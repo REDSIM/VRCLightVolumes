@@ -714,7 +714,7 @@ Transform:
   m_GameObject: {fileID: 377396392}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: -0.427, y: 1.74, z: -17.971}
+  m_LocalPosition: {x: -0.197, y: 1.74, z: -17.569}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -964,6 +964,9 @@ MonoBehaviour:
   - {fileID: 110763775}
   - {fileID: 1819868269}
   - {fileID: 42751781}
+  DataCRT: {fileID: 8600000, guid: 404db91fccb9dc94eb61c98a1b15d678, type: 2}
+  MatrixCRT: {fileID: 8600000, guid: 9743face536f7ce4f8e1439f2253f31a, type: 2}
+  SmoothingCRT: {fileID: 8600000, guid: 1b46d77ee62689a4eb70b72e1e015716, type: 2}
 --- !u!114 &446951795
 MonoBehaviour:
   m_ObjectHideFlags: 2
@@ -1010,6 +1013,67 @@ Transform:
   - {fileID: 1665989577}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!1001 &628302388
+PrefabInstance:
+  m_ObjectHideFlags: 0
+  serializedVersion: 2
+  m_Modification:
+    serializedVersion: 3
+    m_TransformParent: {fileID: 0}
+    m_Modifications:
+    - target: {fileID: 1270109891748915428, guid: 39efc0387abc72a4fbe5aa958ca92df1, type: 3}
+      propertyPath: m_LocalPosition.x
+      value: -0.1
+      objectReference: {fileID: 0}
+    - target: {fileID: 1270109891748915428, guid: 39efc0387abc72a4fbe5aa958ca92df1, type: 3}
+      propertyPath: m_LocalPosition.y
+      value: 2.68
+      objectReference: {fileID: 0}
+    - target: {fileID: 1270109891748915428, guid: 39efc0387abc72a4fbe5aa958ca92df1, type: 3}
+      propertyPath: m_LocalPosition.z
+      value: -11.91
+      objectReference: {fileID: 0}
+    - target: {fileID: 1270109891748915428, guid: 39efc0387abc72a4fbe5aa958ca92df1, type: 3}
+      propertyPath: m_LocalRotation.w
+      value: 0.0000002533197
+      objectReference: {fileID: 0}
+    - target: {fileID: 1270109891748915428, guid: 39efc0387abc72a4fbe5aa958ca92df1, type: 3}
+      propertyPath: m_LocalRotation.x
+      value: -0
+      objectReference: {fileID: 0}
+    - target: {fileID: 1270109891748915428, guid: 39efc0387abc72a4fbe5aa958ca92df1, type: 3}
+      propertyPath: m_LocalRotation.y
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 1270109891748915428, guid: 39efc0387abc72a4fbe5aa958ca92df1, type: 3}
+      propertyPath: m_LocalRotation.z
+      value: -0
+      objectReference: {fileID: 0}
+    - target: {fileID: 1270109891748915428, guid: 39efc0387abc72a4fbe5aa958ca92df1, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 1270109891748915428, guid: 39efc0387abc72a4fbe5aa958ca92df1, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.y
+      value: 180
+      objectReference: {fileID: 0}
+    - target: {fileID: 1270109891748915428, guid: 39efc0387abc72a4fbe5aa958ca92df1, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 2129285262713602144, guid: 39efc0387abc72a4fbe5aa958ca92df1, type: 3}
+      propertyPath: m_Name
+      value: Overdrawing Benchmark
+      objectReference: {fileID: 0}
+    - target: {fileID: 2129285262713602144, guid: 39efc0387abc72a4fbe5aa958ca92df1, type: 3}
+      propertyPath: m_IsActive
+      value: 1
+      objectReference: {fileID: 0}
+    m_RemovedComponents: []
+    m_RemovedGameObjects: []
+    m_AddedGameObjects: []
+    m_AddedComponents: []
+  m_SourcePrefab: {fileID: 100100000, guid: 39efc0387abc72a4fbe5aa958ca92df1, type: 3}
 --- !u!1 &751639248
 GameObject:
   m_ObjectHideFlags: 0
@@ -1438,11 +1502,6 @@ MonoBehaviour:
   RenderReflectionIntensity: 0
   RenderSkybox: {fileID: 0}
   NetworkIDs:
-  - gameObject: {fileID: 0}
-    ID: 10
-    SerializedTypeNames:
-    - VRC.SDK3.Components.VRCPickup
-    - VRC.SDK3.Components.VRCObjectSync
   - gameObject: {fileID: 1285058854}
     ID: 11
     SerializedTypeNames:
@@ -1484,6 +1543,11 @@ MonoBehaviour:
     ID: 22
     SerializedTypeNames:
     - VRC.Udon.UdonBehaviour
+  - gameObject: {fileID: 377396392}
+    ID: 23
+    SerializedTypeNames:
+    - VRC.SDK3.Components.VRCPickup
+    - VRC.SDK3.Components.VRCObjectSync
   portraitCameraPositionOffset: {x: 0, y: 0, z: 0}
   portraitCameraRotationOffset: {x: 0, y: 1, z: 0, w: -0.00000004371139}
   PlayerPersistence: []
@@ -2429,7 +2493,7 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1819868266}
   serializedVersion: 2
-  m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
+  m_LocalRotation: {x: -0, y: 0.000000014901161, z: -0, w: 1}
   m_LocalPosition: {x: 0, y: 1.875, z: -0.00000011920929}
   m_LocalScale: {x: 10, y: 2.75, z: 10}
   m_ConstrainProportionsScale: 0
@@ -2497,13 +2561,13 @@ MonoBehaviour:
   InvWorldMatrix:
     e00: 0.1
     e01: 0
-    e02: 0
-    e03: 0
+    e02: -0.0000000029802323
+    e03: -3.5527137e-16
     e10: 0
     e11: 0.36363637
     e12: 0
     e13: -0.6818182
-    e20: 0
+    e20: 0.0000000029802323
     e21: 0
     e22: 0.1
     e23: 0.000000011920929
@@ -2511,7 +2575,7 @@ MonoBehaviour:
     e31: 0
     e32: 0
     e33: 1
-  RelativeRotation: {x: 0, y: 0, z: 0, w: 1}
+  RelativeRotation: {x: 0, y: 0.000000014901161, z: 0, w: 1}
   IsRotated: 0
 --- !u!114 &1819868270
 MonoBehaviour:
@@ -2879,3 +2943,4 @@ SceneRoots:
   - {fileID: 1474319418}
   - {fileID: 1776304555}
   - {fileID: 377396399}
+  - {fileID: 628302388}

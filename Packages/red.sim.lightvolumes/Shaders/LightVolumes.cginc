@@ -3,7 +3,7 @@
 uniform float _UdonLightVolumeEnabled;
 
 // All volumes count in scene
-uniform float _UdonLightVolumeCount;
+uniform float _UdonLightVolumeEnabledCount;
 
 // Additive volumes max overdraw count
 uniform float _UdonLightVolumeAdditiveMaxOverdraw;
@@ -18,26 +18,50 @@ uniform float _UdonLightVolumeProbesBlend;
 uniform float _UdonLightVolumeSharpBounds;
 
 // Main 3D Texture atlas
-uniform sampler3D _UdonLightVolume;
+uniform sampler3D _UdonLightVolumeAtlas;
 
-// World to Local (-0.5, 0.5) UVW Matrix
-uniform float4x4 _UdonLightVolumeInvWorldMatrix[256];
+uniform sampler2D _UdonLightVolumeData;
+uniform sampler2D _UdonLightVolumeMatrix;
+uniform sampler2D _UdonLightVolumeSmoothing;
+
+#define LV_MatrixTS float2(0.0013020833, 1)   // 1/768
+#define LV_SmoothingTS float2(0.00390625, 1)  // 1/256
+#define LV_DataTS float2(0.00048828125, 1)    // 1/2048
+
+// Getting World to Local (-0.5, 0.5) UVW Matrix
+float4x4 LV_Matrix(uint id)
+{
+    float4 col0 = tex2Dlod(_UdonLightVolumeMatrix, float4((float2(id * 3 + 0.5, 0.5) * LV_MatrixTS), 0, 0));
+    float4 col1 = tex2Dlod(_UdonLightVolumeMatrix, float4((float2(id * 3 + 1.5, 0.5) * LV_MatrixTS), 0, 0));
+    float4 col2 = tex2Dlod(_UdonLightVolumeMatrix, float4((float2(id * 3 + 2.5, 0.5) * LV_MatrixTS), 0, 0));
+    float4x4 mat = float4x4(col0, col1, col2, float4(0, 0, 0, 1));
+    return mat;
+}
+
+// Getting value that is needed to smoothly blend volumes ( BoundsScale / edgeSmooth )
+float3 LV_Smoothing(uint id) {
+    return tex2Dlod(_UdonLightVolumeSmoothing, float4(float2(id + 0.5, 0.5) * LV_SmoothingTS, 0, 0)).xyz;
+}
+
+// AABB Min Bounds of islands on the 3D Texture atlas
+float3 LV_GetUvwMin(uint id, uint n) {
+    return tex2Dlod(_UdonLightVolumeData, float4(float2(id * 8 + n * 2 + 0.5, 0.5) * LV_DataTS, 0, 0)).xyz;
+}
+
+// AABB Max Bounds of islands on the 3D Texture atlas
+float3 LV_GetUvwMax(uint id, uint n) {
+    return tex2Dlod(_UdonLightVolumeData, float4(float2(id * 8 + n * 2 + 1.5, 0.5) * LV_DataTS, 0, 0)).xyz;
+}
+
+// Color multiplier (XYZ) and bool if we actually need to rotate L1 components at all (W)
+float4 LV_GetColorAndIsRotated(uint id) {
+    return tex2Dlod(_UdonLightVolumeData, float4(float2(id * 8 + 6.5, 0.5) * LV_DataTS, 0, 0));
+}
 
 // L1 SH components rotation (relative to baked rotataion)
-uniform float4 _UdonLightVolumeRotation[256];
-
-// If we actually need to rotate L1 components at all
-uniform float _UdonLightVolumeIsRotated[256];
-
-// Value that is needed to smoothly blend volumes ( BoundsScale / edgeSmooth )
-uniform float3 _UdonLightVolumeInvLocalEdgeSmooth[256];
-
-// AABB Bounds of islands on the 3D Texture atlas
-uniform float4 _UdonLightVolumeUvwMin[768];
-uniform float4 _UdonLightVolumeUvwMax[768];
-
-// Color multiplier
-uniform float4 _UdonLightVolumeColor[256];
+float4 LV_GetRotation(uint id) {
+    return tex2Dlod(_UdonLightVolumeData, float4(float2(id * 8 + 7.5, 0.5) * LV_DataTS, 0, 0));
+}
 
 // Rotates vector by quaternion
 float3 LV_MultiplyVectorByQuaternion(float3 v, float4 q) {
@@ -51,16 +75,15 @@ bool LV_PointLocalAABB(float3 localUVW){
 }
 
 // Calculates local UVW using volume ID
-float3 LV_LocalFromVolume(int volumeID, float3 worldPos) {
-    return mul(_UdonLightVolumeInvWorldMatrix[volumeID], float4(worldPos, 1.0)).xyz;
+float3 LV_LocalFromVolume(uint volumeID, float3 worldPos) {
+    return mul(LV_Matrix(volumeID), float4(worldPos, 1.0)).xyz;
 }
 
 // Calculates Island UVW from local UVW
-float3 LV_LocalToIsland(int volumeID, int texID, float3 localUVW){
+float3 LV_LocalToIsland(uint volumeID, uint texID, float3 localUVW){
     // UVW bounds
-    int uvwID = volumeID * 3 + texID;
-    float3 uvwMin = _UdonLightVolumeUvwMin[uvwID].xyz;
-    float3 uvwMax = _UdonLightVolumeUvwMax[uvwID].xyz;
+    float3 uvwMin = LV_GetUvwMin(volumeID, texID);
+    float3 uvwMax = LV_GetUvwMax(volumeID, texID);
     // Ramapping world bounds to UVW bounds
     return clamp(lerp(uvwMin, uvwMax, localUVW + 0.5), uvwMin, uvwMax);
 }
@@ -68,9 +91,9 @@ float3 LV_LocalToIsland(int volumeID, int texID, float3 localUVW){
 // Samples 3 SH textures and packing them into L1 channels
 void LV_SampleLightVolumeTex(float3 uvw0, float3 uvw1, float3 uvw2, out float3 L0, out float3 L1r, out float3 L1g, out float3 L1b) {
     // Sampling 3D Atlas
-    float4 tex0 = tex3Dlod(_UdonLightVolume, float4(uvw0, 0));
-    float4 tex1 = tex3Dlod(_UdonLightVolume, float4(uvw1, 0));
-    float4 tex2 = tex3Dlod(_UdonLightVolume, float4(uvw2, 0));
+    float4 tex0 = tex3Dlod(_UdonLightVolumeAtlas, float4(uvw0, 0));
+    float4 tex1 = tex3Dlod(_UdonLightVolumeAtlas, float4(uvw1, 0));
+    float4 tex2 = tex3Dlod(_UdonLightVolumeAtlas, float4(uvw2, 0));
     // Packing final data
     L0 = tex0.rgb;
     L1r = float3(tex1.r, tex2.r, tex0.a);
@@ -100,7 +123,7 @@ float LV_EvaluateSH(float L0, float3 L1, float3 n) {
 }
 
 // Samples a Volume with ID and Local UVW
-void LV_SampleVolume(int id, float3 localUVW, out float3 L0, out float3 L1r, out float3 L1g, out float3 L1b) {
+void LV_SampleVolume(uint id, float3 localUVW, out float3 L0, out float3 L1r, out float3 L1g, out float3 L1b) {
     
     // Additive UVW
     float3 uvw0 = LV_LocalToIsland(id, 0, localUVW);
@@ -110,18 +133,21 @@ void LV_SampleVolume(int id, float3 localUVW, out float3 L0, out float3 L1r, out
     // Sample additive
     LV_SampleLightVolumeTex(uvw0, uvw1, uvw2, L0, L1r, L1g, L1b);
     
+    float4 color = LV_GetColorAndIsRotated(id);
+    
     // Color correction
-    L0 = L0 * _UdonLightVolumeColor[id].rgb;
-    L1r = L1r * _UdonLightVolumeColor[id].r;
-    L1g = L1g * _UdonLightVolumeColor[id].g;
-    L1b = L1b * _UdonLightVolumeColor[id].b;
+    L0 = L0 * color.rgb;
+    L1r = L1r * color.r;
+    L1g = L1g * color.g;
+    L1b = L1b * color.b;
     
     // Rotate if needed
-    if (_UdonLightVolumeIsRotated[id] != 0) {
-        L1r = LV_MultiplyVectorByQuaternion(L1r, _UdonLightVolumeRotation[id]);
-        L1g = LV_MultiplyVectorByQuaternion(L1g, _UdonLightVolumeRotation[id]);
-        L1b = LV_MultiplyVectorByQuaternion(L1b, _UdonLightVolumeRotation[id]);
-    }
+    if (color.a != 0) {
+        float4 rot = LV_GetRotation(id);
+        L1r = LV_MultiplyVectorByQuaternion(L1r, rot);
+        L1g = LV_MultiplyVectorByQuaternion(L1g, rot);
+        L1b = LV_MultiplyVectorByQuaternion(L1b, rot);
+    } 
                 
 }
 
@@ -137,7 +163,7 @@ float3 LightVolumeSpecular(float3 albedo, float smoothness, float metallic, floa
     float3 specs = ((1 / (invLightLength * 0.003f)) * specColor + L0) * specMask;
     float fresnel2 = fresnel * fresnel;
     float fresnelExp = fresnel2 * fresnel2 * fresnel;
-    float f0 = lerp(0.04f, albedo, metallic);
+    float3 f0 = lerp(0.04f, albedo, metallic);
     return lerp(specs * 0.003f, specs, smoothExp) * ((1 - f0) * fresnelExp + f0);
 }
 
@@ -156,13 +182,13 @@ void LightVolumeSH(float3 worldPos, out float3 L0, out float3 L1r, out float3 L1
     L1b = float3(0, 0, 0);
     
     // Fallback to default light probes if Light Volume are not enabled
-    if (!_UdonLightVolumeEnabled || _UdonLightVolumeCount == 0) {
+    if (!_UdonLightVolumeEnabled || _UdonLightVolumeEnabledCount == 0) {
         LV_SampleLightProbe(L0, L1r, L1g, L1b);
         return;
     }
     
-    int volumeID_A = -1; // Main, dominant volume ID
-    int volumeID_B = -1; // Secondary volume ID to blend main with
+    uint volumeID_A = -1; // Main, dominant volume ID
+    uint volumeID_B = -1; // Secondary volume ID to blend main with
 
     float3 localUVW   = float3(0, 0, 0); // Last local UVW to use in disabled Light Probes mode
     float3 localUVW_A = float3(0, 0, 0); // Main local UVW for Y Axis and Free rotations
@@ -173,10 +199,10 @@ void LightVolumeSH(float3 worldPos, out float3 L0, out float3 L1r, out float3 L1
     bool isNoB = true;
     
     // Additive volumes variables
-    int addVolumesCount = 0;
+    uint addVolumesCount = 0;
     float3 L0_, L1r_, L1g_, L1b_;
     
-    int id = 0; // Loop iterator
+    uint id = 0; // Loop iterator
     
     // Iterating through all light volumes with simplified algorithm requiring Light Volumes to be sorted by weight in descending order
     [loop]
@@ -193,7 +219,7 @@ void LightVolumeSH(float3 worldPos, out float3 L0, out float3 L1r, out float3 L1
     }
     
     [loop] // First, searching for volume A
-    for (id = _UdonLightVolumeAdditiveCount; id < _UdonLightVolumeCount; id++) {
+    for (id = _UdonLightVolumeAdditiveCount; id < _UdonLightVolumeEnabledCount; id++) {
         localUVW = LV_LocalFromVolume(id, worldPos);
         if (LV_PointLocalAABB(localUVW)) { // Intersection test
             volumeID_A = id;
@@ -204,7 +230,7 @@ void LightVolumeSH(float3 worldPos, out float3 L0, out float3 L1r, out float3 L1
     }
     
     [loop] // Next, searching for volume B if A found
-    for (id++; id < _UdonLightVolumeCount; id++) {
+    for (id++; id < _UdonLightVolumeEnabledCount; id++) {
         localUVW = LV_LocalFromVolume(id, worldPos);
         if (LV_PointLocalAABB(localUVW)) { // Intersection test
             volumeID_B = id;
@@ -232,12 +258,12 @@ void LightVolumeSH(float3 worldPos, out float3 L0, out float3 L1r, out float3 L1
         
     // Fallback to lowest weight light volume if oudside of every volume
     localUVW_A = isNoA ? localUVW : localUVW_A;
-    volumeID_A = isNoA ? _UdonLightVolumeCount - 1 : volumeID_A;
+    volumeID_A = isNoA ? _UdonLightVolumeEnabledCount - 1 : volumeID_A;
 
     // Sampling Light Volume A
     LV_SampleVolume(volumeID_A, localUVW_A, L0_A, L1r_A, L1g_A, L1b_A);
     
-    float mask = LV_BoundsMask(localUVW_A, _UdonLightVolumeInvLocalEdgeSmooth[volumeID_A]);
+    float mask = LV_BoundsMask(localUVW_A, LV_Smoothing(volumeID_A));
     if (mask == 1 || isNoA || (_UdonLightVolumeSharpBounds && isNoB)) { // Returning SH A result if it's the center of mask or out of bounds
         L0  += L0_A;
         L1r += L1r_A;
@@ -261,7 +287,7 @@ void LightVolumeSH(float3 worldPos, out float3 L0, out float3 L1r, out float3 L1
             
         // If no volume b found, use last one found to fallback
         localUVW_B = isNoB ? localUVW : localUVW_B;
-        volumeID_B = isNoB ? _UdonLightVolumeCount - 1 : volumeID_B;
+        volumeID_B = isNoB ? _UdonLightVolumeEnabledCount - 1 : volumeID_B;
             
         // Sampling Light Volume B
         LV_SampleVolume(volumeID_B, localUVW_B, L0_B, L1r_B, L1g_B, L1b_B);
@@ -288,12 +314,12 @@ void LightVolumeAdditiveSH(float3 worldPos, out float3 L0, out float3 L1r, out f
     
     // Additive volumes variables
     float3 localUVW = float3(0, 0, 0);
-    int addVolumesCount = 0;
+    uint addVolumesCount = 0;
     float3 L0_, L1r_, L1g_, L1b_;
     
     // Iterating through all light volumes with simplified algorithm requiring Light Volumes to be sorted by weight in descending order
     [loop]
-    for (int id = 0; id < _UdonLightVolumeAdditiveCount && addVolumesCount < _UdonLightVolumeAdditiveMaxOverdraw; id++) {
+    for (uint id = 0; id < _UdonLightVolumeAdditiveCount && addVolumesCount < _UdonLightVolumeAdditiveMaxOverdraw; id++) {
         localUVW = LV_LocalFromVolume(id, worldPos);
         //Intersection test
         if (LV_PointLocalAABB(localUVW)) {

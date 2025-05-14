@@ -146,6 +146,9 @@ namespace VRCLightVolumes {
 
         private void Start() {
             UpdateVolumes();
+            DataCRT.Update();
+            MatrixCRT.Update();
+            SmoothingCRT.Update();
         }
 
         public void UpdateVolumes() {
@@ -156,15 +159,15 @@ namespace VRCLightVolumes {
             // Setting if volumes are enables
             if (LightVolumeAtlas == null || _enabledCount == 0) {
                 VRCShader.SetGlobalFloat(_enabledID, 0);
-                DataCRT.updateMode = CustomRenderTextureUpdateMode.OnDemand;
-                MatrixCRT.updateMode = CustomRenderTextureUpdateMode.OnDemand;
-                SmoothingCRT.updateMode = CustomRenderTextureUpdateMode.OnDemand;
+                //DataCRT.updateMode = CustomRenderTextureUpdateMode.OnDemand;
+                //MatrixCRT.updateMode = CustomRenderTextureUpdateMode.OnDemand;
+                //SmoothingCRT.updateMode = CustomRenderTextureUpdateMode.OnDemand;
                 return;
             } else {
                 VRCShader.SetGlobalFloat(_enabledID, 1);
-                DataCRT.updateMode = CustomRenderTextureUpdateMode.Realtime;
-                MatrixCRT.updateMode = CustomRenderTextureUpdateMode.Realtime;
-                SmoothingCRT.updateMode = CustomRenderTextureUpdateMode.Realtime;
+                //DataCRT.updateMode = CustomRenderTextureUpdateMode.Realtime;
+                //MatrixCRT.updateMode = CustomRenderTextureUpdateMode.Realtime;
+                //SmoothingCRT.updateMode = CustomRenderTextureUpdateMode.Realtime;
             }
 
             // Materials
@@ -182,9 +185,9 @@ namespace VRCLightVolumes {
             smoothingMaterial.SetVectorArray(_invLocalEdgeSmoothID, _invLocalEdgeSmooth);
 
             // Update CRTs
-            DataCRT.Update();
-            MatrixCRT.Update();
-            SmoothingCRT.Update();
+            //DataCRT.Update();
+            //MatrixCRT.Update();
+            //SmoothingCRT.Update();
 
             // Global Single Variables
             VRCShader.SetGlobalFloat(_lightProbesBlendingID, LightProbesBlending ? 1 : 0);

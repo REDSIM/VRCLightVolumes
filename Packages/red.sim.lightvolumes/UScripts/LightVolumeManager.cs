@@ -26,7 +26,7 @@ namespace VRCLightVolumes {
 
         // Actually enabled Volumes
         private int _enabledCount = 0;
-        private int[] _enabledIDs = new int[256];
+        private int[] _enabledIDs = new int[32];
         private Vector4[] _invLocalEdgeSmooth = new Vector4[0];
         private Matrix4x4[] _invWorldMatrix = new Matrix4x4[0];
         private Vector4[] _boundsUvwMin = new Vector4[0];

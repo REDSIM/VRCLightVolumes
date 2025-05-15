@@ -1067,7 +1067,11 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 2129285262713602144, guid: 39efc0387abc72a4fbe5aa958ca92df1, type: 3}
       propertyPath: m_IsActive
-      value: 1
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 2129285262713602144, guid: 39efc0387abc72a4fbe5aa958ca92df1, type: 3}
+      propertyPath: m_TagString
+      value: EditorOnly
       objectReference: {fileID: 0}
     m_RemovedComponents: []
     m_RemovedGameObjects: []
@@ -1441,14 +1445,14 @@ MonoBehaviour:
   useAssignedLayers: 0
   DynamicPrefabs: []
   DynamicMaterials:
+  - {fileID: 2100000, guid: 269af33bf0eb06c49ae1e2bafde895bd, type: 2}
   - {fileID: 2100000, guid: 7c585b132fe0e0547943e27b6db50c43, type: 2}
+  - {fileID: 2100000, guid: 9ec09f8f5a313cc4c91bd7feaf546635, type: 2}
   - {fileID: 2100000, guid: 39587cf21953c2a459a9f90d27b451ea, type: 2}
   - {fileID: 2100000, guid: baede57ab42d19d4899dcbc2e280bd1c, type: 2}
-  - {fileID: 2100000, guid: 269af33bf0eb06c49ae1e2bafde895bd, type: 2}
-  - {fileID: 2100000, guid: 64028782a454b1f46ae8c6b415024546, type: 2}
-  - {fileID: 2100000, guid: 9ec09f8f5a313cc4c91bd7feaf546635, type: 2}
-  - {fileID: 2100000, guid: 7cd8219b2223a14459b4fcc39e1e0edb, type: 2}
   - {fileID: 2100000, guid: 5628279d67a7cde43b8975e53bdac69f, type: 2}
+  - {fileID: 2100000, guid: 7cd8219b2223a14459b4fcc39e1e0edb, type: 2}
+  - {fileID: 2100000, guid: 64028782a454b1f46ae8c6b415024546, type: 2}
   LightMapsNear: []
   LightMapsFar: []
   LightMode: 0

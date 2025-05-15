@@ -18,15 +18,15 @@ Shader "Hidden/LightVolumeData" {
             #pragma fragment frag
             #include "UnityCG.cginc"
 
-            #define LV_VOLUMES_COUNT 256
-            #define LV_PIXELS_COUNT 2048
+            #define LV_VOLUMES_COUNT 32
+            #define LV_PIXELS_COUNT 256
             #define LV_SEGMENT_COUNT 8
 
-            uniform float3 UvwMin[768];
-            uniform float3 UvwMax[768];
-            uniform float3 Colors[256];
-            uniform float  IsRotated[256];
-            uniform float4 Rotation[256];
+            uniform float3 UvwMin[96];
+            uniform float3 UvwMax[96];
+            uniform float3 Colors[32];
+            uniform float  IsRotated[32];
+            uniform float4 Rotation[32];
 
             struct appdata { float4 vertex : POSITION; float2 uv : TEXCOORD0; };
             struct v2f     { float2 uv : TEXCOORD0; float4 pos : SV_POSITION; };

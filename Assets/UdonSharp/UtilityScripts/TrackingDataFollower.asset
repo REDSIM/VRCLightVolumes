@@ -12,8 +12,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: c333ccfdd0cbdbc4ca30cef2dd6e6b9b, type: 3}
   m_Name: TrackingDataFollower
   m_EditorClassIdentifier: 
-  serializedUdonProgramAsset: {fileID: 11400000, guid: 17f8fbbe6cc186d4f8dbb057b01a4ec2,
-    type: 2}
+  serializedUdonProgramAsset: {fileID: 11400000, guid: 4c634d1ca976db749bb481139bd00755, type: 2}
   udonAssembly: 
   assemblyError: 
   sourceCsScript: {fileID: 11500000, guid: cfa6b6afca5fc44419a259edec93cea2, type: 3}

@@ -12,9 +12,9 @@ Shader "Hidden/LightVolumeMatrix" {
             #pragma vertex vert
             #pragma fragment frag
             #include "UnityCG.cginc"
-            #define LV_PIXELS_COUNT 768
+            #define LV_PIXELS_COUNT 96
 
-            uniform float4x4 InvWorldMatrix[256];
+            uniform float4x4 InvWorldMatrix[32];
 
             struct appdata { float4 vertex : POSITION; float2 uv : TEXCOORD0; };
             struct v2f     { float2 uv : TEXCOORD0; float4 pos : SV_POSITION; };

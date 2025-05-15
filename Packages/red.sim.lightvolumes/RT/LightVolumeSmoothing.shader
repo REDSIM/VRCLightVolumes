@@ -12,9 +12,9 @@ Shader "Hidden/LightVolumeSmoothing" {
             #pragma vertex vert
             #pragma fragment frag
             #include "UnityCG.cginc"
-            #define LV_PIXELS_COUNT 256
+            #define LV_PIXELS_COUNT 32
 
-            uniform float3 InvLocalEdgeSmooth[256];
+            uniform float3 InvLocalEdgeSmooth[32];
 
             struct appdata { float4 vertex : POSITION; float2 uv : TEXCOORD0; };
             struct v2f     { float2 uv : TEXCOORD0; float4 pos : SV_POSITION; };

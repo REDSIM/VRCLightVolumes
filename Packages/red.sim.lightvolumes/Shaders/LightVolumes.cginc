@@ -24,9 +24,9 @@ uniform sampler2D _UdonLightVolumeData;
 uniform sampler2D _UdonLightVolumeMatrix;
 uniform sampler2D _UdonLightVolumeSmoothing;
 
-#define LV_MatrixTS float2(0.0013020833, 1)   // 1/768
-#define LV_SmoothingTS float2(0.00390625, 1)  // 1/256
-#define LV_DataTS float2(0.00048828125, 1)    // 1/2048
+#define LV_MatrixTS float2(0.01041666, 1)  // 1/96
+#define LV_SmoothingTS float2(0.03125, 1)  // 1/32
+#define LV_DataTS float2(0.00390625, 1)    // 1/256
 
 // Getting World to Local (-0.5, 0.5) UVW Matrix
 float4x4 LV_Matrix(uint id)

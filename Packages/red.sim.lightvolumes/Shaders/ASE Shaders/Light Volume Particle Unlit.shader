@@ -49,7 +49,7 @@ Shader "Light Volume Particle Unlit"
 				#pragma multi_compile_instancing
 				#pragma multi_compile_particles
 				#pragma multi_compile_fog
-				#include "../LightVolumes.cginc"
+				#include "Packages/red.sim.lightvolumes/Shaders/LightVolumes.cginc"
 				#include "UnityStandardUtils.cginc"
 				#define ASE_NEEDS_FRAG_COLOR
 				#define ASE_NEEDS_VERT_POSITION

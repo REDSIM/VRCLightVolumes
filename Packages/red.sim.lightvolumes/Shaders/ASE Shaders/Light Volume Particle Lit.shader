@@ -24,7 +24,7 @@ Shader "Light Volume Particle Lit"
 		Tags{ "RenderType" = "Transparent"  "Queue" = "Transparent+0" "IgnoreProjector" = "True" }
 		Cull [_Culling]
 		CGINCLUDE
-		#include "../LightVolumes.cginc"
+		#include "Packages/red.sim.lightvolumes/Shaders/LightVolumes.cginc"
 		#include "UnityStandardUtils.cginc"
 		#include "UnityCG.cginc"
 		#include "UnityPBSLighting.cginc"

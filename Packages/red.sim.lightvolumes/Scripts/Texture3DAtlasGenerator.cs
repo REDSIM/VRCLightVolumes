@@ -101,6 +101,13 @@ namespace VRCLightVolumes {
                                 if (x < p.x + p.w && x + bw > p.x && y < p.y + p.h && y + bh > p.y && z < p.z + p.d && z + bd > p.z) {
                                     collides = true; break;
                                 }
+
+                                // Check for out of bounds of the texture3D
+                                int t3dMax = 2048;
+                                if (x + bw > t3dMax || y + bh > t3dMax || z + bd > t3dMax)
+                                {
+                                    collides = true; break;
+                                }
                             }
                             if (collides) continue;
 

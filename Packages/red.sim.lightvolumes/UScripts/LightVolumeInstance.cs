@@ -1,4 +1,6 @@
 ﻿using UnityEngine;
+using UnityEngine.Serialization;
+using VRC.SDKBase;
 #if UDONSHARP
 using UdonSharp;
 #endif
@@ -12,9 +14,12 @@ namespace VRCLightVolumes {
 #endif
     {
 
+        [SerializeField]
+        [FormerlySerializedAs("Color")]
+        [FieldChangeCallback(nameof(Color))]
         [Tooltip("Changing the color is useful for animating Additive volumes. You can even control the R, G, B channels separately this way.")]
         [ColorUsage(showAlpha: false, hdr: true)]
-        public Color Color = Color.white;
+        private Color _color = Color.white;
         [Tooltip("Defines whether this volume can be moved in runtime. Disabling this option slightly improves performance. You can even change it in runtime.")]
         public bool IsDynamic = false;
         [Tooltip("Additive volumes apply their light on top of others as an overlay. Useful for movable lights like flashlights, projectors, disco balls, etc. They can also project light onto static lightmapped objects if the surface shader supports it.")]
@@ -46,6 +51,27 @@ namespace VRCLightVolumes {
         public Vector3 RelativeRotationRow1 = Vector3.zero;
         [Tooltip("True if there is any relative rotation. No relative rotation improves performance. Recalculated via the UpdateRotation() method.")]
         public bool IsRotated = false;
+        [Tooltip("Reference to the LightVolumeManager that manages this volume. Used to notify the manager about changes in this volume.")]
+        public LightVolumeManager UpdateNotifier;
+
+        public Color Color {
+            get => _color;
+            set {
+                if (_color == value) return; // No change
+                _color = value;
+#if COMPILER_UDONSHARP
+                if (Utilities.IsValid(UpdateNotifier)) UpdateNotifier.RequestUpdateVolumes();
+#endif
+            }
+        }
+
+        private void OnEnable() {
+            if (Utilities.IsValid(UpdateNotifier)) UpdateNotifier.RequestUpdateVolumes();
+        }
+
+        private void OnDisable() {
+            if (Utilities.IsValid(UpdateNotifier)) UpdateNotifier.RequestUpdateVolumes();
+        }
 
         // Calculates and sets invLocalEdgeBlending
         public void SetSmoothBlending(float radius) {

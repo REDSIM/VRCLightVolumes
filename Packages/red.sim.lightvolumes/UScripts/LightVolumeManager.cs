@@ -1,5 +1,6 @@
 ﻿using UnityEngine;
 using System;
+using UnityEngine.Serialization;
 
 #if UDONSHARP
 using VRC.SDKBase;
@@ -23,14 +24,17 @@ namespace VRCLightVolumes {
         public bool LightProbesBlending = true;
         [Tooltip("Disables smooth blending with areas outside Light Volumes. Use it if your entire scene's play area is covered by Light Volumes. It also improves performance.")]
         public bool SharpBounds = true;
+        [FormerlySerializedAs("AutoUpdateVolumes")]
+        [FieldChangeCallback(nameof(AutoUpdateVolumes))]
         [Tooltip("Automatically updates any volumes data in runtime: Enabling/Disabling, Color, Edge Smoothing, all the global settings and more. Position, Rotation and Scale gets updated only for volumes that are marked dynamic.")]
-        public bool AutoUpdateVolumes = false;
+        public bool _autoUpdateVolumes = false;
         [Tooltip("Limits the maximum number of additive volumes that can affect a single pixel. If you have many dynamic additive volumes that may overlap, it's good practice to limit overdraw to maintain performance.")]
         public int AdditiveMaxOverdraw = 4;
         [Tooltip("All Light Volume instances sorted in decreasing order by weight. You can enable or disable volumes game objects at runtime. Manually disabling unnecessary volumes improves performance.")]
         public LightVolumeInstance[] LightVolumeInstances = new LightVolumeInstance[0];
 
         private bool _isInitialized = false;
+        private bool _isUpdateRequested = false;
 
         // Actually enabled Volumes
         private int _enabledCount = 0;
@@ -55,6 +59,16 @@ namespace VRCLightVolumes {
         private int lightVolumeProbesBlendID;
         private int lightVolumeSharpBoundsID;
         private int lightVolumeID;
+
+        public bool AutoUpdateVolumes {
+            get => _autoUpdateVolumes;
+            set {
+                _autoUpdateVolumes = value;
+#if COMPILER_UDONSHARP
+                if (_autoUpdateVolumes) RequestUpdateVolumes();
+#endif
+            }
+        }
 
         // Initializing gloabal shader arrays if needed 
         private void TryInitialize() {
@@ -88,13 +102,28 @@ namespace VRCLightVolumes {
             _isInitialized = true;
         }
 
-        private void Update() {
+        private void OnEnable() {
             if (!AutoUpdateVolumes) return;
-            UpdateVolumes();
+            RequestUpdateVolumes();
         }
 
         private void Start() {
             _isInitialized = false;
+            UpdateVolumes();
+        }
+
+        public void RequestUpdateVolumes() {
+            if (_isUpdateRequested) return; // Prevent multiple requests
+            _isUpdateRequested = true;
+            SendCustomEventDelayedFrames(nameof(DeferredUpdateVolumes), 1);
+        }
+
+        public void DeferredUpdateVolumes() {
+            if (AutoUpdateVolumes && enabled && gameObject.activeInHierarchy) {
+                SendCustomEventDelayedFrames(nameof(DeferredUpdateVolumes), 1); // Auto schedule next update if AutoUpdateVolumes is enabled
+            } else {
+                _isUpdateRequested = false;
+            }
             UpdateVolumes();
         }
 
@@ -103,29 +132,34 @@ namespace VRCLightVolumes {
             TryInitialize();
 
             // Searching for enabled volumes. Counting Additive volumes.
-            _enabledCount = 0;
+            int enabledCount = 0;
             _additiveCount = 0;
             int maxLength = Mathf.Min(LightVolumeInstances.Length, 32);
             for (int i = 0; i < maxLength; i++) {
                 LightVolumeInstance instance = LightVolumeInstances[i];
-                if (instance != null && instance.gameObject.activeInHierarchy) {
+                if (instance == null) continue;
+                instance.UpdateNotifier = this; // Setting update notifier for the instance
+                if (instance.enabled && instance.gameObject.activeInHierarchy) {
 #if UNITY_EDITOR
                     instance.UpdateTransform();
 #else
                     if (instance.IsDynamic) instance.UpdateTransform();
 #endif
                     if (instance.IsAdditive) _additiveCount++;
-                    _enabledIDs[_enabledCount] = i;
-                    _enabledCount++;
+                    _enabledIDs[enabledCount] = i;
+                    enabledCount++;
                 }
             }
 
-            // Initializing required arrays
-            _invLocalEdgeSmooth = new Vector4[_enabledCount];
-            _invWorldMatrix = new Matrix4x4[_enabledCount];
-            _colors = new Vector4[_enabledCount];
-            _relativeRotations = new Vector4[_enabledCount * 2];
-            _boundsUvw = new Vector4[_enabledCount * 6];
+            // Resize arrays if needed
+            if (enabledCount != _enabledCount) {
+                _enabledCount = enabledCount;
+                _invLocalEdgeSmooth = new Vector4[_enabledCount];
+                _invWorldMatrix = new Matrix4x4[_enabledCount];
+                _colors = new Vector4[_enabledCount];
+                _relativeRotations = new Vector4[_enabledCount * 2];
+                _boundsUvw = new Vector4[_enabledCount * 6];
+            }
 
             // Filling arrays with enabled volumes
             for (int i = 0; i < _enabledCount; i++) {

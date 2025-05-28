@@ -33,7 +33,7 @@ namespace VRCLightVolumes {
         private bool _isInitialized = false;
 
         // Actually enabled Volumes
-        private int _enabledCount = 0;
+        private int _enabledCount = 0, _lastEnabledCount = -1;
         private int[] _enabledIDs = new int[32];
         private Vector4[] _invLocalEdgeSmooth = new Vector4[0];
         private Matrix4x4[] _invWorldMatrix = new Matrix4x4[0];
@@ -121,11 +121,14 @@ namespace VRCLightVolumes {
             }
 
             // Initializing required arrays
-            _invLocalEdgeSmooth = new Vector4[_enabledCount];
-            _invWorldMatrix = new Matrix4x4[_enabledCount];
-            _colors = new Vector4[_enabledCount];
-            _relativeRotations = new Vector4[_enabledCount * 2];
-            _boundsUvw = new Vector4[_enabledCount * 6];
+            if (_enabledCount != _lastEnabledCount) {
+                _invLocalEdgeSmooth = new Vector4[_enabledCount];
+                _invWorldMatrix = new Matrix4x4[_enabledCount];
+                _colors = new Vector4[_enabledCount];
+                _relativeRotations = new Vector4[_enabledCount * 2];
+                _boundsUvw = new Vector4[_enabledCount * 6];
+                _lastEnabledCount = _enabledCount;
+            }
 
             // Filling arrays with enabled volumes
             for (int i = 0; i < _enabledCount; i++) {

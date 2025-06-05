@@ -120,23 +120,15 @@ namespace VRCLightVolumes {
 
     // On Bakery Started baking
     private void OnBakeryStartedRender(object sender, EventArgs e) {
-        if (BakingMode != Baking.Bakery) {
-            BakingMode = Baking.Bakery;
-        }
-
         // Attempt to fix a bakery bug
         var volumes = FindObjectsOfType<LightVolume>(true);
         for (int i = 0; i < volumes.Length; i++) {
             volumes[i].SetupBakeryDependencies();
         }
-
     }
 
     // On Bakery Finished baking
     private void OnBakeryFinishedRender(object sender, EventArgs e) {
-        if (BakingMode != Baking.Bakery) {
-            BakingMode = Baking.Bakery;
-        }
         LightVolume[] volumes = FindObjectsByType<LightVolume>(FindObjectsInactive.Exclude, FindObjectsSortMode.None);
         for (int i = 0; i < volumes.Length; i++) {
             if (volumes[i].Bake && volumes[i].LightVolumeInstance != null) {
@@ -157,8 +149,8 @@ namespace VRCLightVolumes {
 
     // On Unity Lightmapper started baking
     private void OnUnityBakingStarted() {
-        if (BakingMode != Baking.Progressive) {
-            BakingMode = Baking.Progressive;
+        if (BakingMode == Baking.Bakery) {
+            return;
         }
         LightVolume[] volumes = FindObjectsByType<LightVolume>(FindObjectsInactive.Exclude, FindObjectsSortMode.None);
         for (int i = 0; i < volumes.Length; i++) {
@@ -171,9 +163,8 @@ namespace VRCLightVolumes {
 
     // On Unity Lightmapper baked additional probes
     private void OnAdditionalProbesCompleted() {
-
-        if (BakingMode != Baking.Progressive) {
-            BakingMode = Baking.Progressive;
+        if (BakingMode == Baking.Bakery) {
+            return;
         }
         LightVolume[] volumes = FindObjectsByType<LightVolume>(FindObjectsInactive.Exclude, FindObjectsSortMode.None);
         for (int i = 0; i < volumes.Length; i++) {

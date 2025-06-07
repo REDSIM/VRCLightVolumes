@@ -43,7 +43,9 @@ namespace VRCLightVolumes {
         public bool AutoUpdateVolumes = false;
         [Tooltip("Limits the maximum number of additive volumes that can affect a single pixel. If you have many dynamic additive volumes that may overlap, it's good practice to limit overdraw to maintain performance.")]
         [Min(1)]public int AdditiveMaxOverdraw = 4;
-
+        [Tooltip("The minimum brightness at a point due to lighting from an area light, before the area light is culled. Larger values will result in better performance, but may cause artifacts. Setting this to 0 disables distance-based culling for area lights.")]
+        [Range(0.0f, 0.1f)] public float AreaLightBrightnessCutoff = 0.005f;
+        
         [SerializeField] public List<LightVolumeData> LightVolumeDataList = new List<LightVolumeData>();
 
         public bool IsBakeryMode => BakingMode == Baking.Bakery; // Just a shortcut
@@ -406,6 +408,7 @@ namespace VRCLightVolumes {
             LightVolumeManager.LightProbesBlending = LightProbesBlending;
             LightVolumeManager.SharpBounds = SharpBounds;
             LightVolumeManager.AdditiveMaxOverdraw = AdditiveMaxOverdraw;
+            LightVolumeManager.AreaLightBrightnessCutoff = AreaLightBrightnessCutoff;
 
             if (LightVolumes.Count != 0) {
                 LightVolumeManager.LightVolumeInstances = LightVolumeDataSorter.GetData(LightVolumeDataSorter.SortData(LightVolumeDataList));

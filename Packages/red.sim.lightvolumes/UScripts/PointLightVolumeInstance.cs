@@ -26,6 +26,16 @@ namespace VRCLightVolumes {
         public bool IsSpotLight() {
             return PositionData.w < 0;
         }
+        
+        // Checks if it's a point light
+        public bool IsPointLight() {
+            return PositionData.w >= 0 && ColorData.w <= 1.5;
+        }
+
+        // Checks if it's an area light
+        public bool IsAreaLight() {
+            return PositionData.w >= 0 && ColorData.w > 1.5;
+        }
 
         // Checks if uses custom texture
         public bool IsCustomTexture() {
@@ -94,6 +104,12 @@ namespace VRCLightVolumes {
             }
             PositionData.w = - Mathf.Abs(PositionData.w);
         }
+        
+        // Sets light into the area light type
+        public void SetAreaLight(float width, float height) {
+            PositionData.w = width;
+            ColorData.w = 2 + height; // Add 2 to get out of [-1; 1] codomain of cosine
+        }
 
         // Sets color
         public void SetColor(Color color, float intensity) {
@@ -107,7 +123,10 @@ namespace VRCLightVolumes {
             Vector3 pos = transform.position;
             PositionData = new Vector4(pos.x, pos.y, pos.z, PositionData.w);
 
-            if (IsSpotLight() && !IsCustomTexture()) { // If Spot Light with no cookie
+            if (IsAreaLight()) {
+                Quaternion rot = transform.rotation;
+                DirectionData = new Vector4(rot.x, rot.y, rot.z, rot.w);
+            } if (IsSpotLight() && !IsCustomTexture()) { // If Spot Light with no cookie
                 Vector3 dir = transform.forward;
                 DirectionData = new Vector4(dir.x, dir.y, dir.z, DirectionData.w);
             } else if (!IsParametric()) { // If Point Light with a cubemap or a spot light with cookie

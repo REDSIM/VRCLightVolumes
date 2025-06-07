@@ -15,6 +15,8 @@ namespace VRCLightVolumes {
         public LightShape Shape = LightShape.Parametric;
         [Range(0.1f, 360)] public float Angle = 60f;
         [Range(0.001f, 1)] public float Falloff = 1f;
+        [Min(0.001f)] public float AreaLightWidth = 1f;
+        [Min(0.001f)] public float AreaLightHeight = 1f;
         public Texture2D FalloffLUT = null;
         public Texture2D Cookie = null;
         public Cubemap Cubemap = null;
@@ -81,9 +83,9 @@ namespace VRCLightVolumes {
             SetupDependencies();
             PointLightVolumeInstance.IsDynamic = Dynamic;
             PointLightVolumeInstance.SetColor(Color, Intensity);
-            PointLightVolumeInstance.SetRange(Range);
 
             if(Type == LightType.PointLight) { // Point light
+                PointLightVolumeInstance.SetRange(Range);
                 if (Shape == LightShape.Custom && Cubemap != null) {
                     PointLightVolumeInstance.SetCustomTexture(CustomID); // Use Custom Cubemap Texture
                 } else if (Shape == LightShape.LUT && FalloffLUT != null) {
@@ -92,7 +94,8 @@ namespace VRCLightVolumes {
                     PointLightVolumeInstance.SetParametric(); // Use this light in parametric mode
                 }
                 PointLightVolumeInstance.SetPointLight(); // Use it as Point Light
-            } else { // Spot Light
+            } else if (Type == LightType.SpotLight) { // Spot Light
+                PointLightVolumeInstance.SetRange(Range);
                 if (Shape == LightShape.Custom && FalloffLUT != null) {
                     PointLightVolumeInstance.SetCustomTexture(CustomID); // Use Custom Projection Texture
                 } else if (Shape == LightShape.LUT && FalloffLUT != null) {
@@ -101,6 +104,8 @@ namespace VRCLightVolumes {
                     PointLightVolumeInstance.SetParametric(); // Use this light in parametric mode
                 }
                 PointLightVolumeInstance.SetSpotLight(Angle, Falloff); // Don't use custom tex
+            } else if (Type == LightType.AreaLight) { // Area light
+                PointLightVolumeInstance.SetAreaLight(AreaLightWidth, AreaLightHeight);
             }
 
             LVUtils.MarkDirty(PointLightVolumeInstance);
@@ -154,7 +159,8 @@ namespace VRCLightVolumes {
 
         public enum LightType {
             PointLight,
-            SpotLight
+            SpotLight,
+            AreaLight,
         }
 
     }

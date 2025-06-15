@@ -27,6 +27,26 @@ namespace VRCLightVolumes {
         public float CustomID;
         [Tooltip("Half-angle of the spotlight cone, in radians.")]
         public float angle;
+        [Tooltip("Reference to the LightVolumeManager that manages this volume. Used to notify the manager about changes in this volume.")]
+        public LightVolumeManager UpdateNotifier;
+
+        private void OnEnable() {
+#if UDONSHARP
+            if (Utilities.IsValid(UpdateNotifier))
+#else
+            if (UpdateNotifier != null)
+#endif
+                UpdateNotifier.RequestUpdateVolumes();
+        }
+
+        private void OnDisable() {
+#if UDONSHARP
+            if (Utilities.IsValid(UpdateNotifier))
+#else
+            if (UpdateNotifier != null)
+#endif
+                UpdateNotifier.RequestUpdateVolumes();
+        }
 
         // Checks if it's a spotlight
         public bool IsSpotLight() {
@@ -61,12 +81,18 @@ namespace VRCLightVolumes {
         // Sets range data which is actually an inverted squared range
         public void SetRange(float range) {
             PositionData.w = Mathf.Sign(PositionData.w) / (range * range); // Saving the sign that was here before
+#if COMPILER_UDONSHARP
+            if (Utilities.IsValid(UpdateNotifier)) UpdateNotifier.RequestUpdateVolumes();
+#endif
         }
 
         // Sets LUT ID
         public void SetLut(int id) {
             CustomID = id + 1;
             ColorData.w = Mathf.Cos(angle);
+#if COMPILER_UDONSHARP
+            if (Utilities.IsValid(UpdateNotifier)) UpdateNotifier.RequestUpdateVolumes();
+#endif
         }
 
         // Sets Cubemap or a Cookie ID
@@ -75,17 +101,26 @@ namespace VRCLightVolumes {
             if(IsSpotLight()) { // If it's spotlight
                 ColorData.w = Mathf.Tan(angle);
             }
+#if COMPILER_UDONSHARP
+            if (Utilities.IsValid(UpdateNotifier)) UpdateNotifier.RequestUpdateVolumes();
+#endif
         }
 
         // Sets light into parametric mode
         public void SetParametric() {
             CustomID = 0;
             ColorData.w = Mathf.Cos(angle);
+#if COMPILER_UDONSHARP
+            if (Utilities.IsValid(UpdateNotifier)) UpdateNotifier.RequestUpdateVolumes();
+#endif
         }
 
         // Sets light into the point light type
         public void SetPointLight() {
             PositionData.w = Mathf.Abs(PositionData.w);
+#if COMPILER_UDONSHARP
+            if (Utilities.IsValid(UpdateNotifier)) UpdateNotifier.RequestUpdateVolumes();
+#endif
         }
 
         // Sets light into the spot light type with both angle and falloff because angle required to determine falloff anyway
@@ -98,6 +133,9 @@ namespace VRCLightVolumes {
                 DirectionData.w = 1 / (Mathf.Cos(angle * (1.0f - Mathf.Clamp01(falloff))) - ColorData.w);
             }
             PositionData.w = - Mathf.Abs(PositionData.w);
+#if COMPILER_UDONSHARP
+            if (Utilities.IsValid(UpdateNotifier)) UpdateNotifier.RequestUpdateVolumes();
+#endif
         }
 
         // Sets light into the spot light type with angle specified
@@ -109,18 +147,27 @@ namespace VRCLightVolumes {
                 ColorData.w = Mathf.Cos(angle);
             }
             PositionData.w = - Mathf.Abs(PositionData.w);
+#if COMPILER_UDONSHARP
+            if (Utilities.IsValid(UpdateNotifier)) UpdateNotifier.RequestUpdateVolumes();
+#endif
         }
         
         // Sets light into the area light type
         public void SetAreaLight() {
             PositionData.w = Mathf.Max(Mathf.Abs(transform.lossyScale.x), 0.001f);
             ColorData.w = 2 + Mathf.Max(Mathf.Abs(transform.lossyScale.y), 0.001f); // Add 2 to get out of [-1; 1] codomain of cosine
+#if COMPILER_UDONSHARP
+            if (Utilities.IsValid(UpdateNotifier)) UpdateNotifier.RequestUpdateVolumes();
+#endif
         }
 
         // Sets color
         public void SetColor(Color color, float intensity) {
             Vector4 c = color * intensity;
             ColorData = new Vector4(c.x, c.y, c.z, ColorData.w);
+#if COMPILER_UDONSHARP
+            if (Utilities.IsValid(UpdateNotifier)) UpdateNotifier.RequestUpdateVolumes();
+#endif
         }
 
         // Updates data required for shader

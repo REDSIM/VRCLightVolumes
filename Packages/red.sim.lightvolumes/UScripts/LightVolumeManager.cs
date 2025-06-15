@@ -1,10 +1,12 @@
 using UnityEngine;
 using System;
+using UnityEngine.Serialization;
 
 #if UDONSHARP
 using VRC.SDKBase;
 using UdonSharp;
 #else
+using System.Collections;
 using VRCShader = UnityEngine.Shader;
 #endif
 
@@ -24,8 +26,10 @@ namespace VRCLightVolumes {
         public bool LightProbesBlending = true;
         [Tooltip("Disables smooth blending with areas outside Light Volumes. Use it if your entire scene's play area is covered by Light Volumes. It also improves performance.")]
         public bool SharpBounds = true;
+        [FormerlySerializedAs("AutoUpdateVolumes")]
+        [FieldChangeCallback(nameof(AutoUpdateVolumes))]
         [Tooltip("Automatically updates any volumes data in runtime: Enabling/Disabling, Color, Edge Smoothing, all the global settings and more. Position, Rotation and Scale gets updated only for volumes that are marked dynamic.")]
-        public bool AutoUpdateVolumes = false;
+        public bool _autoUpdateVolumes = false;
         [Tooltip("Limits the maximum number of additive volumes that can affect a single pixel. If you have many dynamic additive volumes that may overlap, it's good practice to limit overdraw to maintain performance.")]
         public int AdditiveMaxOverdraw = 4;
         [Tooltip("The minimum brightness at a point due to lighting from an area light, before the area light is culled. Larger values will result in better performance, but may cause artifacts. Setting this to 0 disables distance-based culling for area lights.")]
@@ -40,6 +44,11 @@ namespace VRCLightVolumes {
         public int CubemapsCount = 0;
 
         private bool _isInitialized = false;
+#if UDONSHARP
+        private bool _isUpdateRequested = false;
+#else
+        private Coroutine _updateCoroutine = null;
+#endif
 
         // Light Volumes Data
         private int _enabledCount = 0;
@@ -99,7 +108,23 @@ namespace VRCLightVolumes {
         private int lightVolumeInvWorldMatrixID;
         private int lightVolumeUvwID;
 
+        public bool AutoUpdateVolumes {
+            get => _autoUpdateVolumes;
+            set {
+                _autoUpdateVolumes = value;
+#if COMPILER_UDONSHARP
+                if (_autoUpdateVolumes) RequestUpdateVolumes();
+#endif
+            }
+        }
+
         private void OnDisable() {
+#if !UDONSHARP
+            if (_updateCoroutine != null) {
+                StopCoroutine(_updateCoroutine);
+                _updateCoroutine = null;
+            }
+#endif
             TryInitialize();
             VRCShader.SetGlobalFloat(lightVolumeEnabledID, 0);
         }
@@ -163,15 +188,45 @@ namespace VRCLightVolumes {
 
         #endregion
 
-        private void Update() {
+        private void OnEnable() {
             if (!AutoUpdateVolumes) return;
-            UpdateVolumes();
+            RequestUpdateVolumes();
         }
 
         private void Start() {
             _isInitialized = false;
             UpdateVolumes();
         }
+
+        public void RequestUpdateVolumes() {
+#if UDONSHARP
+            if (_isUpdateRequested) return; // Prevent multiple requests
+            _isUpdateRequested = true;
+            SendCustomEventDelayedFrames(nameof(DeferredUpdateVolumes), 1);
+#else
+            if (_updateCoroutine != null || !isActiveAndEnabled) return;
+            _updateCoroutine = StartCoroutine(DeferredUpdateVolumes());
+#endif
+        }
+
+#if UDONSHARP
+        public void DeferredUpdateVolumes() {
+            if (AutoUpdateVolumes && enabled && gameObject.activeInHierarchy) {
+                SendCustomEventDelayedFrames(nameof(DeferredUpdateVolumes), 1); // Auto schedule next update if AutoUpdateVolumes is enabled
+            } else {
+                _isUpdateRequested = false;
+            }
+            UpdateVolumes();
+        }
+#else
+        private IEnumerator DeferredUpdateVolumes() {
+            do {
+                yield return null;
+                UpdateVolumes();
+            } while (AutoUpdateVolumes);
+            _updateCoroutine = null;
+        }
+#endif
 
         public void UpdateVolumes() {
 
@@ -183,20 +238,22 @@ namespace VRCLightVolumes {
             }
 
             // Searching for enabled volumes. Counting Additive volumes.
-            _enabledCount = 0;
+            int enabledCount = 0;
             _additiveCount = 0;
             int maxLength = Mathf.Min(LightVolumeInstances.Length, 32);
             for (int i = 0; i < maxLength; i++) {
                 LightVolumeInstance instance = LightVolumeInstances[i];
-                if (instance != null && instance.gameObject.activeInHierarchy) {
+                if (instance == null) continue;
+                instance.UpdateNotifier = this; // Setting update notifier for the instance
+                if (instance.enabled && instance.gameObject.activeInHierarchy) {
 #if UNITY_EDITOR
                     instance.UpdateTransform();
 #else
                     if (instance.IsDynamic) instance.UpdateTransform();
 #endif
                     if (instance.IsAdditive) _additiveCount++;
-                    _enabledIDs[_enabledCount] = i;
-                    _enabledCount++;
+                    _enabledIDs[enabledCount] = i;
+                    enabledCount++;
                 }
             }
 
@@ -265,7 +322,9 @@ namespace VRCLightVolumes {
             int pointMaxLength = Mathf.Min(PointLightVolumeInstances.Length, 128);
             for (int i = 0; i < pointMaxLength; i++) {
                 PointLightVolumeInstance instance = PointLightVolumeInstances[i];
-                if (instance != null && instance.gameObject.activeInHierarchy) {
+                if (instance == null) continue;
+                instance.UpdateNotifier = this; // Setting update notifier for the instance
+                if (instance.gameObject.activeInHierarchy) {
 #if UNITY_EDITOR
                     instance.UpdateTransform();
 #else

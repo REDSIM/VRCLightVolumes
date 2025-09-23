@@ -48,6 +48,11 @@ namespace VRCLightVolumes {
         [Tooltip("Color that will be used when Override Color is enabled")]
         [ColorUsage(showAlpha: false)] public Color Color = Color.white;
 
+        [Tooltip("How much to normalize the saturation of the AudioLink theme color. 0 keeps original saturation, 1 makes it fully saturated.")]
+        [Range(0, 1)] public float NormalizeALColorSaturation = 1f;
+        [Tooltip("How much to normalize the brightness of the AudioLink theme color. 0 keeps original brightness, 1 makes it full brightness.")]
+        [Range(0, 1)] public float NormalizeALColorBrightness = 1f;
+        
         [Tooltip("Enable to set the base color of the material to the light color")]
         public bool SetBaseColor = false;
         [Tooltip("Brightness multiplier of the materials that should change color based on AudioLink. Intensity for Light Volumes and Point Light Volumes should be setup in their components")]
@@ -145,7 +150,9 @@ namespace VRCLightVolumes {
         // Gets color with max brightness and saturation. Applies on top of the color chord color because AL dims the brightness of this color by dafault, which makes it no sense to use with smoothing, delayed effects, etc.
         private Color NormalizeColor(Color color) {
             Color.RGBToHSV(color, out float h, out float s, out float v);
-            return Color.HSVToRGB(h, 1f, 1f);
+            s = Mathf.Lerp(s, 1f, NormalizeALColorSaturation);
+            v = Mathf.Lerp(v, 1f, NormalizeALColorBrightness);
+            return Color.HSVToRGB(h, s, v);
         }
 
         private float ApplyALFactors(float alData) {
@@ -176,7 +183,6 @@ namespace VRCLightVolumes {
             }
             return alData;
         }
-
 
         private float ColorDifference(Color colorA, Color colorB) {
             float rmean = (colorA.r + colorB.r) * 0.5f;

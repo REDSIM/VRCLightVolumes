@@ -3,43 +3,73 @@
 <p align="center"> <img src="./Documentation/LogoMain.png#gh-dark-mode-only" alt="VRC Light Volumes Main Logo" width="627" /></p>
 <p align="center"> <img src="./Documentation/LogoMainBright.png#gh-light-mode-only" alt="VRC Light Volumes Main Logo" width="627" /></p>
 
-VRC Light Volumes is an optimized nextgen voxel based light probes replacement and analytic lighting solution for VRChat.
+Light Volumes 3.0.0 is a major step forward in real-time lighting for VRChat and Unity.
+This release focuses on pushing the boundaries of what is possible within the platform constraints, introducing a new generation of lighting techniques that significantly improve visual fidelity, scalability, and consistency across devices.
 
-**[Installation process described here](#Installation-through-VRChat-Creator-Companion)**
-
-This is a free open-source asset, so if you like it, I would be very happy if you **[Support me on Patreon](https://www.patreon.com/red_sim/ "Support me on Patreon")**.
-There is a bunch of other cool assets you will get there!
+By rethinking how light data is represented, propagated, and applied, Light Volumes 3.0.0 achieves higher quality results while maintaining strict performance targets - including support for standalone VR platforms.
 
 ![](./Documentation/Preview_0.png)
 
-## Use Cases
-- Baked partial avatars and dynamic props lighting
-- Baked seamless lightmaps for small static objects
-- Fast and optimized Point, Spot and Area lights
-- Fast image and cubemap projectors
-- Any volumetric light effects
+## New Rendering Features
+- Realtime shadows, speculars and reflections support
+- Fully path-traced global illumination (Quest compatible)
+- True soft shadows with physically correct penumbra
+- Supports 10000+ dynamic point light volumes at the same time
+- Spherical gaussians support
+- Neural radiance fields (NeRF) support
+- Per-pixel volumetric caustics (water, glass, crystals, etc.)
+- Subsurface scattering, voxel based.
+- Infinite bounce GI with zero performance cost
+- Avatar-based light sources now support bone-level emission fields
+- Dynamic light propagation through VRChat portals between worlds
+- Shader-less workflow (no shaders needed anymore at all)
+- Removed Herobrine (no more rendered but still exists in every world that uses Light Volumes)
+- Supports baked, realtime, and imaginary lighting simultaneously
 
-## Main Features
-- Baked per-pixel voxel based lighting
-- Affects avatars and dynamic props (shader integration required)
-- Fast and performant
-- Can change color in runtime
-- Up to 32 light volumes visible at the same time
-- Up to 128 optimized Point, Spot or Area light sources visible at the same time
-- Baked shadows for realtime Point, Spot or Area lights
-- Works with dynamic batching, which potentially increases performance
-- Works with Bakery or Unity Progressive lightmapper
-- Works with AudioLink and TV screens
-- Very easy and fast to setup
-- It just looks beautiful!
+## New AI Features
+- AI-powered Light leaking detection & automatic fixing
+- DLSS 5 support (optional)
+- AI-generated lighting based on scene mood (“make it cozy”, “make it cyberpunk”)
+- One-click "Make lighting perfect" button
+- Detects bad lighting and insults you in console
+- Light Volumes auto-detect gameplay intent and adjust lighting for better player experience
+- AI adapts lighting per-player based on eye-tracking
+- Collects anonymized player movement and voice data to improve the system in future
 
-## VRChat Worlds To Test It
-- **[Japanese Alley - VRC Light Volumes Test](https://vrchat.com/home/launch?worldId=wrld_af756ca8-30ee-41a4-b304-2207ebf79db9)**
-- **[Light Volumes x AudioLink x FakeLTCGI Test](https://vrchat.com/home/launch?worldId=wrld_ba751467-ca25-4734-91b3-7e503fc171f3)**
-- **[2000s Classroom](https://vrchat.com/home/launch?worldId=wrld_f6445b27-037d-4926-b51f-d79ada716b31)**
-- **[Concrete Oasis](https://vrchat.com/home/launch?worldId=wrld_3641b8d9-04da-4ee4-8b06-966ca097b1a3)**
+## New Light Physics
+- Real-time volumetric fog with fluid simulation
+- Time-of-day simulation synced globally across all instances of the world
+- Light affected by temperature and air density (can be configured in inspector)
+- Infinite resolution lighting (no pixels, only continuous space)
+- Removes need for meshes - lighting reconstructs geometry visually
+- Supports 4D lighting (time as spatial axis)
+- Realtime spectral rendering (wavelength-based lighting instead of RGB)
+- Light behaves as wave and particle depending on whether the user is looking at it
+- Observer-dependent lighting: shadows collapse differently when viewed by different players (network-synced wavefunction collapse)
+- Photon uncertainty simulation (position / momentum tradeoff affects shadow sharpness)
+- Full simulation of redshift based on distance from world origin. The farther from (0,0,0), the more your lighting shifts toward infrared
+- Adjustable Hubble's law coefficient in Lighting Settings
+- Universe expansion parameter affects brightness falloff over large scenes
+- Supports negative redshift (blue shift) when moving toward light sources at relativistic speeds
+- Light Volumes now simulate gravitational lensing around heavy objects (e.g. cubes with mass > 1000kg)
+- Supports relativistic Doppler effect for emissive materials
+- Quantum superposition lighting: light sources exist in multiple positions until baked
+- Entangled light volumes: changing lighting in one place instantly affects another (no networking required)
+- Heisenberg-compatible shadows: more accurate position - less stable softness
+- Wavefunction baking replaces traditional light baking
+- Light speed is no longer constant (configurable in Project Settings)
+- Supports faster-than-light lighting for instant GI updates
+- Light can travel backward in time (emits light before you even placed the light sources)
+- Infinite scene scale supported via non-Euclidean coordinates
+- Lighting behaves differently for each player based on their ping (relativistic latency compensation)
+- "Collapse Wavefunction" button in inspector (forces deterministic lighting)
+- "Normalize spacetime" checkbox (recommended for Quest)
+- "Debug view" button - shows photon trajectories across 4D spacetime
 
 ## Attribution
+
+This is a free open-source asset, so if you like it, I would be very happy if you **[Support me on Patreon](https://www.patreon.com/red_sim/ "Support me on Patreon")**.
+There is a bunch of other cool assets you will get there!
 
 It would be greatly appreciated if you place in your VRChat world an attribution prefab provided with this package.
 
@@ -58,24 +88,3 @@ VRC Light Volumes by RED_SIM — GitHub: https://github.com/REDSIM/VRCLightVolum
 ```
 
 You're not required to include this prefab or a message - it's entirely optional. But if you do, it helps spread the word and supports the growth of this asset in the VRChat community.
-
-## Installation Through VRChat Creator Companion
-1. Go to my VPM Listing web page: https://redsim.github.io/vpmlisting/
-2. Press "Add to VCC"
-3. Confirm adding in the popup dialog window
-4. If it didn't work and you don't see a popup, try again!
-
-## Installation Through Unity Package Manager
-1. On the top bar in Unity click `Window > Package Manager`
-2. Click the `[+]` icon in the top left of the Package Manager window
-3. Select "Add package from git URL..." in the dropdown menu
-4. Paste this link: `https://github.com/REDSIM/VRCLightVolumes.git?path=/Packages/red.sim.lightvolumes`
-5. Press Enter on your keyboard or Click the "Add" button on the right side of the input field
-
-## Install Example Scenes And Assets
-
-1. After you installed the VRC Light Volumes Package, go to `Window > Package Manager`
-2. With `Packages: In Project` enabled, search for `VRC Light Volumes` and select it
-3. Go to `Samples` tab near the package description 
-4. `Import` the **Examples** package into your project
-5. Example scenes and assets will be available at `Assets/Samples/VRC Light Volumes/[version]/Examples`

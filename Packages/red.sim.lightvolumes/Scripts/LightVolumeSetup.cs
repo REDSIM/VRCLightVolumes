@@ -62,7 +62,9 @@ namespace VRCLightVolumes {
         [Tooltip("Disables smooth blending with areas outside Light Volumes. Use it if your entire scene's play area is covered by Light Volumes. It also improves performance.")]
         public bool SharpBounds = true;
         [Tooltip("Automatically updates most of the volumes properties in runtime. Enabling/Disabling, Color and Intensity updates automatically even without this option enabled. Position, Rotation and Scale gets updated only for volumes that are marked dynamic.")]
-        public bool AutoUpdateVolumes = false;
+        public bool AutoUpdateVolumes = true;
+        [Tooltip("Automatically updates dynamic point light cookie and shadow texture sources in runtime.")]
+        public bool AutoUpdateTextures = true;
         [Tooltip("Limits the maximum number of additive volumes and point light volumes that can affect a single pixel. If you have many dynamic additive or point light volumes that may overlap, it's good practice to limit overdraw to maintain performance.")]
         [Min(1)]public int AdditiveMaxOverdraw = 4;
         [Tooltip("Disables min/max brightness limits for modern avatar shaders such as lilToon or Poiyomi. Check this only if you're sure your scene lighting is properly configured.")]
@@ -576,6 +578,7 @@ namespace VRCLightVolumes {
 
                 // To sync variables in play-mode, we need to do it directly to the UdonBehaviour
                 _lightVolumeManagerBehaviour.SetProgramVariable("AutoUpdateVolumes", AutoUpdateVolumes);
+                _lightVolumeManagerBehaviour.SetProgramVariable("AutoUpdateTextures", AutoUpdateTextures);
                 _lightVolumeManagerBehaviour.SetProgramVariable("LightProbesBlending", LightProbesBlending);
                 _lightVolumeManagerBehaviour.SetProgramVariable("SharpBounds", SharpBounds);
                 _lightVolumeManagerBehaviour.SetProgramVariable("AdditiveMaxOverdraw", AdditiveMaxOverdraw);
@@ -586,6 +589,8 @@ namespace VRCLightVolumes {
 #if UNITY_EDITOR
                 LightVolumeManager.CustomTexturesWidth = (int)CookieResolution;
                 LightVolumeManager.CustomTexturesHeight = (int)CookieResolution;
+                LightVolumeManager.ShadowTexturesWidth = (int)ShadowResolution;
+                LightVolumeManager.ShadowTexturesHeight = (int)ShadowResolution;
                 LightVolumeManager.CubemapFaceMaterial = GetCubemapFaceMaterial();
 #endif
                 SyncBaseTextureMetadataToUdon();
@@ -607,13 +612,13 @@ namespace VRCLightVolumes {
                     }
                     _lightVolumeManagerBehaviour.SetProgramVariable("PointLightVolumeInstances", pointLightVolumeInstances);
                 }
-                _lightVolumeManagerBehaviour.SendCustomEvent("ReinitializeCustomTextures");
-                _lightVolumeManagerBehaviour.SendCustomEvent("ReinitializeShadowTextures");
-                _lightVolumeManagerBehaviour.SendCustomEvent("UpdateVolumes");
+                // General setup changes must not rebuild point light texture arrays; explicit Reinitialize* paths sync point light texture sources first
+                _lightVolumeManagerBehaviour.SendCustomEvent(AutoUpdateVolumes || AutoUpdateTextures ? "RequestUpdateVolumes" : "UpdateVolumes");
 
             } else {
 #endif
                 LightVolumeManager.AutoUpdateVolumes = AutoUpdateVolumes;
+                LightVolumeManager.AutoUpdateTextures = AutoUpdateTextures;
                 LightVolumeManager.LightProbesBlending = LightProbesBlending;
                 LightVolumeManager.SharpBounds = SharpBounds;
                 LightVolumeManager.AdditiveMaxOverdraw = AdditiveMaxOverdraw;

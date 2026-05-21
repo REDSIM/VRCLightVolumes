@@ -45,7 +45,9 @@ namespace VRCLightVolumes {
         [Tooltip("Disables smooth blending with areas outside Light Volumes. Use it if your entire scene's play area is covered by Light Volumes. It also improves performance.")]
         public bool SharpBounds = true;
         [Tooltip("Automatically updates most of the volumes properties in runtime. Enabling/Disabling, Color and Intensity updates automatically even without this option enabled. Position, Rotation and Scale gets updated only for volumes that are marked dynamic.")]
-        public bool AutoUpdateVolumes = false;
+        public bool AutoUpdateVolumes = true;
+        [Tooltip("Automatically updates dynamic point light cookie and shadow texture sources in runtime.")]
+        public bool AutoUpdateTextures = true;
         [Tooltip("Limits the maximum number of additive volumes that can affect a single pixel. If you have many dynamic additive volumes that may overlap, it's good practice to limit overdraw to maintain performance.")]
         public int AdditiveMaxOverdraw = 4;
         [Tooltip("Disables min/max brightness limits for modern avatar shaders such as lilToon or Poiyomi. Check this only if you're sure your scene lighting is properly configured.")]
@@ -150,6 +152,7 @@ namespace VRCLightVolumes {
         private bool _volumeDataUpdateRequested = false;
         private bool _isUpdatingVolumes = false;
         private bool _old_AutoUpdateVolumes = false;
+        private bool _old_AutoUpdateTextures = false;
 #if UDONSHARP
         private bool _isUpdateProcessRunning = false; // Flag that specifies if the delayed update process is already scheduled
 #else
@@ -286,6 +289,10 @@ namespace VRCLightVolumes {
             if (_old_AutoUpdateVolumes != AutoUpdateVolumes) {
                 _old_AutoUpdateVolumes = AutoUpdateVolumes;
                 if (AutoUpdateVolumes) RequestUpdateVolumes();
+            }
+            if (_old_AutoUpdateTextures != AutoUpdateTextures) {
+                _old_AutoUpdateTextures = AutoUpdateTextures;
+                if (AutoUpdateTextures) RequestUpdateVolumes();
             }
         }
 #endif
@@ -507,7 +514,7 @@ namespace VRCLightVolumes {
 
         // Checks whether any cookie or shadow texture source needs per-frame refresh
         public bool HasAutoTextureUpdates() {
-            return _hasAutoCustomTextureUpdates || _hasAutoShadowTextureUpdates;
+            return AutoUpdateTextures && (_hasAutoCustomTextureUpdates || _hasAutoShadowTextureUpdates);
         }
 
         // Clears active custom texture globals when no point light uses a projection source
@@ -1131,10 +1138,11 @@ namespace VRCLightVolumes {
                 EnsureRuntimeTextureCaches();
             }
 
-            if (_hasAutoCustomTextureUpdates) UpdateAutoCustomTextures();
-            if (_hasAutoShadowTextureUpdates) UpdateAutoShadowTextures();
+            bool updateTextures = AutoUpdateTextures && (_hasAutoCustomTextureUpdates || _hasAutoShadowTextureUpdates);
+            if (AutoUpdateTextures && _hasAutoCustomTextureUpdates) UpdateAutoCustomTextures();
+            if (AutoUpdateTextures && _hasAutoShadowTextureUpdates) UpdateAutoShadowTextures();
 
-            if ((AutoUpdateVolumes || _volumeDataUpdateRequested || _hasAutoCustomTextureUpdates || _hasAutoShadowTextureUpdates || !_customTexturesInitialized || !_shadowTexturesInitialized) && enabled && gameObject.activeInHierarchy) {
+            if ((AutoUpdateVolumes || _volumeDataUpdateRequested || updateTextures || !_customTexturesInitialized || !_shadowTexturesInitialized) && enabled && gameObject.activeInHierarchy) {
                 SendCustomEventDelayedFrames(nameof(UpdateVolumesProcess), 1);
             } else {
                 _isUpdateProcessRunning = false;
@@ -1143,6 +1151,7 @@ namespace VRCLightVolumes {
 #else
         // Internal coroutine to auto update volumes and runtime textures every frame while needed
         private IEnumerator UpdateVolumesCoroutine() {
+            bool updateTextures;
             do {
                 yield return null;
 
@@ -1155,9 +1164,10 @@ namespace VRCLightVolumes {
                     EnsureRuntimeTextureCaches();
                 }
 
-                if (_hasAutoCustomTextureUpdates) UpdateAutoCustomTextures();
-                if (_hasAutoShadowTextureUpdates) UpdateAutoShadowTextures();
-            } while (isActiveAndEnabled && (AutoUpdateVolumes || _volumeDataUpdateRequested || _hasAutoCustomTextureUpdates || _hasAutoShadowTextureUpdates || !_customTexturesInitialized || !_shadowTexturesInitialized));
+                updateTextures = AutoUpdateTextures && (_hasAutoCustomTextureUpdates || _hasAutoShadowTextureUpdates);
+                if (AutoUpdateTextures && _hasAutoCustomTextureUpdates) UpdateAutoCustomTextures();
+                if (AutoUpdateTextures && _hasAutoShadowTextureUpdates) UpdateAutoShadowTextures();
+            } while (isActiveAndEnabled && (AutoUpdateVolumes || _volumeDataUpdateRequested || updateTextures || !_customTexturesInitialized || !_shadowTexturesInitialized));
 
             _updateCoroutine = null;
         }

@@ -1,6 +1,7 @@
 #ifndef VRC_LIGHT_VOLUMES_INCLUDED
 #define VRC_LIGHT_VOLUMES_INCLUDED
 #define VRCLV_VERSION 3
+#define VRCLV_MIN_SUPPORTED_VERSION 2
 #define VRCLV_MAX_VOLUMES_COUNT 32
 #define VRCLV_MAX_LIGHTS_COUNT 128
 
@@ -12,7 +13,7 @@ cbuffer LightVolumeUniforms {
 // Are Light Volumes enabled on scene? can be 0 or 1
 uniform float _UdonLightVolumeEnabled;
     
-// Rreturns 1, 2 or other number if there are light volumes on the scene. Number represents the light volumes system internal version number.
+// Returns 1, 2 or other number if there are light volumes on the scene. Number represents the light volumes system internal version number.
 uniform float _UdonLightVolumeVersion;
 
 // All volumes count in scene
@@ -739,7 +740,7 @@ void LV_SampleVolume(uint id, float3 localUVW, inout float3 L0, inout float3 L1r
 void LV_PointLightVolumeSH(float3 worldPos, inout float3 L0, inout float3 L1r, inout float3 L1g, inout float3 L1b) {
     
     uint pointCount = min((uint) _UdonPointLightVolumeCount, VRCLV_MAX_LIGHTS_COUNT);
-    [branch] if (pointCount == 0) return;
+    [branch] if (_UdonLightVolumeVersion < VRCLV_MIN_SUPPORTED_VERSION || pointCount == 0) return;
     
     uint maxOverdraw = min((uint) _UdonLightVolumeAdditiveMaxOverdraw, VRCLV_MAX_LIGHTS_COUNT);
     uint pcount = 0; // Point lights counter
@@ -756,7 +757,7 @@ void LV_LightVolumeSH(float3 worldPos, inout float3 L0, inout float3 L1r, inout 
     // Clamping gloabal iteration counts
     uint volumesCount = min((uint) _UdonLightVolumeCount, VRCLV_MAX_VOLUMES_COUNT);
     
-    [branch] if (volumesCount == 0) {
+    [branch] if (_UdonLightVolumeVersion < VRCLV_MIN_SUPPORTED_VERSION || volumesCount == 0) {
         LV_SampleLightProbe(L0, L1r, L1g, L1b);
         return;
     }
@@ -864,7 +865,7 @@ void LV_LightVolumeAdditiveSH(float3 worldPos, inout float3 L0, inout float3 L1r
 
     // Clamping gloabal iteration counts
     uint additiveCount = min((uint) _UdonLightVolumeAdditiveCount, VRCLV_MAX_VOLUMES_COUNT);
-    [branch] if (additiveCount == 0 && (uint) _UdonPointLightVolumeCount == 0) return;
+    [branch] if (_UdonLightVolumeVersion < VRCLV_MIN_SUPPORTED_VERSION || (additiveCount == 0 && (uint) _UdonPointLightVolumeCount == 0)) return;
 
     uint maxOverdraw = min((uint) _UdonLightVolumeAdditiveMaxOverdraw, VRCLV_MAX_VOLUMES_COUNT);
 
@@ -945,7 +946,7 @@ float3 LightVolumeEvaluate(float3 worldNormal, float3 L0, float3 L1r, float3 L1g
 // Calculates L1 SH based on the world position. Samples both light volumes and point lights.
 void LightVolumeSH(float3 worldPos, out float3 L0, out float3 L1r, out float3 L1g, out float3 L1b, float3 worldPosOffset = 0) {
     L0 = 0; L1r = 0; L1g = 0; L1b = 0;
-    if (_UdonLightVolumeEnabled == 0) {
+    if (_UdonLightVolumeEnabled == 0 || _UdonLightVolumeVersion < VRCLV_MIN_SUPPORTED_VERSION) {
         LV_SampleLightProbeDering(L0, L1r, L1g, L1b);
     } else {
         LV_LightVolumeSH(worldPos + worldPosOffset, L0, L1r, L1g, L1b);
@@ -956,7 +957,7 @@ void LightVolumeSH(float3 worldPos, out float3 L0, out float3 L1r, out float3 L1
 // Calculates L1 SH based on the world position from additive volumes only. Samples both light volumes and point lights.
 void LightVolumeAdditiveSH(float3 worldPos, out float3 L0, out float3 L1r, out float3 L1g, out float3 L1b, float3 worldPosOffset = 0) {
     L0 = 0; L1r = 0; L1g = 0; L1b = 0;
-    if (_UdonLightVolumeEnabled != 0) {
+    if (_UdonLightVolumeEnabled != 0 && _UdonLightVolumeVersion >= VRCLV_MIN_SUPPORTED_VERSION) {
         LV_LightVolumeAdditiveSH(worldPos + worldPosOffset, L0, L1r, L1g, L1b);
         LV_PointLightVolumeSH(worldPos, L0, L1r, L1g, L1b);
     }
@@ -964,7 +965,7 @@ void LightVolumeAdditiveSH(float3 worldPos, out float3 L0, out float3 L1r, out f
 
 // Calculates L0 SH based on the world position. Samples both light volumes and point lights.
 float3 LightVolumeSH_L0(float3 worldPos, float3 worldPosOffset = 0) {
-    if (_UdonLightVolumeEnabled == 0) {
+    if (_UdonLightVolumeEnabled == 0 || _UdonLightVolumeVersion < VRCLV_MIN_SUPPORTED_VERSION) {
         return float3(unity_SHAr.w, unity_SHAg.w, unity_SHAb.w);
     } else {
         float3 L0 = 0;
@@ -977,7 +978,7 @@ float3 LightVolumeSH_L0(float3 worldPos, float3 worldPosOffset = 0) {
 
 // Calculates L0 SH based on the world position from additive volumes only. Samples both light volumes and point lights.
 float3 LightVolumeAdditiveSH_L0(float3 worldPos, float3 worldPosOffset = 0) {
-    if (_UdonLightVolumeEnabled == 0) {
+    if (_UdonLightVolumeEnabled == 0 || _UdonLightVolumeVersion < VRCLV_MIN_SUPPORTED_VERSION) {
         return 0;
     } else {
         float3 L0 = 0;
@@ -990,7 +991,7 @@ float3 LightVolumeAdditiveSH_L0(float3 worldPos, float3 worldPosOffset = 0) {
 
 // Checks if Light Volumes are used in this scene. Returns 0 if not, returns 1 if enabled
 float LightVolumesEnabled() {
-    return _UdonLightVolumeEnabled;
+    return (_UdonLightVolumeEnabled != 0 && _UdonLightVolumeVersion >= VRCLV_MIN_SUPPORTED_VERSION) ? 1.0f : 0.0f;
 }
 
 // Returns the light volumes version

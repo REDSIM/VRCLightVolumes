@@ -12,6 +12,7 @@ using VRCShader = VRC.SDKBase.VRCShader;
 using VRCShader = UnityEngine.Shader;
 #endif
 #else
+using System.Collections;
 using VRCGraphics = UnityEngine.Graphics;
 using VRCShader = UnityEngine.Shader;
 #endif
@@ -146,8 +147,14 @@ namespace VRCLightVolumes {
         public int EnabledCount => _enabledCount;
         public int[] EnabledIDs => _enabledIDs;
 
-        private bool _volumesUpdateRequested = false;
+        private bool _volumeDataUpdateRequested = false;
         private bool _isUpdatingVolumes = false;
+        private bool _old_AutoUpdateVolumes = false;
+#if UDONSHARP
+        private bool _isUpdateProcessRunning = false; // Flag that specifies if the delayed update process is already scheduled
+#else
+        private Coroutine _updateCoroutine = null; // Coroutine that auto-updates volumes or runtime textures when needed (Non-Udon only)
+#endif
 
 #region Shader Property IDs
         // Light Volumes
@@ -273,17 +280,15 @@ namespace VRCLightVolumes {
             VRCShader.SetGlobalFloat(_lightVolumeEnabledID, 0);
         }
 
-        // Updates volumes and runtime texture arrays when they have active runtime work
+        // To make it work when changing values on UdonSharpBehaviour in editor
+#if !UDONSHARP || UNITY_EDITOR
         private void Update() {
-            if (AutoUpdateVolumes || _volumesUpdateRequested) {
-                _volumesUpdateRequested = false;
-                UpdateVolumes(); // Full volume uploads are needed only when transform/property auto updates are enabled
-            } else if (!_customTexturesInitialized || !_shadowTexturesInitialized) {
-                EnsureRuntimeTextureCaches(); // Static volumes can still need texture arrays rebuilt after source or registry changes
+            if (_old_AutoUpdateVolumes != AutoUpdateVolumes) {
+                _old_AutoUpdateVolumes = AutoUpdateVolumes;
+                if (AutoUpdateVolumes) RequestUpdateVolumes();
             }
-            if (_hasAutoCustomTextureUpdates) UpdateAutoCustomTextures(); // Animated projection sources update without rebuilding volume data
-            if (_hasAutoShadowTextureUpdates) UpdateAutoShadowTextures(); // Animated shadow sources update without rebuilding volume data
         }
+#endif
 
         // Clears runtime texture outputs and disables shader globals when this manager is disabled
         private void OnDisable() {
@@ -291,14 +296,18 @@ namespace VRCLightVolumes {
             ResetCustomTexturesGlobal();
             ResetShadowTexturesGlobal();
 #if !UDONSHARP
+            if (_updateCoroutine != null) {
+                StopCoroutine(_updateCoroutine);
+                _updateCoroutine = null;
+            }
             DestroyCubemapFaceRuntimeMaterial();
 #endif
             SetDisabledShaderState();
         }
 
-        // Runs a fresh volume update after this manager becomes active
+        // Requests a fresh volume update after this manager becomes active
         private void OnEnable() {
-            UpdateVolumes();
+            RequestUpdateVolumes();
         }
 
         // Rebuilds runtime caches and forces the first shader data upload
@@ -1090,11 +1099,69 @@ namespace VRCLightVolumes {
         }
 #endif
 
-        // Requests one deferred volume update and ignores requests produced by the active update pass
+        // Requests to update volumes next frame
         public void RequestUpdateVolumes() {
             if (_isUpdatingVolumes) return;
-            _volumesUpdateRequested = true;
+            _volumeDataUpdateRequested = true;
+#if UDONSHARP
+            if (_isUpdateProcessRunning) return; // Prevent multiple update processes
+            _isUpdateProcessRunning = true;
+            SendCustomEventDelayedFrames(nameof(UpdateVolumesProcess), 1);
+#else
+            if (_updateCoroutine != null || !isActiveAndEnabled) return;
+            _updateCoroutine = StartCoroutine(UpdateVolumesCoroutine());
+#endif
         }
+
+#if UDONSHARP
+        // Internal method to auto update volumes and runtime textures every frame while needed
+        public void UpdateVolumesProcess() {
+            if (!enabled || !gameObject.activeInHierarchy) {
+                _volumeDataUpdateRequested = false;
+                _isUpdateProcessRunning = false;
+                return;
+            }
+
+            bool updateVolumes = _volumeDataUpdateRequested || AutoUpdateVolumes;
+            _volumeDataUpdateRequested = false;
+
+            if (updateVolumes) {
+                UpdateVolumes();
+            } else if (!_customTexturesInitialized || !_shadowTexturesInitialized) {
+                EnsureRuntimeTextureCaches();
+            }
+
+            if (_hasAutoCustomTextureUpdates) UpdateAutoCustomTextures();
+            if (_hasAutoShadowTextureUpdates) UpdateAutoShadowTextures();
+
+            if ((AutoUpdateVolumes || _volumeDataUpdateRequested || _hasAutoCustomTextureUpdates || _hasAutoShadowTextureUpdates || !_customTexturesInitialized || !_shadowTexturesInitialized) && enabled && gameObject.activeInHierarchy) {
+                SendCustomEventDelayedFrames(nameof(UpdateVolumesProcess), 1);
+            } else {
+                _isUpdateProcessRunning = false;
+            }
+        }
+#else
+        // Internal coroutine to auto update volumes and runtime textures every frame while needed
+        private IEnumerator UpdateVolumesCoroutine() {
+            do {
+                yield return null;
+
+                bool updateVolumes = _volumeDataUpdateRequested || AutoUpdateVolumes;
+                _volumeDataUpdateRequested = false;
+
+                if (updateVolumes) {
+                    UpdateVolumes();
+                } else if (!_customTexturesInitialized || !_shadowTexturesInitialized) {
+                    EnsureRuntimeTextureCaches();
+                }
+
+                if (_hasAutoCustomTextureUpdates) UpdateAutoCustomTextures();
+                if (_hasAutoShadowTextureUpdates) UpdateAutoShadowTextures();
+            } while (isActiveAndEnabled && (AutoUpdateVolumes || _volumeDataUpdateRequested || _hasAutoCustomTextureUpdates || _hasAutoShadowTextureUpdates || !_customTexturesInitialized || !_shadowTexturesInitialized));
+
+            _updateCoroutine = null;
+        }
+#endif
 
         // Recalculates all volume data and uploads it to shader globals
         public void UpdateVolumes() {

@@ -558,9 +558,7 @@ namespace VRCLightVolumes {
             for (int i = 0; i < count; i++) { // Start every point light unresolved; supported sources assign a local deduplicated index below
                 _pointLightCustomIDs[i] = -1;
                 PointLightVolumeInstance instance = PointLightVolumeInstances[i];
-                if (instance == null) continue;
-                if (instance.PositionData.w >= 0 && instance.AngleData > 1.5f) continue; // Area lights do not use projection texture arrays
-                if (instance.ProjectionMode == 0) continue; // 0: parametric, no custom projection source
+                if (!HasActiveCustomTextureSource(instance)) continue;
 
                 bool usesCubemapProjection = instance.PositionData.w >= 0 && instance.AngleData <= 1.5f && instance.ProjectionMode == 2; // 2: custom cookie or cubemap
                 Texture textureSource = instance.ProjectionType == 1 ? instance.CustomTexture : null; // 1: texture
@@ -645,6 +643,24 @@ namespace VRCLightVolumes {
             CubemapsCount = cubemapTextureCount + cubemapMaterialCount;
             _customTexturesDepth = CubemapsCount * 6 + singleTextureCount + singleMaterialCount;
             AssignPointLightCustomIDs(customSourceTypes, cubemapTextureCount, singleTextureCount);
+        }
+
+        // Checks whether a point light currently contributes to shader data and texture cache membership
+        private bool IsActivePointLight(PointLightVolumeInstance instance) {
+            return instance != null && instance.gameObject.activeInHierarchy && instance.Intensity != 0 && instance.Color != Color.black;
+        }
+
+        // Checks whether a point light needs a custom projection source in the runtime texture array right now
+        private bool HasActiveCustomTextureSource(PointLightVolumeInstance instance) {
+            if (!IsActivePointLight(instance)) return false;
+            if (instance.PositionData.w >= 0 && instance.AngleData > 1.5f) return false; // Area lights do not use projection texture arrays
+            if (instance.ProjectionMode == 0) return false; // 0: parametric, no custom projection source
+            return (instance.ProjectionType == 1 && instance.CustomTexture != null) || (instance.ProjectionType == 2 && instance.CustomTextureMaterial != null);
+        }
+
+        // Checks whether a point light needs a shadow source in the runtime texture array right now
+        private bool HasActiveShadowTextureSource(PointLightVolumeInstance instance) {
+            return IsActivePointLight(instance) && instance.ShadowMapID >= 0 && (instance.ShadowMapTexture != null || instance.ShadowMapMaterial != null);
         }
 
         // Converts local source indices collected while building the cache into final shader custom IDs
@@ -807,8 +823,9 @@ namespace VRCLightVolumes {
                 // Start every point light unresolved; only valid shadow sources receive a shadow texture ID
                 _pointLightShadowIDs[i] = -1;
                 PointLightVolumeInstance instance = PointLightVolumeInstances[i];
-                if (instance == null || instance.ShadowMapID < 0 || (instance.ShadowMapTexture == null && instance.ShadowMapMaterial == null)) {
-                    if (instance != null) instance.ShadowMapID = -1;
+                if (!IsActivePointLight(instance)) continue;
+                if (instance.ShadowMapID < 0 || (instance.ShadowMapTexture == null && instance.ShadowMapMaterial == null)) {
+                    instance.ShadowMapID = -1;
                     continue;
                 }
                 // Prefer texture shadows over material shadows when both fields are assigned
@@ -1284,6 +1301,10 @@ namespace VRCLightVolumes {
                 if (_isRangeDirty) { // If brightness cutoff changed, force every light range to recalculate
                     instance.UpdateRange();
                 }
+                bool hasCustomTextureSource = HasActiveCustomTextureSource(instance);
+                if (_pointLightCustomIDs == null || i >= _pointLightCustomIDs.Length || hasCustomTextureSource != (_pointLightCustomIDs[i] >= 0)) _customTexturesInitialized = false;
+                bool hasShadowTextureSource = HasActiveShadowTextureSource(instance);
+                if (_pointLightShadowIDs == null || i >= _pointLightShadowIDs.Length || hasShadowTextureSource != (_pointLightShadowIDs[i] >= 0)) _shadowTexturesInitialized = false;
                 if (instance.Intensity != 0 && instance.Color != Color.black) {
 #if UDONSHARP
     #if COMPILER_UDONSHARP
@@ -1308,6 +1329,7 @@ namespace VRCLightVolumes {
             }
 
             _isRangeDirty = false; // Reset range dirtiness
+            EnsureRuntimeTextureCaches();
 
             // Fill arrays with enabled point light data
             _activeShadowCount = 0;

@@ -40,6 +40,7 @@ namespace VRCLightVolumes.Tests {
         private static readonly FieldInfo _customCubemapTexturesField = typeof(LightVolumeManager).GetField("_customCubemapTextures", _lifecycleMethodFlags);
         private static readonly FieldInfo _customSingleTexturesField = typeof(LightVolumeManager).GetField("_customSingleTextures", _lifecycleMethodFlags);
         private static readonly FieldInfo _pointLightCustomIDsField = typeof(LightVolumeManager).GetField("_pointLightCustomIDs", _lifecycleMethodFlags);
+        private static readonly FieldInfo _pointLightShadowIDsField = typeof(LightVolumeManager).GetField("_pointLightShadowIDs", _lifecycleMethodFlags);
 
         private readonly List<UnityEngine.Object> _createdObjects = new List<UnityEngine.Object>();
 
@@ -586,7 +587,7 @@ namespace VRCLightVolumes.Tests {
             PointLightVolumeInstance point = CreatePointLight(manager, "Custom Texture API Spot", true);
             point.SetSpotLight(60, 0.5f);
             point.SetCustomTexture(source, false, true);
-            InvokeLifecycleMethod(manager, "Update");
+            manager.UpdateVolumes();
 
             Assert.That(point.CustomTexture, Is.SameAs(source));
             Assert.That(point.CustomTextureMaterial, Is.Null);
@@ -619,7 +620,7 @@ namespace VRCLightVolumes.Tests {
 
             PointLightVolumeInstance point = CreatePointLight(manager, "Custom Texture API Point", true);
             point.SetCustomTexture(source, true, true);
-            InvokeLifecycleMethod(manager, "Update");
+            manager.UpdateVolumes();
 
             Assert.That(point.CustomTexture, Is.SameAs(source));
             Assert.That(point.CustomTextureIsCubemap, Is.True);
@@ -944,6 +945,64 @@ namespace VRCLightVolumes.Tests {
             AssertPointCustomData(4, cookieSpotADuplicate, -2, 0);
         }
 
+        // Verifies inactive point lights do not keep custom projection sources allocated.
+        [Test]
+        public void InactiveCustomTextureUsersReleaseRuntimeArrayUntilReactivated() {
+            LightVolumeManager manager = CreateManager("Inactive Cookie Users Manager", false);
+            Cubemap cubemap = CreateCubemap("Inactive Cookie Cubemap");
+            PointLightVolumeInstance firstPoint = ConfigurePointCubemapSource(CreatePointLight(manager, "Inactive Cookie Point A", true), cubemap, true);
+            PointLightVolumeInstance secondPoint = ConfigurePointCubemapSource(CreatePointLight(manager, "Inactive Cookie Point B", true), cubemap, true);
+            manager.PointLightVolumeInstances = new[] { firstPoint, secondPoint };
+
+            manager.UpdateVolumes();
+            Assert.That(GetManagerField<int[]>(manager, _pointLightCustomIDsField), Is.EqualTo(new[] { 0, 0 }));
+
+            firstPoint.Intensity = 0;
+            manager.UpdateVolumes();
+            Assert.That(manager.CustomTextures, Is.Not.Null);
+            Assert.That(GetManagerField<int[]>(manager, _pointLightCustomIDsField), Is.EqualTo(new[] { -1, 0 }));
+
+            secondPoint.Intensity = 0;
+            manager.UpdateVolumes();
+            Assert.That(manager.CustomTextures, Is.Null);
+            Assert.That(manager.CubemapsCount, Is.EqualTo(0));
+
+            firstPoint.Intensity = 1;
+            manager.UpdateVolumes();
+            Assert.That(manager.CustomTextures, Is.Not.Null);
+            Assert.That(GetManagerField<int[]>(manager, _pointLightCustomIDsField), Is.EqualTo(new[] { 0, -1 }));
+        }
+
+        // Verifies inactive point lights do not keep shadow sources allocated.
+        [Test]
+        public void InactiveShadowUsersReleaseRuntimeArrayUntilReactivated() {
+            LightVolumeManager manager = CreateManager("Inactive Shadow Users Manager", false);
+            Cubemap cubemap = CreateCubemap("Inactive Shadow Cubemap");
+            PointLightVolumeInstance firstPoint = CreatePointLight(manager, "Inactive Shadow Point A", true);
+            ConfigureShadowTexture(firstPoint, cubemap, true, true, false);
+            PointLightVolumeInstance secondPoint = CreatePointLight(manager, "Inactive Shadow Point B", true);
+            ConfigureShadowTexture(secondPoint, cubemap, true, true, false);
+            manager.PointLightVolumeInstances = new[] { firstPoint, secondPoint };
+
+            manager.UpdateVolumes();
+            Assert.That(GetManagerField<int[]>(manager, _pointLightShadowIDsField), Is.EqualTo(new[] { 0, 0 }));
+
+            firstPoint.Intensity = 0;
+            manager.UpdateVolumes();
+            Assert.That(manager.ShadowTextures, Is.Not.Null);
+            Assert.That(GetManagerField<int[]>(manager, _pointLightShadowIDsField), Is.EqualTo(new[] { -1, 0 }));
+
+            secondPoint.Intensity = 0;
+            manager.UpdateVolumes();
+            Assert.That(manager.ShadowTextures, Is.Null);
+            Assert.That(manager.ShadowMapsCount, Is.EqualTo(0));
+
+            firstPoint.Intensity = 1;
+            manager.UpdateVolumes();
+            Assert.That(manager.ShadowTextures, Is.Not.Null);
+            Assert.That(GetManagerField<int[]>(manager, _pointLightShadowIDsField), Is.EqualTo(new[] { 0, -1 }));
+        }
+
         // Verifies all active point lights can write Shadow data together.
         [Test]
         public void AllPointLightsWithShadowWriteShadowGlobals() {
@@ -1154,6 +1213,20 @@ namespace VRCLightVolumes.Tests {
             point.AutoUpdateShadowMap = autoUpdate;
             point.ShadowMapTextureIsCubemap = isCubemap;
             point.ShadowMapTextureHasDepthSlices = hasDepthSlices;
+        }
+
+        // Assigns a point cubemap projection source in the same shape as PointLightVolume authoring sync does.
+        private static PointLightVolumeInstance ConfigurePointCubemapSource(PointLightVolumeInstance point, Texture source, bool autoUpdate) {
+            point.SetPointLight();
+            point.SetCustomTexture();
+            point.CustomTexture = source;
+            point.CustomTextureMaterial = null;
+            point.ProjectionType = 1; // 1: texture
+            point.CustomTextureIsCubemap = true;
+            point.CustomTextureIsRenderTexture = false;
+            point.CustomTextureHasDepthSlices = false;
+            point.AutoUpdateCustomTexture = autoUpdate;
+            return point;
         }
 
         // Creates a temporary material tracked by teardown.

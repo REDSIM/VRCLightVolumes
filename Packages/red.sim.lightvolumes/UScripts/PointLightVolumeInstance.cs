@@ -360,12 +360,14 @@ namespace VRCLightVolumes {
         // Force update rotation
         public void UpdateRotation() {
             Quaternion rot = transform.rotation;
-            if (IsAreaLight()) {
+            bool isAreaLight = PositionData.w >= 0 && AngleData > 1.5f;
+            bool isSpotLight = PositionData.w < 0;
+            if (isAreaLight) {
                 DirectionData = new Vector4(rot.x, rot.y, rot.z, rot.w);
-            } else if (IsSpotLight() && !IsCustomTexture()) { // Spot light without a cookie
+            } else if (isSpotLight && ProjectionMode != 2) { // Spot light without a cookie
                 Vector3 dir = transform.forward;
                 DirectionData = new Vector4(dir.x, dir.y, dir.z, DirectionData.w);
-            } else if (!IsParametric()) { // If Point Light with a cubemap or a spot light with cookie
+            } else if (ProjectionMode != 0) { // If Point Light with a cubemap or a spot light with cookie
                 rot = Quaternion.Inverse(rot);
                 DirectionData = new Vector4(rot.x, rot.y, rot.z, rot.w);
             }
@@ -374,7 +376,11 @@ namespace VRCLightVolumes {
         // Force update scale
         public void UpdateScale() {
             Vector3 lscale = transform.lossyScale;
-            if (IsAreaLight()) SetAreaLight();
+            if (PositionData.w >= 0 && AngleData > 1.5f) {
+                PositionData.w = Mathf.Max(Mathf.Abs(lscale.x), 0.001f);
+                AngleData = 2 + Mathf.Max(Mathf.Abs(lscale.y), 0.001f);
+                UpdateRotation();
+            }
             SquaredScale = (lscale.x + lscale.y + lscale.z) / 3;
             SquaredScale *= SquaredScale;
             MarkRangeDirtyAndUpdateVolumes();
@@ -383,9 +389,9 @@ namespace VRCLightVolumes {
         // Recalculates squared culling range for the light
         public void UpdateRange() {
             float cutoff = LightVolumeManager != null ? LightVolumeManager.LightsBrightnessCutoff : 0.35f;
-            if (IsAreaLight()) { // Area light squared distance math
+            if (PositionData.w >= 0 && AngleData > 1.5f) { // Area light squared distance math
                 SquaredRange = ComputeAreaLightSquaredBoundingSphere(Mathf.Abs(SquaredScale / PositionData.w), AngleData - 2, Color, Intensity * Mathf.PI, cutoff);
-            } else if(IsLut()) { // LUT uses regular squared range
+            } else if(ProjectionMode == 1) { // LUT uses regular squared range
                 SquaredRange = Mathf.Abs(SquaredScale / PositionData.w);
             } else { // Spot and Point light squared distance math
                 SquaredRange = ComputePointLightSquaredBoundingSphere(Color, Intensity, Mathf.Abs(SquaredScale * PositionData.w), cutoff);

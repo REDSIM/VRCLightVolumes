@@ -1,6 +1,5 @@
 ﻿using UnityEngine;
 #if UDONSHARP
-using VRC.SDKBase;
 using UdonSharp;
 #endif
 
@@ -64,12 +63,10 @@ namespace VRCLightVolumes {
         // _onVarChange_(Name) methods (events) are called when the variable changes.
         // Without udon it should be chacked in update
         public void _onVarChange_Color() {
-            if (_old_Color != Color)
-                if (Utilities.IsValid(LightVolumeManager)) LightVolumeManager.RequestUpdateVolumes();
+            if (_old_Color != Color && LightVolumeManager != null) LightVolumeManager.RequestUpdateVolumes();
         }
         public void _onVarChange_Intensity() {
-            if (_old_Intensity != Intensity)
-                if (Utilities.IsValid(LightVolumeManager)) LightVolumeManager.RequestUpdateVolumes();
+            if (_old_Intensity != Intensity && LightVolumeManager != null) LightVolumeManager.RequestUpdateVolumes();
         }
 #endif
 

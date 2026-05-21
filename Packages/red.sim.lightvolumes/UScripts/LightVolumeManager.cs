@@ -122,7 +122,7 @@ namespace VRCLightVolumes {
         private Vector4[] _invLocalEdgeSmooth = new Vector4[MaxLightVolumeCount];
         private Vector4[] _colors = new Vector4[MaxLightVolumeCount];
         private Vector4[] _boundsUvwScale = new Vector4[MaxLightVolumeUvwScaleVectors];
-        private Vector4[] _relativeRotationQuaternion = new Vector4[MaxLightVolumeCount];
+        private Vector4[] _relativeRotation = new Vector4[MaxLightVolumeRotationVectors];
 
         // Point Lights data
         private int _pointLightCount = 0;
@@ -138,7 +138,6 @@ namespace VRCLightVolumes {
         // Legacy support data
         private Matrix4x4[] _invWorldMatrix = new Matrix4x4[MaxLightVolumeCount];
         private Vector4[] _boundsUvw = new Vector4[MaxLightVolumeLegacyUvwVectors];
-        private Vector4[] _relativeRotation = new Vector4[MaxLightVolumeRotationVectors];
 
         // Other
         private int[] _enabledIDs = new int[MaxLightVolumeCount];
@@ -171,7 +170,7 @@ namespace VRCLightVolumes {
         private int _lightVolumeProbesBlendID;
         private int _lightVolumeSharpBoundsID;
         private int _lightVolumeID;
-        private int _lightVolumeRotationQuaternionID;
+        private int _lightVolumeRotationID;
         private int _lightVolumeInvWorldMatrixID;
         private int _lightVolumeUvwScaleID;
         // Point Lights
@@ -190,7 +189,6 @@ namespace VRCLightVolumes {
         private int _lightBrightnessCutoffID;
         // Legacy support
         private int _areaLightBrightnessCutoffID;
-        private int _lightVolumeRotationID;
         private int _lightVolumeUvwID;
         // Other
         private int _forceSceneLightingID;
@@ -221,7 +219,7 @@ namespace VRCLightVolumes {
             _lightVolumeProbesBlendID = VRCShader.PropertyToID("_UdonLightVolumeProbesBlend");
             _lightVolumeSharpBoundsID = VRCShader.PropertyToID("_UdonLightVolumeSharpBounds");
             _lightVolumeID = VRCShader.PropertyToID("_UdonLightVolume");
-            _lightVolumeRotationQuaternionID = VRCShader.PropertyToID("_UdonLightVolumeRotationQuaternion");
+            _lightVolumeRotationID = VRCShader.PropertyToID("_UdonLightVolumeRotation");
             _lightVolumeUvwScaleID = VRCShader.PropertyToID("_UdonLightVolumeUvwScale");
             // Point Lights
             _pointLightPositionID = VRCShader.PropertyToID("_UdonPointLightVolumePosition");
@@ -239,7 +237,6 @@ namespace VRCLightVolumes {
             _lightBrightnessCutoffID = VRCShader.PropertyToID("_UdonLightBrightnessCutoff");
             // Legacy support
             _areaLightBrightnessCutoffID = VRCShader.PropertyToID("_UdonAreaLightBrightnessCutoff");
-            _lightVolumeRotationID = VRCShader.PropertyToID("_UdonLightVolumeRotation");
             _lightVolumeUvwID = VRCShader.PropertyToID("_UdonLightVolumeUvw");
             // Other
             _forceSceneLightingID = VRCShader.PropertyToID("_UdonForceSceneLighting");
@@ -255,7 +252,7 @@ namespace VRCLightVolumes {
             VRCShader.SetGlobalVectorArray(_lightVolumeInvLocalEdgeSmoothID, _invLocalEdgeSmooth);
             VRCShader.SetGlobalVectorArray(_lightVolumeColorID, _colors);
             VRCShader.SetGlobalMatrixArray(_lightVolumeInvWorldMatrixID, _invWorldMatrix);
-            VRCShader.SetGlobalVectorArray(_lightVolumeRotationQuaternionID, _relativeRotationQuaternion);
+            VRCShader.SetGlobalVectorArray(_lightVolumeRotationID, _relativeRotation);
             VRCShader.SetGlobalVectorArray(_lightVolumeUvwScaleID, _boundsUvwScale);
             // Point Lights
             VRCShader.SetGlobalVectorArray(_pointLightPositionID, _pointLightPosition);
@@ -265,7 +262,6 @@ namespace VRCLightVolumes {
             VRCShader.SetGlobalVectorArray(_pointLightShadowDataID, _pointLightShadowData);
             VRCShader.SetGlobalVectorArray(_pointLightShadowReprojectionDataID, _pointLightShadowReprojectionData);
             // Legacy support
-            VRCShader.SetGlobalVectorArray(_lightVolumeRotationID, _relativeRotation);
             VRCShader.SetGlobalVectorArray(_lightVolumeUvwID, _boundsUvw);
 
             _isInitialized = true;
@@ -1254,9 +1250,8 @@ namespace VRCLightVolumes {
                 _colors[i] = c;
 
                 // Set volume relative rotation
-                _relativeRotationQuaternion[i] = instance.RelativeRotation;
-                _relativeRotation[i2] = instance.RelativeRotationRow0; // Legacy
-                _relativeRotation[i2 + 1] = instance.RelativeRotationRow1; // Legacy
+                _relativeRotation[i2] = instance.RelativeRotationRow0;
+                _relativeRotation[i2 + 1] = instance.RelativeRotationRow1;
 
                 // Set volume UVW bounds
                 _boundsScale[0] = instance.BoundsUvwMin0;
@@ -1421,14 +1416,13 @@ namespace VRCLightVolumes {
                 VRCShader.SetGlobalMatrixArray(_lightVolumeInvWorldMatrixID, _invWorldMatrix);
 
                 // Volume relative rotations
-                VRCShader.SetGlobalVectorArray(_lightVolumeRotationQuaternionID, _relativeRotationQuaternion);
+                VRCShader.SetGlobalVectorArray(_lightVolumeRotationID, _relativeRotation);
 
                 // Volume color correction data
                 VRCShader.SetGlobalVectorArray(_lightVolumeColorID, _colors);
 
                 // Legacy data upload
                 VRCShader.SetGlobalVectorArray(_lightVolumeUvwID, _boundsUvw);
-                VRCShader.SetGlobalVectorArray(_lightVolumeRotationID, _relativeRotation);
             }
 
             // Point Lights

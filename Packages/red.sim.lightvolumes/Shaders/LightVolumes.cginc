@@ -33,8 +33,8 @@ uniform float _UdonLightVolumeSharpBounds;
 // World to Local (-0.5, 0.5) UVW Matrix 4x4
 uniform float4x4 _UdonLightVolumeInvWorldMatrix[VRCLV_MAX_VOLUMES_COUNT];
 
-// L1 SH quaternion rotation relative to baked rotation
-uniform float4 _UdonLightVolumeRotationQuaternion[VRCLV_MAX_VOLUMES_COUNT];
+// L1 SH matrix rotation relative to baked rotation. Stores row 0 and row 1; row 2 is reconstructed in shader.
+uniform float4 _UdonLightVolumeRotation[VRCLV_MAX_VOLUMES_COUNT * 2];
 
 // Value that is needed to smoothly blend volumes ( BoundsScale / edgeSmooth )
 uniform float3 _UdonLightVolumeInvLocalEdgeSmooth[VRCLV_MAX_VOLUMES_COUNT];
@@ -720,10 +720,13 @@ void LV_SampleVolume(uint id, float3 localUVW, inout float3 L0, inout float3 L1r
     
     // Rotate if needed
     if (color.a != 0) {
-        float4 rotation = _UdonLightVolumeRotationQuaternion[id];
-        L1r += LV_MultiplyVectorByQuaternion(l1r, rotation);
-        L1g += LV_MultiplyVectorByQuaternion(l1g, rotation);
-        L1b += LV_MultiplyVectorByQuaternion(l1b, rotation);
+        uint rotationID = id * 2;
+        float3 r0 = _UdonLightVolumeRotation[rotationID].xyz;
+        float3 r1 = _UdonLightVolumeRotation[rotationID + 1].xyz;
+        float3 r2 = cross(r0, r1);
+        L1r += LV_MultiplyVectorByMatrix3x3(l1r, r0, r1, r2);
+        L1g += LV_MultiplyVectorByMatrix3x3(l1g, r0, r1, r2);
+        L1b += LV_MultiplyVectorByMatrix3x3(l1b, r0, r1, r2);
     } else {
         L1r += l1r;
         L1g += l1g;

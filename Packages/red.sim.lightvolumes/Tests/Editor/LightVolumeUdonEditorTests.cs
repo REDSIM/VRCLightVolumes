@@ -18,7 +18,7 @@ namespace VRCLightVolumes.Tests {
         private static readonly int _lightVolumeEnabledID = Shader.PropertyToID("_UdonLightVolumeEnabled");
         private static readonly int _lightVolumeProbesBlendID = Shader.PropertyToID("_UdonLightVolumeProbesBlend");
         private static readonly int _lightVolumeSharpBoundsID = Shader.PropertyToID("_UdonLightVolumeSharpBounds");
-        private static readonly int _lightVolumeRotationQuaternionID = Shader.PropertyToID("_UdonLightVolumeRotationQuaternion");
+        private static readonly int _lightVolumeRotationID = Shader.PropertyToID("_UdonLightVolumeRotation");
         private static readonly int _lightVolumeInvWorldMatrixID = Shader.PropertyToID("_UdonLightVolumeInvWorldMatrix");
         private static readonly int _lightVolumeUvwScaleID = Shader.PropertyToID("_UdonLightVolumeUvwScale");
         private static readonly int _pointLightPositionID = Shader.PropertyToID("_UdonPointLightVolumePosition");
@@ -315,7 +315,8 @@ namespace VRCLightVolumes.Tests {
             AssertVectorClose(second.BoundsUvwMin0, Shader.GetGlobalVectorArray(_lightVolumeUvwScaleID)[0]);
             AssertVectorClose(second.BoundsUvwMin1, Shader.GetGlobalVectorArray(_lightVolumeUvwScaleID)[1]);
             AssertVectorClose(second.BoundsUvwMin2, Shader.GetGlobalVectorArray(_lightVolumeUvwScaleID)[2]);
-            AssertVectorClose(second.RelativeRotation, Shader.GetGlobalVectorArray(_lightVolumeRotationQuaternionID)[0]);
+            AssertVectorClose(second.RelativeRotationRow0, Shader.GetGlobalVectorArray(_lightVolumeRotationID)[0]);
+            AssertVectorClose(second.RelativeRotationRow1, Shader.GetGlobalVectorArray(_lightVolumeRotationID)[1]);
             AssertMatrixClose(Matrix4x4.TRS(second.transform.position, second.transform.rotation, second.transform.lossyScale).inverse, Shader.GetGlobalMatrixArray(_lightVolumeInvWorldMatrixID)[0]);
 
             second.Intensity = 0;
@@ -367,7 +368,8 @@ namespace VRCLightVolumes.Tests {
 
             Quaternion expectedPointRotation = Quaternion.Inverse(point.transform.rotation);
             AssertMatrixClose(Matrix4x4.TRS(volume.transform.position, volume.transform.rotation, volume.transform.lossyScale).inverse, Shader.GetGlobalMatrixArray(_lightVolumeInvWorldMatrixID)[0]);
-            AssertVectorClose(volume.RelativeRotation, Shader.GetGlobalVectorArray(_lightVolumeRotationQuaternionID)[0]);
+            AssertVectorClose(volume.RelativeRotationRow0, Shader.GetGlobalVectorArray(_lightVolumeRotationID)[0]);
+            AssertVectorClose(volume.RelativeRotationRow1, Shader.GetGlobalVectorArray(_lightVolumeRotationID)[1]);
             AssertVectorClose(new Vector4(-2, -3, -4, point.PositionData.w * point.SquaredScale), Shader.GetGlobalVectorArray(_pointLightPositionID)[0]);
             AssertVectorClose(new Vector4(expectedPointRotation.x, expectedPointRotation.y, expectedPointRotation.z, expectedPointRotation.w), Shader.GetGlobalVectorArray(_pointLightDirectionID)[0]);
         }

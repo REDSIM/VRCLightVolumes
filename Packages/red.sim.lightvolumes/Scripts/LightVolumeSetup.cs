@@ -596,7 +596,7 @@ namespace VRCLightVolumes {
                 SyncBaseTextureMetadataToUdon();
 
                 if (LightVolumes.Count != 0) {
-                    var instances = LightVolumeDataSorter.GetData(LightVolumeDataSorter.SortData(LightVolumeDataList));
+                    var instances = GetLightVolumeInstances();
                     UdonBehaviour[] lightVolumeInstances = new UdonBehaviour[instances.Length];
                     for (int i = 0; i < instances.Length; i++) {
                         lightVolumeInstances[i] = instances[i].GetComponent<UdonBehaviour>();
@@ -633,9 +633,7 @@ namespace VRCLightVolumes {
                 RefreshAtlasOutput();
 #endif
 
-                if (LightVolumes.Count != 0) {
-                    LightVolumeManager.LightVolumeInstances = LightVolumeDataSorter.GetData(LightVolumeDataSorter.SortData(LightVolumeDataList));
-                }
+                if (LightVolumes.Count != 0) LightVolumeManager.LightVolumeInstances = GetLightVolumeInstances();
 
                 if (PointLightVolumes.Count != 0) {
                     LightVolumeManager.PointLightVolumeInstances = GetPointLightVolumeInstances();
@@ -688,6 +686,34 @@ namespace VRCLightVolumes {
             }
         }
 
+        // Builds sorted Light Volume runtime instances from the current authoring list.
+        private LightVolumeInstance[] GetLightVolumeInstances() {
+            int count = LightVolumes.Count;
+            LightVolumeData[] sortedData = new LightVolumeData[count];
+            int sortedCount = 0;
+            for (int i = 0; i < count; i++) {
+                LightVolume lightVolume = LightVolumes[i];
+                if (lightVolume == null || lightVolume.LightVolumeInstance == null) continue;
+
+                LightVolumeData data = new LightVolumeData(i < LightVolumesWeights.Count ? LightVolumesWeights[i] : 0, lightVolume.LightVolumeInstance);
+                int insertIndex = sortedCount;
+                while (insertIndex > 0) {
+                    LightVolumeData previous = sortedData[insertIndex - 1];
+                    if (previous.LightVolumeInstance.IsAdditive && !data.LightVolumeInstance.IsAdditive) break;
+                    if (previous.LightVolumeInstance.IsAdditive == data.LightVolumeInstance.IsAdditive && previous.Weight >= data.Weight) break;
+                    sortedData[insertIndex] = previous;
+                    insertIndex--;
+                }
+                sortedData[insertIndex] = data;
+                sortedCount++;
+            }
+
+            LightVolumeInstance[] volumes = new LightVolumeInstance[sortedCount];
+            for (int i = 0; i < sortedCount; i++) volumes[i] = sortedData[i].LightVolumeInstance;
+            return volumes;
+        }
+
+        // Builds Point Light Volume runtime instances from the current authoring list.
         private PointLightVolumeInstance[] GetPointLightVolumeInstances() {
             List<PointLightVolumeInstance> list = new List<PointLightVolumeInstance>();
             int count = PointLightVolumes.Count;

@@ -152,6 +152,31 @@ namespace VRCLightVolumes.Tests {
             Assert.That(manager.ShadowTextures.hideFlags, Is.EqualTo(HideFlags.HideAndDontSave));
         }
 
+        // Verifies setup sync can restore manager volume instances even when serialized LightVolumeDataList is missing.
+        [Test]
+        public void SetupSyncUsesAuthoringVolumesWhenDataListIsEmpty() {
+            GameObject setupObject = CreateGameObject("Empty Data List Setup", false);
+            LightVolumeSetup setup = setupObject.AddComponent<LightVolumeSetup>();
+            setup.SetupDependencies();
+            LightVolumeManager manager = setup.LightVolumeManager;
+            if (manager == null) manager = setupObject.GetComponent<LightVolumeManager>();
+            Texture3D atlas = CreateAtlas("Empty Data List Atlas");
+            manager.LightVolumeAtlas = atlas;
+            manager.LightVolumeAtlasBase = atlas;
+
+            LightVolumeInstance regularInstance = CreateLightVolume(setup, manager, "Regular Volume", false);
+            LightVolumeInstance additiveInstance = CreateLightVolume(setup, manager, "Additive Volume", true);
+            setup.LightVolumesWeights.Add(10);
+            setup.LightVolumesWeights.Add(0);
+            setup.LightVolumeDataList.Clear();
+
+            setup.SyncUdonScript();
+
+            Assert.That(manager.LightVolumeInstances, Has.Length.EqualTo(2));
+            Assert.That(manager.LightVolumeInstances[0], Is.SameAs(additiveInstance));
+            Assert.That(manager.LightVolumeInstances[1], Is.SameAs(regularInstance));
+        }
+
         // Creates a manager with deterministic defaults.
         private LightVolumeManager CreateManager(string name, bool withAtlas) {
             GameObject gameObject = CreateGameObject(name, false);
@@ -178,6 +203,24 @@ namespace VRCLightVolumes.Tests {
             gameObject.SetActive(active);
             if (active && manager != null) manager.InitializePointLightVolume(point);
             return point;
+        }
+
+        // Creates a scene Light Volume authoring/runtime pair.
+        private LightVolumeInstance CreateLightVolume(LightVolumeSetup setup, LightVolumeManager manager, string name, bool additive) {
+            GameObject gameObject = CreateGameObject(name, false);
+            LightVolumeInstance instance = gameObject.AddComponent<LightVolumeInstance>();
+            LightVolume volume = gameObject.AddComponent<LightVolume>();
+            volume.LightVolumeSetup = setup;
+            volume.LightVolumeInstance = instance;
+            volume.Intensity = 1;
+            volume.Color = Color.white;
+            volume.Additive = additive;
+            instance.LightVolumeManager = manager;
+            instance.Intensity = 1;
+            instance.Color = Color.white;
+            instance.IsAdditive = additive;
+            setup.LightVolumes.Add(volume);
+            return instance;
         }
 
         // Creates a temporary GameObject tracked by teardown.

@@ -8,9 +8,21 @@ namespace VRCLightVolumes {
     public static class PointLightShadowBaker {
 
         private static class ShaderConstants {
-            public static readonly int LightPositionID = Shader.PropertyToID("_VRCLV_LightPosition");
+            public const string ShadowShaderPath = "Packages/red.sim.lightvolumes/Shaders/PointLightShadow.shader";
+        }
 
-            public const string ShadowShaderPath = "Packages/red.sim.lightvolumes/Shaders/Editor/PointLightShadow.shader";
+        private static readonly CubemapFace[] _cubemapFaces = {
+            CubemapFace.PositiveX,
+            CubemapFace.NegativeX,
+            CubemapFace.PositiveY,
+            CubemapFace.NegativeY,
+            CubemapFace.PositiveZ,
+            CubemapFace.NegativeZ
+        };
+
+        private struct OccluderState {
+            public MeshRenderer Renderer;
+            public bool PreviousForceRenderingOff;
         }
 
         // Bakes a world-space radial depth shadow map from the light position.
@@ -37,14 +49,10 @@ namespace VRCLightVolumes {
             RenderTexture cubeRT = null;
             Texture2D temp = null;
             GameObject cameraObject = null;
-            MeshRenderer[] renderers = null;
-            bool[] previousForceRenderingOff = null;
+            OccluderState[] occluderStates = null;
 
             try {
-                string title = "Shadow Baking " + infoString;
-                EditorUtility.DisplayProgressBar(title, "Preparing static occluders...", 0.1f);
-
-                renderers = ApplyOccluderFilter(out previousForceRenderingOff);
+                occluderStates = ApplyOccluderFilter();
 
                 cubeRT = new RenderTexture(safeResolution, safeResolution, 24, safeRenderTextureFormat) {
                     dimension = TextureDimension.Cube,
@@ -74,17 +82,13 @@ namespace VRCLightVolumes {
                 camera.useOcclusionCulling = false;
                 camera.cullingMask = -1;
                 camera.stereoTargetEye = StereoTargetEyeMask.None;
-                camera.SetReplacementShader(shadowShader, string.Empty);
+                camera.SetReplacementShader(shadowShader, "RenderType");
 
-                Shader.SetGlobalVector(ShaderConstants.LightPositionID, pointLightVolume.transform.position);
-
-                EditorUtility.DisplayProgressBar(title, "Rendering depth cubemap...", 0.45f);
                 if (!camera.RenderToCubemap(cubeRT)) {
                     Debug.LogError($"[PointLightShadowBaker] Failed to render shadow map for '{pointLightVolume.gameObject.name}'.", pointLightVolume);
                     return null;
                 }
 
-                EditorUtility.DisplayProgressBar(title, "Reading cubemap faces...", 0.8f);
                 temp = new Texture2D(safeResolution, safeResolution, safeTextureFormat, false, true);
                 Cubemap cubemap = new Cubemap(safeResolution, safeTextureFormat, false) {
                     wrapMode = TextureWrapMode.Clamp,
@@ -92,27 +96,17 @@ namespace VRCLightVolumes {
                     anisoLevel = 0
                 };
 
-                CubemapFace[] faces = {
-                    CubemapFace.PositiveX,
-                    CubemapFace.NegativeX,
-                    CubemapFace.PositiveY,
-                    CubemapFace.NegativeY,
-                    CubemapFace.PositiveZ,
-                    CubemapFace.NegativeZ
-                };
-
-                for (int i = 0; i < faces.Length; i++) {
-                    Graphics.SetRenderTarget(cubeRT, 0, faces[i]);
+                for (int i = 0; i < _cubemapFaces.Length; i++) {
+                    Graphics.SetRenderTarget(cubeRT, 0, _cubemapFaces[i]);
                     temp.ReadPixels(new Rect(0, 0, safeResolution, safeResolution), 0, 0);
                     temp.Apply(false);
-                    cubemap.SetPixels(temp.GetPixels(), faces[i]);
+                    cubemap.SetPixels(temp.GetPixels(), _cubemapFaces[i]);
                 }
                 cubemap.Apply(false);
 
                 return cubemap;
             } finally {
-                EditorUtility.ClearProgressBar();
-                RestoreOccluderFilter(renderers, previousForceRenderingOff);
+                RestoreOccluderFilter(occluderStates);
                 RenderTexture.active = oldActive;
 
                 if (temp != null) Object.DestroyImmediate(temp);
@@ -125,27 +119,34 @@ namespace VRCLightVolumes {
         }
 
         // Temporarily hides renderers that should not contribute to shadow maps.
-        private static MeshRenderer[] ApplyOccluderFilter(out bool[] previousForceRenderingOff) {
-            MeshRenderer[] renderers = Object.FindObjectsByType<MeshRenderer>(FindObjectsInactive.Include, FindObjectsSortMode.None);
-            previousForceRenderingOff = new bool[renderers.Length];
+        private static OccluderState[] ApplyOccluderFilter() {
+            MeshRenderer[] renderers = Object.FindObjectsByType<MeshRenderer>(FindObjectsInactive.Exclude, FindObjectsSortMode.None);
+            OccluderState[] occluderStates = new OccluderState[renderers.Length];
 
             for (int i = 0; i < renderers.Length; i++) {
                 MeshRenderer renderer = renderers[i];
-                previousForceRenderingOff[i] = renderer.forceRenderingOff;
+                OccluderState state = new OccluderState {
+                    Renderer = renderer,
+                    PreviousForceRenderingOff = renderer.forceRenderingOff
+                };
+
                 bool isOccluder = IsValidOccluder(renderer);
-                renderer.forceRenderingOff = previousForceRenderingOff[i] || !isOccluder;
+                renderer.forceRenderingOff = state.PreviousForceRenderingOff || !isOccluder;
+
+                occluderStates[i] = state;
             }
 
-            return renderers;
+            return occluderStates;
         }
 
         // Restores the renderer visibility state changed before baking.
-        private static void RestoreOccluderFilter(MeshRenderer[] renderers, bool[] previousForceRenderingOff) {
-            if (renderers == null || previousForceRenderingOff == null) return;
-            for (int i = 0; i < renderers.Length && i < previousForceRenderingOff.Length; i++) {
-                if (renderers[i] != null) {
-                    renderers[i].forceRenderingOff = previousForceRenderingOff[i];
-                }
+        private static void RestoreOccluderFilter(OccluderState[] occluderStates) {
+            if (occluderStates == null) return;
+            for (int i = 0; i < occluderStates.Length; i++) {
+                OccluderState state = occluderStates[i];
+                if (state.Renderer == null) continue;
+
+                state.Renderer.forceRenderingOff = state.PreviousForceRenderingOff;
             }
         }
 

@@ -273,30 +273,34 @@ float LV_PointLightShadowBilinearBlend(float4 shadows, float2 texelFrac) {
 // Compares four depth values with a receiver distance for the bilinear PCF path.
 float4 LV_PointLightShadowCompareDepths(float4 shadowDepths, float distanceToLight, float bias, float biasSmoothness) {
     float receiverDistance = distanceToLight - bias;
+    float4 result;
     [branch] if (biasSmoothness <= 0.0001f) {
-        return step(float4(receiverDistance, receiverDistance, receiverDistance, receiverDistance), shadowDepths);
+        result = step(float4(receiverDistance, receiverDistance, receiverDistance, receiverDistance), shadowDepths);
+    } else {
+        float smoothing = max(biasSmoothness, 0.0001f);
+        float4 smoothShadow = saturate((shadowDepths - (receiverDistance - smoothing)) * rcp(smoothing * 2.0f));
+        result = smoothShadow * smoothShadow * (3.0f - 2.0f * smoothShadow);
     }
-
-    float smoothing = max(biasSmoothness, 0.0001f);
-    float4 smoothShadow = saturate((shadowDepths - (receiverDistance - smoothing)) * rcp(smoothing * 2.0f));
-    return smoothShadow * smoothShadow * (3.0f - 2.0f * smoothShadow);
+    return result;
 }
 
 // Compares four squared reprojected depths with a receiver distance for the bilinear PCF path.
 float4 LV_PointLightShadowCompareDepthsSq(float4 shadowDistanceSq, float distanceToLight, float bias, float biasSmoothness) {
     float receiverDistance = max(distanceToLight - bias, 0.0f);
     float receiverDistanceSq = receiverDistance * receiverDistance;
+    float4 result;
     [branch] if (biasSmoothness <= 0.0001f) {
-        return step(float4(receiverDistanceSq, receiverDistanceSq, receiverDistanceSq, receiverDistanceSq), shadowDistanceSq);
+        result = step(float4(receiverDistanceSq, receiverDistanceSq, receiverDistanceSq, receiverDistanceSq), shadowDistanceSq);
+    } else {
+        float smoothing = max(biasSmoothness, 0.0001f);
+        float nearDistance = max(receiverDistance - smoothing, 0.0f);
+        float farDistance = receiverDistance + smoothing;
+        float nearDistanceSq = nearDistance * nearDistance;
+        float farDistanceSq = farDistance * farDistance;
+        float4 smoothShadow = saturate((shadowDistanceSq - nearDistanceSq) * rcp(max(farDistanceSq - nearDistanceSq, 0.000001f)));
+        result = smoothShadow * smoothShadow * (3.0f - 2.0f * smoothShadow);
     }
-
-    float smoothing = max(biasSmoothness, 0.0001f);
-    float nearDistance = max(receiverDistance - smoothing, 0.0f);
-    float farDistance = receiverDistance + smoothing;
-    float nearDistanceSq = nearDistance * nearDistance;
-    float farDistanceSq = farDistance * farDistance;
-    float4 smoothShadow = saturate((shadowDistanceSq - nearDistanceSq) * rcp(max(farDistanceSq - nearDistanceSq, 0.000001f)));
-    return smoothShadow * smoothShadow * (3.0f - 2.0f * smoothShadow);
+    return result;
 }
 
 // Bilinear PCF compare, close to how hardware shadow samplers soften shadow-map edges.
@@ -367,11 +371,11 @@ void LV_PointLightShadow(uint id, float4 shadowData, float3 lightPos, float3 wor
 
 // Returns per-light shadow attenuation after the overdraw slot has already been reserved.
 float LV_PointLightShadowAttenuation(uint id, float4 lightPositionData, float3 worldPos, float3 dirN, float sqDistanceToLight, float invDistanceToLight) {
-    [branch] if (_UdonPointLightVolumeShadowCount <= 0.0f) return 1.0f;
-    float4 shadowData = _UdonPointLightVolumeShadowData[id];
-    [branch] if (shadowData.x == 0.0f) return 1.0f;
     float shadow = 1.0f;
-    LV_PointLightShadow(id, shadowData, lightPositionData.xyz, worldPos, dirN, sqDistanceToLight * invDistanceToLight, shadow);
+    [branch] if (_UdonPointLightVolumeShadowCount > 0.0f) {
+        float4 shadowData = _UdonPointLightVolumeShadowData[id];
+        [branch] if (shadowData.x != 0.0f) LV_PointLightShadow(id, shadowData, lightPositionData.xyz, worldPos, dirN, sqDistanceToLight * invDistanceToLight, shadow);
+    }
     return shadow;
 }
 

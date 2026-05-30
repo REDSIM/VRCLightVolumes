@@ -441,7 +441,6 @@ namespace VRCLightVolumes {
                 _lightVolumeBehaviour.SendCustomEvent("__0_SetSmoothBlending");
             } else {
 #endif
-                LightVolumeInstance.IsInitialized = true; // Always override to true in editor outside play mode
                 LightVolumeInstance.LightVolumeManager = LightVolumeSetup.LightVolumeManager;
 
                 LightVolumeInstance.IsDynamic = Dynamic;

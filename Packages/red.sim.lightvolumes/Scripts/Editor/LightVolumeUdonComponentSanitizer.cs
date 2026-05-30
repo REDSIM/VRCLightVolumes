@@ -442,10 +442,10 @@ namespace VRCLightVolumes {
             }
 
             LightVolumeInstance lightVolume = component as LightVolumeInstance;
-            if (lightVolume != null) return (lightVolume.LightVolumeManager != null ? 1 : 0) + (lightVolume.IsInitialized ? 1 : 0);
+            if (lightVolume != null) return lightVolume.LightVolumeManager != null ? 1 : 0;
 
             PointLightVolumeInstance pointLight = component as PointLightVolumeInstance;
-            if (pointLight != null) return (pointLight.LightVolumeManager != null ? 1 : 0) + (pointLight.IsInitialized ? 1 : 0);
+            if (pointLight != null) return pointLight.LightVolumeManager != null ? 1 : 0;
 
             return 0;
         }

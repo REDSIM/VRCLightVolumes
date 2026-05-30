@@ -36,17 +36,23 @@ namespace VRCLightVolumes {
         public UnityEngine.Object Cubemap = null;
         [Tooltip("Shows overdrawing range gizmo. Less point light volumes intersections - more performance!")]
         public bool DebugRange = false;
-
+        [Space]
         [Tooltip("Enables baked shadow map rendering for this light. When disabled, an assigned or baked Shadow Map is kept but ignored at runtime.")]
         public bool Shadows = false;
         [Tooltip("Rebakes shadows for this point light automatically when you click \"Bake Shadows\" in Light Volume Setup. Alternatively, you can bake it manually pressing the \"Bake Shadows\" button here.")]
         public bool RebakeShadows = false;
-        [Tooltip("World-space bias in meters applied when comparing shaded points against this light's baked cubemap. Larger values reduce artifacts, but can detach contact edges.")]
+        [Tooltip("Layer mask used by the shadow bake camera. Only these layers can write into the shadow depth pass.")]
+        public LayerMask LayerMask = -1;
+        [Tooltip("If empty, all objects in the scene are baked. If not empty, only children of the listed objects cast shadows during bake.")]
+        public GameObject[] ObjectMask = new GameObject[0];
+        [Tooltip("World-space bias in meters applied while baking this light's shadow map. Larger values reduce self-shadow artifacts, but can detach contact edges. Requires rebaking.")]
         [Min(0)] public float Bias = 0.1f;
-        [Tooltip("World-space smoothing radius in meters around this light's bias threshold. Larger values reduce artifacts, but can detach contact edges.")]
-        [Min(0)] public float BiasSmoothness = 0.25f;
-        [Tooltip("Multiplier for shadow PCF sampling sharpness. 1 keeps native shadow map sharpness, lower values make shadows softer.")]
-        [Range(0, 1)] public float ShadowSharpness = 1f;
+        [Tooltip("Near clip plane used by the shadow bake camera. Higher values improve depth precision but clip nearby occluders.")]
+        [Min(0.0001f)] public float NearPlane = 0.01f;
+        [Tooltip("Editor-only Gaussian blur radius in shadow texels applied after baking. 0 keeps the baked shadow map unblurred.")]
+        [Min(0)] public float Blur = 1f;
+        [Tooltip("Hardens shadows near the contact areas. Can produce artefacts, so use with caution! Requires rebaking.")]
+        [Range(0, 1)] public float ContactHardening = 0f;
         [Tooltip("Use it if you don't want to move baked shadows together with their light. Attaches shadows to the world space basically. Less optimized when turned on.")]
         public bool UseWorldSpace = false;
 
@@ -159,11 +165,6 @@ namespace VRCLightVolumes {
             return IsCubemapTexture(GetProjectionSource() as Texture);
         }
 
-        // Returns true when the assigned projection texture is runtime-rendered
-        private bool IsProjectionTextureRenderTexture() {
-            return GetProjectionSource() is RenderTexture;
-        }
-
         // Returns true when the assigned projection texture has independent array slices
         private bool ProjectionTextureHasDepthSlices() {
             UnityEngine.Object source = GetProjectionSource();
@@ -264,77 +265,38 @@ namespace VRCLightVolumes {
                 _pointLightVolumeBehaviour.SetProgramVariable("IsRangeDirty", true);
                 _pointLightVolumeBehaviour.SetProgramVariable("ShadowMapID", (float)GetShadowRuntimeID());
                 _pointLightVolumeBehaviour.SetProgramVariable("WorldSpaceShadows", UseWorldSpace);
-                _pointLightVolumeBehaviour.SetProgramVariable("ShadowBias", Bias);
-                _pointLightVolumeBehaviour.SetProgramVariable("ShadowBiasSmoothness", BiasSmoothness);
-                _pointLightVolumeBehaviour.SetProgramVariable("ShadowSharpness", ShadowSharpness);
+                _pointLightVolumeBehaviour.SetProgramVariable("Bias", Bias);
+                _pointLightVolumeBehaviour.SetProgramVariable("FarClip", GetShadowFarClip());
+                _pointLightVolumeBehaviour.SetProgramVariable("NearClip", GetShadowNearClip());
+                _pointLightVolumeBehaviour.SetProgramVariable("LayerMask", LayerMask.value);
+                _pointLightVolumeBehaviour.SetProgramVariable("Blur", Mathf.Max(Blur, 0));
+                _pointLightVolumeBehaviour.SetProgramVariable("ContactHardening", Mathf.Clamp01(ContactHardening));
                 _pointLightVolumeBehaviour.SetProgramVariable("ShadowBakePosition", PointLightVolumeInstance.ShadowBakePosition);
-                _pointLightVolumeBehaviour.SetProgramVariable("ShadowBakeRotation", PointLightVolumeInstance.ShadowBakeRotation);
                 if (syncTextureSources) SyncTextureSourcesToUdon();
                 // Udon does not support parameterized methods, so the values are passed through temporary program variables
                 // Set the parameters first, then execute a parameterless method
-                if (Type == LightType.PointLight) { // Point light
-                    if (Projection == LightProjection.Custom && HasProjectionSource()) { // Use custom cubemap texture
-                        // SetRange(LightSourceSize)
-                        _pointLightVolumeBehaviour.SetProgramVariable("__0_size__param", LightSourceSize);
-                        _pointLightVolumeBehaviour.SendCustomEvent("__0_SetLightSourceSize");
-                        // SetCustomTexture()
-                        _pointLightVolumeBehaviour.SendCustomEvent("SetCustomTexture");
-                    } else if (Projection == LightProjection.LUT && HasProjectionSource()) { // Use LUT
-                        // SetRange(Range)
-                        _pointLightVolumeBehaviour.SetProgramVariable("__0_size__param", Range);
-                        _pointLightVolumeBehaviour.SendCustomEvent("__0_SetLightSourceSize");
-                        // SetLut()
-                        _pointLightVolumeBehaviour.SendCustomEvent("SetLut");
-                    } else { // Use this light in parametric mode
-                        // SetRange(LightSourceSize)
-                        _pointLightVolumeBehaviour.SetProgramVariable("__0_size__param", LightSourceSize);
-                        _pointLightVolumeBehaviour.SendCustomEvent("__0_SetLightSourceSize");
-                        // SetParametric()
-                        _pointLightVolumeBehaviour.SendCustomEvent("SetParametric");
-                    }
-                    // Use it as a point light
-                    // SetPointLight()
-                    _pointLightVolumeBehaviour.SendCustomEvent("SetPointLight");
-                    _pointLightVolumeBehaviour.SendCustomEvent("UpdateRotation");
-                } else if (Type == LightType.SpotLight) { // Spot light
-                    // SetRange(Range)
-                    _pointLightVolumeBehaviour.SetProgramVariable("__0_size__param", Range);
-                    _pointLightVolumeBehaviour.SendCustomEvent("__0_SetLightSourceSize");
-                    if (Projection == LightProjection.Custom && HasProjectionSource()) { // Use cookie texture
-                        // SetRange(LightSourceSize)
-                        _pointLightVolumeBehaviour.SetProgramVariable("__0_size__param", LightSourceSize);
-                        _pointLightVolumeBehaviour.SendCustomEvent("__0_SetLightSourceSize");
-                        // SetCustomTexture()
-                        _pointLightVolumeBehaviour.SendCustomEvent("SetCustomTexture");
-                    } else if (Projection == LightProjection.LUT && HasProjectionSource()) { // Use LUT
-                        // SetRange(Range)
-                        _pointLightVolumeBehaviour.SetProgramVariable("__0_size__param", Range);
-                        _pointLightVolumeBehaviour.SendCustomEvent("__0_SetLightSourceSize");
-                        // SetLut()
-                        _pointLightVolumeBehaviour.SendCustomEvent("SetLut");
-                    } else { // Use this light in parametric mode
-                        // SetRange(LightSourceSize)
-                        _pointLightVolumeBehaviour.SetProgramVariable("__0_size__param", LightSourceSize);
-                        _pointLightVolumeBehaviour.SendCustomEvent("__0_SetLightSourceSize");
-                        // SetParametric()
-                        _pointLightVolumeBehaviour.SendCustomEvent("SetParametric");
-                    }
-                    // Use regular spot light projection
-                    // SetSpotLight(Angle, Falloff)
-                    _pointLightVolumeBehaviour.SetProgramVariable("__0_angleDeg__param", Angle);
-                    _pointLightVolumeBehaviour.SetProgramVariable("__0_falloff__param", Falloff);
-                    _pointLightVolumeBehaviour.SendCustomEvent("__0_SetSpotLight");
-                    _pointLightVolumeBehaviour.SendCustomEvent("UpdateRotation");
-
-                } else if (Type == LightType.AreaLight) { // Area light
-                    // SetAreaLight()
+                bool hasProjectionSource = HasProjectionSource();
+                if (Type == LightType.AreaLight) {
                     _pointLightVolumeBehaviour.SendCustomEvent("SetAreaLight");
-                    _pointLightVolumeBehaviour.SendCustomEvent("UpdateRotation");
+                } else {
+                    bool usesLut = Projection == LightProjection.LUT && hasProjectionSource;
+                    bool usesCustom = Projection == LightProjection.Custom && hasProjectionSource;
+                    _pointLightVolumeBehaviour.SetProgramVariable("__0_size__param", usesLut ? Range : LightSourceSize);
+                    _pointLightVolumeBehaviour.SendCustomEvent("__0_SetLightSourceSize");
+                    if (usesCustom) _pointLightVolumeBehaviour.SendCustomEvent("SetCustomTexture");
+                    else if (usesLut) _pointLightVolumeBehaviour.SendCustomEvent("SetLut");
+                    else _pointLightVolumeBehaviour.SendCustomEvent("SetParametric");
+                    if (Type == LightType.PointLight) {
+                        _pointLightVolumeBehaviour.SendCustomEvent("SetPointLight");
+                    } else if (Type == LightType.SpotLight) {
+                        _pointLightVolumeBehaviour.SetProgramVariable("__0_angleDeg__param", Angle);
+                        _pointLightVolumeBehaviour.SetProgramVariable("__0_falloff__param", Falloff);
+                        _pointLightVolumeBehaviour.SendCustomEvent("__0_SetSpotLight");
+                    }
                 }
 
             } else {
 #endif
-                PointLightVolumeInstance.IsInitialized = true; // Always override to true in editor outside play mode
                 PointLightVolumeInstance.LightVolumeManager = LightVolumeSetup.LightVolumeManager;
 
                 PointLightVolumeInstance.IsDynamic = Dynamic;
@@ -343,41 +305,26 @@ namespace VRCLightVolumes {
                 PointLightVolumeInstance.IsRangeDirty = true;
                 PointLightVolumeInstance.ShadowMapID = GetShadowRuntimeID();
                 PointLightVolumeInstance.WorldSpaceShadows = UseWorldSpace;
-                PointLightVolumeInstance.ShadowBias = Bias;
-                PointLightVolumeInstance.ShadowBiasSmoothness = BiasSmoothness;
-                PointLightVolumeInstance.ShadowSharpness = ShadowSharpness;
+                PointLightVolumeInstance.Bias = Bias;
+                PointLightVolumeInstance.FarClip = GetShadowFarClip();
+                PointLightVolumeInstance.NearClip = GetShadowNearClip();
+                PointLightVolumeInstance.LayerMask = LayerMask.value;
+                PointLightVolumeInstance.Blur = Mathf.Max(Blur, 0);
+                PointLightVolumeInstance.ContactHardening = Mathf.Clamp01(ContactHardening);
                 if (syncTextureSources) SyncTextureSourcesToInstance();
 
-                if (Type == LightType.PointLight) { // Point light
-                    if (Projection == LightProjection.Custom && HasProjectionSource()) {
-                        PointLightVolumeInstance.SetLightSourceSize(LightSourceSize);
-                        PointLightVolumeInstance.SetCustomTexture(); // Use custom cubemap texture
-                    } else if (Projection == LightProjection.LUT && HasProjectionSource()) {
-                        PointLightVolumeInstance.SetLightSourceSize(Range);
-                        PointLightVolumeInstance.SetLut(); // Use LUT
-                    } else {
-                        PointLightVolumeInstance.SetLightSourceSize(LightSourceSize);
-                        PointLightVolumeInstance.SetParametric(); // Use this light in parametric mode
-                    }
-                    PointLightVolumeInstance.SetPointLight(); // Use it as a point light
-                    PointLightVolumeInstance.UpdateRotation();
-                } else if (Type == LightType.SpotLight) { // Spot light
-                    PointLightVolumeInstance.SetLightSourceSize(Range);
-                    if (Projection == LightProjection.Custom && HasProjectionSource()) {
-                        PointLightVolumeInstance.SetLightSourceSize(LightSourceSize);
-                        PointLightVolumeInstance.SetCustomTexture(); // Use cookie texture
-                    } else if (Projection == LightProjection.LUT && HasProjectionSource()) {
-                        PointLightVolumeInstance.SetLightSourceSize(Range);
-                        PointLightVolumeInstance.SetLut(); // Use LUT
-                    } else {
-                        PointLightVolumeInstance.SetLightSourceSize(LightSourceSize);
-                        PointLightVolumeInstance.SetParametric(); // Use this light in parametric mode
-                    }
-                    PointLightVolumeInstance.SetSpotLight(Angle, Falloff); // Use regular spot light projection
-                    PointLightVolumeInstance.UpdateRotation();
-                } else if (Type == LightType.AreaLight) { // Area light
+                bool hasProjectionSource = HasProjectionSource();
+                if (Type == LightType.AreaLight) {
                     PointLightVolumeInstance.SetAreaLight();
-                    PointLightVolumeInstance.UpdateRotation();
+                } else {
+                    bool usesLut = Projection == LightProjection.LUT && hasProjectionSource;
+                    bool usesCustom = Projection == LightProjection.Custom && hasProjectionSource;
+                    PointLightVolumeInstance.SetLightSourceSize(usesLut ? Range : LightSourceSize);
+                    if (usesCustom) PointLightVolumeInstance.SetCustomTexture();
+                    else if (usesLut) PointLightVolumeInstance.SetLut();
+                    else PointLightVolumeInstance.SetParametric();
+                    if (Type == LightType.PointLight) PointLightVolumeInstance.SetPointLight();
+                    else if (Type == LightType.SpotLight) PointLightVolumeInstance.SetSpotLight(Angle, Falloff);
                 }
 
 #if UNITY_EDITOR
@@ -399,7 +346,6 @@ namespace VRCLightVolumes {
             _pointLightVolumeBehaviour.SetProgramVariable("ProjectionMode", GetProjectionMode());
             _pointLightVolumeBehaviour.SetProgramVariable("AutoUpdateCustomTexture", ShouldAutoUpdateCustomTexture());
             _pointLightVolumeBehaviour.SetProgramVariable("CustomTextureIsCubemap", IsProjectionTextureCubemap());
-            _pointLightVolumeBehaviour.SetProgramVariable("CustomTextureIsRenderTexture", IsProjectionTextureRenderTexture());
             _pointLightVolumeBehaviour.SetProgramVariable("CustomTextureHasDepthSlices", ProjectionTextureHasDepthSlices());
             _pointLightVolumeBehaviour.SetProgramVariable("ShadowMapTexture", GetShadowMapTexture());
             _pointLightVolumeBehaviour.SetProgramVariable("ShadowMapMaterial", ShadowMap as Material);
@@ -417,7 +363,6 @@ namespace VRCLightVolumes {
             PointLightVolumeInstance.ProjectionMode = GetProjectionMode();
             PointLightVolumeInstance.AutoUpdateCustomTexture = ShouldAutoUpdateCustomTexture();
             PointLightVolumeInstance.CustomTextureIsCubemap = IsProjectionTextureCubemap();
-            PointLightVolumeInstance.CustomTextureIsRenderTexture = IsProjectionTextureRenderTexture();
             PointLightVolumeInstance.CustomTextureHasDepthSlices = ProjectionTextureHasDepthSlices();
             PointLightVolumeInstance.ShadowMapTexture = GetShadowMapTexture();
             PointLightVolumeInstance.ShadowMapMaterial = ShadowMap as Material;
@@ -485,6 +430,11 @@ namespace VRCLightVolumes {
             return Mathf.Max(Mathf.Sqrt(ComputePointLightSquaredBoundingSphere(Color, Intensity, size, cutoff)), 0.0001f);
         }
 
+        // Returns the editor-defined near clip used by the shadow map bake
+        public float GetShadowNearClip() {
+            return Mathf.Max(NearPlane, 0.0001f);
+        }
+
         // Returns the same average lossy scale approximation used by PointLightVolumeInstance
         private float GetAverageLossyScale() {
             Vector3 scale = transform.lossyScale;
@@ -527,10 +477,11 @@ namespace VRCLightVolumes {
         // Bakes or re-bakes the shadow map for this light
         public bool BakeShadowMap(string infoString, bool regenerateArray) {
             SetupDependencies();
+            SyncUdonScript(false);
             float farClip = GetShadowFarClip();
             int resolution = LightVolumeSetup != null ? (int)LightVolumeSetup.ShadowResolution : 128;
-            TextureFormat format = LightVolumeSetup != null ? LightVolumeSetup.GetShadowMapBakeFormat() : TextureFormat.RHalf;
-            Cubemap cubemap = PointLightShadowBaker.BakeShadowMap(this, resolution, farClip, format, infoString);
+            TextureFormat format = LightVolumeSetup != null ? LightVolumeSetup.GetShadowMapBakeFormat() : TextureFormat.RGBAFloat;
+            Cubemap cubemap = PointLightShadowBaker.BakeShadowMap(this, resolution, farClip, format, Blur, ContactHardening, infoString);
             if (cubemap == null) return false;
 
             string scenePath = UnityEngine.SceneManagement.SceneManager.GetActiveScene().path;
@@ -542,7 +493,7 @@ namespace VRCLightVolumes {
 
             ShadowMap = cubemap;
             PointLightVolumeInstance.ShadowBakePosition = transform.position;
-            PointLightVolumeInstance.ShadowBakeRotation = transform.rotation;
+            PointLightVolumeInstance.FarClip = farClip;
             _shadowMapPrev = ShadowMap;
             LVUtils.MarkDirty(this);
             LVUtils.MarkDirty(PointLightVolumeInstance);

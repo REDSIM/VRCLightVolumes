@@ -1,5 +1,5 @@
-
 using UnityEngine;
+using UnityEngine.Serialization;
 #if UDONSHARP
 using UdonSharp;
 using VRC.SDKBase;
@@ -15,63 +15,101 @@ namespace VRCLightVolumes {
     public class PointLightVolumeInstance : MonoBehaviour
 #endif
     {
-        [Tooltip("Point light volume color")]
-        [ColorUsage(showAlpha: false)] public Color Color;
-        [Tooltip("Color multiplies by this value.")]
-        public float Intensity = 1;
+        [Header("Light Setup")]
         [Tooltip("Defines whether this point light volume can be moved in runtime. Disabling this option slightly improves performance. Don't forget to enable \"Auto Update Volumes\" in your Light Volumes Setup to have this dynamic updates!")]
         public bool IsDynamic = false;
-        [Tooltip("For point light: XYZ = Position, W = Inverse squared range.\nFor spot light: XYZ = Position, W = Inverse squared range, negated.\nFor area light: XYZ = Position, W = Width.")]
-        public Vector4 PositionData;
-        [Tooltip("For point light: XYZW = Rotation quaternion.\nFor spot light: XYZ = Direction, W = Cone falloff.\nFor area light: XYZW = Rotation quaternion.")]
-        public Vector4 DirectionData;
+        [Tooltip("Point light volume shape. 0 = point, 1 = spot, 2 = area.")]
+        public int LightType = 0; // 0: point, 1: spot, 2: area
+        [Tooltip("Multiplies the point light volume's color by this value.")]
+        [ColorUsage(showAlpha: false)] public Color Color = Color.white;
+        [Tooltip("Brightness of the point light volume.")]
+        public float Intensity = 1f;
+
+        [Header("Position Data")]
+        [Tooltip("World-space position used by this point light volume.")]
+        public Vector3 Position = Vector3.zero;
+        [Tooltip("Light source size used by parametric point lights, parametric spot lights, cookies and cubemap projections.")]
+        [Min(0.0001f)] public float LightSourceSize = 1f;
+        [Tooltip("Inverse squared range used by LUT projection.")]
+        [Min(0)] public float InverseSquaredRange = 1f;
+        [Tooltip("Area light width in meters.")]
+        [Min(0.001f)] public float Width = 1f;
+
+        [Header("Direction Data")]
+        [Tooltip("World-space spotlight direction used by parametric and LUT spot lights.")]
+        public Vector3 Direction = Vector3.forward;
+        [Tooltip("Rotation used by area lights, cubemap projections and cookie projections.")]
+        public Quaternion Rotation = Quaternion.identity;
+        [Tooltip("Spotlight cone falloff multiplier used by parametric spot lights.")]
+        public float ConeFalloff = 1f;
+
+        [Header("Angle Data")]
         [Tooltip("Half-angle of the spotlight cone, in radians.")]
         public float Angle;
-        [Tooltip("For point light: unused.\nFor spot light: Cos of outer angle if no custom texture, tan of outer angle otherwise.\nFor area light: 2 + Height.")]
-        public float AngleData;
-        [Tooltip("Index of the shadow map used by this light. -1 means no shadow.")]
-        public float ShadowMapID = -1;
-        [Tooltip("Enables World Space Shadows using the bake position. Disable for Local Space Shadows that move and rotate with this light.")]
-        public bool WorldSpaceShadows = false;
-        [Tooltip("World-space bias in meters applied when comparing shaded points against this light's shadow map.")]
-        [Min(0)] public float ShadowBias = 0.03f;
-        [Tooltip("World-space smoothing radius in meters around this light's shadow bias threshold.")]
-        [Min(0)] public float ShadowBiasSmoothness = 0.02f;
-        [Tooltip("Multiplier for shadow PCF sampling sharpness. 1 keeps native shadow map sharpness, lower values make shadows softer.")]
-        [Range(0, 1)] public float ShadowSharpness = 1f;
-        [Tooltip("World-space position where the shadow map was baked.")]
-        public Vector3 ShadowBakePosition = Vector3.zero;
-        [Tooltip("World-space rotation where the shadow map was baked.")]
-        public Quaternion ShadowBakeRotation = Quaternion.identity;
-        [Tooltip("True if this Point Light Volume is registered in the Light Volume Manager array. Disabled objects can be unregistered and will register again on enable.")]
-        public bool IsInitialized = false;
+        [Tooltip("Cosine of the spotlight outer angle used by parametric and LUT spot lights.")]
+        public float OuterAngleCos = 1f;
+        [Tooltip("Tangent of the spotlight outer angle used by cookie projection.")]
+        public float OuterAngleTan = 0f;
+        [Tooltip("Area light height in meters.")]
+        [Min(0.001f)] public float Height = 1f;
+
+        [Header("Runtime State")]
         [Tooltip("Squared range after which light will be culled. Should be recalculated by executing UpdateRange() method.")]
-        public float SquaredRange = 1;
+        public float SquaredRange = 1f;
         [Tooltip("Average squared lossy scale of the light. Light Source Size gets multiplied by it at the end. Updates with UpdateTransform() method.")]
-        public float SquaredScale = 1;
+        public float SquaredScale = 1f;
         [Tooltip("Reference to the Light Volume Manager. Needed for runtime initialization.")]
         public LightVolumeManager LightVolumeManager;
+
+        [Header("Projection Source")]
         [Tooltip("Texture source used by this light's active LUT, cookie or cubemap projection.")]
         public Texture CustomTexture;
         [Tooltip("Material source used by this light's active LUT, cookie or cubemap projection.")]
         public Material CustomTextureMaterial;
         [Tooltip("Projection source type used by this light. 0 = none, 1 = texture, 2 = material.")]
         public int ProjectionType = 0; // 0: none, 1: texture, 2: material
+        [Tooltip("Projection mode used by this light. 0 = parametric, 1 = LUT, 2 = custom cookie or cubemap.")]
+        public int ProjectionMode = 0; // 0: parametric, 1: LUT, 2: custom cookie or cubemap
         [Tooltip("Updates this light's custom texture slice every frame.")]
         public bool AutoUpdateCustomTexture = false;
 
-        // Internal projection metadata copied from the authoring PointLightVolume
-        [HideInInspector] public bool CustomTextureIsCubemap = false;
-        [HideInInspector] public bool CustomTextureIsRenderTexture = false;
-        [HideInInspector] public bool CustomTextureHasDepthSlices = false;
-        [HideInInspector] public int ProjectionMode = 0; // 0: parametric, 1: LUT, 2: custom cookie or cubemap
-
+        [Header("Shadow Source")]
         [Tooltip("Texture source used by this light's shadow map.")]
         public Texture ShadowMapTexture;
         [Tooltip("Material source used by this light's shadow map.")]
         public Material ShadowMapMaterial;
-        [Tooltip("Updates this light's shadow map cubemap every frame.")]
+        [Tooltip("Updates this light's shadow map texture every frame.")]
         public bool AutoUpdateShadowMap = false;
+        [Tooltip("Index of the shadow map used by this light. -1 means no shadow.")]
+        public float ShadowMapID = -1f;
+        [Tooltip("Enables World Space Shadows using the bake position. Disable for Local Space Shadows that move and rotate with this light.")]
+        public bool WorldSpaceShadows = false;
+        [Tooltip("World-space position where the shadow map was baked.")]
+        public Vector3 ShadowBakePosition = Vector3.zero;
+
+        [Header("Shadow Bake Settings")]
+        [Tooltip("Layer mask used by the shadow bake camera. Only these layers can write into the shadow depth pass.")]
+        [FormerlySerializedAs("ShadowCullingMask")]
+        public int LayerMask = -1;
+        [Tooltip("Near clip plane used by the shadow bake camera. Higher values improve depth precision but clip nearby occluders.")]
+        [FormerlySerializedAs("ShadowNearClip")]
+        [Min(0.0001f)] public float NearClip = 0.01f;
+        [Tooltip("World-space bias in meters applied while baking this light's shadow map. Larger values reduce self-shadow artifacts, but can detach contact edges. Requires rebaking.")]
+        [FormerlySerializedAs("ShadowBias")]
+        [Min(0)] public float Bias = 0.03f;
+        [Tooltip("Far clip distance used when the EVSM shadow map was baked. 0 falls back to this light's current culling range.")]
+        [FormerlySerializedAs("ShadowFarClip")]
+        [Min(0)] public float FarClip = 0f;
+        [Tooltip("Editor-only Gaussian blur radius in shadow texels applied after baking. 0 keeps the baked shadow map unblurred.")]
+        [FormerlySerializedAs("ShadowBlur")]
+        [Min(0)] public float Blur = 1f;
+        [Tooltip("Hardens shadows near the contact areas. Can produce artefacts, so use with caution! Requires rebaking.")]
+        [FormerlySerializedAs("ShadowBlurDepth")]
+        [Range(0, 1)] public float ContactHardening = 0f;
+
+        // Internal projection metadata copied from the authoring PointLightVolume
+        [HideInInspector] public bool CustomTextureIsCubemap = false;
+        [HideInInspector] public bool CustomTextureHasDepthSlices = false;
 
         // Internal shadow source metadata copied from the authoring PointLightVolume
         [HideInInspector] public bool ShadowMapTextureIsCubemap = false;
@@ -116,7 +154,7 @@ namespace VRCLightVolumes {
                 LightVolumeManager = FindObjectOfType<LightVolumeManager>();
             }
 #endif
-            if (!IsInitialized && LightVolumeManager != null) {
+            if (LightVolumeManager != null) {
                 LightVolumeManager.InitializePointLightVolume(this);
             }
         }
@@ -137,17 +175,17 @@ namespace VRCLightVolumes {
 
         // Checks whether this instance is a spotlight
         public bool IsSpotLight() {
-            return PositionData.w < 0;
+            return LightType == 1; // 1: spot
         }
         
         // Checks whether this instance is a point light
         public bool IsPointLight() {
-            return PositionData.w >= 0 && AngleData <= 1.5;
+            return LightType == 0; // 0: point
         }
 
         // Checks whether this instance is an area light
         public bool IsAreaLight() {
-            return PositionData.w >= 0 && AngleData > 1.5;
+            return LightType == 2; // 2: area
         }
 
         // Checks whether this instance uses a custom texture
@@ -167,18 +205,16 @@ namespace VRCLightVolumes {
 
         // Sets light source size or range data for LUT mode
         public void SetLightSourceSize(float size) {
-            if (IsLut()) {
-                PositionData.w = Mathf.Sign(PositionData.w) / (size * size); // Preserve the previous sign. Inverse squared range
-            } else {
-                PositionData.w = Mathf.Sign(PositionData.w) * size * size; // Preserve the previous sign. Squared light size
-            }
+            float safeSize = Mathf.Max(Mathf.Abs(size), 0.0001f);
+            LightSourceSize = safeSize;
+            InverseSquaredRange = 1f / (safeSize * safeSize);
             MarkRangeDirtyAndUpdateVolumes();
         }
 
         // Sets LUT mode
         public void SetLut() {
             ProjectionMode = 1; // 1: LUT
-            AngleData = Mathf.Cos(Angle);
+            OuterAngleCos = Mathf.Cos(Angle);
             UpdateRotation();
             MarkRangeDirtyAndUpdateVolumes();
         }
@@ -195,7 +231,6 @@ namespace VRCLightVolumes {
             CustomTextureMaterial = null;
             ProjectionType = 0; // 0: none
             AutoUpdateCustomTexture = false;
-            CustomTextureIsRenderTexture = false;
             CustomTextureIsCubemap = false;
             CustomTextureHasDepthSlices = false;
 
@@ -203,7 +238,6 @@ namespace VRCLightVolumes {
                 ProjectionType = 1; // 1: texture
                 AutoUpdateCustomTexture = autoUpdate;
 
-                CustomTextureIsRenderTexture = autoUpdate;
                 if (isCubemap) {
                     int textureDimension = (int)texture.dimension;
                     if (textureDimension == 4) CustomTextureIsCubemap = true; // 4: TextureDimension.Cube
@@ -223,7 +257,6 @@ namespace VRCLightVolumes {
             CustomTextureMaterial = material;
             ProjectionType = 0; // 0: none
             AutoUpdateCustomTexture = false;
-            CustomTextureIsRenderTexture = false;
             CustomTextureIsCubemap = false;
             CustomTextureHasDepthSlices = false;
 
@@ -245,42 +278,47 @@ namespace VRCLightVolumes {
 
         // Sets the light into the point light type
         public void SetPointLight() {
-            PositionData.w = Mathf.Abs(PositionData.w);
+            LightType = 0; // 0: point
+            Position = transform.position;
             UpdateRotation();
             MarkRangeDirtyAndUpdateVolumes();
         }
 
         // Sets the light into the spotlight type with both angle and falloff because angle is required to determine falloff
         public void SetSpotLight(float angleDeg, float falloff) {
+            LightType = 1; // 1: spot
             Angle = angleDeg * Mathf.Deg2Rad * 0.5f;
             if (IsCustomTexture()) {
-                AngleData = Mathf.Tan(Angle); // Use custom texture projection
+                OuterAngleTan = Mathf.Tan(Angle);
             } else {
-                AngleData = Mathf.Cos(Angle);
-                DirectionData.w = 1 / (Mathf.Cos(Angle * (1.0f - Mathf.Clamp01(falloff))) - AngleData);
+                OuterAngleCos = Mathf.Cos(Angle);
+                ConeFalloff = 1f / (Mathf.Cos(Angle * (1.0f - Mathf.Clamp01(falloff))) - OuterAngleCos);
             }
-            PositionData.w = - Mathf.Abs(PositionData.w);
+            Position = transform.position;
             UpdateRotation();
             MarkRangeDirtyAndUpdateVolumes();
         }
 
         // Sets the light into the spotlight type with a specified angle
         public void SetSpotLight(float angleDeg) {
+            LightType = 1; // 1: spot
             Angle = angleDeg * Mathf.Deg2Rad * 0.5f;
             if (IsCustomTexture()) {
-                AngleData = Mathf.Tan(Angle); // Use custom texture projection
+                OuterAngleTan = Mathf.Tan(Angle);
             } else {
-                AngleData = Mathf.Cos(Angle);
+                OuterAngleCos = Mathf.Cos(Angle);
             }
-            PositionData.w = - Mathf.Abs(PositionData.w);
+            Position = transform.position;
             UpdateRotation();
             MarkRangeDirtyAndUpdateVolumes();
         }
         
         // Sets the light into the area light type
         public void SetAreaLight() {
-            PositionData.w = Mathf.Max(Mathf.Abs(transform.lossyScale.x), 0.001f);
-            AngleData = 2 + Mathf.Max(Mathf.Abs(transform.lossyScale.y), 0.001f); // Add 2 to move outside the [-1; 1] cosine codomain
+            LightType = 2; // 2: area
+            Position = transform.position;
+            Width = Mathf.Max(Mathf.Abs(transform.lossyScale.x), 0.001f);
+            Height = Mathf.Max(Mathf.Abs(transform.lossyScale.y), 0.001f);
             UpdateRotation();
             MarkRangeDirtyAndUpdateVolumes();
         }
@@ -314,14 +352,16 @@ namespace VRCLightVolumes {
         // Applies the internal custom projection mode without touching texture source fields
         private void SetCustomProjectionMode() {
             ProjectionMode = 2; // 2: custom cookie or cubemap
-            if(IsSpotLight()) AngleData = Mathf.Tan(Angle);
+            if (IsSpotLight()) {
+                OuterAngleTan = Mathf.Tan(Angle);
+            }
             UpdateRotation();
         }
 
         // Applies the internal parametric projection mode without touching texture source fields
         private void SetParametricMode() {
             ProjectionMode = 0; // 0: parametric
-            AngleData = Mathf.Cos(Angle);
+            OuterAngleCos = Mathf.Cos(Angle);
             UpdateRotation();
         }
 
@@ -353,32 +393,28 @@ namespace VRCLightVolumes {
 
         // Force update position
         public void UpdatePosition() {
-            Vector3 pos = transform.position;
-            PositionData = new Vector4(pos.x, pos.y, pos.z, PositionData.w);
+            Position = transform.position;
         }
         
         // Force update rotation
         public void UpdateRotation() {
             Quaternion rot = transform.rotation;
-            bool isAreaLight = PositionData.w >= 0 && AngleData > 1.5f;
-            bool isSpotLight = PositionData.w < 0;
-            if (isAreaLight) {
-                DirectionData = new Vector4(rot.x, rot.y, rot.z, rot.w);
-            } else if (isSpotLight && ProjectionMode != 2) { // Spot light without a cookie
-                Vector3 dir = transform.forward;
-                DirectionData = new Vector4(dir.x, dir.y, dir.z, DirectionData.w);
-            } else if (ProjectionMode != 0) { // If Point Light with a cubemap or a spot light with cookie
+            if (LightType == 2) { // 2: area
+                Rotation = rot;
+            } else if (LightType == 1 && ProjectionMode != 2) { // 1: spot, 2: custom cookie
+                Direction = transform.forward;
+            } else if (ProjectionMode != 0) { // 0: parametric; non-parametric point/cookie uses inverse rotation
                 rot = Quaternion.Inverse(rot);
-                DirectionData = new Vector4(rot.x, rot.y, rot.z, rot.w);
+                Rotation = rot;
             }
         }
 
         // Force update scale
         public void UpdateScale() {
             Vector3 lscale = transform.lossyScale;
-            if (PositionData.w >= 0 && AngleData > 1.5f) {
-                PositionData.w = Mathf.Max(Mathf.Abs(lscale.x), 0.001f);
-                AngleData = 2 + Mathf.Max(Mathf.Abs(lscale.y), 0.001f);
+            if (LightType == 2) { // 2: area
+                Width = Mathf.Max(Mathf.Abs(lscale.x), 0.001f);
+                Height = Mathf.Max(Mathf.Abs(lscale.y), 0.001f);
                 UpdateRotation();
             }
             SquaredScale = (lscale.x + lscale.y + lscale.z) / 3;
@@ -389,12 +425,12 @@ namespace VRCLightVolumes {
         // Recalculates squared culling range for the light
         public void UpdateRange() {
             float cutoff = LightVolumeManager != null ? LightVolumeManager.LightsBrightnessCutoff : 0.35f;
-            if (PositionData.w >= 0 && AngleData > 1.5f) { // Area light squared distance math
-                SquaredRange = ComputeAreaLightSquaredBoundingSphere(Mathf.Abs(SquaredScale / PositionData.w), AngleData - 2, Color, Intensity * Mathf.PI, cutoff);
-            } else if(ProjectionMode == 1) { // LUT uses regular squared range
-                SquaredRange = Mathf.Abs(SquaredScale / PositionData.w);
+            if (LightType == 2) { // 2: area
+                SquaredRange = ComputeAreaLightSquaredBoundingSphere(Mathf.Abs(SquaredScale / Width), Height, Color, Intensity * Mathf.PI, cutoff);
+            } else if (ProjectionMode == 1) { // 1: LUT
+                SquaredRange = Mathf.Abs(SquaredScale / InverseSquaredRange);
             } else { // Spot and Point light squared distance math
-                SquaredRange = ComputePointLightSquaredBoundingSphere(Color, Intensity, Mathf.Abs(SquaredScale * PositionData.w), cutoff);
+                SquaredRange = ComputePointLightSquaredBoundingSphere(Color, Intensity, Mathf.Abs(SquaredScale * LightSourceSize * LightSourceSize), cutoff);
             }
             IsRangeDirty = false;
         }

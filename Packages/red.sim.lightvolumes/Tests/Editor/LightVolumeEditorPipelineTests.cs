@@ -48,7 +48,6 @@ namespace VRCLightVolumes.Tests {
             pointLight.SyncUdonScript();
 
             Assert.That(instance.AutoUpdateCustomTexture, Is.True);
-            Assert.That(instance.CustomTextureIsRenderTexture, Is.True);
 
             pointLight.Cookie = CreateMaterial("Hidden/CubeFace");
             pointLight.SyncUdonScript();
@@ -86,18 +85,25 @@ namespace VRCLightVolumes.Tests {
             pointLight.Projection = PointLightVolume.LightProjection.Custom;
             pointLight.Cubemap = CreateRenderTexture("Animated Cubemap Source", 4, 4, 1, TextureDimension.Cube);
             pointLight.Shadows = true;
-            pointLight.ShadowSharpness = 0.42f;
+            pointLight.Bias = 0.42f;
+            pointLight.LayerMask = 1 << 6;
+            pointLight.NearPlane = 0.15f;
+            pointLight.Blur = 2.5f;
+            pointLight.ContactHardening = 0.08f;
             pointLight.ShadowMap = CreateRenderTexture("Animated Shadow Cubemap Source", 4, 4, 1, TextureDimension.Cube);
             instance.LightVolumeManager = manager;
 
             pointLight.SyncUdonScript();
 
             Assert.That(instance.CustomTextureIsCubemap, Is.True);
-            Assert.That(instance.CustomTextureIsRenderTexture, Is.True);
             Assert.That(instance.AutoUpdateCustomTexture, Is.True);
             Assert.That(instance.ShadowMapTextureIsCubemap, Is.True);
             Assert.That(instance.AutoUpdateShadowMap, Is.True);
-            Assert.That(instance.ShadowSharpness, Is.EqualTo(0.42f).Within(0.0001f));
+            Assert.That(instance.Bias, Is.EqualTo(0.42f).Within(0.0001f));
+            Assert.That(instance.LayerMask, Is.EqualTo(1 << 6));
+            Assert.That(instance.NearClip, Is.EqualTo(0.15f).Within(0.0001f));
+            Assert.That(instance.Blur, Is.EqualTo(2.5f).Within(0.0001f));
+            Assert.That(instance.ContactHardening, Is.EqualTo(0.08f).Within(0.0001f));
         }
 
         // Verifies the authoring Shadows toggle controls runtime shadow usage even when a shadow map asset exists.
@@ -120,6 +126,21 @@ namespace VRCLightVolumes.Tests {
             Assert.That((int)method.Invoke(pointLightVolume, null), Is.EqualTo(0));
         }
 
+        // Verifies editor-only shadow blur authoring data is routed through the bake API.
+        [Test]
+        public void PointLightVolumeShadowBlurUsesBakeOverload() {
+            GameObject gameObject = CreateGameObject("Shadow Blur Point Light Volume", false);
+            PointLightVolume pointLightVolume = gameObject.AddComponent<PointLightVolume>();
+            pointLightVolume.Blur = 2.5f;
+            pointLightVolume.ContactHardening = 0.08f;
+
+            MethodInfo method = typeof(PointLightShadowBaker).GetMethod("BakeShadowMapTextureArray", BindingFlags.Public | BindingFlags.Static, null, new[] { typeof(PointLightVolume), typeof(int), typeof(float), typeof(TextureFormat), typeof(float), typeof(float), typeof(string) }, null);
+
+            Assert.That(pointLightVolume.Blur, Is.EqualTo(2.5f).Within(0.0001f));
+            Assert.That(pointLightVolume.ContactHardening, Is.EqualTo(0.08f).Within(0.0001f));
+            Assert.That(method, Is.Not.Null);
+        }
+
         // Verifies manager-created runtime texture arrays are hidden from scene and asset serialization.
         [Test]
         public void RuntimeTextureArraysUseHideAndDontSave() {
@@ -135,7 +156,6 @@ namespace VRCLightVolumes.Tests {
             point.SetCustomTexture();
             point.CustomTexture = customSource;
             point.ProjectionType = 1; // 1: texture
-            point.CustomTextureIsRenderTexture = true;
             point.AutoUpdateCustomTexture = true;
             point.ShadowMapID = 0;
             point.ShadowMapTexture = shadowSource;
@@ -196,10 +216,12 @@ namespace VRCLightVolumes.Tests {
             point.Color = Color.white;
             point.Intensity = 1;
             point.IsDynamic = true;
-            point.PositionData = new Vector4(0, 0, 0, 1);
-            point.DirectionData = new Vector4(0, 0, 1, 1);
+            point.LightSourceSize = 1;
+            point.InverseSquaredRange = 1;
+            point.Direction = Vector3.forward;
+            point.ConeFalloff = 1;
             point.Angle = 30 * Mathf.Deg2Rad;
-            point.AngleData = Mathf.Cos(point.Angle);
+            point.OuterAngleCos = Mathf.Cos(point.Angle);
             gameObject.SetActive(active);
             if (active && manager != null) manager.InitializePointLightVolume(point);
             return point;

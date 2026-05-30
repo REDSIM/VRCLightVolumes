@@ -9,7 +9,9 @@ namespace VRCLightVolumes {
     public class PointLightVolumeEditor : Editor {
 
         PointLightVolume PointLightVolume;
-        private static readonly GUIContent _shadowMapContent = new GUIContent("Shadow Map", "Generated cubemap, RenderTexture, CustomRenderTexture or Material used by the shared shadow texture array.");
+        private static readonly GUIContent _shadowMapContent = new GUIContent("Shadow Map", "Generated EVSM Texture2DArray, cubemap, RenderTexture, CustomRenderTexture or Material used by the shared shadow texture array.");
+        private static readonly GUIContent _shadowLayerMaskContent = new GUIContent("Layer Mask", "Layer mask used by the shadow bake camera. Only these layers can write into the shadow depth pass.");
+        private static readonly GUIContent _shadowNearPlaneContent = new GUIContent("Near Plane", "Near clip plane used by the shadow bake camera. Higher values improve depth precision but clip nearby occluders.");
         private static readonly GUIContent _useWorldSpaceContent = new GUIContent("Use World Space", "Enables World Space Shadows using the bake position. Disable for Local Space Shadows that move and rotate with this light.");
         private static readonly GUIContent _bakeShadowsButtonContent = new GUIContent("Bake Shadows", "Bakes or re-bakes a shadow map for this light.");
         private static readonly GUIContent _falloffLutContent = new GUIContent("Falloff LUT", "Texture2D, RenderTexture, CustomRenderTexture or Material used by LUT projection.");
@@ -35,8 +37,11 @@ namespace VRCLightVolumes {
             hiddenFields.Add("ShadowMap");
             hiddenFields.Add("RebakeShadows");
             hiddenFields.Add("Bias");
-            hiddenFields.Add("BiasSmoothness");
-            hiddenFields.Add("ShadowSharpness");
+            hiddenFields.Add("LayerMask");
+            hiddenFields.Add("ObjectMask");
+            hiddenFields.Add("NearPlane");
+            hiddenFields.Add("Blur");
+            hiddenFields.Add("ContactHardening");
             hiddenFields.Add("UseWorldSpace");
             hiddenFields.Add("FalloffLUT");
             hiddenFields.Add("Cubemap");
@@ -80,15 +85,13 @@ namespace VRCLightVolumes {
             if (drawShadowFields) {
                 SerializedProperty shadowMapProperty = serializedObject.FindProperty("ShadowMap");
                 DrawTextureMaterialField(shadowMapProperty, _shadowMapContent, _cubemapMaterialHint, true);
-
-                if (shadowMapProperty.hasMultipleDifferentValues || shadowMapProperty.objectReferenceValue != null) {
-                    EditorGUILayout.PropertyField(serializedObject.FindProperty("Bias"));
-                    EditorGUILayout.PropertyField(serializedObject.FindProperty("BiasSmoothness"));
-                    EditorGUILayout.PropertyField(serializedObject.FindProperty("ShadowSharpness"));
-                    SerializedProperty useWorldSpaceProperty = serializedObject.FindProperty("UseWorldSpace");
-                    EditorGUILayout.PropertyField(useWorldSpaceProperty, _useWorldSpaceContent);
-                }
-
+                EditorGUILayout.PropertyField(serializedObject.FindProperty("LayerMask"), _shadowLayerMaskContent);
+                EditorGUILayout.PropertyField(serializedObject.FindProperty("ObjectMask"));
+                EditorGUILayout.PropertyField(serializedObject.FindProperty("NearPlane"), _shadowNearPlaneContent);
+                EditorGUILayout.PropertyField(serializedObject.FindProperty("Bias"));
+                EditorGUILayout.PropertyField(serializedObject.FindProperty("Blur"));
+                EditorGUILayout.PropertyField(serializedObject.FindProperty("ContactHardening"));
+                EditorGUILayout.PropertyField(serializedObject.FindProperty("UseWorldSpace"), _useWorldSpaceContent);
                 EditorGUILayout.PropertyField(serializedObject.FindProperty("RebakeShadows"));
 
                 if (GUILayout.Button(_bakeShadowsButtonContent)) {
@@ -99,6 +102,7 @@ namespace VRCLightVolumes {
                             pointLightVolume.BakeShadowMap();
                         }
                     }
+                    serializedObject.Update();
                 }
             }
 
@@ -204,7 +208,7 @@ namespace VRCLightVolumes {
         // Checks if an object can be used by the selected texture/material source field.
         private bool IsSupportedTextureMaterialSource(UnityEngine.Object value, bool isShadowSource) {
             if (value == null) return true;
-            if (isShadowSource) return value is Cubemap || value is RenderTexture || value is Material;
+            if (isShadowSource) return value is Texture2DArray || value is Cubemap || value is RenderTexture || value is Material;
             if (value is RenderTexture || value is Material) return true;
             if (PointLightVolume.Projection == PointLightVolume.LightProjection.LUT) return value is Texture;
             if (PointLightVolume.Projection == PointLightVolume.LightProjection.Custom && PointLightVolume.Type == PointLightVolume.LightType.PointLight) return value is Texture;

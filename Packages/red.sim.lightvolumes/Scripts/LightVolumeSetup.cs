@@ -34,6 +34,8 @@ namespace VRCLightVolumes {
         [Range(0.05f, 1f)] public float BrightnessCutoff = 0.35f;
         [Tooltip("Resolution used for per-light shadow maps.")]
         public TextureArrayResolution ShadowResolution = TextureArrayResolution._128x128;
+        [Tooltip("Precision used for baked EVSM shadow cubemaps and the runtime shadow texture array. Half is cheaper, Float reduces EVSM precision artifacts.")]
+        public ShadowTexturePrecision ShadowTextureFormat = ShadowTexturePrecision.Float;
 
         [Header("Baking")]
         [Tooltip("Bakery usually gives better results and works faster.")]
@@ -107,13 +109,12 @@ namespace VRCLightVolumes {
 
         public Baking _bakingModePrev;
 
-        public bool IsLegacyUVWConverted = false; // True once the legacy UVW fix has been applied
-
         private TextureArrayResolution _resolutionPrev = TextureArrayResolution._128x128;
         private TextureArrayResolution _shadowResolutionPrev = TextureArrayResolution._64x64;
+        private ShadowTexturePrecision _shadowTextureFormatPrev = ShadowTexturePrecision.Float;
 #if UNITY_EDITOR
         private EditorCoroutine _generateAtlasCoroutine = null;
-        private const string CubemapFaceMaterialPath = "Packages/red.sim.lightvolumes/Materials/LightVolumeCubemapFace.mat";
+        private const string CubemapFaceShaderName = "Hidden/CubeFace";
 #endif
         public void RefreshVolumesList() {
 
@@ -173,9 +174,21 @@ namespace VRCLightVolumes {
             ReinitializePointLightTextureArray(true);
         }
 
-        // Loads the shared material used to unwrap cubemap faces at runtime
+        // Creates or returns the manager-owned material used to unwrap cubemap faces at runtime
         private Material GetCubemapFaceMaterial() {
-            return AssetDatabase.LoadAssetAtPath<Material>(CubemapFaceMaterialPath);
+            if (LightVolumeManager == null) return null;
+            Material material = LightVolumeManager.CubemapFaceMaterial;
+            if (material != null && !AssetDatabase.Contains(material) && material.shader != null && material.shader.name == CubemapFaceShaderName) return material;
+
+            Shader shader = Shader.Find(CubemapFaceShaderName);
+            if (shader == null) return null;
+
+            material = new Material(shader) {
+                name = LightVolumeManager.name + "_CubemapFaceRuntime",
+                hideFlags = HideFlags.HideAndDontSave
+            };
+            LightVolumeManager.CubemapFaceMaterial = material;
+            return material;
         }
 
         // Rebuilds manager-owned shadow source caches and the runtime RenderTextureArray
@@ -195,6 +208,7 @@ namespace VRCLightVolumes {
             } else {
                 LightVolumeManager.ShadowTexturesWidth = (int)ShadowResolution;
                 LightVolumeManager.ShadowTexturesHeight = (int)ShadowResolution;
+                LightVolumeManager.ShadowTextureFormat = ShadowTextureFormat == ShadowTexturePrecision.Half ? 0 : 1;
             }
             LightVolumeManager.CubemapFaceMaterial = GetCubemapFaceMaterial();
 
@@ -338,7 +352,6 @@ namespace VRCLightVolumes {
         private void Update() {
             if (DontSync) return;
             SetupDependencies();
-            ConvertLegacyUVW();
             // Resetup required game objects and components for light volumes in new baking mode
             if (_bakingModePrev != BakingMode) {
                 _bakingModePrev = BakingMode;
@@ -352,8 +365,9 @@ namespace VRCLightVolumes {
                 _resolutionPrev = CookieResolution;
                 ReinitializeCustomTextures();
             }
-            if (_shadowResolutionPrev != ShadowResolution) {
+            if (_shadowResolutionPrev != ShadowResolution || _shadowTextureFormatPrev != ShadowTextureFormat) {
                 _shadowResolutionPrev = ShadowResolution;
+                _shadowTextureFormatPrev = ShadowTextureFormat;
                 ReinitializeShadowTextures();
             }
             if (!Application.isPlaying && LightVolumeManager != null) {
@@ -366,38 +380,6 @@ namespace VRCLightVolumes {
                 }
             }
         }
-
-        // Try to convert Legacy UVW data into a new compact data format
-        private void ConvertLegacyUVW() {
-
-            if (IsLegacyUVWConverted || LVUtils.IsInPrefabAsset(this) || LightVolumes.Count == 0) return;
-
-            for (int i = 0; i < LightVolumes.Count; i++) {
-
-                if (LightVolumes[i] == null) continue;
-                var lightVolumeInstance = LightVolumes[i].LightVolumeInstance;
-                if (lightVolumeInstance == null) continue;
-                if(lightVolumeInstance.BoundsUvwMin0.w != 0 && lightVolumeInstance.BoundsUvwMin1.w != 0 && lightVolumeInstance.BoundsUvwMin2.w != 0) {
-                    continue; // This is already NOT Legacy UVW, skip
-                }
-
-                Vector3 scale = lightVolumeInstance.BoundsUvwMax0 - lightVolumeInstance.BoundsUvwMin0;
-                Vector3 uvwMin0 = lightVolumeInstance.BoundsUvwMin0;
-                Vector3 uvwMin1 = lightVolumeInstance.BoundsUvwMin1;
-                Vector3 uvwMin2 = lightVolumeInstance.BoundsUvwMin2;
-
-                lightVolumeInstance.BoundsUvwMin0 = new Vector4(uvwMin0.x, uvwMin0.y, uvwMin0.z, scale.x);
-                lightVolumeInstance.BoundsUvwMin1 = new Vector4(uvwMin1.x, uvwMin1.y, uvwMin1.z, scale.y);
-                lightVolumeInstance.BoundsUvwMin2 = new Vector4(uvwMin2.x, uvwMin2.y, uvwMin2.z, scale.z);
-
-                LVUtils.MarkDirty(lightVolumeInstance);
-            }
-
-            IsLegacyUVWConverted = true;
-
-        }
-
-        
 
         // Generates atlas and setups udon script
         public void GenerateAtlas() {
@@ -448,20 +430,11 @@ namespace VRCLightVolumes {
                         lightVolumeBehaviour.SetProgramVariable("BoundsUvwMin1", new Vector4(uvwMin1.x, uvwMin1.y, uvwMin1.z, scale.y));
                         lightVolumeBehaviour.SetProgramVariable("BoundsUvwMin2", new Vector4(uvwMin2.x, uvwMin2.y, uvwMin2.z, scale.z));
 
-                        lightVolumeBehaviour.SetProgramVariable("BoundsUvwMax0", (Vector4) atlas.BoundsUvwMax[atlasIndex]);
-                        lightVolumeBehaviour.SetProgramVariable("BoundsUvwMax1", (Vector4) atlas.BoundsUvwMax[atlasIndex + 1]);
-                        lightVolumeBehaviour.SetProgramVariable("BoundsUvwMax2", (Vector4) atlas.BoundsUvwMax[atlasIndex + 2]);
-
                     } else {
 #endif
                         lightVolumeInstance.BoundsUvwMin0 = new Vector4(uvwMin0.x, uvwMin0.y, uvwMin0.z, scale.x);
                         lightVolumeInstance.BoundsUvwMin1 = new Vector4(uvwMin1.x, uvwMin1.y, uvwMin1.z, scale.y);
                         lightVolumeInstance.BoundsUvwMin2 = new Vector4(uvwMin2.x, uvwMin2.y, uvwMin2.z, scale.z);
-
-                        // Legacy
-                        lightVolumeInstance.BoundsUvwMax0 = (Vector4) atlas.BoundsUvwMax[atlasIndex];
-                        lightVolumeInstance.BoundsUvwMax1 = (Vector4) atlas.BoundsUvwMax[atlasIndex + 1];
-                        lightVolumeInstance.BoundsUvwMax2 = (Vector4) atlas.BoundsUvwMax[atlasIndex + 2];
 #if UDONSHARP
                     }
 #endif
@@ -542,6 +515,7 @@ namespace VRCLightVolumes {
         private void SyncShadowTextureMetadataToUdon() {
             SyncManagerProgramVariable("ShadowTexturesWidth", LightVolumeManager.ShadowTexturesWidth);
             SyncManagerProgramVariable("ShadowTexturesHeight", LightVolumeManager.ShadowTexturesHeight);
+            SyncManagerProgramVariable("ShadowTextureFormat", LightVolumeManager.ShadowTextureFormat);
             SyncManagerProgramVariable("CubemapFaceMaterial", LightVolumeManager.CubemapFaceMaterial);
         }
 
@@ -585,12 +559,14 @@ namespace VRCLightVolumes {
                 _lightVolumeManagerBehaviour.SetProgramVariable("LightsBrightnessCutoff", BrightnessCutoff);
                 _lightVolumeManagerBehaviour.SetProgramVariable("ShadowTexturesWidth", (int)ShadowResolution);
                 _lightVolumeManagerBehaviour.SetProgramVariable("ShadowTexturesHeight", (int)ShadowResolution);
+                _lightVolumeManagerBehaviour.SetProgramVariable("ShadowTextureFormat", ShadowTextureFormat == ShadowTexturePrecision.Half ? 0 : 1);
                 _lightVolumeManagerBehaviour.SetProgramVariable("ForceSceneLighting", ForceSceneLighting);
 #if UNITY_EDITOR
                 LightVolumeManager.CustomTexturesWidth = (int)CookieResolution;
                 LightVolumeManager.CustomTexturesHeight = (int)CookieResolution;
                 LightVolumeManager.ShadowTexturesWidth = (int)ShadowResolution;
                 LightVolumeManager.ShadowTexturesHeight = (int)ShadowResolution;
+                LightVolumeManager.ShadowTextureFormat = ShadowTextureFormat == ShadowTexturePrecision.Half ? 0 : 1;
                 LightVolumeManager.CubemapFaceMaterial = GetCubemapFaceMaterial();
 #endif
                 SyncBaseTextureMetadataToUdon();
@@ -625,6 +601,7 @@ namespace VRCLightVolumes {
                 LightVolumeManager.LightsBrightnessCutoff = BrightnessCutoff;
                 LightVolumeManager.ShadowTexturesWidth = (int)ShadowResolution;
                 LightVolumeManager.ShadowTexturesHeight = (int)ShadowResolution;
+                LightVolumeManager.ShadowTextureFormat = ShadowTextureFormat == ShadowTexturePrecision.Half ? 0 : 1;
                 LightVolumeManager.ForceSceneLighting = ForceSceneLighting;
 #if UNITY_EDITOR
                 LightVolumeManager.CustomTexturesWidth = (int)CookieResolution;
@@ -920,9 +897,9 @@ namespace VRCLightVolumes {
         }
 #endif
 
-        // Returns the fixed texture format used for baked shadow map cubemaps
+        // Returns the fixed texture format used for baked EVSM shadow map cubemaps
         public TextureFormat GetShadowMapBakeFormat() {
-            return TextureFormat.RHalf;
+            return ShadowTextureFormat == ShadowTexturePrecision.Half ? TextureFormat.RGBAHalf : TextureFormat.RGBAFloat;
         }
 
         // Bakes all requested per-light shadow maps
@@ -953,6 +930,11 @@ namespace VRCLightVolumes {
             _512x512 = 512,
             _1024x1024 = 1024,
             _2048x2048 = 2048
+        }
+
+        public enum ShadowTexturePrecision {
+            Half = 0,
+            Float = 1
         }
 
         public enum Downscale {

@@ -53,7 +53,6 @@ Shader "Light Volume Samples/Light Volume Debugger" {
         float4 _DebugAdditiveBoundsColor;
         float4 _DebugAreaLightRectColor;
         sampler2D _DebugLightIcon;
-
         // Inverts a 3x3 matrix stored as rows.
         float3x3 LVDebugInverse3x3(float3x3 m) {
             float3 row0 = m[0];
@@ -109,22 +108,18 @@ Shader "Light Volume Samples/Light Volume Debugger" {
         }
 
         // Resolves the manually selected volume or the highest-weight volume containing the camera.
-        uint LVDebugResolveVolumeID() {
-            uint volumeCount = min((uint)_UdonLightVolumeCount, (uint)VRCLV_MAX_VOLUMES_COUNT);
+        uint LVDebugResolveVolumeID(uint volumeCount) {
             uint manualID = LVDebugClampVolumeID(_DebugVolumeID, volumeCount);
             if (volumeCount == 0u || _DebugAutoVolumeID <= 0.5) return manualID;
 
             uint additiveCount = min((uint)_UdonLightVolumeAdditiveCount, volumeCount);
             float3 cameraPosition = _WorldSpaceCameraPos;
 
-            [loop] for (uint id = 0u; id < (uint)VRCLV_MAX_VOLUMES_COUNT; id++) {
-                if (id < additiveCount) continue;
-                if (id >= volumeCount) break;
+            [loop] for (uint id = additiveCount; id < volumeCount; id++) {
                 if (LVDebugIsPointInsideVolume(id, cameraPosition)) return id;
             }
 
-            [loop] for (uint additiveID = 0u; additiveID < (uint)VRCLV_MAX_VOLUMES_COUNT; additiveID++) {
-                if (additiveID >= additiveCount) break;
+            [loop] for (uint additiveID = 0u; additiveID < additiveCount; additiveID++) {
                 if (LVDebugIsPointInsideVolume(additiveID, cameraPosition)) return additiveID;
             }
 
@@ -387,13 +382,10 @@ Shader "Light Volume Samples/Light Volume Debugger" {
                 _UdonLightVolume.GetDimensions(atlasWidth, atlasHeight, atlasDepth);
 
                 uint uvwID = volumeID * 3u;
-                float3 islandScale = float3(
-                    _UdonLightVolumeUvwScale[uvwID].w,
-                    _UdonLightVolumeUvwScale[uvwID + 1u].w,
-                    _UdonLightVolumeUvwScale[uvwID + 2u].w
-                );
+                float3 islandScale = float3(_UdonLightVolumeUvwScale[uvwID].w, _UdonLightVolumeUvwScale[uvwID + 1u].w, _UdonLightVolumeUvwScale[uvwID + 2u].w);
+
                 float3 atlasResolution = float3((float)atlasWidth, (float)atlasHeight, (float)atlasDepth);
-                return (int3)max(round(islandScale * atlasResolution), float3(1.0, 1.0, 1.0));
+                return (int3)max(round(abs(islandScale) * atlasResolution), float3(1.0, 1.0, 1.0));
             }
 
             // Places each generated mesh card on a near-to-far voxel center of the selected runtime Light Volume.
@@ -405,10 +397,13 @@ Shader "Light Volume Samples/Light Volume Debugger" {
                 DisableVolumeVertex(o);
 
                 if (LVDebugResolveDrawMode() != LVDEBUG_MODE_SELECTED_VOLUME) return o;
+                if (_DebugSphereRadius <= 0.0 || _DebugVisibleFraction <= 0.0) return o;
 
-                uint volumeID = LVDebugResolveVolumeID();
                 uint volumeCount = min((uint)_UdonLightVolumeCount, (uint)VRCLV_MAX_VOLUMES_COUNT);
-                if (_UdonLightVolumeEnabled <= 0.0 || volumeID >= volumeCount) return o;
+                if (_UdonLightVolumeEnabled <= 0.0 || volumeCount == 0u) return o;
+
+                uint volumeID = LVDebugResolveVolumeID(volumeCount);
+                if (volumeID >= volumeCount) return o;
 
                 uint cardId = (uint)floor(v.cardData.x + 0.5);
                 uint meshCardCount = (uint)floor(max(max(v.cardData.y, _DebugMeshCardCount), 1.0) + 0.5);
@@ -436,8 +431,8 @@ Shader "Light Volume Samples/Light Volume Debugger" {
                 if (sphereRadiusWS <= 0.0 || mul(UNITY_MATRIX_V, float4(centerWS, 1.0)).z > sphereRadiusWS) return o;
 
                 float2 disc = v.posOS.xy;
-                float3 cameraRightWS = normalize(unity_CameraToWorld._m00_m10_m20);
-                float3 cameraUpWS = normalize(unity_CameraToWorld._m01_m11_m21);
+                float3 cameraRightWS = unity_CameraToWorld._m00_m10_m20;
+                float3 cameraUpWS = unity_CameraToWorld._m01_m11_m21;
                 float3 posWS = centerWS + (cameraRightWS * disc.x + cameraUpWS * disc.y) * sphereRadiusWS;
 
                 o.posCS = UnityWorldToClipPos(posWS);
@@ -458,8 +453,8 @@ Shader "Light Volume Samples/Light Volume Debugger" {
                 clip(1.0 - radiusSq);
 
                 half sphereZ = (half)sqrt(saturate(1.0 - radiusSq));
-                half3 cameraRightWS = (half3)normalize(unity_CameraToWorld._m00_m10_m20);
-                half3 cameraUpWS = (half3)normalize(unity_CameraToWorld._m01_m11_m21);
+                half3 cameraRightWS = (half3)unity_CameraToWorld._m00_m10_m20;
+                half3 cameraUpWS = (half3)unity_CameraToWorld._m01_m11_m21;
                 half3 viewDirWS = (half3)normalize(UnityWorldSpaceViewDir(i.centerWS));
                 half3 normalWS = normalize(cameraRightWS * (half)disc.x + cameraUpWS * (half)disc.y + viewDirWS * sphereZ);
 
@@ -551,8 +546,8 @@ Shader "Light Volume Samples/Light Volume Debugger" {
             // Expands a camera-facing quad centered in world space.
             float3 BuildBillboardQuadPosition(float3 centerWS, float2 quad) {
                 float halfSize = max(_DebugLightIconSize, 0.0) * 0.5;
-                float3 cameraRightWS = normalize(unity_CameraToWorld._m00_m10_m20);
-                float3 cameraUpWS = normalize(unity_CameraToWorld._m01_m11_m21);
+                float3 cameraRightWS = unity_CameraToWorld._m00_m10_m20;
+                float3 cameraUpWS = unity_CameraToWorld._m01_m11_m21;
                 return centerWS + (cameraRightWS * quad.x + cameraUpWS * quad.y) * halfSize;
             }
 
@@ -563,11 +558,16 @@ Shader "Light Volume Samples/Light Volume Debugger" {
                 float3 edgeDirectionWS = edgeVectorWS / edgeLength;
                 float3 edgeCenterWS = (edgeStartWS + edgeEndWS) * 0.5;
 
-                float3 cameraRightWS = normalize(unity_CameraToWorld._m00_m10_m20);
-                float3 cameraUpWS = normalize(unity_CameraToWorld._m01_m11_m21);
-                float3 viewDirectionWS = LVDebugSafeNormalize(_WorldSpaceCameraPos - edgeCenterWS, -normalize(unity_CameraToWorld._m02_m12_m22));
+                float3 cameraRightWS = unity_CameraToWorld._m00_m10_m20;
+                float3 cameraUpWS = unity_CameraToWorld._m01_m11_m21;
+                float3 viewDirectionWS = LVDebugSafeNormalize(_WorldSpaceCameraPos - edgeCenterWS, -unity_CameraToWorld._m02_m12_m22);
                 float3 sideDirectionWS = cross(viewDirectionWS, edgeDirectionWS);
-                sideDirectionWS = LVDebugSafeNormalize(sideDirectionWS, LVDebugSafeNormalize(cross(cameraUpWS, edgeDirectionWS), cameraRightWS));
+                float sideLengthSq = dot(sideDirectionWS, sideDirectionWS);
+                if (sideLengthSq > 1e-8) {
+                    sideDirectionWS *= rsqrt(sideLengthSq);
+                } else {
+                    sideDirectionWS = LVDebugSafeNormalize(cross(cameraUpWS, edgeDirectionWS), cameraRightWS);
+                }
 
                 float halfThickness = max(_DebugBoundsThickness, 0.0) * 0.5;
                 float halfLength = edgeLength * 0.5 + halfThickness;
@@ -575,24 +575,26 @@ Shader "Light Volume Samples/Light Volume Debugger" {
             }
 
             // Builds one selected-volume or all-volume bounds edge.
-            bool TryBuildVolumeBoundsCard(uint cardID, float2 quad, out float3 posWS, out half4 color) {
+            bool TryBuildVolumeBoundsCard(uint cardID, float2 quad, int drawMode, out float3 posWS, out half4 color) {
                 posWS = 0.0;
                 color = 0.0;
                 if (_DebugBoundsThickness <= 0.0) return false;
 
                 uint volumeCount = min((uint)_UdonLightVolumeCount, (uint)VRCLV_MAX_VOLUMES_COUNT);
-                uint additiveCount = min((uint)_UdonLightVolumeAdditiveCount, volumeCount);
                 if (_UdonLightVolumeEnabled <= 0.0 || volumeCount == 0u) return false;
 
-                uint volumeID = LVDebugResolveVolumeID();
+                uint volumeID = 0u;
                 uint edgeID = cardID;
-                if (LVDebugResolveDrawMode() == LVDEBUG_MODE_ALL_VOLUME_BOUNDS) {
+                if (drawMode == LVDEBUG_MODE_ALL_VOLUME_BOUNDS) {
                     volumeID = cardID / LVDEBUG_BOUNDS_EDGE_COUNT;
                     edgeID = cardID - volumeID * LVDEBUG_BOUNDS_EDGE_COUNT;
+                } else {
+                    volumeID = LVDebugResolveVolumeID(volumeCount);
                 }
 
                 if (volumeID >= volumeCount || edgeID >= LVDEBUG_BOUNDS_EDGE_COUNT) return false;
 
+                uint additiveCount = min((uint)_UdonLightVolumeAdditiveCount, volumeCount);
                 color = (half4)(volumeID < additiveCount ? _DebugAdditiveBoundsColor : _DebugRegularBoundsColor);
                 if (color.a <= 0.0) return false;
 
@@ -619,24 +621,25 @@ Shader "Light Volume Samples/Light Volume Debugger" {
                 LV_QuaternionAxes(rotation, xAxis, yAxis, normal);
 
                 float2 halfSize = max(size, float2(0.0, 0.0)) * 0.5;
-                float3 leftBottom = centerWS - xAxis * halfSize.x - yAxis * halfSize.y;
-                float3 rightBottom = centerWS + xAxis * halfSize.x - yAxis * halfSize.y;
-                float3 leftTop = centerWS - xAxis * halfSize.x + yAxis * halfSize.y;
-                float3 rightTop = centerWS + xAxis * halfSize.x + yAxis * halfSize.y;
+                float2 startXY;
+                float2 endXY;
 
                 if (edgeID == 0u) {
-                    edgeStartWS = leftBottom;
-                    edgeEndWS = rightBottom;
+                    startXY = float2(-halfSize.x, -halfSize.y);
+                    endXY = float2(halfSize.x, -halfSize.y);
                 } else if (edgeID == 1u) {
-                    edgeStartWS = rightBottom;
-                    edgeEndWS = rightTop;
+                    startXY = float2(halfSize.x, -halfSize.y);
+                    endXY = halfSize;
                 } else if (edgeID == 2u) {
-                    edgeStartWS = rightTop;
-                    edgeEndWS = leftTop;
+                    startXY = halfSize;
+                    endXY = float2(-halfSize.x, halfSize.y);
                 } else {
-                    edgeStartWS = leftTop;
-                    edgeEndWS = leftBottom;
+                    startXY = float2(-halfSize.x, halfSize.y);
+                    endXY = -halfSize;
                 }
+
+                edgeStartWS = centerWS + xAxis * startXY.x + yAxis * startXY.y;
+                edgeEndWS = centerWS + xAxis * endXY.x + yAxis * endXY.y;
             }
 
             // Builds either a shared light icon or one of an area light's four rectangle outline edges.
@@ -688,7 +691,7 @@ Shader "Light Volume Samples/Light Volume Debugger" {
                 int drawMode = LVDebugResolveDrawMode();
 
                 if (drawMode == LVDEBUG_MODE_SELECTED_VOLUME || drawMode == LVDEBUG_MODE_ALL_VOLUME_BOUNDS) {
-                    valid = TryBuildVolumeBoundsCard(cardID, quad, posWS, color);
+                    valid = TryBuildVolumeBoundsCard(cardID, quad, drawMode, posWS, color);
                 } else if (drawMode == LVDEBUG_MODE_ALL_LIGHTS) {
                     valid = TryBuildLightCard(cardID, quad, posWS, color, overlayType);
                 }

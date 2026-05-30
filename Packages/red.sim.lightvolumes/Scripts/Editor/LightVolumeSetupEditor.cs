@@ -19,6 +19,7 @@ namespace VRCLightVolumes {
         private bool _isMultipleInstancesError = false;
         private static readonly GUIContent _cookieResolutionContent = new GUIContent("Cookie Resolution", "Resolution used for point light cookie, LUT and cubemap projection textures.");
         private static readonly GUIContent _shadowResolutionContent = new GUIContent("Shadow Resolution", "Resolution used for per-light shadow maps.");
+        private static readonly GUIContent _shadowTextureFormatContent = new GUIContent("Shadow Texture Format", "Precision used for baked EVSM shadow cubemaps and the runtime shadow texture array. Half is cheaper, Float reduces EVSM precision artifacts.");
         private static readonly GUIContent _brightnessCutoffContent = new GUIContent("Brightness Cutoff", "The minimum brightness at a point due to lighting from a Point Light Volume, before the light is culled.");
 
         private void OnEnable() {
@@ -265,7 +266,10 @@ namespace VRCLightVolumes {
                 if (customTexturesRT != null) vramBytes += (ulong)customTexturesRT.width * (ulong)customTexturesRT.height * (ulong)Mathf.Max(customTexturesRT.volumeDepth, 1) * 8;
 
                 RenderTexture shadowTexturesRT = manager.ShadowTextures;
-                if (shadowTexturesRT != null) vramBytes += (ulong)shadowTexturesRT.width * (ulong)shadowTexturesRT.height * (ulong)Mathf.Max(shadowTexturesRT.volumeDepth, 1) * 2;
+                if (shadowTexturesRT != null) {
+                    ulong shadowBytesPerPixel = shadowTexturesRT.format == RenderTextureFormat.ARGBHalf ? 8UL : 16UL;
+                    vramBytes += (ulong)shadowTexturesRT.width * (ulong)shadowTexturesRT.height * (ulong)Mathf.Max(shadowTexturesRT.volumeDepth, 1) * shadowBytesPerPixel * 4 / 3;
+                }
             }
 
             GUILayout.Label(new GUIContent($"Data size in VRAM: {SizeInVRAM(vramBytes)} MB", "Includes only the Light Volume 3D atlas, cookie texture arrays and shadow map arrays."));
@@ -273,10 +277,11 @@ namespace VRCLightVolumes {
 
             GUILayout.Space(10);
 
-            List<string> hiddenFields = new List<string>() { "m_Script", "LightVolumes", "PointLightVolumes", "LightVolumesWeights", "LightVolumeAtlas", "LightVolumeDataList", "LightVolumeManager", "_bakingModePrev", "IsLegacyUVWConverted" };
+            List<string> hiddenFields = new List<string>() { "m_Script", "LightVolumes", "PointLightVolumes", "LightVolumesWeights", "LightVolumeAtlas", "LightVolumeDataList", "LightVolumeManager", "_bakingModePrev" };
             hiddenFields.Add("CookieResolution");
             hiddenFields.Add("BrightnessCutoff");
             hiddenFields.Add("ShadowResolution");
+            hiddenFields.Add("ShadowTextureFormat");
             hiddenFields.Add("AtlasPostProcessors");
             int plvCount = _lightVolumeSetup.PointLightVolumes.Count;
             bool isShadow = false;
@@ -308,6 +313,7 @@ namespace VRCLightVolumes {
                 EditorGUILayout.PropertyField(serializedObject.FindProperty("CookieResolution"), _cookieResolutionContent);
                 if (isShadow) {
                     EditorGUILayout.PropertyField(serializedObject.FindProperty("ShadowResolution"), _shadowResolutionContent);
+                    EditorGUILayout.PropertyField(serializedObject.FindProperty("ShadowTextureFormat"), _shadowTextureFormatContent);
                 }
                 EditorGUILayout.PropertyField(serializedObject.FindProperty("BrightnessCutoff"), _brightnessCutoffContent);
             }

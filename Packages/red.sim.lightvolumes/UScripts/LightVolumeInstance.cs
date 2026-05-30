@@ -13,44 +13,39 @@ namespace VRCLightVolumes {
 #endif
     {
 
-        [Tooltip("Changing the color is useful for animating Additive volumes. You can even control the R, G, B channels separately this way.")]
-        [ColorUsage(showAlpha: false)] public Color Color = Color.white;
-        [Tooltip("Color multiplies by this value.")]
-        public float Intensity = 1;
-        [Tooltip("Defines whether this volume can be moved in runtime. Disabling this option slightly improves performance. You can even change it in runtime. Don't forget to enable \"Auto Update Volumes\" in your Light Volumes Setup to have this dynamic updates!")]
+        [Header("Volume Setup")]
+        [Tooltip("Defines whether this volume can be moved in runtime. Disabling this option slightly improves performance. Don't forget to enable \"Auto Update Volumes\" in your Light Volumes Setup to have this dynamic updates!")]
         public bool IsDynamic = false;
-        [Tooltip("Additive volumes apply their light on top of others as an overlay. Useful for movable lights like flashlights, projectors, disco balls, etc. They can also project light onto static lightmapped objects if the surface shader supports it.")]
+        [Tooltip("Additive volumes apply their light on top of others as an overlay. Useful for movable and togglable lights. They can also project light onto static lightmapped objects if the surface shader supports it.")]
         public bool IsAdditive = false;
-        [Tooltip("Inverse rotation of the pose the volume was baked in. Automatically recalculated for dynamic volumes with auto-update, or manually via the UpdateRotation() method.")]
-        public Quaternion InvBakedRotation = Quaternion.identity;
-        [Space]
+        [Tooltip("Multiplies the volume's color by this value.")]
+        [ColorUsage(showAlpha: false)] public Color Color = Color.white;
+        [Tooltip("Brightness of the volume.")]
+        public float Intensity = 1f;
+        [Tooltip("Inversed edge smoothing in 3D atlas space. Recalculates via SetSmoothBlending(float radius) method.")]
+        public Vector4 InvLocalEdgeSmoothing = new Vector4();
+
+        [Header("Atlas Data")]
         [Tooltip("Min bounds of Texture0 in 3D atlas space. W stores Scale X.)")]
         public Vector4 BoundsUvwMin0 = new Vector4();
         [Tooltip("Min bounds of Texture1 in 3D atlas space. W stores Scale Y.")]
         public Vector4 BoundsUvwMin1 = new Vector4();
         [Tooltip("Min bounds of Texture2 in 3D atlas space. W stores Scale Z.")]
         public Vector4 BoundsUvwMin2 = new Vector4();
-        [Tooltip("Max bounds of Texture0 in 3D atlas space. (Legacy)")]
-        public Vector4 BoundsUvwMax0 = new Vector4();
-        [Tooltip("Max bounds of Texture1 in 3D atlas space. (Legacy)")]
-        public Vector4 BoundsUvwMax1 = new Vector4();
-        [Tooltip("Max bounds of Texture2 in 3D atlas space. (Legacy)")]
-        public Vector4 BoundsUvwMax2 = new Vector4();
-        [Space]
-        [Tooltip("Inversed edge smoothing in 3D atlas space. Recalculates via SetSmoothBlending(float radius) method.")]
-        public Vector4 InvLocalEdgeSmoothing = new Vector4();
+
+        [Header("Transform Data")]
+        [Tooltip("Inverse rotation of the pose the volume was baked in. Automatically recalculated for dynamic volumes with auto-update, or manually via the UpdateRotation() method.")]
+        public Quaternion InvBakedRotation = Quaternion.identity;
         [Tooltip("Inversed TRS matrix of this volume that transforms it into the 1x1x1 cube. Recalculates via the UpdateRotation() method.")]
         public Matrix4x4 InvWorldMatrix = Matrix4x4.identity;
-        [Tooltip("Current volume's rotation relative to the rotation it was baked with. Mandatory for dynamic volumes. Recalculates via the UpdateRotation() method.")]
-        public Vector4 RelativeRotation = new Vector4(0, 0, 0, 1);
-        [Tooltip("Current volume's rotation matrix row 0 relative to the rotation it was baked with. Mandatory for dynamic volumes. Recalculates via the UpdateRotation() method. (Legacy)")]
+        [Tooltip("Current volume's rotation matrix row 0 relative to the rotation it was baked with. Mandatory for dynamic volumes. Recalculates via the UpdateRotation() method.")]
         public Vector3 RelativeRotationRow0 = Vector3.zero;
-        [Tooltip("Current volume's rotation matrix row 1 relative to the rotation it was baked with. Mandatory for dynamic volumes. Recalculates via the UpdateRotation() method. (Legacy)")]
+        [Tooltip("Current volume's rotation matrix row 1 relative to the rotation it was baked with. Mandatory for dynamic volumes. Recalculates via the UpdateRotation() method.")]
         public Vector3 RelativeRotationRow1 = Vector3.zero;
         [Tooltip("True if there is any relative rotation. No relative rotation improves performance. Recalculated via the UpdateRotation() method.")]
         public bool IsRotated = false;
-        [Tooltip("True if this Light Volume is registered in the Light Volume Manager array. Disabled objects can be unregistered and will register again on enable.")]
-        public bool IsInitialized = false;
+
+        [Header("Runtime State")]
         [Tooltip("Reference to the Light Volume Manager. Needed for runtime initialization.")]
         public LightVolumeManager LightVolumeManager;
 
@@ -87,7 +82,7 @@ namespace VRCLightVolumes {
                 LightVolumeManager = FindObjectOfType<LightVolumeManager>();
             }
 #endif
-            if (!IsInitialized && LightVolumeManager != null) {
+            if (LightVolumeManager != null) {
                 LightVolumeManager.InitializeLightVolume(this);
             }
         }
@@ -128,8 +123,6 @@ namespace VRCLightVolumes {
             Vector4 row1 = m.GetRow(1);
             row1.w = 0;
             RelativeRotationRow1 = row1;
-
-            RelativeRotation = new Vector4(rot.x, rot.y, rot.z, rot.w);
         }
 
     }

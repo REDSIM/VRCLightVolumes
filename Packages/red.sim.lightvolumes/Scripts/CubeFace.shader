@@ -10,6 +10,7 @@ Shader "Hidden/CubeFace"
 
         Pass {
             CGPROGRAM
+            #pragma target 3.0
             #pragma vertex vert
             #pragma fragment frag
             #include "UnityCG.cginc"
@@ -47,7 +48,7 @@ Shader "Hidden/CubeFace"
                 float2 uv = i.uv * 2 - 1;
                 float3 viewDir = faceDirs[_FaceIndex][0] + uv.x * faceDirs[_FaceIndex][1] + uv.y * faceDirs[_FaceIndex][2];
 
-                return texCUBE(_CubeTex, - normalize(viewDir));
+                return texCUBElod(_CubeTex, float4(-normalize(viewDir), 0));
             }
             ENDCG
         }

@@ -32,6 +32,9 @@ namespace VRCLightVolumes {
         private const int MaxLightVolumeRotationVectors = MaxLightVolumeCount * 2;
         private const int MaxLightVolumeUvwScaleVectors = MaxLightVolumeCount * 3;
         private const int MaxLightVolumeLegacyUvwVectors = MaxLightVolumeCount * 6;
+        private const int DynamicUpdateFlagLightVolumes = 1;
+        private const int DynamicUpdateFlagPointLights = 2;
+        private const int DynamicUpdateFlagFullRebuild = 4;
         private const RenderTextureFormat FixedCustomTexturesFormat = RenderTextureFormat.ARGBHalf;
         private const string CustomRenderTextureInfoProperty = "_CustomRenderTextureInfo";
 
@@ -168,8 +171,12 @@ namespace VRCLightVolumes {
         private int _dynamicPointLightVolumeCount = 0;
 
         // Dynamic transform references and last uploaded values for cheap change detection
+        private LightVolumeInstance[] _dynamicLightVolumeInstances = new LightVolumeInstance[MaxLightVolumeCount];
+        private PointLightVolumeInstance[] _dynamicPointLightVolumeInstances = new PointLightVolumeInstance[MaxPointLightCount];
         private Transform[] _dynamicLightVolumeTransforms = new Transform[MaxLightVolumeCount];
         private Transform[] _dynamicPointLightVolumeTransforms = new Transform[MaxPointLightCount];
+        private int[] _dynamicLightVolumeShaderIndices = new int[MaxLightVolumeCount];
+        private int[] _dynamicPointLightVolumeShaderIndices = new int[MaxPointLightCount];
         private Vector3[] _dynamicLightVolumePositions = new Vector3[MaxLightVolumeCount];
         private Quaternion[] _dynamicLightVolumeRotations = new Quaternion[MaxLightVolumeCount];
         private Vector3[] _dynamicLightVolumeScales = new Vector3[MaxLightVolumeCount];
@@ -1233,27 +1240,98 @@ namespace VRCLightVolumes {
 #endif
         }
 
-        // Checks dynamic volume transforms without rebuilding or uploading shader arrays
-        private bool HasAutoUpdatedVolumeChanges() {
+        // Updates moved dynamic volumes in-place and returns which shader buffer groups need uploading
+        private int UpdateAutoUpdatedVolumeChanges() {
+            if (LightVolumeInstances == null || PointLightVolumeInstances == null) return DynamicUpdateFlagFullRebuild;
+            int updateFlags = 0;
+
             // Compare regular dynamic volumes against the transform values captured during the last upload
             for (int i = 0; i < _dynamicLightVolumeCount; i++) {
+                LightVolumeInstance instance = _dynamicLightVolumeInstances[i];
                 Transform instanceTransform = _dynamicLightVolumeTransforms[i];
-                if (instanceTransform == null) return true;
-                if (instanceTransform.position != _dynamicLightVolumePositions[i]) return true;
-                if (instanceTransform.rotation != _dynamicLightVolumeRotations[i]) return true;
-                if (instanceTransform.lossyScale != _dynamicLightVolumeScales[i]) return true;
+                if (instance == null || instanceTransform == null) return DynamicUpdateFlagFullRebuild;
+                if (!instance.gameObject.activeInHierarchy || !instance.IsDynamic) return DynamicUpdateFlagFullRebuild;
+
+                Vector3 position = instanceTransform.position;
+                Quaternion rotation = instanceTransform.rotation;
+                Vector3 scale = instanceTransform.lossyScale;
+                if (position == _dynamicLightVolumePositions[i] && rotation == _dynamicLightVolumeRotations[i] && scale == _dynamicLightVolumeScales[i]) continue;
+                if (instance.Intensity == 0 || instance.Color == Color.black) return DynamicUpdateFlagFullRebuild;
+
+                int shaderIndex = _dynamicLightVolumeShaderIndices[i];
+                if (shaderIndex < 0 || shaderIndex >= _enabledCount) return DynamicUpdateFlagFullRebuild;
+                int registryIndex = _enabledIDs[shaderIndex];
+                if (registryIndex < 0 || registryIndex >= LightVolumeInstances.Length || LightVolumeInstances[registryIndex] != instance) return DynamicUpdateFlagFullRebuild;
+
+                instance.UpdateTransform();
+                _dynamicLightVolumePositions[i] = position;
+                _dynamicLightVolumeRotations[i] = rotation;
+                _dynamicLightVolumeScales[i] = scale;
+                WriteLightVolumeTransformShaderData(shaderIndex, instance);
+                updateFlags |= DynamicUpdateFlagLightVolumes;
             }
 
             // Compare dynamic point lights against the transform values captured during the last upload
             for (int i = 0; i < _dynamicPointLightVolumeCount; i++) {
+                PointLightVolumeInstance instance = _dynamicPointLightVolumeInstances[i];
                 Transform instanceTransform = _dynamicPointLightVolumeTransforms[i];
-                if (instanceTransform == null) return true;
-                if (instanceTransform.position != _dynamicPointLightVolumePositions[i]) return true;
-                if (instanceTransform.rotation != _dynamicPointLightVolumeRotations[i]) return true;
-                if (instanceTransform.lossyScale != _dynamicPointLightVolumeScales[i]) return true;
+                if (instance == null || instanceTransform == null) return DynamicUpdateFlagFullRebuild;
+                if (!instance.gameObject.activeInHierarchy || !instance.IsDynamic) return DynamicUpdateFlagFullRebuild;
+
+                Vector3 position = instanceTransform.position;
+                Quaternion rotation = instanceTransform.rotation;
+                Vector3 scale = instanceTransform.lossyScale;
+                bool positionChanged = position != _dynamicPointLightVolumePositions[i];
+                bool rotationChanged = rotation != _dynamicPointLightVolumeRotations[i];
+                bool scaleChanged = scale != _dynamicPointLightVolumeScales[i];
+                if (!positionChanged && !rotationChanged && !scaleChanged) continue;
+                if (instance.Intensity == 0 || instance.Color == Color.black) return DynamicUpdateFlagFullRebuild;
+
+                int shaderIndex = _dynamicPointLightVolumeShaderIndices[i];
+                if (shaderIndex < 0 || shaderIndex >= _pointLightCount) return DynamicUpdateFlagFullRebuild;
+                int registryIndex = _enabledPointIDs[shaderIndex];
+                if (registryIndex < 0 || registryIndex >= PointLightVolumeInstances.Length || PointLightVolumeInstances[registryIndex] != instance) return DynamicUpdateFlagFullRebuild;
+
+                if (positionChanged) {
+                    instance.Position = position;
+                }
+                if (rotationChanged) instance.UpdateRotation();
+
+                if (scaleChanged) {
+                    if (instance.LightType == 2) { // 2: area
+                        instance.Width = Mathf.Max(Mathf.Abs(scale.x), 0.001f);
+                        instance.Height = Mathf.Max(Mathf.Abs(scale.y), 0.001f);
+                        instance.UpdateRotation();
+                    }
+                    float squaredScale = (scale.x + scale.y + scale.z) * 0.3333333333f;
+                    instance.SquaredScale = squaredScale * squaredScale;
+                    instance.IsRangeDirty = true;
+                }
+
+                _dynamicPointLightVolumePositions[i] = position;
+                _dynamicPointLightVolumeRotations[i] = rotation;
+                _dynamicPointLightVolumeScales[i] = scale;
+                WritePointLightShaderData(shaderIndex, registryIndex, instance, false);
+                updateFlags |= DynamicUpdateFlagPointLights;
             }
 
-            return false;
+            return updateFlags;
+        }
+
+        // Uploads only shader arrays affected by an incremental dynamic transform update
+        private void UploadAutoUpdatedVolumeChanges(int updateFlags) {
+            if ((updateFlags & DynamicUpdateFlagLightVolumes) != 0 && _enabledCount != 0) {
+                VRCShader.SetGlobalMatrixArray(_lightVolumeInvWorldMatrixID, _invWorldMatrix);
+                VRCShader.SetGlobalVectorArray(_lightVolumeRotationID, _relativeRotation);
+                VRCShader.SetGlobalVectorArray(_lightVolumeColorID, _colors);
+            }
+            if ((updateFlags & DynamicUpdateFlagPointLights) != 0 && _pointLightCount != 0) {
+                VRCShader.SetGlobalVectorArray(_pointLightColorID, _pointLightColor);
+                VRCShader.SetGlobalVectorArray(_pointLightPositionID, _pointLightPosition);
+                VRCShader.SetGlobalVectorArray(_pointLightDirectionID, _pointLightDirection);
+                VRCShader.SetGlobalVectorArray(_pointLightCustomIdID, _pointLightCustomId);
+                if (_activeShadowCount > 0) VRCShader.SetGlobalVectorArray(_pointLightShadowReprojectionDataID, _pointLightShadowReprojectionData);
+            }
         }
 
 #if UDONSHARP
@@ -1267,11 +1345,17 @@ namespace VRCLightVolumes {
 
             bool updateVolumes = _volumeDataUpdateRequested;
             _volumeDataUpdateRequested = false;
-            // AutoUpdateVolumes only does the cheap transform comparison unless an explicit rebuild was requested
-            if (!updateVolumes && AutoUpdateVolumes) updateVolumes = HasAutoUpdatedVolumeChanges();
+            int dynamicUpdateFlags = 0;
+            // AutoUpdateVolumes updates moved dynamic instances in-place unless an explicit rebuild was requested
+            if (!updateVolumes && AutoUpdateVolumes) {
+                dynamicUpdateFlags = UpdateAutoUpdatedVolumeChanges();
+                if ((dynamicUpdateFlags & DynamicUpdateFlagFullRebuild) != 0) updateVolumes = true;
+            }
 
             if (updateVolumes) {
                 UpdateVolumes();
+            } else if (dynamicUpdateFlags != 0) {
+                UploadAutoUpdatedVolumeChanges(dynamicUpdateFlags);
             } else if (!_customTexturesInitialized || !_shadowTexturesInitialized) {
                 // Texture caches may need initialization even when volume transforms did not change
                 EnsureRuntimeTextureCaches();
@@ -1297,11 +1381,17 @@ namespace VRCLightVolumes {
 
                 bool updateVolumes = _volumeDataUpdateRequested;
                 _volumeDataUpdateRequested = false;
-                // AutoUpdateVolumes only does the cheap transform comparison unless an explicit rebuild was requested
-                if (!updateVolumes && AutoUpdateVolumes) updateVolumes = HasAutoUpdatedVolumeChanges();
+                int dynamicUpdateFlags = 0;
+                // AutoUpdateVolumes updates moved dynamic instances in-place unless an explicit rebuild was requested
+                if (!updateVolumes && AutoUpdateVolumes) {
+                    dynamicUpdateFlags = UpdateAutoUpdatedVolumeChanges();
+                    if ((dynamicUpdateFlags & DynamicUpdateFlagFullRebuild) != 0) updateVolumes = true;
+                }
 
                 if (updateVolumes) {
                     UpdateVolumes();
+                } else if (dynamicUpdateFlags != 0) {
+                    UploadAutoUpdatedVolumeChanges(dynamicUpdateFlags);
                 } else if (!_customTexturesInitialized || !_shadowTexturesInitialized) {
                     // Texture caches may need initialization even when volume transforms did not change
                     EnsureRuntimeTextureCaches();
@@ -1315,6 +1405,116 @@ namespace VRCLightVolumes {
             _updateCoroutine = null;
         }
 #endif
+
+        // Writes one regular Light Volume into the compact shader upload buffers
+        private void WriteLightVolumeShaderData(int shaderIndex, LightVolumeInstance instance) {
+            int i2 = shaderIndex * 2;
+            int i3 = shaderIndex * 3;
+            int i6 = shaderIndex * 6;
+
+            _invWorldMatrix[shaderIndex] = instance.InvWorldMatrix;
+            _invLocalEdgeSmooth[shaderIndex] = instance.InvLocalEdgeSmoothing;
+
+            Vector4 c = instance.Color.linear * instance.Intensity;
+            c.w = instance.IsRotated ? 1 : 0;
+            _colors[shaderIndex] = c;
+
+            _relativeRotation[i2] = instance.RelativeRotationRow0;
+            _relativeRotation[i2 + 1] = instance.RelativeRotationRow1;
+
+            _boundsUvwScale[i3] = instance.BoundsUvwMin0;
+            _boundsUvwScale[i3 + 1] = instance.BoundsUvwMin1;
+            _boundsUvwScale[i3 + 2] = instance.BoundsUvwMin2;
+            Vector4 uvwMin0 = instance.BoundsUvwMin0;
+            Vector4 uvwMin1 = instance.BoundsUvwMin1;
+            Vector4 uvwMin2 = instance.BoundsUvwMin2;
+            float uvwScaleX = uvwMin0.w;
+            float uvwScaleY = uvwMin1.w;
+            float uvwScaleZ = uvwMin2.w;
+            _boundsUvw[i6] = new Vector4(uvwMin0.x, uvwMin0.y, uvwMin0.z, 0);
+            _boundsUvw[i6 + 1] = new Vector4(uvwMin0.x + uvwScaleX, uvwMin0.y + uvwScaleY, uvwMin0.z + uvwScaleZ, 0);
+            _boundsUvw[i6 + 2] = new Vector4(uvwMin1.x, uvwMin1.y, uvwMin1.z, 0);
+            _boundsUvw[i6 + 3] = new Vector4(uvwMin1.x + uvwScaleX, uvwMin1.y + uvwScaleY, uvwMin1.z + uvwScaleZ, 0);
+            _boundsUvw[i6 + 4] = new Vector4(uvwMin2.x, uvwMin2.y, uvwMin2.z, 0);
+            _boundsUvw[i6 + 5] = new Vector4(uvwMin2.x + uvwScaleX, uvwMin2.y + uvwScaleY, uvwMin2.z + uvwScaleZ, 0);
+        }
+
+        // Writes only dynamic transform-dependent Light Volume data for incremental AutoUpdateVolumes
+        private void WriteLightVolumeTransformShaderData(int shaderIndex, LightVolumeInstance instance) {
+            int i2 = shaderIndex * 2;
+            _invWorldMatrix[shaderIndex] = instance.InvWorldMatrix;
+            Vector4 c = _colors[shaderIndex];
+            c.w = instance.IsRotated ? 1 : 0;
+            _colors[shaderIndex] = c;
+            _relativeRotation[i2] = instance.RelativeRotationRow0;
+            _relativeRotation[i2 + 1] = instance.RelativeRotationRow1;
+        }
+
+        // Writes one Point Light Volume into the compact shader upload buffers
+        private void WritePointLightShaderData(int shaderIndex, int sourceIndex, PointLightVolumeInstance instance, bool countActiveShadow) {
+            if (instance.IsRangeDirty) instance.UpdateRange();
+
+            Vector4 pos = new Vector4(instance.Position.x, instance.Position.y, instance.Position.z, 0);
+            float angleData;
+            if (instance.LightType == 2) { // 2: area
+                pos.w = instance.Width;
+                angleData = 2f + instance.Height;
+            } else {
+                float typeSign = instance.LightType == 1 ? -1f : 1f; // 1: spot
+                if (instance.ProjectionMode == 1) pos.w = typeSign * instance.InverseSquaredRange / Mathf.Max(instance.SquaredScale, 0.000001f); // 1: LUT
+                else pos.w = typeSign * instance.LightSourceSize * instance.LightSourceSize * instance.SquaredScale;
+                if (instance.LightType == 1 && instance.ProjectionMode == 2) angleData = instance.OuterAngleTan; // 1: spot, 2: custom cookie
+                else angleData = instance.OuterAngleCos;
+            }
+            _pointLightPosition[shaderIndex] = pos;
+
+            Vector4 c = instance.Color.linear * instance.Intensity;
+            c.w = angleData;
+            _pointLightColor[shaderIndex] = c;
+
+            if (instance.LightType == 1 && instance.ProjectionMode != 2) { // 1: spot, 2: custom cookie
+                _pointLightDirection[shaderIndex].x = instance.Direction.x;
+                _pointLightDirection[shaderIndex].y = instance.Direction.y;
+                _pointLightDirection[shaderIndex].z = instance.Direction.z;
+                _pointLightDirection[shaderIndex].w = instance.ConeFalloff;
+            } else {
+                _pointLightDirection[shaderIndex].x = instance.Rotation.x;
+                _pointLightDirection[shaderIndex].y = instance.Rotation.y;
+                _pointLightDirection[shaderIndex].z = instance.Rotation.z;
+                _pointLightDirection[shaderIndex].w = instance.Rotation.w;
+            }
+
+            int resolvedCustomId = _pointLightCustomIDs != null && sourceIndex < _pointLightCustomIDs.Length ? _pointLightCustomIDs[sourceIndex] : -1;
+            float shaderCustomId = 0;
+            if (resolvedCustomId >= 0) {
+                if (instance.ProjectionMode == 1) shaderCustomId = resolvedCustomId + 1; // 1: LUT
+                else if (instance.ProjectionMode == 2) shaderCustomId = -resolvedCustomId - 1; // 2: custom cookie or cubemap
+            }
+            _pointLightCustomId[shaderIndex].x = shaderCustomId;
+
+            int resolvedShadowId = _pointLightShadowIDs != null && sourceIndex < _pointLightShadowIDs.Length ? _pointLightShadowIDs[sourceIndex] : -1;
+            bool hasShadow = ShadowMapsCount > 0 && resolvedShadowId >= 0 && resolvedShadowId < ShadowMapsCount;
+            if (countActiveShadow && hasShadow) _activeShadowCount++;
+            float shadowFarClip = 0;
+            if (hasShadow) shadowFarClip = instance.FarClip > 0 ? instance.FarClip : Mathf.Sqrt(Mathf.Max(instance.SquaredRange, 0.000001f));
+            bool useLocalSpaceShadows = hasShadow && !instance.WorldSpaceShadows;
+            float shadowMapID = hasShadow ? (useLocalSpaceShadows ? -resolvedShadowId - 1 : resolvedShadowId + 1) : 0;
+            _pointLightCustomId[shaderIndex].y = shadowMapID;
+            _pointLightCustomId[shaderIndex].z = instance.SquaredRange;
+            _pointLightCustomId[shaderIndex].w = shadowFarClip;
+            if (useLocalSpaceShadows) {
+                Quaternion shadowRotation = Quaternion.Inverse(instance.transform.rotation);
+                _pointLightShadowReprojectionData[shaderIndex].x = shadowRotation.x;
+                _pointLightShadowReprojectionData[shaderIndex].y = shadowRotation.y;
+                _pointLightShadowReprojectionData[shaderIndex].z = shadowRotation.z;
+                _pointLightShadowReprojectionData[shaderIndex].w = shadowRotation.w;
+            } else {
+                _pointLightShadowReprojectionData[shaderIndex].x = instance.ShadowBakePosition.x;
+                _pointLightShadowReprojectionData[shaderIndex].y = instance.ShadowBakePosition.y;
+                _pointLightShadowReprojectionData[shaderIndex].z = instance.ShadowBakePosition.z;
+                _pointLightShadowReprojectionData[shaderIndex].w = hasShadow ? 1 : 0;
+            }
+        }
 
         // Recalculates all volume data and uploads it to shader globals
         public void UpdateVolumes() {
@@ -1378,7 +1578,9 @@ namespace VRCLightVolumes {
                     if (instance.IsDynamic) {
                         // Store dynamic transform state only after the instance has refreshed its own cached data
                         Transform instanceTransform = instance.transform;
+                        _dynamicLightVolumeInstances[_dynamicLightVolumeCount] = instance;
                         _dynamicLightVolumeTransforms[_dynamicLightVolumeCount] = instanceTransform;
+                        _dynamicLightVolumeShaderIndices[_dynamicLightVolumeCount] = _enabledCount;
                         _dynamicLightVolumePositions[_dynamicLightVolumeCount] = instanceTransform.position;
                         _dynamicLightVolumeRotations[_dynamicLightVolumeCount] = instanceTransform.rotation;
                         _dynamicLightVolumeScales[_dynamicLightVolumeCount] = instanceTransform.lossyScale;
@@ -1392,43 +1594,7 @@ namespace VRCLightVolumes {
 
             // Fill arrays with enabled volume data
             for (int i = 0; i < _enabledCount; i++) {
-
-                int enabledId = _enabledIDs[i];
-                int i2 = i * 2;
-                int i3 = i * 3;
-                int i6 = i * 6;
-
-                LightVolumeInstance instance = LightVolumeInstances[enabledId];
-
-                // Set volume transform data
-                _invWorldMatrix[i] = instance.InvWorldMatrix;
-                _invLocalEdgeSmooth[i] = instance.InvLocalEdgeSmoothing; // Set volume edge smoothing
-
-                Vector4 c = instance.Color.linear * instance.Intensity; // Apply volume color and intensity
-                c.w = instance.IsRotated ? 1 : 0; // Color alpha stores whether the volume is rotated
-                _colors[i] = c;
-
-                // Set volume relative rotation
-                _relativeRotation[i2] = instance.RelativeRotationRow0;
-                _relativeRotation[i2 + 1] = instance.RelativeRotationRow1;
-
-                // Set volume UVW bounds
-                _boundsUvwScale[i3] = instance.BoundsUvwMin0;
-                _boundsUvwScale[i3 + 1] = instance.BoundsUvwMin1;
-                _boundsUvwScale[i3 + 2] = instance.BoundsUvwMin2;
-                Vector4 uvwMin0 = instance.BoundsUvwMin0;
-                Vector4 uvwMin1 = instance.BoundsUvwMin1;
-                Vector4 uvwMin2 = instance.BoundsUvwMin2;
-                float uvwScaleX = uvwMin0.w;
-                float uvwScaleY = uvwMin1.w;
-                float uvwScaleZ = uvwMin2.w;
-                _boundsUvw[i6] = new Vector4(uvwMin0.x, uvwMin0.y, uvwMin0.z, 0);
-                _boundsUvw[i6 + 1] = new Vector4(uvwMin0.x + uvwScaleX, uvwMin0.y + uvwScaleY, uvwMin0.z + uvwScaleZ, 0);
-                _boundsUvw[i6 + 2] = new Vector4(uvwMin1.x, uvwMin1.y, uvwMin1.z, 0);
-                _boundsUvw[i6 + 3] = new Vector4(uvwMin1.x + uvwScaleX, uvwMin1.y + uvwScaleY, uvwMin1.z + uvwScaleZ, 0);
-                _boundsUvw[i6 + 4] = new Vector4(uvwMin2.x, uvwMin2.y, uvwMin2.z, 0);
-                _boundsUvw[i6 + 5] = new Vector4(uvwMin2.x + uvwScaleX, uvwMin2.y + uvwScaleY, uvwMin2.z + uvwScaleZ, 0);
-
+                WriteLightVolumeShaderData(i, LightVolumeInstances[_enabledIDs[i]]);
             }
 
             // Search for enabled point light volumes
@@ -1470,7 +1636,9 @@ namespace VRCLightVolumes {
                     if (instance.IsDynamic) {
                         // Store dynamic transform state only after the instance has refreshed its own cached data
                         Transform instanceTransform = instance.transform;
+                        _dynamicPointLightVolumeInstances[_dynamicPointLightVolumeCount] = instance;
                         _dynamicPointLightVolumeTransforms[_dynamicPointLightVolumeCount] = instanceTransform;
+                        _dynamicPointLightVolumeShaderIndices[_dynamicPointLightVolumeCount] = _pointLightCount;
                         _dynamicPointLightVolumePositions[_dynamicPointLightVolumeCount] = instanceTransform.position;
                         _dynamicPointLightVolumeRotations[_dynamicPointLightVolumeCount] = instanceTransform.rotation;
                         _dynamicPointLightVolumeScales[_dynamicPointLightVolumeCount] = instanceTransform.lossyScale;
@@ -1488,75 +1656,8 @@ namespace VRCLightVolumes {
             // Fill arrays with enabled point light data
             _activeShadowCount = 0;
             for (int i = 0; i < _pointLightCount; i++) {
-                PointLightVolumeInstance instance = PointLightVolumeInstances[_enabledPointIDs[i]];
-
-                // Recalculate squared range of the light if dirty
-                if (instance.IsRangeDirty) {
-                    instance.UpdateRange();
-                }
-
-                // Convert readable point light data into the packed shader format
-                Vector4 pos = new Vector4(instance.Position.x, instance.Position.y, instance.Position.z, 0);
-                float angleData;
-                if (instance.LightType == 2) { // 2: area
-                    pos.w = instance.Width;
-                    angleData = 2f + instance.Height; // Keep area lights outside the [-1; 1] cosine codomain
-                } else {
-                    float typeSign = instance.LightType == 1 ? -1f : 1f; // 1: spot
-                    if (instance.ProjectionMode == 1) pos.w = typeSign * instance.InverseSquaredRange / Mathf.Max(instance.SquaredScale, 0.000001f); // 1: LUT
-                    else pos.w = typeSign * instance.LightSourceSize * instance.LightSourceSize * instance.SquaredScale;
-                    if (instance.LightType == 1 && instance.ProjectionMode == 2) angleData = instance.OuterAngleTan; // 1: spot, 2: custom cookie
-                    else angleData = instance.OuterAngleCos;
-                }
-                _pointLightPosition[i] = pos;
-
-                // Pack light color, intensity, and angle into the shader color vector
-                Vector4 c = instance.Color.linear * instance.Intensity;
-                c.w = angleData;
-                _pointLightColor[i] = c;
-
-                // Resolve custom texture and shadow IDs from manager caches using the original registry index
-                if (instance.LightType == 1 && instance.ProjectionMode != 2) { // 1: spot, 2: custom cookie
-                    _pointLightDirection[i].x = instance.Direction.x;
-                    _pointLightDirection[i].y = instance.Direction.y;
-                    _pointLightDirection[i].z = instance.Direction.z;
-                    _pointLightDirection[i].w = instance.ConeFalloff;
-                } else {
-                    _pointLightDirection[i].x = instance.Rotation.x;
-                    _pointLightDirection[i].y = instance.Rotation.y;
-                    _pointLightDirection[i].z = instance.Rotation.z;
-                    _pointLightDirection[i].w = instance.Rotation.w;
-                }
                 int sourceIndex = _enabledPointIDs[i];
-                int resolvedCustomId = _pointLightCustomIDs != null && sourceIndex < _pointLightCustomIDs.Length ? _pointLightCustomIDs[sourceIndex] : -1;
-                float shaderCustomId = 0;
-                if (resolvedCustomId >= 0) { // Positive IDs are LUT slices; negative IDs are custom cookie/cubemap projections
-                    if (instance.ProjectionMode == 1) shaderCustomId = resolvedCustomId + 1; // 1: LUT
-                    else if (instance.ProjectionMode == 2) shaderCustomId = -resolvedCustomId - 1; // 2: custom cookie or cubemap
-                }
-                _pointLightCustomId[i].x = shaderCustomId;
-                int resolvedShadowId = _pointLightShadowIDs != null && sourceIndex < _pointLightShadowIDs.Length ? _pointLightShadowIDs[sourceIndex] : -1;
-                bool hasShadow = ShadowMapsCount > 0 && resolvedShadowId >= 0 && resolvedShadowId < ShadowMapsCount;
-                if (hasShadow) _activeShadowCount++;
-                float shadowFarClip = 0;
-                if (hasShadow) shadowFarClip = instance.FarClip > 0 ? instance.FarClip : Mathf.Sqrt(Mathf.Max(instance.SquaredRange, 0.000001f));
-                bool useLocalSpaceShadows = hasShadow && !instance.WorldSpaceShadows;
-                float shadowMapID = hasShadow ? (useLocalSpaceShadows ? -resolvedShadowId - 1 : resolvedShadowId + 1) : 0;
-                _pointLightCustomId[i].y = shadowMapID;
-                _pointLightCustomId[i].z = instance.SquaredRange;
-                _pointLightCustomId[i].w = shadowFarClip;
-                if (useLocalSpaceShadows) { // Local-space shadow maps are baked in the light's cubemap space, so only the current inverse rotation is needed for sampling
-                    Quaternion shadowRotation = Quaternion.Inverse(instance.transform.rotation);
-                    _pointLightShadowReprojectionData[i].x = shadowRotation.x;
-                    _pointLightShadowReprojectionData[i].y = shadowRotation.y;
-                    _pointLightShadowReprojectionData[i].z = shadowRotation.z;
-                    _pointLightShadowReprojectionData[i].w = shadowRotation.w;
-                } else { // World-space shadows use the baked world position directly
-                    _pointLightShadowReprojectionData[i].x = instance.ShadowBakePosition.x;
-                    _pointLightShadowReprojectionData[i].y = instance.ShadowBakePosition.y;
-                    _pointLightShadowReprojectionData[i].z = instance.ShadowBakePosition.z;
-                    _pointLightShadowReprojectionData[i].w = hasShadow ? 1 : 0;
-                }
+                WritePointLightShaderData(i, sourceIndex, PointLightVolumeInstances[sourceIndex], true);
             }
 
             bool isAtlas = LightVolumeAtlas != null;

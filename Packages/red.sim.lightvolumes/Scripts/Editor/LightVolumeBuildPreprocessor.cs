@@ -212,9 +212,11 @@ namespace VRCLightVolumes {
             camera.orthographic = false;
             camera.fieldOfView = 90f;
             camera.aspect = 1f;
-            camera.depthTextureMode = DepthTextureMode.Depth;
-            camera.allowHDR = true;
+            camera.depthTextureMode = DepthTextureMode.None;
+            camera.renderingPath = RenderingPath.Forward;
+            camera.allowHDR = false;
             camera.allowMSAA = false;
+            camera.useOcclusionCulling = false;
             camera.stereoTargetEye = StereoTargetEyeMask.None;
             camera.ResetReplacementShader();
             return camera;

@@ -196,9 +196,11 @@ namespace VRCLightVolumes {
             shadowCamera.aspect = 1f;
             shadowCamera.nearClipPlane = safeNearClip;
             shadowCamera.farClipPlane = safeFarClip;
-            shadowCamera.depthTextureMode = DepthTextureMode.Depth;
-            shadowCamera.allowHDR = true;
+            shadowCamera.depthTextureMode = DepthTextureMode.None;
+            shadowCamera.renderingPath = RenderingPath.Forward;
+            shadowCamera.allowHDR = false;
             shadowCamera.allowMSAA = false;
+            shadowCamera.useOcclusionCulling = false;
             shadowCamera.cullingMask = cullingMask;
             shadowCamera.stereoTargetEye = StereoTargetEyeMask.None;
             shadowCamera.ResetReplacementShader();

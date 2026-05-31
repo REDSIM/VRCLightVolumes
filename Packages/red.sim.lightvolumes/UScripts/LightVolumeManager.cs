@@ -87,38 +87,51 @@ namespace VRCLightVolumes {
 
         // Material used to copy cubemap source faces into the animated projection texture array
         [HideInInspector] public Material CubemapFaceMaterial;
-        // Shared scratch texture used by runtime shadow bakers for separable blur passes
-        [HideInInspector] public RenderTexture ShadowBlurTempTexture;
 
-        // Custom texture source cache and resolved per-instance IDs
+        // Custom projection texture cache state
+        // Counts describe active prefixes, arrays stay reusable to avoid runtime allocations
         private bool _customTexturesInitialized = false;
         private int _customTexturesDepth = 0;
-        private Texture[] _customCubemapTextures = new Texture[0];
-        private Material[] _customCubemapMaterials = new Material[0];
-        private Texture[] _customSingleTextures = new Texture[0];
-        private Material[] _customSingleMaterials = new Material[0];
-        private int[] _customCubemapTextureModes = new int[0];
-        private bool[] _customCubemapTextureAutoUpdates = new bool[0];
-        private bool[] _customCubemapMaterialAutoUpdates = new bool[0];
-        private bool[] _customSingleTextureAutoUpdates = new bool[0];
-        private bool[] _customSingleMaterialAutoUpdates = new bool[0];
-        private int[] _pointLightCustomIDs = new int[0];
+        private int _customCubemapTextureCount = 0;
+        private int _customCubemapMaterialCount = 0;
+        private int _customSingleTextureCount = 0;
+        private int _customSingleMaterialCount = 0;
+
+        // Unique custom projection sources split by source shape and source type
+        private Texture[] _customCubemapTextures = new Texture[MaxPointLightCount];
+        private Material[] _customCubemapMaterials = new Material[MaxPointLightCount];
+        private Texture[] _customSingleTextures = new Texture[MaxPointLightCount];
+        private Material[] _customSingleMaterials = new Material[MaxPointLightCount];
+        private int[] _customCubemapTextureModes = new int[MaxPointLightCount];
+        private bool[] _customCubemapTextureAutoUpdates = new bool[MaxPointLightCount];
+        private bool[] _customCubemapMaterialAutoUpdates = new bool[MaxPointLightCount];
+        private bool[] _customSingleTextureAutoUpdates = new bool[MaxPointLightCount];
+        private bool[] _customSingleMaterialAutoUpdates = new bool[MaxPointLightCount];
+        private int[] _pointLightCustomIDs = new int[MaxPointLightCount];
+        private int[] _customSourceTypes = new int[MaxPointLightCount];
         private bool _hasAutoCustomTextureUpdates = false;
 
-        // Shadow texture source cache and resolved per-instance IDs
+        // Shadow texture cache state
+        // Counts describe active prefixes, arrays stay reusable to avoid runtime allocations
         private bool _shadowTexturesInitialized = false;
         private int _shadowTexturesDepth = 0;
-        private Texture[] _shadowCubemapTextures = new Texture[0];
-        private Material[] _shadowCubemapMaterials = new Material[0];
-        private int[] _shadowCubemapTextureModes = new int[0];
-        private bool[] _shadowCubemapTextureAutoUpdates = new bool[0];
-        private bool[] _shadowCubemapMaterialAutoUpdates = new bool[0];
-        private int[] _pointLightShadowIDs = new int[0];
+        private int _shadowCubemapTextureCount = 0;
+        private int _shadowCubemapMaterialCount = 0;
+
+        // Unique shadow sources and resolved per-point-light shadow IDs
+        private Texture[] _shadowCubemapTextures = new Texture[MaxPointLightCount];
+        private Material[] _shadowCubemapMaterials = new Material[MaxPointLightCount];
+        private int[] _shadowCubemapTextureModes = new int[MaxPointLightCount];
+        private bool[] _shadowCubemapTextureAutoUpdates = new bool[MaxPointLightCount];
+        private bool[] _shadowCubemapMaterialAutoUpdates = new bool[MaxPointLightCount];
+        private int[] _pointLightShadowIDs = new int[MaxPointLightCount];
+        private bool[] _shadowSourceIsMaterial = new bool[MaxPointLightCount];
         private bool _hasAutoShadowTextureUpdates = false;
 
         // Dummy source texture required by VRCGraphics material blits when a material generates pixels without a real input texture
         private RenderTexture _runtimeMaterialBlitInputTexture;
 
+        // Runtime state mirrors and dirty flags
         private bool _isRangeDirty = false;
         // Tracks one-time shader array initialization in runtime while still allowing editor property IDs to refresh
         private bool _isInitialized = false;
@@ -128,7 +141,7 @@ namespace VRCLightVolumes {
 
         private Vector4 _customRenderTextureInfo;
 
-        // Light Volumes data
+        // Light Volume shader upload buffers
         private int _enabledCount = 0;
         private int _additiveCount = 0;
         private Vector4[] _invLocalEdgeSmooth = new Vector4[MaxLightVolumeCount];
@@ -137,7 +150,7 @@ namespace VRCLightVolumes {
         private Vector4[] _boundsUvw = new Vector4[MaxLightVolumeLegacyUvwVectors];
         private Vector4[] _relativeRotation = new Vector4[MaxLightVolumeRotationVectors];
 
-        // Point Lights data
+        // Point Light shader upload buffers
         private int _pointLightCount = 0;
         private int _activeShadowCount = 0;
         private int[] _enabledPointIDs = new int[MaxPointLightCount];
@@ -147,16 +160,31 @@ namespace VRCLightVolumes {
         private Vector4[] _pointLightCustomId = new Vector4[MaxPointLightCount];
         private Vector4[] _pointLightShadowReprojectionData = new Vector4[MaxPointLightCount];
 
-        // Current shader upload data
+        // Matrix upload buffer for active regular volumes
         private Matrix4x4[] _invWorldMatrix = new Matrix4x4[MaxLightVolumeCount];
 
-        // Other
+        // Dynamic volume transform watch cache used by AutoUpdateVolumes
+        private int _dynamicLightVolumeCount = 0;
+        private int _dynamicPointLightVolumeCount = 0;
+
+        // Dynamic transform references and last uploaded values for cheap change detection
+        private Transform[] _dynamicLightVolumeTransforms = new Transform[MaxLightVolumeCount];
+        private Transform[] _dynamicPointLightVolumeTransforms = new Transform[MaxPointLightCount];
+        private Vector3[] _dynamicLightVolumePositions = new Vector3[MaxLightVolumeCount];
+        private Quaternion[] _dynamicLightVolumeRotations = new Quaternion[MaxLightVolumeCount];
+        private Vector3[] _dynamicLightVolumeScales = new Vector3[MaxLightVolumeCount];
+        private Vector3[] _dynamicPointLightVolumePositions = new Vector3[MaxPointLightCount];
+        private Quaternion[] _dynamicPointLightVolumeRotations = new Quaternion[MaxPointLightCount];
+        private Vector3[] _dynamicPointLightVolumeScales = new Vector3[MaxPointLightCount];
+
+        // Active registry index buffer for compact shader uploads
         private int[] _enabledIDs = new int[MaxLightVolumeCount];
 
         // Public API for other UdonSharp scripts
         public int EnabledCount => _enabledCount;
         public int[] EnabledIDs => _enabledIDs;
 
+        // Delayed update loop state
         private bool _volumeDataUpdateRequested = false;
         private bool _isUpdatingVolumes = false;
         private bool _old_AutoUpdateVolumes = false;
@@ -206,6 +234,26 @@ namespace VRCLightVolumes {
         private void EnsureRegistryArrays() {
             if (LightVolumeInstances == null) LightVolumeInstances = new LightVolumeInstance[0];
             if (PointLightVolumeInstances == null) PointLightVolumeInstances = new PointLightVolumeInstance[0];
+        }
+
+        // Finds a Light Volume reference in a registry prefix without using generic Array helpers
+        private int FindLightVolumeIndex(LightVolumeInstance[] array, LightVolumeInstance instance, int startIndex, int count) {
+            if (array == null) return -1;
+            int endIndex = startIndex + count;
+            for (int i = startIndex; i < endIndex; i++) {
+                if (array[i] == instance) return i;
+            }
+            return -1;
+        }
+
+        // Finds a Point Light Volume reference in a registry prefix without using generic Array helpers
+        private int FindPointLightVolumeIndex(PointLightVolumeInstance[] array, PointLightVolumeInstance instance, int startIndex, int count) {
+            if (array == null) return -1;
+            int endIndex = startIndex + count;
+            for (int i = startIndex; i < endIndex; i++) {
+                if (array[i] == instance) return i;
+            }
+            return -1;
         }
 
         // Initializes shader property IDs and global shader arrays when needed
@@ -300,7 +348,9 @@ namespace VRCLightVolumes {
             TryInitialize();
             ResetCustomTexturesGlobal();
             ResetShadowTexturesGlobal();
-#if !UDONSHARP
+#if UDONSHARP
+            _isUpdateProcessRunning = false;
+#else
             if (_updateCoroutine != null) {
                 StopCoroutine(_updateCoroutine);
                 _updateCoroutine = null;
@@ -323,6 +373,7 @@ namespace VRCLightVolumes {
             ReinitializeCustomTextures();
             ReinitializeShadowTextures();
             UpdateVolumes(); // Force the first volume update at Start even if auto update is disabled
+            _volumeDataUpdateRequested = false;
         }
 
         // Clears manager-owned runtime texture outputs before rebuilding them
@@ -341,13 +392,13 @@ namespace VRCLightVolumes {
             EnsureRegistryArrays();
             int count = LightVolumeInstances.Length;
             // Reuse an existing slot so repeated OnEnable calls do not duplicate the same volume
-            int existingIndex = Array.IndexOf((Array)LightVolumeInstances, lightVolume, 0, count);
+            int existingIndex = FindLightVolumeIndex(LightVolumeInstances, lightVolume, 0, count);
             if (existingIndex >= 0) {
                 lightVolume.LightVolumeManager = this;
                 return;
             }
             // Fill the first stale/null slot before growing the registry array
-            int emptyIndex = Array.IndexOf((Array)LightVolumeInstances, null, 0, count);
+            int emptyIndex = FindLightVolumeIndex(LightVolumeInstances, null, 0, count);
             if (emptyIndex >= 0) {
                 LightVolumeInstances[emptyIndex] = lightVolume;
                 lightVolume.LightVolumeManager = this;
@@ -366,13 +417,13 @@ namespace VRCLightVolumes {
             if (lightVolume == null) return;
             EnsureRegistryArrays();
             int count = LightVolumeInstances.Length;
-            int index = Array.IndexOf((Array)LightVolumeInstances, lightVolume, 0, count);
+            int index = FindLightVolumeIndex(LightVolumeInstances, lightVolume, 0, count);
             // Clear all duplicate registrations left by serialized data or previous versions
             while (index >= 0) {
                 LightVolumeInstances[index] = null;
                 int nextIndex = index + 1;
                 if (nextIndex >= count) break;
-                index = Array.IndexOf((Array)LightVolumeInstances, lightVolume, nextIndex, count - nextIndex); // Continue after the cleared slot to catch later duplicates
+                index = FindLightVolumeIndex(LightVolumeInstances, lightVolume, nextIndex, count - nextIndex); // Continue after the cleared slot to catch later duplicates
             }
         }
 
@@ -382,13 +433,13 @@ namespace VRCLightVolumes {
             EnsureRegistryArrays();
             int count = PointLightVolumeInstances.Length;
             // Reuse an existing slot so repeated OnEnable calls do not duplicate the same point light
-            int existingIndex = Array.IndexOf((Array)PointLightVolumeInstances, pointLightVolume, 0, count);
+            int existingIndex = FindPointLightVolumeIndex(PointLightVolumeInstances, pointLightVolume, 0, count);
             if (existingIndex >= 0) {
                 pointLightVolume.LightVolumeManager = this;
                 return;
             }
             // Fill the first stale/null slot before growing the registry array
-            int emptyIndex = Array.IndexOf((Array)PointLightVolumeInstances, null, 0, count);
+            int emptyIndex = FindPointLightVolumeIndex(PointLightVolumeInstances, null, 0, count);
             if (emptyIndex >= 0) {
                 PointLightVolumeInstances[emptyIndex] = pointLightVolume;
                 pointLightVolume.LightVolumeManager = this;
@@ -412,14 +463,14 @@ namespace VRCLightVolumes {
             EnsureRegistryArrays();
             int count = PointLightVolumeInstances.Length;
             // Clear all duplicate point light registrations and mark texture caches dirty when the registry changes
-            int index = Array.IndexOf((Array)PointLightVolumeInstances, pointLightVolume, 0, count);
+            int index = FindPointLightVolumeIndex(PointLightVolumeInstances, pointLightVolume, 0, count);
             while (index >= 0) {
                 PointLightVolumeInstances[index] = null;
                 _customTexturesInitialized = false;
                 _shadowTexturesInitialized = false;
                 int nextIndex = index + 1;
                 if (nextIndex >= count) break;
-                index = Array.IndexOf((Array)PointLightVolumeInstances, pointLightVolume, nextIndex, count - nextIndex);
+                index = FindPointLightVolumeIndex(PointLightVolumeInstances, pointLightVolume, nextIndex, count - nextIndex);
             }
         }
 
@@ -435,7 +486,7 @@ namespace VRCLightVolumes {
                     continue;
                 }
                 // Keep the first occurrence so serialized duplicates do not shift runtime light IDs
-                if (Array.IndexOf((Array)LightVolumeInstances, instance, 0, i) >= 0) LightVolumeInstances[i] = null;
+                if (FindLightVolumeIndex(LightVolumeInstances, instance, 0, i) >= 0) LightVolumeInstances[i] = null;
             }
 
             int pointLightCount = PointLightVolumeInstances.Length;
@@ -451,7 +502,7 @@ namespace VRCLightVolumes {
                     continue;
                 }
                 // Keep the first occurrence and force runtime texture IDs to rebuild if a duplicate was removed
-                if (Array.IndexOf((Array)PointLightVolumeInstances, instance, 0, i) >= 0) {
+                if (FindPointLightVolumeIndex(PointLightVolumeInstances, instance, 0, i) >= 0) {
                     PointLightVolumeInstances[i] = null;
                     _customTexturesInitialized = false;
                     _shadowTexturesInitialized = false;
@@ -501,48 +552,84 @@ namespace VRCLightVolumes {
             return AutoUpdateTextures && (_hasAutoCustomTextureUpdates || _hasAutoShadowTextureUpdates);
         }
 
+        // Ensures reusable custom texture source arrays can cover the current point light registry
+        private void EnsureCustomTextureCacheCapacity(int count) {
+            int targetCapacity = count > MaxPointLightCount ? count : MaxPointLightCount;
+            int capacity = _pointLightCustomIDs != null ? _pointLightCustomIDs.Length : 0;
+            // Keep existing arrays when their reusable capacity already covers the registry
+            if (capacity >= targetCapacity && _customCubemapTextures != null && _customCubemapTextures.Length >= targetCapacity && _customCubemapMaterials != null && _customCubemapMaterials.Length >= targetCapacity && _customSingleTextures != null && _customSingleTextures.Length >= targetCapacity && _customSingleMaterials != null && _customSingleMaterials.Length >= targetCapacity && _customCubemapTextureModes != null && _customCubemapTextureModes.Length >= targetCapacity && _customCubemapTextureAutoUpdates != null && _customCubemapTextureAutoUpdates.Length >= targetCapacity && _customCubemapMaterialAutoUpdates != null && _customCubemapMaterialAutoUpdates.Length >= targetCapacity && _customSingleTextureAutoUpdates != null && _customSingleTextureAutoUpdates.Length >= targetCapacity && _customSingleMaterialAutoUpdates != null && _customSingleMaterialAutoUpdates.Length >= targetCapacity && _customSourceTypes != null && _customSourceTypes.Length >= targetCapacity) return;
+
+            // Grow all related arrays together so source IDs keep matching registry indices
+            _customCubemapTextures = new Texture[targetCapacity];
+            _customCubemapMaterials = new Material[targetCapacity];
+            _customSingleTextures = new Texture[targetCapacity];
+            _customSingleMaterials = new Material[targetCapacity];
+            _customCubemapTextureModes = new int[targetCapacity];
+            _customCubemapTextureAutoUpdates = new bool[targetCapacity];
+            _customCubemapMaterialAutoUpdates = new bool[targetCapacity];
+            _customSingleTextureAutoUpdates = new bool[targetCapacity];
+            _customSingleMaterialAutoUpdates = new bool[targetCapacity];
+            _pointLightCustomIDs = new int[targetCapacity];
+            _customSourceTypes = new int[targetCapacity];
+        }
+
+        // Clears reusable custom texture source cache entries without reallocating their arrays
+        private void ClearCustomTextureSourceCache() {
+            // Clear only previously active source prefixes; the arrays can be much larger than active counts
+            for (int i = 0; i < _customCubemapTextureCount; i++) {
+                _customCubemapTextures[i] = null;
+                _customCubemapTextureModes[i] = 0;
+                _customCubemapTextureAutoUpdates[i] = false;
+            }
+            for (int i = 0; i < _customCubemapMaterialCount; i++) {
+                _customCubemapMaterials[i] = null;
+                _customCubemapMaterialAutoUpdates[i] = false;
+            }
+            for (int i = 0; i < _customSingleTextureCount; i++) {
+                _customSingleTextures[i] = null;
+                _customSingleTextureAutoUpdates[i] = false;
+            }
+            for (int i = 0; i < _customSingleMaterialCount; i++) {
+                _customSingleMaterials[i] = null;
+                _customSingleMaterialAutoUpdates[i] = false;
+            }
+
+            int idCount = _pointLightCustomIDs != null ? _pointLightCustomIDs.Length : 0;
+            // Per-instance ID arrays use registry indices directly, so the whole reusable capacity is reset
+            for (int i = 0; i < idCount; i++) {
+                _pointLightCustomIDs[i] = -1;
+                _customSourceTypes[i] = 0;
+            }
+
+            _customCubemapTextureCount = 0;
+            _customCubemapMaterialCount = 0;
+            _customSingleTextureCount = 0;
+            _customSingleMaterialCount = 0;
+            CubemapsCount = 0;
+            _customTexturesDepth = 0;
+            _hasAutoCustomTextureUpdates = false;
+        }
+
         // Clears active custom texture globals when no point light uses a projection source
         private void ResetCustomTexturesGlobal() {
             ReleaseRuntimeRenderTexture(CustomTextures);
             CustomTextures = null;
-            _customTexturesDepth = 0;
-            CubemapsCount = 0;
-            _customCubemapTextures = new Texture[0];
-            _customCubemapMaterials = new Material[0];
-            _customSingleTextures = new Texture[0];
-            _customSingleMaterials = new Material[0];
-            _customCubemapTextureModes = new int[0];
-            _customCubemapTextureAutoUpdates = new bool[0];
-            _customCubemapMaterialAutoUpdates = new bool[0];
-            _customSingleTextureAutoUpdates = new bool[0];
-            _customSingleMaterialAutoUpdates = new bool[0];
-            _pointLightCustomIDs = new int[0];
-            _hasAutoCustomTextureUpdates = false;
+            ClearCustomTextureSourceCache();
         }
 
         // Builds deduplicated source arrays and per-instance shader IDs for the runtime cookie texture array
         private void BuildCustomTextureSourceCache() {
             int count = PointLightVolumeInstances != null ? PointLightVolumeInstances.Length : 0;
-            Texture[] cubemapTextures = new Texture[count];
-            Material[] cubemapMaterials = new Material[count];
-            Texture[] singleTextures = new Texture[count];
-            Material[] singleMaterials = new Material[count];
-            int[] cubemapTextureModes = new int[count];
-            bool[] cubemapTextureAutoUpdates = new bool[count];
-            bool[] cubemapMaterialAutoUpdates = new bool[count];
-            bool[] singleTextureAutoUpdates = new bool[count];
-            bool[] singleMaterialAutoUpdates = new bool[count];
+            EnsureCustomTextureCacheCapacity(count);
+            ClearCustomTextureSourceCache();
 
             int cubemapTextureCount = 0;
             int cubemapMaterialCount = 0;
             int singleTextureCount = 0;
             int singleMaterialCount = 0;
 
-            _hasAutoCustomTextureUpdates = false;
-            _pointLightCustomIDs = new int[count];
-            int[] customSourceTypes = new int[count]; // 0: none, 1: cubemap texture, 2: cubemap material, 3: single texture, 4: single material
+            // Walk the registry once and collect unique texture/material sources in reusable arrays
             for (int i = 0; i < count; i++) { // Start every point light unresolved; supported sources assign a local deduplicated index below
-                _pointLightCustomIDs[i] = -1;
                 PointLightVolumeInstance instance = PointLightVolumeInstances[i];
                 if (!HasActiveCustomTextureSource(instance)) continue;
 
@@ -550,33 +637,33 @@ namespace VRCLightVolumes {
                 Texture textureSource = instance.ProjectionType == 1 ? instance.CustomTexture : null; // 1: texture
                 if (textureSource != null) {
                     if (usesCubemapProjection) { // Point light cubemap sources reserve six consecutive slices
-                        int index = FindTextureIndex(cubemapTextures, cubemapTextureCount, textureSource);
+                        int index = FindTextureIndex(_customCubemapTextures, cubemapTextureCount, textureSource);
                         int textureMode = instance.CustomTextureIsCubemap ? 2 : (instance.CustomTextureHasDepthSlices ? 1 : 0);
                         if (index < 0) { // Append each unique source once so matching lights share the same texture ID
                             index = cubemapTextureCount;
-                            cubemapTextures[cubemapTextureCount] = textureSource;
-                            cubemapTextureModes[cubemapTextureCount] = textureMode;
+                            _customCubemapTextures[cubemapTextureCount] = textureSource;
+                            _customCubemapTextureModes[cubemapTextureCount] = textureMode;
                             cubemapTextureCount++;
                         } else {
-                            if (textureMode > cubemapTextureModes[index]) cubemapTextureModes[index] = textureMode;
+                            if (textureMode > _customCubemapTextureModes[index]) _customCubemapTextureModes[index] = textureMode;
                         }
                         _pointLightCustomIDs[i] = index;
-                        customSourceTypes[i] = 1;
+                        _customSourceTypes[i] = 1;
                         if (instance.AutoUpdateCustomTexture) {
-                            cubemapTextureAutoUpdates[index] = true;
+                            _customCubemapTextureAutoUpdates[index] = true;
                             _hasAutoCustomTextureUpdates = true;
                         }
                     } else { // Spot and LUT/cookie projections use one slice per unique source
-                        int index = FindTextureIndex(singleTextures, singleTextureCount, textureSource);
+                        int index = FindTextureIndex(_customSingleTextures, singleTextureCount, textureSource);
                         if (index < 0) { // Append each unique source once so matching lights share the same texture ID
                             index = singleTextureCount;
-                            singleTextures[singleTextureCount] = textureSource;
+                            _customSingleTextures[singleTextureCount] = textureSource;
                             singleTextureCount++;
                         }
                         _pointLightCustomIDs[i] = index;
-                        customSourceTypes[i] = 3;
+                        _customSourceTypes[i] = 3;
                         if (instance.AutoUpdateCustomTexture) {
-                            singleTextureAutoUpdates[index] = true;
+                            _customSingleTextureAutoUpdates[index] = true;
                             _hasAutoCustomTextureUpdates = true;
                         }
                     }
@@ -586,49 +673,43 @@ namespace VRCLightVolumes {
                 Material materialSource = instance.ProjectionType == 2 ? instance.CustomTextureMaterial : null; // 2: material
                 if (materialSource != null) {
                     if (usesCubemapProjection) { // Cubemap materials are rendered as six generated faces
-                        int index = FindMaterialIndex(cubemapMaterials, cubemapMaterialCount, materialSource);
+                        int index = FindMaterialIndex(_customCubemapMaterials, cubemapMaterialCount, materialSource);
                         if (index < 0) { // Append each unique material once so matching lights share the same texture ID
                             index = cubemapMaterialCount;
-                            cubemapMaterials[cubemapMaterialCount] = materialSource;
+                            _customCubemapMaterials[cubemapMaterialCount] = materialSource;
                             cubemapMaterialCount++;
                         }
                         _pointLightCustomIDs[i] = index;
-                        customSourceTypes[i] = 2;
+                        _customSourceTypes[i] = 2;
                         if (instance.AutoUpdateCustomTexture) {
-                            cubemapMaterialAutoUpdates[index] = true;
+                            _customCubemapMaterialAutoUpdates[index] = true;
                             _hasAutoCustomTextureUpdates = true;
                         }
                     } else { // Single-slice materials render directly into one projection slice
-                        int index = FindMaterialIndex(singleMaterials, singleMaterialCount, materialSource);
+                        int index = FindMaterialIndex(_customSingleMaterials, singleMaterialCount, materialSource);
                         if (index < 0) { // Append each unique material once so matching lights share the same texture ID
                             index = singleMaterialCount;
-                            singleMaterials[singleMaterialCount] = materialSource;
+                            _customSingleMaterials[singleMaterialCount] = materialSource;
                             singleMaterialCount++;
                         }
                         _pointLightCustomIDs[i] = index;
-                        customSourceTypes[i] = 4;
+                        _customSourceTypes[i] = 4;
                         if (instance.AutoUpdateCustomTexture) {
-                            singleMaterialAutoUpdates[index] = true;
+                            _customSingleMaterialAutoUpdates[index] = true;
                             _hasAutoCustomTextureUpdates = true;
                         }
                     }
                 }
             }
 
-            // Trim temporary arrays to actual source counts so update loops only touch valid entries
-            _customCubemapTextures = CopyTextureArray(cubemapTextures, cubemapTextureCount);
-            _customCubemapMaterials = CopyMaterialArray(cubemapMaterials, cubemapMaterialCount);
-            _customSingleTextures = CopyTextureArray(singleTextures, singleTextureCount);
-            _customSingleMaterials = CopyMaterialArray(singleMaterials, singleMaterialCount);
-            _customCubemapTextureModes = CopyIntArray(cubemapTextureModes, cubemapTextureCount);
-            _customCubemapTextureAutoUpdates = CopyBoolArray(cubemapTextureAutoUpdates, cubemapTextureCount);
-            _customCubemapMaterialAutoUpdates = CopyBoolArray(cubemapMaterialAutoUpdates, cubemapMaterialCount);
-            _customSingleTextureAutoUpdates = CopyBoolArray(singleTextureAutoUpdates, singleTextureCount);
-            _customSingleMaterialAutoUpdates = CopyBoolArray(singleMaterialAutoUpdates, singleMaterialCount);
-
+            _customCubemapTextureCount = cubemapTextureCount;
+            _customCubemapMaterialCount = cubemapMaterialCount;
+            _customSingleTextureCount = singleTextureCount;
+            _customSingleMaterialCount = singleMaterialCount;
             CubemapsCount = cubemapTextureCount + cubemapMaterialCount;
             _customTexturesDepth = CubemapsCount * 6 + singleTextureCount + singleMaterialCount;
-            AssignPointLightCustomIDs(customSourceTypes, cubemapTextureCount, singleTextureCount);
+            // Convert local per-source indices into final texture-array slice IDs after final counts are known
+            AssignPointLightCustomIDs(_customSourceTypes, cubemapTextureCount, singleTextureCount);
         }
 
         // Checks whether a point light currently contributes to shader data and texture cache membership
@@ -666,14 +747,14 @@ namespace VRCLightVolumes {
         private void BlitCustomTextures(bool onlyAutoUpdates) {
 
             // Cubemap texture sources occupy the first custom texture slices, six slices per source
-            int cubemapTextureCount = _customCubemapTextures != null ? _customCubemapTextures.Length : 0;
+            int cubemapTextureCount = _customCubemapTextureCount;
             for (int i = 0; i < cubemapTextureCount; i++) {
                 if (onlyAutoUpdates && !_customCubemapTextureAutoUpdates[i]) continue;
                 BlitCubemapTexture(_customCubemapTextures[i], _customCubemapTextureModes[i], i * 6, CustomTextures);
             }
 
             // Cubemap material sources follow cubemap texture sources and are also rendered as six slices
-            int cubemapMaterialCount = _customCubemapMaterials != null ? _customCubemapMaterials.Length : 0;
+            int cubemapMaterialCount = _customCubemapMaterialCount;
             for (int i = 0; i < cubemapMaterialCount; i++) {
                 if (onlyAutoUpdates && !_customCubemapMaterialAutoUpdates[i]) continue;
                 BlitCubemapMaterial(_customCubemapMaterials[i], (cubemapTextureCount + i) * 6, CustomTextures, _customTexturesDepth);
@@ -681,7 +762,7 @@ namespace VRCLightVolumes {
 
             // Single-slice projection textures start after every cubemap slice
             int singleBaseSlice = CubemapsCount * 6;
-            int singleTextureCount = _customSingleTextures != null ? _customSingleTextures.Length : 0;
+            int singleTextureCount = _customSingleTextureCount;
             for (int i = 0; i < singleTextureCount; i++) {
                 if (onlyAutoUpdates && !_customSingleTextureAutoUpdates[i]) continue;
                 Texture sourceTexture = _customSingleTextures[i];
@@ -690,7 +771,7 @@ namespace VRCLightVolumes {
             }
 
             // Single-slice projection materials follow regular single-slice textures
-            int singleMaterialCount = _customSingleMaterials != null ? _customSingleMaterials.Length : 0;
+            int singleMaterialCount = _customSingleMaterialCount;
             for (int i = 0; i < singleMaterialCount; i++) {
                 if (onlyAutoUpdates && !_customSingleMaterialAutoUpdates[i]) continue;
                 Material sourceMaterial = _customSingleMaterials[i];
@@ -703,45 +784,19 @@ namespace VRCLightVolumes {
         // Finds a texture reference in a fixed-size prefix of an array
         private int FindTextureIndex(Texture[] array, int count, Texture texture) {
             if (array == null || texture == null) return -1;
-            return Array.IndexOf((Array)array, texture, 0, count);
+            for (int i = 0; i < count; i++) {
+                if (array[i] == texture) return i;
+            }
+            return -1;
         }
 
         // Finds a material reference in a fixed-size prefix of an array
         private int FindMaterialIndex(Material[] array, int count, Material material) {
             if (array == null || material == null) return -1;
-            return Array.IndexOf((Array)array, material, 0, count);
-        }
-
-        // Copies a texture array prefix to an exact-sized array
-        private Texture[] CopyTextureArray(Texture[] source, int count) {
-            if (count <= 0) return new Texture[0];
-            Texture[] destination = new Texture[count];
-            Array.Copy(source, destination, count);
-            return destination;
-        }
-
-        // Copies a material array prefix to an exact-sized array
-        private Material[] CopyMaterialArray(Material[] source, int count) {
-            if (count <= 0) return new Material[0];
-            Material[] destination = new Material[count];
-            Array.Copy(source, destination, count);
-            return destination;
-        }
-
-        // Copies an int array prefix to an exact-sized array
-        private int[] CopyIntArray(int[] source, int count) {
-            if (count <= 0) return new int[0];
-            int[] destination = new int[count];
-            Array.Copy(source, destination, count);
-            return destination;
-        }
-
-        // Copies a bool array prefix to an exact-sized array
-        private bool[] CopyBoolArray(bool[] source, int count) {
-            if (count <= 0) return new bool[0];
-            bool[] destination = new bool[count];
-            Array.Copy(source, destination, count);
-            return destination;
+            for (int i = 0; i < count; i++) {
+                if (array[i] == material) return i;
+            }
+            return -1;
         }
 
         // Rebuilds the runtime shadow texture array and assigns stable shader-side IDs to all shadowed point light instances
@@ -799,47 +854,69 @@ namespace VRCLightVolumes {
             return true;
         }
 
-        // Returns one shared six-slice scratch array for runtime shadow blur passes
-        public RenderTexture GetShadowBlurTempTexture() {
-            if (!EnsureRuntimeShadowBlurTempTexture(ShadowTexturesWidth, ShadowTexturesHeight)) return null;
-            return ShadowBlurTempTexture;
+        // Ensures reusable shadow texture source arrays can cover the current point light registry
+        private void EnsureShadowTextureCacheCapacity(int count) {
+            int targetCapacity = count > MaxPointLightCount ? count : MaxPointLightCount;
+            int capacity = _pointLightShadowIDs != null ? _pointLightShadowIDs.Length : 0;
+            // Keep existing arrays when their reusable capacity already covers the registry
+            if (capacity >= targetCapacity && _shadowCubemapTextures != null && _shadowCubemapTextures.Length >= targetCapacity && _shadowCubemapMaterials != null && _shadowCubemapMaterials.Length >= targetCapacity && _shadowCubemapTextureModes != null && _shadowCubemapTextureModes.Length >= targetCapacity && _shadowCubemapTextureAutoUpdates != null && _shadowCubemapTextureAutoUpdates.Length >= targetCapacity && _shadowCubemapMaterialAutoUpdates != null && _shadowCubemapMaterialAutoUpdates.Length >= targetCapacity && _shadowSourceIsMaterial != null && _shadowSourceIsMaterial.Length >= targetCapacity) return;
+
+            // Grow all related arrays together so shadow IDs keep matching registry indices
+            _shadowCubemapTextures = new Texture[targetCapacity];
+            _shadowCubemapMaterials = new Material[targetCapacity];
+            _shadowCubemapTextureModes = new int[targetCapacity];
+            _shadowCubemapTextureAutoUpdates = new bool[targetCapacity];
+            _shadowCubemapMaterialAutoUpdates = new bool[targetCapacity];
+            _pointLightShadowIDs = new int[targetCapacity];
+            _shadowSourceIsMaterial = new bool[targetCapacity];
+        }
+
+        // Clears reusable shadow texture source cache entries without reallocating their arrays
+        private void ClearShadowTextureSourceCache() {
+            // Clear only previously active source prefixes; the arrays can be much larger than active counts
+            for (int i = 0; i < _shadowCubemapTextureCount; i++) {
+                _shadowCubemapTextures[i] = null;
+                _shadowCubemapTextureModes[i] = 0;
+                _shadowCubemapTextureAutoUpdates[i] = false;
+            }
+            for (int i = 0; i < _shadowCubemapMaterialCount; i++) {
+                _shadowCubemapMaterials[i] = null;
+                _shadowCubemapMaterialAutoUpdates[i] = false;
+            }
+
+            int idCount = _pointLightShadowIDs != null ? _pointLightShadowIDs.Length : 0;
+            // Per-instance ID arrays use registry indices directly, so the whole reusable capacity is reset
+            for (int i = 0; i < idCount; i++) {
+                _pointLightShadowIDs[i] = -1;
+                _shadowSourceIsMaterial[i] = false;
+            }
+
+            _shadowCubemapTextureCount = 0;
+            _shadowCubemapMaterialCount = 0;
+            ShadowMapsCount = 0;
+            _shadowTexturesDepth = 0;
+            _hasAutoShadowTextureUpdates = false;
         }
 
         // Clears active shadow texture globals when no point light uses a shadow source
         private void ResetShadowTexturesGlobal() {
             ReleaseRuntimeRenderTexture(ShadowTextures);
-            ReleaseRuntimeRenderTexture(ShadowBlurTempTexture);
             ShadowTextures = null;
-            ShadowBlurTempTexture = null;
-            ShadowMapsCount = 0;
-            _shadowTexturesDepth = 0;
-            _shadowCubemapTextures = new Texture[0];
-            _shadowCubemapMaterials = new Material[0];
-            _shadowCubemapTextureModes = new int[0];
-            _shadowCubemapTextureAutoUpdates = new bool[0];
-            _shadowCubemapMaterialAutoUpdates = new bool[0];
-            _pointLightShadowIDs = new int[0];
-            _hasAutoShadowTextureUpdates = false;
+            ClearShadowTextureSourceCache();
         }
 
         // Builds deduplicated source arrays and per-instance shader IDs for the runtime shadow texture array
         private void BuildShadowTextureSourceCache() {
             int count = PointLightVolumeInstances != null ? PointLightVolumeInstances.Length : 0;
-            Texture[] cubemapTextures = new Texture[count];
-            Material[] cubemapMaterials = new Material[count];
-            int[] cubemapTextureModes = new int[count];
-            bool[] cubemapTextureAutoUpdates = new bool[count];
-            bool[] cubemapMaterialAutoUpdates = new bool[count];
+            EnsureShadowTextureCacheCapacity(count);
+            ClearShadowTextureSourceCache();
 
             int cubemapTextureCount = 0;
             int cubemapMaterialCount = 0;
 
-            _hasAutoShadowTextureUpdates = false;
-            _pointLightShadowIDs = new int[count];
-            bool[] shadowSourceIsMaterial = new bool[count];
+            // Walk the registry once and collect unique shadow sources in reusable arrays
             for (int i = 0; i < count; i++) {
                 // Start every point light unresolved; only valid shadow sources receive a shadow texture ID
-                _pointLightShadowIDs[i] = -1;
                 PointLightVolumeInstance instance = PointLightVolumeInstances[i];
                 if (!IsActivePointLight(instance)) continue;
                 if (instance.ShadowMapID < 0 || (instance.ShadowMapTexture == null && instance.ShadowMapMaterial == null)) {
@@ -849,18 +926,18 @@ namespace VRCLightVolumes {
                 // Prefer texture shadows over material shadows when both fields are assigned
                 Texture textureSource = instance.ShadowMapTexture;
                 if (textureSource != null) { // Shadow textures are deduplicated before being copied into the runtime array
-                    int index = FindTextureIndex(cubemapTextures, cubemapTextureCount, textureSource);
+                    int index = FindTextureIndex(_shadowCubemapTextures, cubemapTextureCount, textureSource);
                     int textureMode = instance.ShadowMapTextureIsCubemap ? 2 : (instance.ShadowMapTextureHasDepthSlices ? 1 : 0);
                     if (index < 0) { // Append each unique texture once; matching lights reuse the same shadow ID
                         index = cubemapTextureCount;
-                        cubemapTextures[cubemapTextureCount] = textureSource;
-                        cubemapTextureModes[cubemapTextureCount] = textureMode;
+                        _shadowCubemapTextures[cubemapTextureCount] = textureSource;
+                        _shadowCubemapTextureModes[cubemapTextureCount] = textureMode;
                         cubemapTextureCount++;
                     } else { // Keep the most expressive mode when the same texture appears with different source metadata
-                        if (textureMode > cubemapTextureModes[index]) cubemapTextureModes[index] = textureMode;
+                        if (textureMode > _shadowCubemapTextureModes[index]) _shadowCubemapTextureModes[index] = textureMode;
                     }
                     if (instance.AutoUpdateShadowMap) {
-                        cubemapTextureAutoUpdates[index] = true;
+                        _shadowCubemapTextureAutoUpdates[index] = true;
                         _hasAutoShadowTextureUpdates = true;
                     }
                     _pointLightShadowIDs[i] = index;
@@ -869,35 +946,30 @@ namespace VRCLightVolumes {
                 // Material shadows are rendered after texture shadows, but share the same final cubemap array
                 Material materialSource = instance.ShadowMapMaterial;
                 if (materialSource != null) {
-                    int index = FindMaterialIndex(cubemapMaterials, cubemapMaterialCount, materialSource);
+                    int index = FindMaterialIndex(_shadowCubemapMaterials, cubemapMaterialCount, materialSource);
                     if (index < 0) { // Append each unique material once; matching lights reuse the same shadow ID
                         index = cubemapMaterialCount;
-                        cubemapMaterials[cubemapMaterialCount] = materialSource;
+                        _shadowCubemapMaterials[cubemapMaterialCount] = materialSource;
                         cubemapMaterialCount++;
                     }
                     if (instance.AutoUpdateShadowMap) {
-                        cubemapMaterialAutoUpdates[index] = true;
+                        _shadowCubemapMaterialAutoUpdates[index] = true;
                         _hasAutoShadowTextureUpdates = true;
                     }
                     _pointLightShadowIDs[i] = index;
-                    shadowSourceIsMaterial[i] = true;
+                    _shadowSourceIsMaterial[i] = true;
                 }
             }
 
-            // Trim temporary arrays to actual source counts so update loops only touch valid entries
-            _shadowCubemapTextures = CopyTextureArray(cubemapTextures, cubemapTextureCount);
-            _shadowCubemapMaterials = CopyMaterialArray(cubemapMaterials, cubemapMaterialCount);
-            _shadowCubemapTextureModes = CopyIntArray(cubemapTextureModes, cubemapTextureCount);
-            _shadowCubemapTextureAutoUpdates = CopyBoolArray(cubemapTextureAutoUpdates, cubemapTextureCount);
-            _shadowCubemapMaterialAutoUpdates = CopyBoolArray(cubemapMaterialAutoUpdates, cubemapMaterialCount);
-
+            _shadowCubemapTextureCount = cubemapTextureCount;
+            _shadowCubemapMaterialCount = cubemapMaterialCount;
             ShadowMapsCount = cubemapTextureCount + cubemapMaterialCount;
             _shadowTexturesDepth = ShadowMapsCount * 6;
             // Material shadow sources are stored after texture sources in the final array
             for (int i = 0; i < count; i++) {
                 int index = _pointLightShadowIDs[i];
                 if (index < 0) continue;
-                if (shadowSourceIsMaterial[i]) index += cubemapTextureCount;
+                if (_shadowSourceIsMaterial[i]) index += cubemapTextureCount;
                 _pointLightShadowIDs[i] = index;
                 PointLightVolumeInstance instance = PointLightVolumeInstances[i];
                 if (instance != null) instance.ShadowMapID = index;
@@ -907,13 +979,13 @@ namespace VRCLightVolumes {
         // Copies unique shadow cubemap sources into the runtime array
         private void BlitShadowTextures(bool onlyAutoUpdates) {
             // Shadow texture sources occupy the first shadow slices, six slices per cubemap
-            int cubemapTextureCount = _shadowCubemapTextures != null ? _shadowCubemapTextures.Length : 0;
+            int cubemapTextureCount = _shadowCubemapTextureCount;
             for (int i = 0; i < cubemapTextureCount; i++) {
                 if (onlyAutoUpdates && !_shadowCubemapTextureAutoUpdates[i]) continue;
                 BlitCubemapTexture(_shadowCubemapTextures[i], _shadowCubemapTextureModes[i], i * 6, ShadowTextures);
             }
             // Shadow material sources follow texture sources and are rendered as six generated slices
-            int cubemapMaterialCount = _shadowCubemapMaterials != null ? _shadowCubemapMaterials.Length : 0;
+            int cubemapMaterialCount = _shadowCubemapMaterialCount;
             for (int i = 0; i < cubemapMaterialCount; i++) {
                 if (onlyAutoUpdates && !_shadowCubemapMaterialAutoUpdates[i]) continue;
                 BlitCubemapMaterial(_shadowCubemapMaterials[i], (cubemapTextureCount + i) * 6, ShadowTextures, _shadowTexturesDepth);
@@ -952,22 +1024,6 @@ namespace VRCLightVolumes {
             ShadowMapsCount = depth / 6;
             _shadowTexturesDepth = depth;
             return true;
-        }
-
-        // Creates or recreates the shared runtime shadow blur scratch array
-        private bool EnsureRuntimeShadowBlurTempTexture(int width, int height) {
-            if (width <= 0 || height <= 0) return false;
-            RenderTextureFormat renderTextureFormat = ShadowTextureFormat == 0 ? RenderTextureFormat.ARGBHalf : RenderTextureFormat.ARGBFloat;
-            bool recreate = ShouldRecreateRuntimeTextureArray(ShadowBlurTempTexture, width, height, 6, renderTextureFormat, false, FilterMode.Bilinear);
-            if (!recreate) return ShadowBlurTempTexture != null;
-
-            ReleaseRuntimeRenderTexture(ShadowBlurTempTexture);
-
-            ShadowBlurTempTexture = CreateRuntimeTextureArray(width, height, 6, renderTextureFormat, FilterMode.Bilinear, false);
-#if !COMPILER_UDONSHARP
-            ShadowBlurTempTexture.name = "LightVolumeManager_ShadowBlurTempTexture";
-#endif
-            return ShadowBlurTempTexture != null;
         }
 
         // Checks if a runtime texture array must be recreated for the requested layout
@@ -1177,6 +1233,29 @@ namespace VRCLightVolumes {
 #endif
         }
 
+        // Checks dynamic volume transforms without rebuilding or uploading shader arrays
+        private bool HasAutoUpdatedVolumeChanges() {
+            // Compare regular dynamic volumes against the transform values captured during the last upload
+            for (int i = 0; i < _dynamicLightVolumeCount; i++) {
+                Transform instanceTransform = _dynamicLightVolumeTransforms[i];
+                if (instanceTransform == null) return true;
+                if (instanceTransform.position != _dynamicLightVolumePositions[i]) return true;
+                if (instanceTransform.rotation != _dynamicLightVolumeRotations[i]) return true;
+                if (instanceTransform.lossyScale != _dynamicLightVolumeScales[i]) return true;
+            }
+
+            // Compare dynamic point lights against the transform values captured during the last upload
+            for (int i = 0; i < _dynamicPointLightVolumeCount; i++) {
+                Transform instanceTransform = _dynamicPointLightVolumeTransforms[i];
+                if (instanceTransform == null) return true;
+                if (instanceTransform.position != _dynamicPointLightVolumePositions[i]) return true;
+                if (instanceTransform.rotation != _dynamicPointLightVolumeRotations[i]) return true;
+                if (instanceTransform.lossyScale != _dynamicPointLightVolumeScales[i]) return true;
+            }
+
+            return false;
+        }
+
 #if UDONSHARP
         // Internal method to auto update volumes and runtime textures every frame while needed
         public void UpdateVolumesProcess() {
@@ -1186,12 +1265,15 @@ namespace VRCLightVolumes {
                 return;
             }
 
-            bool updateVolumes = _volumeDataUpdateRequested || AutoUpdateVolumes;
+            bool updateVolumes = _volumeDataUpdateRequested;
             _volumeDataUpdateRequested = false;
+            // AutoUpdateVolumes only does the cheap transform comparison unless an explicit rebuild was requested
+            if (!updateVolumes && AutoUpdateVolumes) updateVolumes = HasAutoUpdatedVolumeChanges();
 
             if (updateVolumes) {
                 UpdateVolumes();
             } else if (!_customTexturesInitialized || !_shadowTexturesInitialized) {
+                // Texture caches may need initialization even when volume transforms did not change
                 EnsureRuntimeTextureCaches();
             }
 
@@ -1199,7 +1281,8 @@ namespace VRCLightVolumes {
             if (AutoUpdateTextures && _hasAutoCustomTextureUpdates) UpdateAutoCustomTextures();
             if (AutoUpdateTextures && _hasAutoShadowTextureUpdates) UpdateAutoShadowTextures();
 
-            if ((AutoUpdateVolumes || _volumeDataUpdateRequested || updateTextures || !_customTexturesInitialized || !_shadowTexturesInitialized) && enabled && gameObject.activeInHierarchy) {
+            // Keep the delayed loop alive only while there is monitoring or texture work left to do
+            if (((AutoUpdateVolumes && (_dynamicLightVolumeCount > 0 || _dynamicPointLightVolumeCount > 0)) || _volumeDataUpdateRequested || updateTextures || !_customTexturesInitialized || !_shadowTexturesInitialized) && enabled && gameObject.activeInHierarchy) {
                 SendCustomEventDelayedFrames(nameof(UpdateVolumesProcess), 1);
             } else {
                 _isUpdateProcessRunning = false;
@@ -1212,19 +1295,22 @@ namespace VRCLightVolumes {
             do {
                 yield return null;
 
-                bool updateVolumes = _volumeDataUpdateRequested || AutoUpdateVolumes;
+                bool updateVolumes = _volumeDataUpdateRequested;
                 _volumeDataUpdateRequested = false;
+                // AutoUpdateVolumes only does the cheap transform comparison unless an explicit rebuild was requested
+                if (!updateVolumes && AutoUpdateVolumes) updateVolumes = HasAutoUpdatedVolumeChanges();
 
                 if (updateVolumes) {
                     UpdateVolumes();
                 } else if (!_customTexturesInitialized || !_shadowTexturesInitialized) {
+                    // Texture caches may need initialization even when volume transforms did not change
                     EnsureRuntimeTextureCaches();
                 }
 
                 updateTextures = AutoUpdateTextures && (_hasAutoCustomTextureUpdates || _hasAutoShadowTextureUpdates);
                 if (AutoUpdateTextures && _hasAutoCustomTextureUpdates) UpdateAutoCustomTextures();
                 if (AutoUpdateTextures && _hasAutoShadowTextureUpdates) UpdateAutoShadowTextures();
-            } while (isActiveAndEnabled && (AutoUpdateVolumes || _volumeDataUpdateRequested || updateTextures || !_customTexturesInitialized || !_shadowTexturesInitialized));
+            } while (isActiveAndEnabled && ((AutoUpdateVolumes && (_dynamicLightVolumeCount > 0 || _dynamicPointLightVolumeCount > 0)) || _volumeDataUpdateRequested || updateTextures || !_customTexturesInitialized || !_shadowTexturesInitialized));
 
             _updateCoroutine = null;
         }
@@ -1256,6 +1342,10 @@ namespace VRCLightVolumes {
 
             if (!_isRegistrySanitized) SanitizeRegistries();
 
+            // Start a new transform baseline for AutoUpdateVolumes before scanning active instances
+            _dynamicLightVolumeCount = 0;
+            _dynamicPointLightVolumeCount = 0;
+
             // Search for enabled volumes and count additive volumes
             _enabledCount = 0;
             _additiveCount = 0;
@@ -1285,6 +1375,15 @@ namespace VRCLightVolumes {
                         instance.UpdateTransform();
                     }
 #endif
+                    if (instance.IsDynamic) {
+                        // Store dynamic transform state only after the instance has refreshed its own cached data
+                        Transform instanceTransform = instance.transform;
+                        _dynamicLightVolumeTransforms[_dynamicLightVolumeCount] = instanceTransform;
+                        _dynamicLightVolumePositions[_dynamicLightVolumeCount] = instanceTransform.position;
+                        _dynamicLightVolumeRotations[_dynamicLightVolumeCount] = instanceTransform.rotation;
+                        _dynamicLightVolumeScales[_dynamicLightVolumeCount] = instanceTransform.lossyScale;
+                        _dynamicLightVolumeCount++;
+                    }
                     if (instance.IsAdditive) _additiveCount++;
                     _enabledIDs[_enabledCount] = i;
                     _enabledCount++;
@@ -1345,6 +1444,7 @@ namespace VRCLightVolumes {
                 if (_isRangeDirty) { // If brightness cutoff changed, force every light range to recalculate
                     instance.UpdateRange();
                 }
+                // Source membership changes invalidate only the matching texture cache
                 bool hasCustomTextureSource = HasActiveCustomTextureSource(instance);
                 if (_pointLightCustomIDs == null || i >= _pointLightCustomIDs.Length || hasCustomTextureSource != (_pointLightCustomIDs[i] >= 0)) _customTexturesInitialized = false;
                 bool hasShadowTextureSource = HasActiveShadowTextureSource(instance);
@@ -1367,12 +1467,22 @@ namespace VRCLightVolumes {
                         instance.UpdateTransform();
                     }
 #endif
+                    if (instance.IsDynamic) {
+                        // Store dynamic transform state only after the instance has refreshed its own cached data
+                        Transform instanceTransform = instance.transform;
+                        _dynamicPointLightVolumeTransforms[_dynamicPointLightVolumeCount] = instanceTransform;
+                        _dynamicPointLightVolumePositions[_dynamicPointLightVolumeCount] = instanceTransform.position;
+                        _dynamicPointLightVolumeRotations[_dynamicPointLightVolumeCount] = instanceTransform.rotation;
+                        _dynamicPointLightVolumeScales[_dynamicPointLightVolumeCount] = instanceTransform.lossyScale;
+                        _dynamicPointLightVolumeCount++;
+                    }
                     _enabledPointIDs[_pointLightCount] = i;
                     _pointLightCount++;
                 }
             }
 
             _isRangeDirty = false; // Reset range dirtiness
+            // Rebuild texture caches after point light source membership has been checked
             EnsureRuntimeTextureCaches();
 
             // Fill arrays with enabled point light data
@@ -1381,7 +1491,7 @@ namespace VRCLightVolumes {
                 PointLightVolumeInstance instance = PointLightVolumeInstances[_enabledPointIDs[i]];
 
                 // Recalculate squared range of the light if dirty
-                if (_isRangeDirty || instance.IsRangeDirty) {
+                if (instance.IsRangeDirty) {
                     instance.UpdateRange();
                 }
 

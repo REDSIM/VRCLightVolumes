@@ -12,18 +12,20 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 78b2425a2284af743826c689403a4924, type: 3}
   m_Name: LightVolumeL0
   m_EditorClassIdentifier: 
-  m_functionInfo: "// Made with Amplify Shader Editor v1.9.9\n// Available at the
-    Unity Asset Store - http://u3d.as/y3X \n/*ASEBEGIN\nVersion=19900\nNode;AmplifyShaderEditor.FunctionInput,
+  m_functionInfo: "// Made with Amplify Shader Editor v1.9.9.9\n// Available at the
+    Unity Asset Store - http://u3d.as/y3X \n/*ASEBEGIN\nVersion=19909\nNode;AmplifyShaderEditor.FunctionInput,
     AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;6;-1264,-48;Inherit;False;WorldPosition;3;0;False;1;0;FLOAT3;0,0,0;False;1;FLOAT3;0\nNode;AmplifyShaderEditor.WorldPosInputsNode,
     AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;7;-1456,-48;Inherit;False;0;4;FLOAT3;0;FLOAT;1;FLOAT;2;FLOAT;3\nNode;AmplifyShaderEditor.FunctionSwitch,
     AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;8;-752,-48;Inherit;False;AdditiveOnly;True;0;2;-1;In
     0;In 1;Object;-1;20;0;FLOAT3;0,0,0;False;1;FLOAT3;0,0,0;False;2;FLOAT;0;False;3;FLOAT;0;False;4;FLOAT;0;False;5;FLOAT;0;False;6;FLOAT;0;False;7;FLOAT;0;False;8;FLOAT;0;False;9;FLOAT;0;False;10;FLOAT;0;False;11;FLOAT;0;False;12;FLOAT;0;False;13;FLOAT;0;False;14;FLOAT;0;False;15;FLOAT;0;False;16;FLOAT;0;False;17;FLOAT;0;False;18;FLOAT;0;False;19;FLOAT;0;False;1;FLOAT3;0\nNode;AmplifyShaderEditor.FunctionInput,
     AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;14;-1296,128;Inherit;False;WorldPositionOffset;3;1;False;1;0;FLOAT3;0,0,0;False;1;FLOAT3;0\nNode;AmplifyShaderEditor.CustomExpressionNode,
-    AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;9;-1056,16;Inherit;False;
-    ;3;File;2;True;worldPos;FLOAT3;0,0,0;In;;Inherit;False;True;worldPosOffset;FLOAT3;0,0,0;In;;Inherit;False;LightVolumeAdditiveSH_L0;False;True;0;4ae0b01e695ad7545a078e1e04d2e609;False;2;0;FLOAT3;0,0,0;False;1;FLOAT3;0,0,0;False;1;FLOAT3;0\nNode;AmplifyShaderEditor.CustomExpressionNode,
     AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;1;-1056,-80;Inherit;False;
-    ;3;File;2;True;worldPos;FLOAT3;0,0,0;In;;Inherit;False;True;worldPosOffset;FLOAT3;0,0,0;In;;Inherit;False;LightVolumeSH_L0;False;True;0;4ae0b01e695ad7545a078e1e04d2e609;False;2;0;FLOAT3;0,0,0;False;1;FLOAT3;0,0,0;False;1;FLOAT3;0\nNode;AmplifyShaderEditor.FunctionOutput,
-    AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;13;-496,-48;Inherit;False;True;-1;L0;0;False;1;0;FLOAT3;0,0,0;False;1;FLOAT3;0\nWireConnection;6;0;7;0\nWireConnection;8;0;1;0\nWireConnection;8;1;9;0\nWireConnection;9;0;6;0\nWireConnection;9;1;14;0\nWireConnection;1;0;6;0\nWireConnection;1;1;14;0\nWireConnection;13;0;8;0\nASEEND*/\n//CHKSM=F2DB2B347764E0A9D4AF87A5B7DE40E60D5713B8"
+    ;3;File;3;True;worldPos;FLOAT3;0,0,0;In;;Inherit;False;True;worldPosOffset;FLOAT3;0,0,0;In;;Inherit;False;True;worldNormal;FLOAT3;0,0,0;In;;Inherit;False;LightVolumeSH_L0;False;True;0;4ae0b01e695ad7545a078e1e04d2e609;False;3;0;FLOAT3;0,0,0;False;1;FLOAT3;0,0,0;False;2;FLOAT3;0,0,0;False;1;FLOAT3;0\nNode;AmplifyShaderEditor.CustomExpressionNode,
+    AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;9;-1056,48;Inherit;False;
+    ;3;File;3;True;worldPos;FLOAT3;0,0,0;In;;Inherit;False;True;worldPosOffset;FLOAT3;0,0,0;In;;Inherit;False;True;worldNormal;FLOAT3;0,0,0;In;;Inherit;False;LightVolumeAdditiveSH_L0;False;True;0;4ae0b01e695ad7545a078e1e04d2e609;False;3;0;FLOAT3;0,0,0;False;1;FLOAT3;0,0,0;False;2;FLOAT3;0,0,0;False;1;FLOAT3;0\nNode;AmplifyShaderEditor.FunctionInput,
+    AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;16;-1264,224;Inherit;False;WorldNormal;3;2;False;1;0;FLOAT3;0,0,0;False;1;FLOAT3;0\nNode;AmplifyShaderEditor.WorldNormalVector,
+    AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;15;-1456,224;Inherit;False;True;1;0;FLOAT3;0,0,1;False;4;FLOAT3;0;FLOAT;1;FLOAT;2;FLOAT;3\nNode;AmplifyShaderEditor.FunctionOutput,
+    AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;13;-496,-48;Inherit;False;True;-1;L0;0;False;1;0;FLOAT3;0,0,0;False;1;FLOAT3;0\nWireConnection;6;0;7;0\nWireConnection;8;0;1;0\nWireConnection;8;1;9;0\nWireConnection;1;0;6;0\nWireConnection;1;1;14;0\nWireConnection;1;2;16;0\nWireConnection;9;0;6;0\nWireConnection;9;1;14;0\nWireConnection;9;2;16;0\nWireConnection;16;0;15;0\nWireConnection;13;0;8;0\nASEEND*/\n//CHKSM=4CDD8515EDC6AE3DA7F65D9D2BAB91F9A39F719A"
   m_functionName: 
   m_description: 'Samples VRC Light Volumes and returns color
 

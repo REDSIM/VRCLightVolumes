@@ -1,4 +1,4 @@
-// Made with Amplify Shader Editor v1.9.9.1
+// Made with Amplify Shader Editor v1.9.9.9
 // Available at the Unity Asset Store - http://u3d.as/y3X 
 Shader "Light Volume Samples/Light Volume PBR"
 {
@@ -19,7 +19,7 @@ Shader "Light Volume Samples/Light Volume PBR"
 		[Toggle( _SPECULARS_ON )] _Speculars( "Speculars", Float ) = 1
 		[Toggle( _DOMINANTDIRSPECULARS_ON )] _DominantDirSpeculars( "Dominant Dir Speculars", Float ) = 0
 		[Enum(UnityEngine.Rendering.CullMode)] _Culling( "Culling", Float ) = 2
-		[HideInInspector] _texcoord( "", 2D ) = "white" {}
+
 
 		//_TransmissionShadow( "Transmission Shadow", Range( 0, 1 ) ) = 0.5
 		//_TransStrength( "Trans Strength", Range( 0, 50 ) ) = 1
@@ -28,18 +28,24 @@ Shader "Light Volume Samples/Light Volume PBR"
 		//_TransDirect( "Trans Direct", Range( 0, 1 ) ) = 0.9
 		//_TransAmbient( "Trans Ambient", Range( 0, 1 ) ) = 0.1
 		//_TransShadow( "Trans Shadow", Range( 0, 1 ) ) = 0.5
+
 		//_TessPhongStrength( "Tess Phong Strength", Range( 0, 1 ) ) = 0.5
 		//_TessValue( "Tess Max Tessellation", Range( 1, 32 ) ) = 16
 		//_TessMin( "Tess Min Distance", Float ) = 10
 		//_TessMax( "Tess Max Distance", Float ) = 25
 		//_TessEdgeLength ( "Tess Edge length", Range( 2, 50 ) ) = 16
 		//_TessMaxDisp( "Tess Max Displacement", Float ) = 25
+
 		//[ToggleOff] _SpecularHighlights("Specular Highlights", Float) = 1.0
-		//[ToggleOff] _GlossyReflections("Reflections", Float) = 1.0
+		[ToggleOff] _GlossyReflections("Reflections", Float) = 1.0
+
+		//_InstancedTerrainNormals("Specular Highlights", Float) = 1.0
 	}
 
 	SubShader
 	{
+		
+
 		
 
 		Tags { "RenderType"="Opaque" "Queue"="Geometry" "DisableBatching"="False" }
@@ -59,6 +65,7 @@ Shader "Light Volume Samples/Light Volume PBR"
 
 		CGINCLUDE
 			#pragma target 3.5
+			// ensure rendering platforms toggle list is visible
 
 			float4 FixedTess( float tessValue )
 			{
@@ -179,16 +186,16 @@ Shader "Light Volume Samples/Light Volume PBR"
 			Blend One Zero
 
 			CGPROGRAM
-				#define ASE_GEOMETRY 1
+				#define ASE_GEOMETRY
 				#define ASE_FRAGMENT_NORMAL 0
 				#define ASE_RECEIVE_SHADOWS
-				#pragma shader_feature_local_fragment _SPECULARHIGHLIGHTS_OFF
+				#pragma shader_feature_local_fragment _GLOSSYREFLECTIONS_OFF
 				#pragma multi_compile_instancing
 				#pragma multi_compile _ LOD_FADE_CROSSFADE
 				#pragma multi_compile_fog
 				#define ASE_FOG
 				#define ASE_NO_AMBIENT 1
-				#define ASE_VERSION 19901
+				#define ASE_VERSION 19909
 
 				#pragma vertex vert
 				#pragma fragment frag
@@ -197,7 +204,7 @@ Shader "Light Volume Samples/Light Volume PBR"
 					#define UNITY_PASS_FORWARDBASE
 				#endif
 				#include "HLSLSupport.cginc"
-				#ifdef ASE_GEOMETRY
+				#if defined( ASE_GEOMETRY ) || defined( ASE_IMPOSTOR )
 					#ifndef UNITY_INSTANCED_LOD_FADE
 						#define UNITY_INSTANCED_LOD_FADE
 					#endif
@@ -213,6 +220,10 @@ Shader "Light Volume Samples/Light Volume PBR"
 				#include "Lighting.cginc"
 				#include "UnityPBSLighting.cginc"
 				#include "AutoLight.cginc"
+
+				#if defined( UNITY_INSTANCING_ENABLED ) && defined( ASE_INSTANCED_TERRAIN ) && ( defined(_TERRAIN_INSTANCED_PERPIXEL_NORMAL) || defined(_INSTANCEDTERRAINNORMALS_PIXEL) )
+					#define ENABLE_TERRAIN_PERPIXEL_NORMAL
+				#endif
 
 				#include "UnityStandardUtils.cginc"
 				#include "Packages/red.sim.lightvolumes/Shaders/LightVolumes.cginc"
@@ -236,18 +247,19 @@ Shader "Light Volume Samples/Light Volume PBR"
 					float4 vertex : POSITION;
 					half3 normal : NORMAL;
 					half4 tangent : TANGENT;
+					float4 texcoord : TEXCOORD0;
 					float4 texcoord1 : TEXCOORD1;
 					float4 texcoord2 : TEXCOORD2;
-					float4 ase_texcoord : TEXCOORD0;
+					
 					UNITY_VERTEX_INPUT_INSTANCE_ID
 				};
 
 				struct v2f
 				{
 					float4 pos : SV_POSITION;
-					float4 positionWS : TEXCOORD0; // xyz = positionWS, w = fogCoord
+					float4 worldPos : TEXCOORD0; // xyz = positionWS, w = fogCoord
 					half3 normalWS : TEXCOORD1;
-					half4 tangentWS : TEXCOORD2;
+					float4 tangentWS : TEXCOORD2; // holds terrainUV ifdef ENABLE_TERRAIN_PERPIXEL_NORMAL
 					half4 ambientOrLightmapUV : TEXCOORD3;
 					UNITY_LIGHTING_COORDS( 4, 5 )
 					float4 ase_texcoord6 : TEXCOORD6;
@@ -299,7 +311,7 @@ Shader "Light Volume Samples/Light Volume PBR"
 					UNITY_TRANSFER_INSTANCE_ID(v,o);
 					UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(o);
 
-					o.ase_texcoord6.xy = v.ase_texcoord.xy;
+					o.ase_texcoord6.xy = v.texcoord.xyzw.xy;
 					
 					//setting value to unused interpolator channels and avoid initialization warnings
 					o.ase_texcoord6.zw = 0;
@@ -324,7 +336,7 @@ Shader "Light Volume Samples/Light Volume PBR"
 					half3 tangentWS = UnityObjectToWorldDir( v.tangent.xyz );
 
 					o.pos = UnityObjectToClipPos( v.vertex );
-					o.positionWS.xyz = positionWS;
+					o.worldPos.xyz = positionWS;
 					o.normalWS = normalWS;
 					o.tangentWS = half4( tangentWS, v.tangent.w );
 
@@ -344,9 +356,14 @@ Shader "Light Volume Samples/Light Volume PBR"
 						o.ambientOrLightmapUV.zw = v.texcoord2.xy * unity_DynamicLightmapST.xy + unity_DynamicLightmapST.zw;
 					#endif
 
+					#if defined(ENABLE_TERRAIN_PERPIXEL_NORMAL)
+						o.tangentWS.zw = v.texcoord.xy;
+						o.tangentWS.xy = v.texcoord.xy * unity_LightmapST.xy + unity_LightmapST.zw;
+					#endif
+
 					UNITY_TRANSFER_LIGHTING(o, v.texcoord1.xy);
 					#if defined( ASE_FOG )
-						o.positionWS.w = o.pos.z;
+						UNITY_TRANSFER_FOG_COMBINED_WITH_WORLD_POS( o, o.pos );
 					#endif
 					return o;
 				}
@@ -357,10 +374,10 @@ Shader "Light Volume Samples/Light Volume PBR"
 					float4 vertex : INTERNALTESSPOS;
 					half4 tangent : TANGENT;
 					half3 normal : NORMAL;
+					float4 texcoord : TEXCOORD0;
 					float4 texcoord1 : TEXCOORD1;
 					float4 texcoord2 : TEXCOORD2;
-					float4 ase_texcoord : TEXCOORD0;
-
+					
 					UNITY_VERTEX_INPUT_INSTANCE_ID
 				};
 
@@ -378,9 +395,10 @@ Shader "Light Volume Samples/Light Volume PBR"
 					o.vertex = v.vertex;
 					o.tangent = v.tangent;
 					o.normal = v.normal;
+					o.texcoord = v.texcoord;
 					o.texcoord1 = v.texcoord1;
 					o.texcoord2 = v.texcoord2;
-					o.ase_texcoord = v.ase_texcoord;
+					
 					return o;
 				}
 
@@ -420,9 +438,10 @@ Shader "Light Volume Samples/Light Volume PBR"
 					o.vertex = patch[0].vertex * bary.x + patch[1].vertex * bary.y + patch[2].vertex * bary.z;
 					o.tangent = patch[0].tangent * bary.x + patch[1].tangent * bary.y + patch[2].tangent * bary.z;
 					o.normal = patch[0].normal * bary.x + patch[1].normal * bary.y + patch[2].normal * bary.z;
+					o.texcoord = patch[0].texcoord * bary.x + patch[1].texcoord * bary.y + patch[2].texcoord * bary.z;
 					o.texcoord1 = patch[0].texcoord1 * bary.x + patch[1].texcoord1 * bary.y + patch[2].texcoord1 * bary.z;
 					o.texcoord2 = patch[0].texcoord2 * bary.x + patch[1].texcoord2 * bary.y + patch[2].texcoord2 * bary.z;
-					o.ase_texcoord = patch[0].ase_texcoord * bary.x + patch[1].ase_texcoord * bary.y + patch[2].ase_texcoord * bary.z;
+					
 					#if defined(ASE_PHONG_TESSELLATION)
 					float3 pp[3];
 					for (int i = 0; i < 3; ++i)
@@ -465,14 +484,14 @@ Shader "Light Volume Samples/Light Volume PBR"
 					half atten;
 					{
 						#if defined( ASE_RECEIVE_SHADOWS )
-							UNITY_LIGHT_ATTENUATION( temp, IN, IN.positionWS.xyz )
+							UNITY_LIGHT_ATTENUATION( temp, IN, IN.worldPos.xyz )
 							atten = temp;
 						#else
 							atten = 1;
 						#endif
 					}
 
-					float3 PositionWS = IN.positionWS.xyz;
+					float3 PositionWS = IN.worldPos.xyz;
 					half3 ViewDirWS = normalize( UnityWorldSpaceViewDir( PositionWS ) );
 					float4 ScreenPosNorm = float4( IN.pos.xy * ( _ScreenParams.zw - 1.0 ), IN.pos.zw );
 					float4 ClipPos = ComputeClipSpacePosition( ScreenPosNorm.xy, IN.pos.z ) * IN.pos.w;
@@ -481,7 +500,13 @@ Shader "Light Volume Samples/Light Volume PBR"
 					half3 TangentWS = IN.tangentWS.xyz;
 					half3 BitangentWS = cross( IN.normalWS, IN.tangentWS.xyz ) * IN.tangentWS.w * unity_WorldTransformParams.w;
 					half3 LightAtten = atten;
-					float FogCoord = IN.positionWS.w;
+
+					#if defined(ENABLE_TERRAIN_PERPIXEL_NORMAL)
+						float2 sampleCoords = (IN.tangentWS.zw / _TerrainHeightmapRecipSize.zw + 0.5f) * _TerrainHeightmapRecipSize.xy;
+						NormalWS = UnityObjectToWorldNormal(normalize(tex2D(_TerrainNormalmapTexture, sampleCoords).rgb * 2 - 1));
+						TangentWS = -cross(unity_ObjectToWorld._13_23_33, NormalWS);
+						BitangentWS = cross(NormalWS, -TangentWS);
+					#endif
 
 					float2 uv_MainTex = IN.ase_texcoord6.xy * _MainTex_ST.xy + _MainTex_ST.zw;
 					float3 Albedo337 = ( _Color.rgb * tex2D( _MainTex, uv_MainTex ).rgb );
@@ -517,7 +542,10 @@ Shader "Light Volume Samples/Light Volume PBR"
 					float3 temp_output_475_0 = ( _LightVolumesBias * World_Normal112 );
 					float3 temp_output_17_0_g3 = temp_output_475_0;
 					float3 worldPosOffset1_g3 = temp_output_17_0_g3;
-					LightVolumeSH( worldPos1_g3 , L01_g3 , L1r1_g3 , L1g1_g3 , L1b1_g3 , worldPosOffset1_g3 );
+					float3 normalizedWorldNormal = normalize( NormalWS );
+					float3 temp_output_18_0_g3 = normalizedWorldNormal;
+					float3 worldNormal1_g3 = temp_output_18_0_g3;
+					LightVolumeSH( worldPos1_g3 , L01_g3 , L1r1_g3 , L1g1_g3 , L1b1_g3 , worldPosOffset1_g3 , worldNormal1_g3 );
 					float localLightVolumeAdditiveSH9_g4 = ( 0.0 );
 					float3 temp_output_6_0_g4 = PositionWS;
 					float3 worldPos9_g4 = temp_output_6_0_g4;
@@ -527,7 +555,9 @@ Shader "Light Volume Samples/Light Volume PBR"
 					float3 L1b9_g4 = float3( 0,0,0 );
 					float3 temp_output_17_0_g4 = temp_output_475_0;
 					float3 worldPosOffset9_g4 = temp_output_17_0_g4;
-					LightVolumeAdditiveSH( worldPos9_g4 , L09_g4 , L1r9_g4 , L1g9_g4 , L1b9_g4 , worldPosOffset9_g4 );
+					float3 temp_output_18_0_g4 = normalizedWorldNormal;
+					float3 worldNormal9_g4 = temp_output_18_0_g4;
+					LightVolumeAdditiveSH( worldPos9_g4 , L09_g4 , L1r9_g4 , L1g9_g4 , L1b9_g4 , worldPosOffset9_g4 , worldNormal9_g4 );
 					#ifdef LIGHTMAP_ON
 					float3 staticSwitch472 = L09_g4;
 					#else
@@ -661,7 +691,7 @@ Shader "Light Volume Samples/Light Volume PBR"
 					half3 Translucency = 1;
 
 					#if defined( ASE_DEPTH_WRITE_ON )
-						float DeviceDepth = IN.pos.z;
+						IN.pos.z = IN.pos.z;
 					#endif
 
 					#ifdef _ALPHATEST_ON
@@ -688,7 +718,7 @@ Shader "Light Volume Samples/Light Volume PBR"
 					#endif
 
 					#if defined( ASE_DEPTH_WRITE_ON )
-						outputDepth = DeviceDepth;
+						outputDepth = IN.pos.z;
 					#endif
 
 					#ifndef USING_DIRECTIONAL_LIGHT
@@ -807,7 +837,8 @@ Shader "Light Volume Samples/Light Volume PBR"
 					c.rgb += o.Emission;
 
 					#if defined( ASE_FOG )
-						UNITY_APPLY_FOG( FogCoord, c );
+						UNITY_EXTRACT_FOG_FROM_WORLD_POS( IN );
+						UNITY_APPLY_FOG(_unity_fogCoord, c.rgb);
 					#endif
 					return c;
 				}
@@ -824,16 +855,15 @@ Shader "Light Volume Samples/Light Volume PBR"
 			Blend One One
 
 			CGPROGRAM
-				#define ASE_GEOMETRY 1
+				#define ASE_GEOMETRY
 				#define ASE_FRAGMENT_NORMAL 0
 				#define ASE_RECEIVE_SHADOWS
-				#pragma shader_feature_local_fragment _SPECULARHIGHLIGHTS_OFF
 				#pragma multi_compile_instancing
 				#pragma multi_compile _ LOD_FADE_CROSSFADE
 				#pragma multi_compile_fog
 				#define ASE_FOG
 				#define ASE_NO_AMBIENT 1
-				#define ASE_VERSION 19901
+				#define ASE_VERSION 19909
 
 				#pragma vertex vert
 				#pragma fragment frag
@@ -843,7 +873,7 @@ Shader "Light Volume Samples/Light Volume PBR"
 					#define UNITY_PASS_FORWARDADD
 				#endif
 				#include "HLSLSupport.cginc"
-				#ifdef ASE_GEOMETRY
+				#if defined( ASE_GEOMETRY ) || defined( ASE_IMPOSTOR )
 					#ifndef UNITY_INSTANCED_LOD_FADE
 						#define UNITY_INSTANCED_LOD_FADE
 					#endif
@@ -860,11 +890,14 @@ Shader "Light Volume Samples/Light Volume PBR"
 				#include "UnityPBSLighting.cginc"
 				#include "AutoLight.cginc"
 
+				#if defined( UNITY_INSTANCING_ENABLED ) && defined( ASE_INSTANCED_TERRAIN ) && ( defined(_TERRAIN_INSTANCED_PERPIXEL_NORMAL) || defined(_INSTANCEDTERRAINNORMALS_PIXEL) )
+					#define ENABLE_TERRAIN_PERPIXEL_NORMAL
+				#endif
+
 				#include "UnityStandardUtils.cginc"
 				#include "Packages/red.sim.lightvolumes/Shaders/LightVolumes.cginc"
 				#define ASE_NEEDS_TEXTURE_COORDINATES0
 				#define ASE_NEEDS_FRAG_TEXTURE_COORDINATES0
-				#define ASE_NEEDS_WORLD_TANGENT
 				#define ASE_NEEDS_FRAG_WORLD_TANGENT
 				#define ASE_NEEDS_WORLD_NORMAL
 				#define ASE_NEEDS_FRAG_WORLD_NORMAL
@@ -882,18 +915,19 @@ Shader "Light Volume Samples/Light Volume PBR"
 					float4 vertex : POSITION;
 					half3 normal : NORMAL;
 					half4 tangent : TANGENT;
+					float4 texcoord : TEXCOORD0;
 					float4 texcoord1 : TEXCOORD1;
 					float4 texcoord2 : TEXCOORD2;
-					float4 ase_texcoord : TEXCOORD0;
+					
 					UNITY_VERTEX_INPUT_INSTANCE_ID
 				};
 
 				struct v2f
 				{
 					float4 pos : SV_POSITION;
-					float4 positionWS : TEXCOORD0; // xyz = positionWS, w = fogCoord
+					float4 worldPos : TEXCOORD0; // xyz = positionWS, w = fogCoord
 					half3 normalWS : TEXCOORD1;
-					half4 tangentWS : TEXCOORD2;
+					float4 tangentWS : TEXCOORD2; // holds terrainUV ifdef ENABLE_TERRAIN_PERPIXEL_NORMAL
 					UNITY_LIGHTING_COORDS( 3, 4 )
 					float4 ase_texcoord5 : TEXCOORD5;
 					UNITY_VERTEX_INPUT_INSTANCE_ID
@@ -943,7 +977,7 @@ Shader "Light Volume Samples/Light Volume PBR"
 					UNITY_TRANSFER_INSTANCE_ID(v,o);
 					UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(o);
 
-					o.ase_texcoord5.xy = v.ase_texcoord.xy;
+					o.ase_texcoord5.xy = v.texcoord.xyzw.xy;
 					
 					//setting value to unused interpolator channels and avoid initialization warnings
 					o.ase_texcoord5.zw = 0;
@@ -968,13 +1002,18 @@ Shader "Light Volume Samples/Light Volume PBR"
 					half3 tangentWS = UnityObjectToWorldDir( v.tangent.xyz );
 
 					o.pos = UnityObjectToClipPos( v.vertex );
-					o.positionWS.xyz = positionWS;
+					o.worldPos.xyz = positionWS;
 					o.normalWS = normalWS;
 					o.tangentWS = half4( tangentWS, v.tangent.w );
 
 					UNITY_TRANSFER_LIGHTING(o, v.texcoord1.xy);
 					#if defined( ASE_FOG )
-						o.positionWS.w = o.pos.z;
+						UNITY_TRANSFER_FOG_COMBINED_WITH_WORLD_POS( o, o.pos );
+					#endif
+
+					#if defined(ENABLE_TERRAIN_PERPIXEL_NORMAL)
+						o.tangentWS.zw = v.texcoord.xy;
+						o.tangentWS.xy = v.texcoord.xy * unity_LightmapST.xy + unity_LightmapST.zw;
 					#endif
 					return o;
 				}
@@ -985,10 +1024,10 @@ Shader "Light Volume Samples/Light Volume PBR"
 					float4 vertex : INTERNALTESSPOS;
 					half4 tangent : TANGENT;
 					half3 normal : NORMAL;
+					float4 texcoord : TEXCOORD0;
 					float4 texcoord1 : TEXCOORD1;
 					float4 texcoord2 : TEXCOORD2;
-					float4 ase_texcoord : TEXCOORD0;
-
+					
 					UNITY_VERTEX_INPUT_INSTANCE_ID
 				};
 
@@ -1006,9 +1045,10 @@ Shader "Light Volume Samples/Light Volume PBR"
 					o.vertex = v.vertex;
 					o.tangent = v.tangent;
 					o.normal = v.normal;
+					o.texcoord = v.texcoord;
 					o.texcoord1 = v.texcoord1;
 					o.texcoord2 = v.texcoord2;
-					o.ase_texcoord = v.ase_texcoord;
+					
 					return o;
 				}
 
@@ -1048,9 +1088,10 @@ Shader "Light Volume Samples/Light Volume PBR"
 					o.vertex = patch[0].vertex * bary.x + patch[1].vertex * bary.y + patch[2].vertex * bary.z;
 					o.tangent = patch[0].tangent * bary.x + patch[1].tangent * bary.y + patch[2].tangent * bary.z;
 					o.normal = patch[0].normal * bary.x + patch[1].normal * bary.y + patch[2].normal * bary.z;
+					o.texcoord = patch[0].texcoord * bary.x + patch[1].texcoord * bary.y + patch[2].texcoord * bary.z;
 					o.texcoord1 = patch[0].texcoord1 * bary.x + patch[1].texcoord1 * bary.y + patch[2].texcoord1 * bary.z;
 					o.texcoord2 = patch[0].texcoord2 * bary.x + patch[1].texcoord2 * bary.y + patch[2].texcoord2 * bary.z;
-					o.ase_texcoord = patch[0].ase_texcoord * bary.x + patch[1].ase_texcoord * bary.y + patch[2].ase_texcoord * bary.z;
+					
 					#if defined(ASE_PHONG_TESSELLATION)
 					float3 pp[3];
 					for (int i = 0; i < 3; ++i)
@@ -1093,14 +1134,14 @@ Shader "Light Volume Samples/Light Volume PBR"
 					half atten;
 					{
 						#if defined( ASE_RECEIVE_SHADOWS )
-							UNITY_LIGHT_ATTENUATION( temp, IN, IN.positionWS.xyz )
+							UNITY_LIGHT_ATTENUATION( temp, IN, IN.worldPos.xyz )
 							atten = temp;
 						#else
 							atten = 1;
 						#endif
 					}
 
-					float3 PositionWS = IN.positionWS.xyz;
+					float3 PositionWS = IN.worldPos.xyz;
 					half3 ViewDirWS = normalize( UnityWorldSpaceViewDir( PositionWS ) );
 					float4 ScreenPosNorm = float4( IN.pos.xy * ( _ScreenParams.zw - 1.0 ), IN.pos.zw );
 					float4 ClipPos = ComputeClipSpacePosition( ScreenPosNorm.xy, IN.pos.z ) * IN.pos.w;
@@ -1109,7 +1150,13 @@ Shader "Light Volume Samples/Light Volume PBR"
 					half3 TangentWS = IN.tangentWS.xyz;
 					half3 BitangentWS = cross( IN.normalWS, IN.tangentWS.xyz ) * IN.tangentWS.w * unity_WorldTransformParams.w;
 					half3 LightAtten = atten;
-					float FogCoord = IN.positionWS.w;
+
+					#if defined(ENABLE_TERRAIN_PERPIXEL_NORMAL)
+						float2 sampleCoords = (IN.tangentWS.zw / _TerrainHeightmapRecipSize.zw + 0.5f) * _TerrainHeightmapRecipSize.xy;
+						NormalWS = UnityObjectToWorldNormal(normalize(tex2D(_TerrainNormalmapTexture, sampleCoords).rgb * 2 - 1));
+						TangentWS = -cross(unity_ObjectToWorld._13_23_33, NormalWS);
+						BitangentWS = cross(NormalWS, -TangentWS);
+					#endif
 
 					float2 uv_MainTex = IN.ase_texcoord5.xy * _MainTex_ST.xy + _MainTex_ST.zw;
 					float3 Albedo337 = ( _Color.rgb * tex2D( _MainTex, uv_MainTex ).rgb );
@@ -1145,7 +1192,10 @@ Shader "Light Volume Samples/Light Volume PBR"
 					float3 temp_output_475_0 = ( _LightVolumesBias * World_Normal112 );
 					float3 temp_output_17_0_g3 = temp_output_475_0;
 					float3 worldPosOffset1_g3 = temp_output_17_0_g3;
-					LightVolumeSH( worldPos1_g3 , L01_g3 , L1r1_g3 , L1g1_g3 , L1b1_g3 , worldPosOffset1_g3 );
+					float3 normalizedWorldNormal = normalize( NormalWS );
+					float3 temp_output_18_0_g3 = normalizedWorldNormal;
+					float3 worldNormal1_g3 = temp_output_18_0_g3;
+					LightVolumeSH( worldPos1_g3 , L01_g3 , L1r1_g3 , L1g1_g3 , L1b1_g3 , worldPosOffset1_g3 , worldNormal1_g3 );
 					float localLightVolumeAdditiveSH9_g4 = ( 0.0 );
 					float3 temp_output_6_0_g4 = PositionWS;
 					float3 worldPos9_g4 = temp_output_6_0_g4;
@@ -1155,7 +1205,9 @@ Shader "Light Volume Samples/Light Volume PBR"
 					float3 L1b9_g4 = float3( 0,0,0 );
 					float3 temp_output_17_0_g4 = temp_output_475_0;
 					float3 worldPosOffset9_g4 = temp_output_17_0_g4;
-					LightVolumeAdditiveSH( worldPos9_g4 , L09_g4 , L1r9_g4 , L1g9_g4 , L1b9_g4 , worldPosOffset9_g4 );
+					float3 temp_output_18_0_g4 = normalizedWorldNormal;
+					float3 worldNormal9_g4 = temp_output_18_0_g4;
+					LightVolumeAdditiveSH( worldPos9_g4 , L09_g4 , L1r9_g4 , L1g9_g4 , L1b9_g4 , worldPosOffset9_g4 , worldNormal9_g4 );
 					#ifdef LIGHTMAP_ON
 					float3 staticSwitch472 = L09_g4;
 					#else
@@ -1287,7 +1339,7 @@ Shader "Light Volume Samples/Light Volume PBR"
 					half3 Translucency = 1;
 
 					#if defined( ASE_DEPTH_WRITE_ON )
-						float DeviceDepth = IN.pos.z;
+						IN.pos.z = IN.pos.z;
 					#endif
 
 					#ifdef _ALPHATEST_ON
@@ -1314,7 +1366,7 @@ Shader "Light Volume Samples/Light Volume PBR"
 					#endif
 
 					#if defined( ASE_DEPTH_WRITE_ON )
-						outputDepth = DeviceDepth;
+						outputDepth = IN.pos.z;
 					#endif
 
 					#ifndef USING_DIRECTIONAL_LIGHT
@@ -1381,7 +1433,8 @@ Shader "Light Volume Samples/Light Volume PBR"
 					#endif
 
 					#if defined( ASE_FOG )
-						UNITY_APPLY_FOG( FogCoord, c );
+						UNITY_EXTRACT_FOG_FROM_WORLD_POS( IN );
+						UNITY_APPLY_FOG(_unity_fogCoord, c.rgb);
 					#endif
 					return c;
 				}
@@ -1397,14 +1450,14 @@ Shader "Light Volume Samples/Light Volume PBR"
 			Cull Off
 
 			CGPROGRAM
-				#define ASE_GEOMETRY 1
+				#define ASE_GEOMETRY
 				#define ASE_FRAGMENT_NORMAL 0
 				#define ASE_RECEIVE_SHADOWS
 				#pragma multi_compile_instancing
 				#pragma multi_compile _ LOD_FADE_CROSSFADE
 				#define ASE_FOG
 				#define ASE_NO_AMBIENT 1
-				#define ASE_VERSION 19901
+				#define ASE_VERSION 19909
 
 				#pragma vertex vert
 				#pragma fragment frag
@@ -1414,7 +1467,7 @@ Shader "Light Volume Samples/Light Volume PBR"
 					#define UNITY_PASS_META
 				#endif
 				#include "HLSLSupport.cginc"
-				#ifdef ASE_GEOMETRY
+				#if defined( ASE_GEOMETRY ) || defined( ASE_IMPOSTOR )
 					#ifndef UNITY_INSTANCED_LOD_FADE
 						#define UNITY_INSTANCED_LOD_FADE
 					#endif
@@ -1560,6 +1613,7 @@ Shader "Light Volume Samples/Light Volume PBR"
 					float4 vertex : INTERNALTESSPOS;
 					float4 tangent : TANGENT;
 					float3 normal : NORMAL;
+					float4 texcoord : TEXCOORD0;
 					float4 texcoord1 : TEXCOORD1;
 					float4 texcoord2 : TEXCOORD2;
 					
@@ -1580,6 +1634,7 @@ Shader "Light Volume Samples/Light Volume PBR"
 					o.vertex = v.vertex;
 					o.tangent = v.tangent;
 					o.normal = v.normal;
+					o.texcoord = v.texcoord;
 					o.texcoord1 = v.texcoord1;
 					o.texcoord2 = v.texcoord2;
 					
@@ -1622,6 +1677,7 @@ Shader "Light Volume Samples/Light Volume PBR"
 					o.vertex = patch[0].vertex * bary.x + patch[1].vertex * bary.y + patch[2].vertex * bary.z;
 					o.tangent = patch[0].tangent * bary.x + patch[1].tangent * bary.y + patch[2].tangent * bary.z;
 					o.normal = patch[0].normal * bary.x + patch[1].normal * bary.y + patch[2].normal * bary.z;
+					o.texcoord = patch[0].texcoord * bary.x + patch[1].texcoord * bary.y + patch[2].texcoord * bary.z;
 					o.texcoord1 = patch[0].texcoord1 * bary.x + patch[1].texcoord1 * bary.y + patch[2].texcoord1 * bary.z;
 					o.texcoord2 = patch[0].texcoord2 * bary.x + patch[1].texcoord2 * bary.y + patch[2].texcoord2 * bary.z;
 					
@@ -1687,7 +1743,10 @@ Shader "Light Volume Samples/Light Volume PBR"
 					float3 temp_output_475_0 = ( _LightVolumesBias * World_Normal112 );
 					float3 temp_output_17_0_g3 = temp_output_475_0;
 					float3 worldPosOffset1_g3 = temp_output_17_0_g3;
-					LightVolumeSH( worldPos1_g3 , L01_g3 , L1r1_g3 , L1g1_g3 , L1b1_g3 , worldPosOffset1_g3 );
+					float3 normalizedWorldNormal = normalize( ase_normalWS );
+					float3 temp_output_18_0_g3 = normalizedWorldNormal;
+					float3 worldNormal1_g3 = temp_output_18_0_g3;
+					LightVolumeSH( worldPos1_g3 , L01_g3 , L1r1_g3 , L1g1_g3 , L1b1_g3 , worldPosOffset1_g3 , worldNormal1_g3 );
 					float localLightVolumeAdditiveSH9_g4 = ( 0.0 );
 					float3 temp_output_6_0_g4 = ase_positionWS;
 					float3 worldPos9_g4 = temp_output_6_0_g4;
@@ -1697,7 +1756,9 @@ Shader "Light Volume Samples/Light Volume PBR"
 					float3 L1b9_g4 = float3( 0,0,0 );
 					float3 temp_output_17_0_g4 = temp_output_475_0;
 					float3 worldPosOffset9_g4 = temp_output_17_0_g4;
-					LightVolumeAdditiveSH( worldPos9_g4 , L09_g4 , L1r9_g4 , L1g9_g4 , L1b9_g4 , worldPosOffset9_g4 );
+					float3 temp_output_18_0_g4 = normalizedWorldNormal;
+					float3 worldNormal9_g4 = temp_output_18_0_g4;
+					LightVolumeAdditiveSH( worldPos9_g4 , L09_g4 , L1r9_g4 , L1g9_g4 , L1b9_g4 , worldPosOffset9_g4 , worldNormal9_g4 );
 					#ifdef LIGHTMAP_ON
 					float3 staticSwitch472 = L09_g4;
 					#else
@@ -1760,7 +1821,7 @@ Shader "Light Volume Samples/Light Volume PBR"
 					float metallic157_g220 = temp_output_137_0_g220;
 					float3 temp_output_2_0_g220 = World_Normal112;
 					float3 worldNormal157_g220 = temp_output_2_0_g220;
-					float3 ase_viewVectorWS = ( _WorldSpaceCameraPos.xyz - ase_positionWS );
+					float3 ase_viewVectorWS = ( ( unity_OrthoParams.w == 0 ) ? _WorldSpaceCameraPos - ase_positionWS : UNITY_MATRIX_V[ 2 ].xyz );
 					float3 ase_viewDirSafeWS = Unity_SafeNormalize( ase_viewVectorWS );
 					float3 temp_output_9_0_g220 = ase_viewDirSafeWS;
 					float3 viewDir157_g220 = temp_output_9_0_g220;
@@ -1843,14 +1904,14 @@ Shader "Light Volume Samples/Light Volume PBR"
 				AlphaToMask Off
 
 				CGPROGRAM
-				#define ASE_GEOMETRY 1
+				#define ASE_GEOMETRY
 				#define ASE_FRAGMENT_NORMAL 0
 				#define ASE_RECEIVE_SHADOWS
 				#pragma multi_compile_instancing
 				#pragma multi_compile _ LOD_FADE_CROSSFADE
 				#define ASE_FOG
 				#define ASE_NO_AMBIENT 1
-				#define ASE_VERSION 19901
+				#define ASE_VERSION 19909
 
 				#pragma vertex vert
 				#pragma fragment frag
@@ -1860,7 +1921,7 @@ Shader "Light Volume Samples/Light Volume PBR"
 					#define UNITY_PASS_SHADOWCASTER
 				#endif
 				#include "HLSLSupport.cginc"
-				#ifdef ASE_GEOMETRY
+				#if defined( ASE_GEOMETRY ) || defined( ASE_IMPOSTOR )
 					#ifndef UNITY_INSTANCED_LOD_FADE
 						#define UNITY_INSTANCED_LOD_FADE
 					#endif
@@ -1937,6 +1998,11 @@ Shader "Light Volume Samples/Light Volume PBR"
 					v.vertex.w = 1;
 					v.normal = v.normal;
 					v.tangent = v.tangent;
+
+				#if defined( ASE_IMPOSTOR )
+					// Disable "Normal Bias" because we're rendering billboard impostors and there's no vertex normals.
+					unity_LightShadowBias.z = 0;
+				#endif
 
 					TRANSFER_SHADOW_CASTER_NORMALOFFSET(o)
 					return o;
@@ -2062,7 +2128,7 @@ Shader "Light Volume Samples/Light Volume PBR"
 					half AlphaClipThresholdShadow = 0.5;
 
 					#if defined( ASE_DEPTH_WRITE_ON )
-						float DeviceDepth = IN.pos.z;
+						IN.pos.z = IN.pos.z;
 					#endif
 
 					#ifdef _ALPHATEST_SHADOW_ON
@@ -2084,10 +2150,467 @@ Shader "Light Volume Samples/Light Volume PBR"
 					#endif
 
 					#if defined( ASE_DEPTH_WRITE_ON )
-						outputDepth = DeviceDepth;
+						outputDepth = IN.pos.z;
 					#endif
 
 					SHADOW_CASTER_FRAGMENT(IN)
+				}
+			ENDCG
+		}
+
+		
+		Pass
+		{
+			
+			Name "SceneSelectionPass"
+			Tags { "LightMode"="SceneSelectionPass" }
+
+			ZWrite On
+
+			CGPROGRAM
+				#define ASE_GEOMETRY
+				#define ASE_FRAGMENT_NORMAL 0
+				#define ASE_RECEIVE_SHADOWS
+				#pragma multi_compile_instancing
+				#pragma multi_compile _ LOD_FADE_CROSSFADE
+				#define ASE_FOG
+				#define ASE_NO_AMBIENT 1
+				#define ASE_VERSION 19909
+
+				#pragma vertex vert
+				#pragma fragment frag
+				#pragma skip_variants FOG_LINEAR FOG_EXP FOG_EXP2
+
+				#pragma multi_compile_fwdbase
+				#ifndef UNITY_PASS_FORWARDBASE
+					#define UNITY_PASS_FORWARDBASE
+				#endif
+				#include "HLSLSupport.cginc"
+				#if defined( ASE_GEOMETRY ) || defined( ASE_IMPOSTOR )
+					#ifndef UNITY_INSTANCED_LOD_FADE
+						#define UNITY_INSTANCED_LOD_FADE
+					#endif
+					#ifndef UNITY_INSTANCED_SH
+						#define UNITY_INSTANCED_SH
+					#endif
+					#ifndef UNITY_INSTANCED_LIGHTMAPSTS
+						#define UNITY_INSTANCED_LIGHTMAPSTS
+					#endif
+				#endif
+				#include "UnityShaderVariables.cginc"
+				#include "UnityCG.cginc"
+				#include "Lighting.cginc"
+				#include "UnityPBSLighting.cginc"
+				#include "AutoLight.cginc"
+
+				
+
+				int _ObjectId;
+				int _PassValue;
+
+				struct appdata
+				{
+					float4 vertex : POSITION;
+					half3 normal : NORMAL;
+					half4 tangent : TANGENT;
+					
+					UNITY_VERTEX_INPUT_INSTANCE_ID
+				};
+
+				struct v2f
+				{
+					float4 pos : SV_POSITION;
+					float4 worldPos : TEXCOORD0; // xyz = positionWS
+					half3 normalWS : TEXCOORD1;
+					
+					UNITY_VERTEX_INPUT_INSTANCE_ID
+					UNITY_VERTEX_OUTPUT_STEREO
+				};
+
+				#ifdef ASE_TESSELLATION
+					float _TessPhongStrength;
+					float _TessValue;
+					float _TessMin;
+					float _TessMax;
+					float _TessEdgeLength;
+					float _TessMaxDisp;
+				#endif
+
+				uniform float _Culling;
+
+
+				
+				v2f VertexFunction( appdata v  )
+				{
+					UNITY_SETUP_INSTANCE_ID(v);
+					v2f o;
+					UNITY_INITIALIZE_OUTPUT(v2f,o);
+					UNITY_TRANSFER_INSTANCE_ID(v,o);
+					UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(o);
+
+					
+
+					#ifdef ASE_ABSOLUTE_VERTEX_POS
+						float3 defaultVertexValue = v.vertex.xyz;
+					#else
+						float3 defaultVertexValue = float3(0, 0, 0);
+					#endif
+					float3 vertexValue = defaultVertexValue;
+					#ifdef ASE_ABSOLUTE_VERTEX_POS
+						v.vertex.xyz = vertexValue;
+					#else
+						v.vertex.xyz += vertexValue;
+					#endif
+					v.vertex.w = 1;
+					v.normal = v.normal;
+					v.tangent = v.tangent;
+
+					float3 positionWS = mul( unity_ObjectToWorld, v.vertex ).xyz;
+					half3 normalWS = UnityObjectToWorldNormal( v.normal );
+
+					o.pos = UnityObjectToClipPos( v.vertex );
+					o.worldPos.xyz = positionWS;
+					o.normalWS = normalWS;
+					return o;
+				}
+
+				#if defined(ASE_TESSELLATION)
+				struct VertexControl
+				{
+					float4 vertex : INTERNALTESSPOS;
+					half3 normal : NORMAL;
+					
+					UNITY_VERTEX_INPUT_INSTANCE_ID
+				};
+
+				struct TessellationFactors
+				{
+					float edge[3] : SV_TessFactor;
+					float inside : SV_InsideTessFactor;
+				};
+
+				VertexControl vert ( appdata v )
+				{
+					VertexControl o;
+					UNITY_SETUP_INSTANCE_ID(v);
+					UNITY_TRANSFER_INSTANCE_ID(v, o);
+					o.vertex = v.vertex;
+					o.normal = v.normal;
+					
+					return o;
+				}
+
+				TessellationFactors TessellationFunction (InputPatch<VertexControl,3> v)
+				{
+					TessellationFactors o;
+					float4 tf = 1;
+					float tessValue = _TessValue; float tessMin = _TessMin; float tessMax = _TessMax;
+					float edgeLength = _TessEdgeLength; float tessMaxDisp = _TessMaxDisp;
+					#if defined(ASE_FIXED_TESSELLATION)
+					tf = FixedTess( tessValue );
+					#elif defined(ASE_DISTANCE_TESSELLATION)
+					tf = DistanceBasedTess(v[0].vertex, v[1].vertex, v[2].vertex, tessValue, tessMin, tessMax, UNITY_MATRIX_M, _WorldSpaceCameraPos );
+					#elif defined(ASE_LENGTH_TESSELLATION)
+					tf = EdgeLengthBasedTess(v[0].vertex, v[1].vertex, v[2].vertex, edgeLength, UNITY_MATRIX_M, _WorldSpaceCameraPos, _ScreenParams );
+					#elif defined(ASE_LENGTH_CULL_TESSELLATION)
+					tf = EdgeLengthBasedTessCull(v[0].vertex, v[1].vertex, v[2].vertex, edgeLength, tessMaxDisp, UNITY_MATRIX_M, _WorldSpaceCameraPos, _ScreenParams, unity_CameraWorldClipPlanes );
+					#endif
+					o.edge[0] = tf.x; o.edge[1] = tf.y; o.edge[2] = tf.z; o.inside = tf.w;
+					return o;
+				}
+
+				[domain("tri")]
+				[partitioning("fractional_odd")]
+				[outputtopology("triangle_cw")]
+				[patchconstantfunc("TessellationFunction")]
+				[outputcontrolpoints(3)]
+				VertexControl HullFunction(InputPatch<VertexControl, 3> patch, uint id : SV_OutputControlPointID)
+				{
+				   return patch[id];
+				}
+
+				[domain("tri")]
+				v2f DomainFunction(TessellationFactors factors, OutputPatch<VertexControl, 3> patch, float3 bary : SV_DomainLocation)
+				{
+					appdata o = (appdata) 0;
+					o.vertex = patch[0].vertex * bary.x + patch[1].vertex * bary.y + patch[2].vertex * bary.z;
+					o.normal = patch[0].normal * bary.x + patch[1].normal * bary.y + patch[2].normal * bary.z;
+					
+					#if defined(ASE_PHONG_TESSELLATION)
+					float3 pp[3];
+					for (int i = 0; i < 3; ++i)
+						pp[i] = o.vertex.xyz - patch[i].normal * (dot(o.vertex.xyz, patch[i].normal) - dot(patch[i].vertex.xyz, patch[i].normal));
+					float phongStrength = _TessPhongStrength;
+					o.vertex.xyz = phongStrength * (pp[0]*bary.x + pp[1]*bary.y + pp[2]*bary.z) + (1.0f-phongStrength) * o.vertex.xyz;
+					#endif
+					UNITY_TRANSFER_INSTANCE_ID(patch[0], o);
+					return VertexFunction(o);
+				}
+				#else
+				v2f vert ( appdata v )
+				{
+					return VertexFunction( v );
+				}
+				#endif
+
+				half4 frag( v2f IN 
+							#if defined( ASE_DEPTH_WRITE_ON )
+								, out float outputDepth : SV_Depth
+							#endif
+							) : SV_Target
+				{
+					UNITY_SETUP_INSTANCE_ID(IN);
+
+					#ifdef LOD_FADE_CROSSFADE
+						UNITY_APPLY_DITHER_CROSSFADE(IN.pos.xy);
+					#endif
+
+					
+
+					half Alpha = 1;
+					half AlphaClipThreshold = 0.5;
+
+					#if defined( ASE_DEPTH_WRITE_ON )
+						IN.pos.z = IN.pos.z;
+					#endif
+
+					#ifdef _ALPHATEST_ON
+						clip( Alpha - AlphaClipThreshold );
+					#endif
+
+					#if defined( ASE_DEPTH_WRITE_ON )
+						outputDepth = IN.pos.z;
+					#endif
+
+					return float4( _ObjectId, _PassValue, 1.0, 1.0 );
+				}
+			ENDCG
+		}
+
+		
+		Pass
+		{
+			
+			Name "ScenePickingPass"
+			Tags { "LightMode"="Picking" }
+
+			ZWrite On
+
+			CGPROGRAM
+				#define ASE_GEOMETRY
+				#define ASE_FRAGMENT_NORMAL 0
+				#define ASE_RECEIVE_SHADOWS
+				#pragma multi_compile_instancing
+				#pragma multi_compile _ LOD_FADE_CROSSFADE
+				#define ASE_FOG
+				#define ASE_NO_AMBIENT 1
+				#define ASE_VERSION 19909
+
+				#pragma vertex vert
+				#pragma fragment frag
+				#pragma skip_variants FOG_LINEAR FOG_EXP FOG_EXP2
+
+				#pragma multi_compile_fwdbase
+				#ifndef UNITY_PASS_FORWARDBASE
+					#define UNITY_PASS_FORWARDBASE
+				#endif
+				#include "HLSLSupport.cginc"
+				#if defined( ASE_GEOMETRY ) || defined( ASE_IMPOSTOR )
+					#ifndef UNITY_INSTANCED_LOD_FADE
+						#define UNITY_INSTANCED_LOD_FADE
+					#endif
+					#ifndef UNITY_INSTANCED_SH
+						#define UNITY_INSTANCED_SH
+					#endif
+					#ifndef UNITY_INSTANCED_LIGHTMAPSTS
+						#define UNITY_INSTANCED_LIGHTMAPSTS
+					#endif
+				#endif
+				#include "UnityShaderVariables.cginc"
+				#include "UnityCG.cginc"
+				#include "Lighting.cginc"
+				#include "UnityPBSLighting.cginc"
+				#include "AutoLight.cginc"
+
+				
+
+				float4 _SelectionID;
+
+				struct appdata
+				{
+					float4 vertex : POSITION;
+					half3 normal : NORMAL;
+					half4 tangent : TANGENT;
+					
+					UNITY_VERTEX_INPUT_INSTANCE_ID
+				};
+
+				struct v2f
+				{
+					float4 pos : SV_POSITION;
+					float4 worldPos : TEXCOORD0; // xyz = positionWS
+					half3 normalWS : TEXCOORD1;
+					
+					UNITY_VERTEX_INPUT_INSTANCE_ID
+					UNITY_VERTEX_OUTPUT_STEREO
+				};
+
+				#ifdef ASE_TESSELLATION
+					float _TessPhongStrength;
+					float _TessValue;
+					float _TessMin;
+					float _TessMax;
+					float _TessEdgeLength;
+					float _TessMaxDisp;
+				#endif
+
+				uniform float _Culling;
+
+
+				
+				v2f VertexFunction( appdata v  )
+				{
+					UNITY_SETUP_INSTANCE_ID(v);
+					v2f o;
+					UNITY_INITIALIZE_OUTPUT(v2f,o);
+					UNITY_TRANSFER_INSTANCE_ID(v,o);
+					UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(o);
+
+					
+
+					#ifdef ASE_ABSOLUTE_VERTEX_POS
+						float3 defaultVertexValue = v.vertex.xyz;
+					#else
+						float3 defaultVertexValue = float3(0, 0, 0);
+					#endif
+					float3 vertexValue = defaultVertexValue;
+					#ifdef ASE_ABSOLUTE_VERTEX_POS
+						v.vertex.xyz = vertexValue;
+					#else
+						v.vertex.xyz += vertexValue;
+					#endif
+					v.vertex.w = 1;
+					v.normal = v.normal;
+					v.tangent = v.tangent;
+
+					float3 positionWS = mul( unity_ObjectToWorld, v.vertex ).xyz;
+					half3 normalWS = UnityObjectToWorldNormal( v.normal );
+
+					o.pos = UnityObjectToClipPos( v.vertex );
+					o.worldPos.xyz = positionWS;
+					o.normalWS = normalWS;
+					return o;
+				}
+
+				#if defined(ASE_TESSELLATION)
+				struct VertexControl
+				{
+					float4 vertex : INTERNALTESSPOS;
+					half3 normal : NORMAL;
+					
+					UNITY_VERTEX_INPUT_INSTANCE_ID
+				};
+
+				struct TessellationFactors
+				{
+					float edge[3] : SV_TessFactor;
+					float inside : SV_InsideTessFactor;
+				};
+
+				VertexControl vert ( appdata v )
+				{
+					VertexControl o;
+					UNITY_SETUP_INSTANCE_ID(v);
+					UNITY_TRANSFER_INSTANCE_ID(v, o);
+					o.vertex = v.vertex;
+					o.normal = v.normal;
+					
+					return o;
+				}
+
+				TessellationFactors TessellationFunction (InputPatch<VertexControl,3> v)
+				{
+					TessellationFactors o;
+					float4 tf = 1;
+					float tessValue = _TessValue; float tessMin = _TessMin; float tessMax = _TessMax;
+					float edgeLength = _TessEdgeLength; float tessMaxDisp = _TessMaxDisp;
+					#if defined(ASE_FIXED_TESSELLATION)
+					tf = FixedTess( tessValue );
+					#elif defined(ASE_DISTANCE_TESSELLATION)
+					tf = DistanceBasedTess(v[0].vertex, v[1].vertex, v[2].vertex, tessValue, tessMin, tessMax, UNITY_MATRIX_M, _WorldSpaceCameraPos );
+					#elif defined(ASE_LENGTH_TESSELLATION)
+					tf = EdgeLengthBasedTess(v[0].vertex, v[1].vertex, v[2].vertex, edgeLength, UNITY_MATRIX_M, _WorldSpaceCameraPos, _ScreenParams );
+					#elif defined(ASE_LENGTH_CULL_TESSELLATION)
+					tf = EdgeLengthBasedTessCull(v[0].vertex, v[1].vertex, v[2].vertex, edgeLength, tessMaxDisp, UNITY_MATRIX_M, _WorldSpaceCameraPos, _ScreenParams, unity_CameraWorldClipPlanes );
+					#endif
+					o.edge[0] = tf.x; o.edge[1] = tf.y; o.edge[2] = tf.z; o.inside = tf.w;
+					return o;
+				}
+
+				[domain("tri")]
+				[partitioning("fractional_odd")]
+				[outputtopology("triangle_cw")]
+				[patchconstantfunc("TessellationFunction")]
+				[outputcontrolpoints(3)]
+				VertexControl HullFunction(InputPatch<VertexControl, 3> patch, uint id : SV_OutputControlPointID)
+				{
+				   return patch[id];
+				}
+
+				[domain("tri")]
+				v2f DomainFunction(TessellationFactors factors, OutputPatch<VertexControl, 3> patch, float3 bary : SV_DomainLocation)
+				{
+					appdata o = (appdata) 0;
+					o.vertex = patch[0].vertex * bary.x + patch[1].vertex * bary.y + patch[2].vertex * bary.z;
+					o.normal = patch[0].normal * bary.x + patch[1].normal * bary.y + patch[2].normal * bary.z;
+					
+					#if defined(ASE_PHONG_TESSELLATION)
+					float3 pp[3];
+					for (int i = 0; i < 3; ++i)
+						pp[i] = o.vertex.xyz - patch[i].normal * (dot(o.vertex.xyz, patch[i].normal) - dot(patch[i].vertex.xyz, patch[i].normal));
+					float phongStrength = _TessPhongStrength;
+					o.vertex.xyz = phongStrength * (pp[0]*bary.x + pp[1]*bary.y + pp[2]*bary.z) + (1.0f-phongStrength) * o.vertex.xyz;
+					#endif
+					UNITY_TRANSFER_INSTANCE_ID(patch[0], o);
+					return VertexFunction(o);
+				}
+				#else
+				v2f vert ( appdata v )
+				{
+					return VertexFunction( v );
+				}
+				#endif
+
+				half4 frag( v2f IN 
+							#if defined( ASE_DEPTH_WRITE_ON )
+								, out float outputDepth : SV_Depth
+							#endif
+							) : SV_Target
+				{
+					UNITY_SETUP_INSTANCE_ID(IN);
+
+					#ifdef LOD_FADE_CROSSFADE
+						UNITY_APPLY_DITHER_CROSSFADE(IN.pos.xy);
+					#endif
+
+					
+
+					half Alpha = 1;
+					half AlphaClipThreshold = 0.5;
+
+					#if defined( ASE_DEPTH_WRITE_ON )
+						IN.pos.z = IN.pos.z;
+					#endif
+
+					#ifdef _ALPHATEST_ON
+						clip( Alpha - AlphaClipThreshold );
+					#endif
+
+					#if defined( ASE_DEPTH_WRITE_ON )
+						outputDepth = IN.pos.z;
+					#endif
+
+					return _SelectionID;
 				}
 			ENDCG
 		}
@@ -2098,7 +2621,7 @@ Shader "Light Volume Samples/Light Volume PBR"
 	Fallback Off
 }
 /*ASEBEGIN
-Version=19901
+Version=19909
 Node;AmplifyShaderEditor.CommentaryNode, AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;443;-2016,-512;Inherit;False;1194.267;509.5228;Metallic Smoothness AO;12;357;57;334;56;109;470;51;54;52;53;50;477;;1,0.8500044,0.4735848,1;0;0
 Node;AmplifyShaderEditor.CommentaryNode, AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;439;-2016,-880;Inherit;False;1252.668;359.5993;Normal;7;437;112;349;14;5;6;478;;0.5792453,0.6214049,1,1;0;0
 Node;AmplifyShaderEditor.CommentaryNode, AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;457;-2016,-1392;Inherit;False;756;475;Albedo;4;3;87;88;337;;1,1,1,1;0;0
@@ -2108,16 +2631,16 @@ Node;AmplifyShaderEditor.CommentaryNode, AmplifyShaderEditor, Version=0.0.0.0, C
 Node;AmplifyShaderEditor.CommentaryNode, AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;458;-656,-176;Inherit;False;1661.691;467.9204;Indirect and Speculars;16;413;464;444;361;124;406;80;338;350;336;451;450;449;448;113;469;;1,1,1,1;0;0
 Node;AmplifyShaderEditor.CommentaryNode, AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;460;-656,336;Inherit;False;1510.74;490.8405;Emission Plus Indirect and Speculars;7;452;417;447;416;415;414;476;;1,1,1,1;0;0
 Node;AmplifyShaderEditor.TextureCoordinatesNode, AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;477;-1952,-448;Inherit;False;0;3;2;3;2;SAMPLER2D;;False;0;FLOAT2;1,1;False;1;FLOAT2;0,0;False;5;FLOAT2;0;FLOAT;1;FLOAT;2;FLOAT;3;FLOAT;4
-Node;AmplifyShaderEditor.SamplerNode, AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;50;-1696,-464;Inherit;True;Property;_MetallicGlossMap;Metal AO Smoothness;2;1;[NoScaleOffset];Create;False;0;0;0;False;0;False;3;None;None;True;0;False;white;Auto;False;Object;-1;Auto;Texture2D;8;0;SAMPLER2D;;False;1;FLOAT2;0,0;False;2;FLOAT;0;False;3;FLOAT2;0,0;False;4;FLOAT2;0,0;False;5;FLOAT;1;False;6;FLOAT;0;False;7;SAMPLERSTATE;;False;6;COLOR;0;FLOAT;1;FLOAT;2;FLOAT;3;FLOAT;4;FLOAT3;5
+Node;AmplifyShaderEditor.SamplerNode, AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;50;-1696,-464;Inherit;True;Property;_MetallicGlossMap;Metal AO Smoothness;2;1;[NoScaleOffset];Create;False;0;0;0;False;0;False;3;None;None;True;0;False;white;Auto;False;Object;-1;Auto;Texture2D;False;8;0;SAMPLER2D;;False;1;FLOAT2;0,0;False;2;FLOAT;0;False;3;FLOAT2;0,0;False;4;FLOAT2;0,0;False;5;FLOAT;1;False;6;FLOAT;0;False;7;SAMPLERSTATE;;False;6;COLOR;0;FLOAT;1;FLOAT;2;FLOAT;3;FLOAT;4;FLOAT3;5
 Node;AmplifyShaderEditor.RangedFloatNode, AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;53;-1696,-192;Inherit;False;Property;_Metallic;Metallic;3;0;Create;False;0;0;0;False;0;False;0;0;0;1;0;1;FLOAT;0
 Node;AmplifyShaderEditor.TextureCoordinatesNode, AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;478;-1941.959,-816.4097;Inherit;False;0;3;2;3;2;SAMPLER2D;;False;0;FLOAT2;1,1;False;1;FLOAT2;0,0;False;5;FLOAT2;0;FLOAT;1;FLOAT;2;FLOAT;3;FLOAT;4
 Node;AmplifyShaderEditor.RangedFloatNode, AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;6;-1920,-672;Inherit;False;Property;_BumpScale;Normal Power;7;0;Create;False;0;0;0;False;0;False;1;1;0;0;0;1;FLOAT;0
-Node;AmplifyShaderEditor.SamplerNode, AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;3;-1968,-1152;Inherit;True;Property;_MainTex;Albedo;0;0;Create;False;0;0;0;False;0;False;-1;None;None;True;0;False;white;Auto;False;Object;-1;Auto;Texture2D;8;0;SAMPLER2D;;False;1;FLOAT2;0,0;False;2;FLOAT;0;False;3;FLOAT2;0,0;False;4;FLOAT2;0,0;False;5;FLOAT;1;False;6;FLOAT;0;False;7;SAMPLERSTATE;;False;6;COLOR;0;FLOAT;1;FLOAT;2;FLOAT;3;FLOAT;4;FLOAT3;5
+Node;AmplifyShaderEditor.SamplerNode, AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;3;-1968,-1152;Inherit;True;Property;_MainTex;Albedo;0;0;Create;False;0;0;0;False;0;False;-1;None;None;True;0;False;white;Auto;False;Object;-1;Auto;Texture2D;False;8;0;SAMPLER2D;;False;1;FLOAT2;0,0;False;2;FLOAT;0;False;3;FLOAT2;0,0;False;4;FLOAT2;0,0;False;5;FLOAT;1;False;6;FLOAT;0;False;7;SAMPLERSTATE;;False;6;COLOR;0;FLOAT;1;FLOAT;2;FLOAT;3;FLOAT;4;FLOAT3;5
 Node;AmplifyShaderEditor.ColorNode, AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;87;-1904,-1344;Inherit;False;Property;_Color;Color;1;0;Create;True;0;0;0;False;0;False;1,1,1,1;1,1,1,0.4901961;True;True;0;6;COLOR;0;FLOAT;1;FLOAT;2;FLOAT;3;FLOAT;4;FLOAT3;5
 Node;AmplifyShaderEditor.RangedFloatNode, AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;52;-1696,-272;Inherit;False;Property;_Glossiness;Smoothness;4;0;Create;False;0;0;0;False;0;False;1;0;0;1;0;1;FLOAT;0
 Node;AmplifyShaderEditor.SimpleMultiplyOpNode, AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;54;-1376,-416;Inherit;False;2;2;0;FLOAT;0;False;1;FLOAT;0;False;1;FLOAT;0
 Node;AmplifyShaderEditor.RangedFloatNode, AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;56;-1696,-112;Inherit;False;Property;_OcclusionStrength;AO;5;0;Create;False;0;0;0;False;0;False;1;1;0;1;0;1;FLOAT;0
-Node;AmplifyShaderEditor.SamplerNode, AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;5;-1648,-720;Inherit;True;Property;_BumpMap;Normal;6;1;[NoScaleOffset];Create;False;0;0;0;False;0;False;3;None;None;True;0;True;bump;Auto;True;Object;-1;Auto;Texture2D;8;0;SAMPLER2D;;False;1;FLOAT2;0,0;False;2;FLOAT;0;False;3;FLOAT2;0,0;False;4;FLOAT2;0,0;False;5;FLOAT;1;False;6;FLOAT;0;False;7;SAMPLERSTATE;;False;6;FLOAT3;0;FLOAT;1;FLOAT;2;FLOAT;3;FLOAT;4;FLOAT3;5
+Node;AmplifyShaderEditor.SamplerNode, AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;5;-1648,-720;Inherit;True;Property;_BumpMap;Normal;6;1;[NoScaleOffset];Create;False;0;0;0;False;0;False;3;None;None;True;0;True;bump;Auto;True;Object;-1;Auto;Texture2D;False;8;0;SAMPLER2D;;False;1;FLOAT2;0,0;False;2;FLOAT;0;False;3;FLOAT2;0,0;False;4;FLOAT2;0,0;False;5;FLOAT;1;False;6;FLOAT;0;False;7;SAMPLERSTATE;;False;6;FLOAT3;0;FLOAT;1;FLOAT;2;FLOAT;3;FLOAT;4;FLOAT3;5
 Node;AmplifyShaderEditor.SimpleMultiplyOpNode, AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;88;-1648,-1152;Inherit;False;2;2;0;FLOAT3;0,0,0;False;1;FLOAT3;0,0,0;False;1;FLOAT3;0
 Node;AmplifyShaderEditor.SimpleMultiplyOpNode, AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;51;-1376,-320;Inherit;False;2;2;0;FLOAT;0;False;1;FLOAT;0;False;1;FLOAT;0
 Node;AmplifyShaderEditor.SimpleMultiplyOpNode, AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;470;-1216,-432;Inherit;False;2;2;0;FLOAT;0;False;1;FLOAT;0;False;1;FLOAT;0
@@ -2136,8 +2659,8 @@ Node;AmplifyShaderEditor.SimpleMultiplyOpNode, AmplifyShaderEditor, Version=0.0.
 Node;AmplifyShaderEditor.Vector4Node, AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;424;-1952,224;Inherit;False;Global;unity_SHAr;unity_SHAr;17;0;Fetch;True;0;0;0;False;0;False;0,0,0,0;0,0,0,0;0;5;FLOAT4;0;FLOAT;1;FLOAT;2;FLOAT;3;FLOAT;4
 Node;AmplifyShaderEditor.Vector4Node, AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;425;-1952,400;Inherit;False;Global;unity_SHAg;unity_SHAg;17;0;Fetch;True;0;0;0;False;0;False;0,0,0,0;0,0,0,0;0;5;FLOAT4;0;FLOAT;1;FLOAT;2;FLOAT;3;FLOAT;4
 Node;AmplifyShaderEditor.Vector4Node, AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;426;-1952,576;Inherit;False;Global;unity_SHAb;unity_SHAb;17;0;Fetch;True;0;0;0;False;0;False;0,0,0,0;0,0,0,0;0;5;FLOAT4;0;FLOAT;1;FLOAT;2;FLOAT;3;FLOAT;4
-Node;AmplifyShaderEditor.FunctionNode, AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;78;-1984,880;Inherit;False;LightVolume;-1;;3;78706f2b7f33b1c44b4f381a7904a7e1;4,8,0,10,0,11,0,12,0;2;6;FLOAT3;0,0,0;False;17;FLOAT3;0,0,0;False;4;FLOAT3;13;FLOAT3;14;FLOAT3;15;FLOAT3;16
-Node;AmplifyShaderEditor.FunctionNode, AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;79;-1984,1040;Inherit;False;LightVolume;-1;;4;78706f2b7f33b1c44b4f381a7904a7e1;4,8,1,10,1,11,1,12,1;2;6;FLOAT3;0,0,0;False;17;FLOAT3;0,0,0;False;4;FLOAT3;13;FLOAT3;14;FLOAT3;15;FLOAT3;16
+Node;AmplifyShaderEditor.FunctionNode, AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;78;-1984,880;Inherit;False;LightVolume;-1;;3;78706f2b7f33b1c44b4f381a7904a7e1;4,8,0,10,0,11,0,12,0;3;6;FLOAT3;0,0,0;False;18;FLOAT3;0,0,0;False;17;FLOAT3;0,0,0;False;4;FLOAT3;13;FLOAT3;14;FLOAT3;15;FLOAT3;16
+Node;AmplifyShaderEditor.FunctionNode, AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;79;-1984,1040;Inherit;False;LightVolume;-1;;4;78706f2b7f33b1c44b4f381a7904a7e1;4,8,1,10,1,11,1,12,1;3;6;FLOAT3;0,0,0;False;18;FLOAT3;0,0,0;False;17;FLOAT3;0,0,0;False;4;FLOAT3;13;FLOAT3;14;FLOAT3;15;FLOAT3;16
 Node;AmplifyShaderEditor.ComponentMaskNode, AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;428;-1696,224;Inherit;False;True;True;True;False;1;0;FLOAT4;0,0,0,0;False;1;FLOAT3;0
 Node;AmplifyShaderEditor.ComponentMaskNode, AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;429;-1696,400;Inherit;False;True;True;True;False;1;0;FLOAT4;0,0,0,0;False;1;FLOAT3;0
 Node;AmplifyShaderEditor.ComponentMaskNode, AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;430;-1696,576;Inherit;False;True;True;True;False;1;0;FLOAT4;0,0,0,0;False;1;FLOAT3;0
@@ -2185,7 +2708,7 @@ Node;AmplifyShaderEditor.GetLocalVarNode, AmplifyShaderEditor, Version=0.0.0.0, 
 Node;AmplifyShaderEditor.SimpleMultiplyOpNode, AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;469;592,-64;Inherit;False;2;2;0;FLOAT3;0,0,0;False;1;FLOAT;0;False;1;FLOAT3;0
 Node;AmplifyShaderEditor.TextureCoordinatesNode, AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;476;-544,624;Inherit;False;0;3;2;3;2;SAMPLER2D;;False;0;FLOAT2;1,1;False;1;FLOAT2;0,0;False;5;FLOAT2;0;FLOAT;1;FLOAT;2;FLOAT;3;FLOAT;4
 Node;AmplifyShaderEditor.RegisterLocalVarNode, AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;444;752,-128;Inherit;False;IndirectAndSpeculars;-1;True;1;0;FLOAT3;0,0,0;False;1;FLOAT3;0
-Node;AmplifyShaderEditor.SamplerNode, AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;414;-304,608;Inherit;True;Property;_EmissionMap;Emission Map;8;2;[HDR];[NoScaleOffset];Create;False;0;0;0;False;0;False;3;None;None;True;0;False;white;Auto;False;Object;-1;Auto;Texture2D;8;0;SAMPLER2D;;False;1;FLOAT2;0,0;False;2;FLOAT;0;False;3;FLOAT2;0,0;False;4;FLOAT2;0,0;False;5;FLOAT;1;False;6;FLOAT;0;False;7;SAMPLERSTATE;;False;6;COLOR;0;FLOAT;1;FLOAT;2;FLOAT;3;FLOAT;4;FLOAT3;5
+Node;AmplifyShaderEditor.SamplerNode, AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;414;-304,608;Inherit;True;Property;_EmissionMap;Emission Map;8;2;[HDR];[NoScaleOffset];Create;False;0;0;0;False;0;False;3;None;None;True;0;False;white;Auto;False;Object;-1;Auto;Texture2D;False;8;0;SAMPLER2D;;False;1;FLOAT2;0,0;False;2;FLOAT;0;False;3;FLOAT2;0,0;False;4;FLOAT2;0,0;False;5;FLOAT;1;False;6;FLOAT;0;False;7;SAMPLERSTATE;;False;6;COLOR;0;FLOAT;1;FLOAT;2;FLOAT;3;FLOAT;4;FLOAT3;5
 Node;AmplifyShaderEditor.ColorNode, AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;415;-240,400;Inherit;False;Property;_EmissionColor;Emission Color;9;1;[HDR];Create;False;0;0;0;False;0;False;0,0,0,1;1,1,1,1;True;True;0;6;COLOR;0;FLOAT;1;FLOAT;2;FLOAT;3;FLOAT;4;FLOAT3;5
 Node;AmplifyShaderEditor.SimpleMultiplyOpNode, AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;416;16,528;Inherit;False;2;2;0;FLOAT3;0,0,0;False;1;FLOAT3;0,0,0;False;1;FLOAT3;0
 Node;AmplifyShaderEditor.GetLocalVarNode, AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;447;16,640;Inherit;False;444;IndirectAndSpeculars;1;0;OBJECT;;False;1;FLOAT3;0
@@ -2198,12 +2721,14 @@ Node;AmplifyShaderEditor.GetLocalVarNode, AmplifyShaderEditor, Version=0.0.0.0, 
 Node;AmplifyShaderEditor.GetLocalVarNode, AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;453;1088,-96;Inherit;False;452;Emission;1;0;OBJECT;;False;1;FLOAT3;0
 Node;AmplifyShaderEditor.GetLocalVarNode, AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;442;1088,144;Inherit;False;357;AO;1;0;OBJECT;;False;1;FLOAT;0
 Node;AmplifyShaderEditor.RangedFloatNode, AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;418;1248,256;Inherit;False;Property;_Culling;Culling;14;1;[Enum];Create;False;0;0;1;UnityEngine.Rendering.CullMode;True;0;False;2;2;0;0;0;1;FLOAT;0
-Node;AmplifyShaderEditor.TemplateMultiPassMasterNode, AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;481;1504,-224;Float;False;False;-1;3;AmplifyShaderEditor.MaterialInspector;0;1;New Amplify Shader;ed95fe726fd7b4644bb42f4d1ddd2bcd;True;ExtraPrePass;0;0;ExtraPrePass;6;False;True;0;1;False;;0;False;;0;1;False;;0;False;;True;0;False;;0;False;;False;False;False;False;False;False;False;False;False;True;0;False;;False;True;0;False;;False;True;True;True;True;True;0;False;;False;False;False;False;False;False;False;True;False;0;False;;255;False;;255;False;;0;False;;0;False;;0;False;;0;False;;0;False;;0;False;;0;False;;0;False;;False;True;1;False;;True;3;False;;False;True;3;RenderType=Opaque=RenderType;Queue=Geometry=Queue=0;DisableBatching=False=DisableBatching;True;3;False;0;False;True;1;1;False;;0;False;;0;1;False;;0;False;;False;False;False;False;False;False;False;False;False;False;False;False;True;0;False;;False;True;True;True;True;True;0;False;;False;False;False;False;False;False;False;True;False;0;False;;255;False;;255;False;;0;False;;0;False;;0;False;;0;False;;0;False;;0;False;;0;False;;0;False;;False;True;1;False;;True;3;False;;True;True;0;False;;0;False;;True;1;LightMode=ForwardBase;False;False;0;;0;0;Standard;0;False;0
-Node;AmplifyShaderEditor.TemplateMultiPassMasterNode, AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;482;1504,-224;Float;False;True;-1;3;AmplifyShaderEditor.MaterialInspector;0;4;Light Volume Samples/Light Volume PBR;ed95fe726fd7b4644bb42f4d1ddd2bcd;True;ForwardBase;0;1;ForwardBase;17;False;True;0;1;False;;0;False;;0;1;False;;0;False;;True;0;False;;0;False;;False;False;False;False;False;False;False;False;False;True;0;False;;True;True;0;True;_Culling;False;True;True;True;True;True;0;False;;False;False;False;False;False;False;False;True;False;0;False;;255;False;;255;False;;0;False;;0;False;;0;False;;0;False;;0;False;;0;False;;0;False;;0;False;;False;True;1;False;;True;3;False;;False;True;3;RenderType=Opaque=RenderType;Queue=Geometry=Queue=0;DisableBatching=False=DisableBatching;True;3;False;0;False;True;1;1;False;;0;False;;0;1;False;;0;False;;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;True;1;LightMode=ForwardBase;False;False;0;;0;0;Standard;44;Category;0;0;Workflow;1;0;Surface;0;0;  Blend;0;0;  Dither Shadows;1;0;Two Sided;1;0;Alpha Clipping;0;0;  Use Shadow Threshold;0;0;Deferred Pass;0;639141478990152187;Normal Space,InvertActionOnDeselection;0;0;Transmission;0;0;  Transmission Shadow;0.5,False,;0;Translucency;0;0;  Translucency Strength;1,False,;0;  Normal Distortion;0.5,False,;0;  Scattering;2,False,;0;  Direct;0.9,False,;0;  Ambient;0.1,False,;0;  Shadow;0.5,False,;0;Cast Shadows;1;0;Receive Shadows;1;0;Receive Specular;1;0;GPU Instancing;1;0;LOD CrossFade;1;0;Built-in Fog;1;0;Ambient Light;0;639141479305039948;Meta Pass;1;0;Add Pass;1;0;Override Baked GI;0;0;Write Depth;0;0;Extra Pre Pass;0;0;Tessellation;0;0;  Phong;0;0;  Strength;0.5,False,;0;  Type;0;0;  Tess;16,False,;0;  Min;10,False,;0;  Max;25,False,;0;  Edge Length;16,False,;0;  Max Displacement;25,False,;0;Fwd Specular Highlights Toggle;0;0;Fwd Reflections Toggle;0;0;Disable Batching;0;0;Vertex Position,InvertActionOnDeselection;1;0;0;6;False;True;True;False;True;True;False;;False;0
-Node;AmplifyShaderEditor.TemplateMultiPassMasterNode, AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;483;1504,-224;Float;False;False;-1;3;AmplifyShaderEditor.MaterialInspector;0;1;New Amplify Shader;ed95fe726fd7b4644bb42f4d1ddd2bcd;True;ForwardAdd;0;2;ForwardAdd;0;False;True;0;1;False;;0;False;;0;1;False;;0;False;;True;0;False;;0;False;;False;False;False;False;False;False;False;False;False;True;0;False;;False;True;0;False;;False;True;True;True;True;True;0;False;;False;False;False;False;False;False;False;True;False;0;False;;255;False;;255;False;;0;False;;0;False;;0;False;;0;False;;0;False;;0;False;;0;False;;0;False;;False;True;1;False;;True;3;False;;False;True;3;RenderType=Opaque=RenderType;Queue=Geometry=Queue=0;DisableBatching=False=DisableBatching;True;3;False;0;False;True;4;1;False;;1;False;;0;1;False;;0;False;;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;True;2;False;;False;False;True;1;LightMode=ForwardAdd;False;False;0;;0;0;Standard;0;False;0
-Node;AmplifyShaderEditor.TemplateMultiPassMasterNode, AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;484;1504,-224;Float;False;False;-1;3;AmplifyShaderEditor.MaterialInspector;0;1;New Amplify Shader;ed95fe726fd7b4644bb42f4d1ddd2bcd;True;Deferred;0;3;Deferred;0;False;True;0;1;False;;0;False;;0;1;False;;0;False;;True;0;False;;0;False;;False;False;False;False;False;False;False;False;False;True;0;False;;False;True;0;False;;False;True;True;True;True;True;0;False;;False;False;False;False;False;False;False;True;False;0;False;;255;False;;255;False;;0;False;;0;False;;0;False;;0;False;;0;False;;0;False;;0;False;;0;False;;False;True;1;False;;True;3;False;;False;True;3;RenderType=Opaque=RenderType;Queue=Geometry=Queue=0;DisableBatching=False=DisableBatching;True;3;False;0;False;False;False;False;False;False;False;False;False;False;False;False;True;0;False;;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;True;1;LightMode=Deferred;False;False;0;;0;0;Standard;0;False;0
-Node;AmplifyShaderEditor.TemplateMultiPassMasterNode, AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;485;1504,-224;Float;False;False;-1;3;AmplifyShaderEditor.MaterialInspector;0;1;New Amplify Shader;ed95fe726fd7b4644bb42f4d1ddd2bcd;True;Meta;0;4;Meta;0;False;True;0;1;False;;0;False;;0;1;False;;0;False;;True;0;False;;0;False;;False;False;False;False;False;False;False;False;False;True;0;False;;False;True;0;False;;False;True;True;True;True;True;0;False;;False;False;False;False;False;False;False;True;False;0;False;;255;False;;255;False;;0;False;;0;False;;0;False;;0;False;;0;False;;0;False;;0;False;;0;False;;False;True;1;False;;True;3;False;;False;True;3;RenderType=Opaque=RenderType;Queue=Geometry=Queue=0;DisableBatching=False=DisableBatching;True;3;False;0;False;False;False;False;False;False;False;False;False;False;False;False;False;False;True;2;False;;False;False;False;False;False;False;False;False;False;False;False;False;False;False;True;1;LightMode=Meta;False;False;0;;0;0;Standard;0;False;0
-Node;AmplifyShaderEditor.TemplateMultiPassMasterNode, AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;486;1504,-224;Float;False;False;-1;3;AmplifyShaderEditor.MaterialInspector;0;1;New Amplify Shader;ed95fe726fd7b4644bb42f4d1ddd2bcd;True;ShadowCaster;0;5;ShadowCaster;0;False;True;0;1;False;;0;False;;0;1;False;;0;False;;True;0;False;;0;False;;False;False;False;False;False;False;False;False;False;True;0;False;;False;True;0;False;;False;True;True;True;True;True;0;False;;False;False;False;False;False;False;False;True;False;0;False;;255;False;;255;False;;0;False;;0;False;;0;False;;0;False;;0;False;;0;False;;0;False;;0;False;;False;True;1;False;;True;3;False;;False;True;3;RenderType=Opaque=RenderType;Queue=Geometry=Queue=0;DisableBatching=False=DisableBatching;True;3;False;0;False;False;False;False;False;False;False;False;False;False;False;False;True;0;False;;False;False;False;False;False;False;False;False;False;False;False;False;False;True;1;False;;True;3;False;;False;True;1;LightMode=ShadowCaster;False;False;0;;0;0;Standard;0;False;0
+Node;AmplifyShaderEditor.TemplateMultiPassMasterNode, AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;481;1504,-224;Float;False;False;-1;3;AmplifyShaderEditor.MaterialInspector;0;3;New Amplify Shader;ed95fe726fd7b4644bb42f4d1ddd2bcd;True;ExtraPrePass;0;0;ExtraPrePass;6;False;True;0;1;False;;0;False;;0;1;False;;0;False;;True;0;False;;0;False;;False;False;False;False;False;False;False;False;False;True;0;False;;False;True;0;False;;False;True;True;True;True;True;0;False;;False;False;False;False;False;False;False;True;False;0;False;;255;False;;255;False;;0;False;;0;False;;0;False;;0;False;;0;False;;0;False;;0;False;;0;False;;False;True;1;False;;True;3;False;;False;False;True;3;RenderType=Opaque=RenderType;Queue=Geometry=Queue=0;DisableBatching=False=DisableBatching;True;3;True;12;all;0;False;True;1;1;False;;0;False;;0;1;False;;0;False;;False;False;False;False;False;False;False;False;False;False;False;False;True;0;False;;False;True;True;True;True;True;0;False;;False;False;False;False;False;False;False;True;False;0;False;;255;False;;255;False;;0;False;;0;False;;0;False;;0;False;;0;False;;0;False;;0;False;;0;False;;False;True;1;False;;True;3;False;;True;True;0;False;;0;False;;False;True;1;LightMode=ForwardBase;False;False;0;;0;0;Standard;0;False;0
+Node;AmplifyShaderEditor.TemplateMultiPassMasterNode, AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;482;1504,-224;Float;False;True;-1;3;AmplifyShaderEditor.MaterialInspector;0;3;Light Volume Samples/Light Volume PBR;ed95fe726fd7b4644bb42f4d1ddd2bcd;True;ForwardBase;0;1;ForwardBase;17;False;True;0;1;False;;0;False;;0;1;False;;0;False;;True;0;False;;0;False;;False;False;False;False;False;False;False;False;False;True;0;False;;True;True;0;True;_Culling;False;True;True;True;True;True;0;False;;False;False;False;False;False;False;False;True;False;0;False;;255;False;;255;False;;0;False;;0;False;;0;False;;0;False;;0;False;;0;False;;0;False;;0;False;;False;True;1;False;;True;3;False;;False;False;True;3;RenderType=Opaque=RenderType;Queue=Geometry=Queue=0;DisableBatching=False=DisableBatching;True;3;True;12;all;0;False;True;1;1;False;;0;False;;0;1;False;;0;False;;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;True;1;LightMode=ForwardBase;False;False;0;;0;0;Standard;44;Category;0;0;  Instanced Terrain Normals;1;0;Workflow;1;0;Surface;0;0;  Blend;0;0;  Dither Shadows;1;0;Two Sided;1;0;Alpha Clipping;0;0;  Use Shadow Threshold;0;0;Deferred Pass;0;639141478990152187;Normal Space;0;0;Transmission;0;0;  Transmission Shadow;0.5,False,;0;Translucency;0;0;  Translucency Strength;1,False,;0;  Normal Distortion;0.5,False,;0;  Scattering;2,False,;0;  Direct;0.9,False,;0;  Ambient;0.1,False,;0;  Shadow;0.5,False,;0;Cast Shadows;1;0;Receive Shadows;1;0;Receive Specular;1;0;Receive Reflections;2;0;GPU Instancing;1;0;LOD CrossFade;1;0;Built-in Fog;1;0;Ambient Light;0;639141479305039948;Meta Pass;1;0;Add Pass;1;0;Override Baked GI;0;0;Write Depth;0;0;Extra Pre Pass;0;0;Tessellation;0;0;  Phong;0;0;  Strength;0.5,False,;0;  Type;0;0;  Tess;16,False,;0;  Min;10,False,;0;  Max;25,False,;0;  Edge Length;16,False,;0;  Max Displacement;25,False,;0;Disable Batching;0;0;Vertex Position;1;0;0;8;False;True;True;False;True;True;True;True;False;;False;0
+Node;AmplifyShaderEditor.TemplateMultiPassMasterNode, AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;483;1504,-224;Float;False;False;-1;3;AmplifyShaderEditor.MaterialInspector;0;3;New Amplify Shader;ed95fe726fd7b4644bb42f4d1ddd2bcd;True;ForwardAdd;0;2;ForwardAdd;0;False;True;0;1;False;;0;False;;0;1;False;;0;False;;True;0;False;;0;False;;False;False;False;False;False;False;False;False;False;True;0;False;;False;True;0;False;;False;True;True;True;True;True;0;False;;False;False;False;False;False;False;False;True;False;0;False;;255;False;;255;False;;0;False;;0;False;;0;False;;0;False;;0;False;;0;False;;0;False;;0;False;;False;True;1;False;;True;3;False;;False;False;True;3;RenderType=Opaque=RenderType;Queue=Geometry=Queue=0;DisableBatching=False=DisableBatching;True;3;True;12;all;0;False;True;4;1;False;;1;False;;0;1;False;;0;False;;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;True;2;False;;False;False;False;True;1;LightMode=ForwardAdd;False;False;0;;0;0;Standard;0;False;0
+Node;AmplifyShaderEditor.TemplateMultiPassMasterNode, AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;484;1504,-224;Float;False;False;-1;3;AmplifyShaderEditor.MaterialInspector;0;3;New Amplify Shader;ed95fe726fd7b4644bb42f4d1ddd2bcd;True;Deferred;0;3;Deferred;0;False;True;0;1;False;;0;False;;0;1;False;;0;False;;True;0;False;;0;False;;False;False;False;False;False;False;False;False;False;True;0;False;;False;True;0;False;;False;True;True;True;True;True;0;False;;False;False;False;False;False;False;False;True;False;0;False;;255;False;;255;False;;0;False;;0;False;;0;False;;0;False;;0;False;;0;False;;0;False;;0;False;;False;True;1;False;;True;3;False;;False;False;True;3;RenderType=Opaque=RenderType;Queue=Geometry=Queue=0;DisableBatching=False=DisableBatching;True;3;True;12;all;0;False;False;False;False;False;False;False;False;False;False;False;False;True;0;False;;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;True;1;LightMode=Deferred;False;False;0;;0;0;Standard;0;False;0
+Node;AmplifyShaderEditor.TemplateMultiPassMasterNode, AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;485;1504,-224;Float;False;False;-1;3;AmplifyShaderEditor.MaterialInspector;0;3;New Amplify Shader;ed95fe726fd7b4644bb42f4d1ddd2bcd;True;Meta;0;4;Meta;0;False;True;0;1;False;;0;False;;0;1;False;;0;False;;True;0;False;;0;False;;False;False;False;False;False;False;False;False;False;True;0;False;;False;True;0;False;;False;True;True;True;True;True;0;False;;False;False;False;False;False;False;False;True;False;0;False;;255;False;;255;False;;0;False;;0;False;;0;False;;0;False;;0;False;;0;False;;0;False;;0;False;;False;True;1;False;;True;3;False;;False;False;True;3;RenderType=Opaque=RenderType;Queue=Geometry=Queue=0;DisableBatching=False=DisableBatching;True;3;True;12;all;0;False;False;False;False;False;False;False;False;False;False;False;False;False;False;True;2;False;;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;True;1;LightMode=Meta;False;False;0;;0;0;Standard;0;False;0
+Node;AmplifyShaderEditor.TemplateMultiPassMasterNode, AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;486;1504,-224;Float;False;False;-1;3;AmplifyShaderEditor.MaterialInspector;0;3;New Amplify Shader;ed95fe726fd7b4644bb42f4d1ddd2bcd;True;ShadowCaster;0;5;ShadowCaster;0;False;True;0;1;False;;0;False;;0;1;False;;0;False;;True;0;False;;0;False;;False;False;False;False;False;False;False;False;False;True;0;False;;False;True;0;False;;False;True;True;True;True;True;0;False;;False;False;False;False;False;False;False;True;False;0;False;;255;False;;255;False;;0;False;;0;False;;0;False;;0;False;;0;False;;0;False;;0;False;;0;False;;False;True;1;False;;True;3;False;;False;False;True;3;RenderType=Opaque=RenderType;Queue=Geometry=Queue=0;DisableBatching=False=DisableBatching;True;3;True;12;all;0;False;False;False;False;False;False;False;False;False;False;False;False;True;0;False;;False;False;False;False;False;False;False;False;False;False;False;False;False;True;1;False;;True;3;False;;False;False;True;1;LightMode=ShadowCaster;False;False;0;;0;0;Standard;0;False;0
+Node;AmplifyShaderEditor.TemplateMultiPassMasterNode, AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;487;1504,-164;Float;False;False;-1;3;AmplifyShaderEditor.MaterialInspector;0;3;New Amplify Shader;ed95fe726fd7b4644bb42f4d1ddd2bcd;True;SceneSelectionPass;0;6;SceneSelectionPass;0;False;True;0;1;False;;0;False;;0;1;False;;0;False;;True;0;False;;0;False;;False;False;False;False;False;False;False;False;False;True;0;False;;False;True;0;False;;False;True;True;True;True;True;0;False;;False;False;False;False;False;False;False;True;False;0;False;;255;False;;255;False;;0;False;;0;False;;0;False;;0;False;;0;False;;0;False;;0;False;;0;False;;False;True;1;False;;True;3;False;;False;False;True;3;RenderType=Opaque=RenderType;Queue=Geometry=Queue=0;DisableBatching=False=DisableBatching;True;3;True;12;all;0;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;True;1;False;;False;False;False;True;1;LightMode=SceneSelectionPass;False;False;0;;0;0;Standard;0;False;0
+Node;AmplifyShaderEditor.TemplateMultiPassMasterNode, AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;488;1504,-164;Float;False;False;-1;3;AmplifyShaderEditor.MaterialInspector;0;3;New Amplify Shader;ed95fe726fd7b4644bb42f4d1ddd2bcd;True;ScenePickingPass;0;7;ScenePickingPass;0;False;True;0;1;False;;0;False;;0;1;False;;0;False;;True;0;False;;0;False;;False;False;False;False;False;False;False;False;False;True;0;False;;False;True;0;False;;False;True;True;True;True;True;0;False;;False;False;False;False;False;False;False;True;False;0;False;;255;False;;255;False;;0;False;;0;False;;0;False;;0;False;;0;False;;0;False;;0;False;;0;False;;False;True;1;False;;True;3;False;;False;False;True;3;RenderType=Opaque=RenderType;Queue=Geometry=Queue=0;DisableBatching=False=DisableBatching;True;3;True;12;all;0;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;True;1;False;;False;False;False;True;1;LightMode=Picking;False;False;0;;0;0;Standard;0;False;0
 WireConnection;50;1;477;0
 WireConnection;54;0;50;1
 WireConnection;54;1;53;0
@@ -2305,4 +2830,4 @@ WireConnection;482;5;441;0
 WireConnection;482;6;442;0
 WireConnection;482;2;453;0
 ASEEND*/
-//CHKSM=89C7168E6F4DB284F901D834EA1C2BB0D8B38E6F
+//CHKSM=CFC4379FB37DF118C3D35FF445A3D8771D02E68F

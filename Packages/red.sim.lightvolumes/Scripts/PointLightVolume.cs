@@ -266,8 +266,6 @@ namespace VRCLightVolumes {
                 _pointLightVolumeBehaviour.SetProgramVariable("ShadowMapID", (float)GetShadowRuntimeID());
                 _pointLightVolumeBehaviour.SetProgramVariable("WorldSpaceShadows", UseWorldSpace);
                 _pointLightVolumeBehaviour.SetProgramVariable("Bias", Bias);
-                _pointLightVolumeBehaviour.SetProgramVariable("FarClip", GetShadowFarClip());
-                _pointLightVolumeBehaviour.SetProgramVariable("NearClip", GetShadowNearClip());
                 _pointLightVolumeBehaviour.SetProgramVariable("LayerMask", LayerMask.value);
                 _pointLightVolumeBehaviour.SetProgramVariable("Blur", Mathf.Max(Blur, 0));
                 _pointLightVolumeBehaviour.SetProgramVariable("ContactHardening", Mathf.Clamp01(ContactHardening));
@@ -306,8 +304,6 @@ namespace VRCLightVolumes {
                 PointLightVolumeInstance.ShadowMapID = GetShadowRuntimeID();
                 PointLightVolumeInstance.WorldSpaceShadows = UseWorldSpace;
                 PointLightVolumeInstance.Bias = Bias;
-                PointLightVolumeInstance.FarClip = GetShadowFarClip();
-                PointLightVolumeInstance.NearClip = GetShadowNearClip();
                 PointLightVolumeInstance.LayerMask = LayerMask.value;
                 PointLightVolumeInstance.Blur = Mathf.Max(Blur, 0);
                 PointLightVolumeInstance.ContactHardening = Mathf.Clamp01(ContactHardening);
@@ -479,6 +475,8 @@ namespace VRCLightVolumes {
             SetupDependencies();
             SyncUdonScript(false);
             float farClip = GetShadowFarClip();
+            float nearClip = GetShadowNearClip();
+            if (nearClip >= farClip) nearClip = farClip * 0.5f;
             int resolution = LightVolumeSetup != null ? (int)LightVolumeSetup.ShadowResolution : 128;
             TextureFormat format = LightVolumeSetup != null ? LightVolumeSetup.GetShadowMapBakeFormat() : TextureFormat.RGBAFloat;
             Cubemap cubemap = PointLightShadowBaker.BakeShadowMap(this, resolution, farClip, format, Blur, ContactHardening, infoString);
@@ -494,6 +492,7 @@ namespace VRCLightVolumes {
             ShadowMap = cubemap;
             PointLightVolumeInstance.ShadowBakePosition = transform.position;
             PointLightVolumeInstance.FarClip = farClip;
+            PointLightVolumeInstance.NearClip = nearClip;
             _shadowMapPrev = ShadowMap;
             LVUtils.MarkDirty(this);
             LVUtils.MarkDirty(PointLightVolumeInstance);

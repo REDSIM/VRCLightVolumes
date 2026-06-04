@@ -35,12 +35,13 @@ namespace VRCLightVolumes.Tests {
         private static readonly int _pointLightShadowTextureID = Shader.PropertyToID("_UdonPointLightVolumeShadowTexture");
         private static readonly int _lightBrightnessCutoffID = Shader.PropertyToID("_UdonLightBrightnessCutoff");
         private static readonly BindingFlags _lifecycleMethodFlags = BindingFlags.Instance | BindingFlags.NonPublic;
-        private static readonly FieldInfo _customTexturesDepthField = typeof(LightVolumeManager).GetField("_customTexturesDepth", _lifecycleMethodFlags);
-        private static readonly FieldInfo _shadowTexturesDepthField = typeof(LightVolumeManager).GetField("_shadowTexturesDepth", _lifecycleMethodFlags);
-        private static readonly FieldInfo _customCubemapTexturesField = typeof(LightVolumeManager).GetField("_customCubemapTextures", _lifecycleMethodFlags);
-        private static readonly FieldInfo _customSingleTexturesField = typeof(LightVolumeManager).GetField("_customSingleTextures", _lifecycleMethodFlags);
+        private static readonly FieldInfo _customTexturesDepthField = typeof(LightVolumeManager).GetField("_customTextureArrayDepth", _lifecycleMethodFlags);
+        private static readonly FieldInfo _shadowTexturesDepthField = typeof(LightVolumeManager).GetField("_shadowTextureArrayDepth", _lifecycleMethodFlags);
+        private static readonly FieldInfo _customCubemapTextureCountField = typeof(LightVolumeManager).GetField("_customCubemapTextureCount", _lifecycleMethodFlags);
+        private static readonly FieldInfo _customSingleTextureCountField = typeof(LightVolumeManager).GetField("_customSingleTextureCount", _lifecycleMethodFlags);
         private static readonly FieldInfo _pointLightCustomIDsField = typeof(LightVolumeManager).GetField("_pointLightCustomIDs", _lifecycleMethodFlags);
         private static readonly FieldInfo _pointLightShadowIDsField = typeof(LightVolumeManager).GetField("_pointLightShadowIDs", _lifecycleMethodFlags);
+        private static readonly FieldInfo _pointLightArraysDirtyField = typeof(LightVolumeManager).GetField("_pointLightArraysDirty", _lifecycleMethodFlags);
 
         private readonly List<UnityEngine.Object> _createdObjects = new List<UnityEngine.Object>();
 
@@ -70,25 +71,6 @@ namespace VRCLightVolumes.Tests {
             field.SetValue(manager, value);
         }
 
-        // Verifies that corrupted serialized registry arrays are repaired instead of throwing.
-        [Test]
-        public void NullRegistriesDisableShaderWithoutThrowing() {
-            LightVolumeManager manager = CreateManager("Null Registries Manager", true);
-            manager.LightVolumeInstances = null;
-            manager.PointLightVolumeInstances = null;
-
-            Assert.DoesNotThrow(() => manager.UpdateVolumes());
-
-            Assert.That(manager.LightVolumeInstances, Is.Not.Null);
-            Assert.That(manager.PointLightVolumeInstances, Is.Not.Null);
-            Assert.That(manager.LightVolumeInstances.Length, Is.EqualTo(0));
-            Assert.That(manager.PointLightVolumeInstances.Length, Is.EqualTo(0));
-            AssertGlobalFloat(_lightVolumeEnabledID, 0);
-            AssertGlobalFloat(_lightVolumeCountID, 0);
-            AssertGlobalFloat(_pointLightCountID, 0);
-            AssertGlobalFloat(_pointLightShadowCountID, 0);
-        }
-
         // Verifies that empty light-volume and point-light families do not block each other.
         [Test]
         public void EmptyVolumeFamiliesWriteIndependentCounts() {
@@ -102,16 +84,18 @@ namespace VRCLightVolumes.Tests {
 
             LightVolumeManager pointOnlyManager = CreateManager("Point Only Manager", false);
             PointLightVolumeInstance point = CreatePointLight(pointOnlyManager, "Point Only Light", true);
+            LightVolumeInstance volumeWithoutAtlas = CreateLightVolume(pointOnlyManager, "Ignored No Atlas Volume", true);
             point.transform.position = new Vector3(1, 2, 3);
             SetPointLightSquaredSize(point, 2);
             point.SetPointLight();
-            pointOnlyManager.LightVolumeInstances = new LightVolumeInstance[0];
+            pointOnlyManager.LightVolumeInstances = new[] { volumeWithoutAtlas };
             pointOnlyManager.PointLightVolumeInstances = new[] { point };
 
             pointOnlyManager.UpdateVolumes();
 
             AssertGlobalFloat(_lightVolumeEnabledID, 1);
             AssertGlobalFloat(_lightVolumeCountID, 0);
+            AssertGlobalFloat(_lightVolumeAdditiveCountID, 0);
             AssertGlobalFloat(_pointLightCountID, 1);
             AssertVectorClose(ExpectedPointLightPosition(point), Shader.GetGlobalVectorArray(_pointLightPositionID)[0]);
 
@@ -195,36 +179,6 @@ namespace VRCLightVolumes.Tests {
             AssertGlobalFloat(_pointLightCountID, 0);
         }
 
-        // Verifies first-update cleanup of duplicate and inactive serialized registry entries.
-        [Test]
-        public void SanitizedRegistriesRemoveInactiveDuplicatesAndKeepValidEntries() {
-            LightVolumeManager manager = CreateManager("Sanitize Manager", true, false);
-            LightVolumeInstance lightA = CreateLightVolume(manager, "Light A", true);
-            LightVolumeInstance lightB = CreateLightVolume(manager, "Light B", true);
-            LightVolumeInstance inactiveLight = CreateLightVolume(manager, "Inactive Light", false);
-            PointLightVolumeInstance pointA = CreatePointLight(manager, "Point A", true);
-            PointLightVolumeInstance pointB = CreatePointLight(manager, "Point B", true);
-            PointLightVolumeInstance inactivePoint = CreatePointLight(manager, "Inactive Point", false);
-
-            manager.LightVolumeInstances = new[] { lightA, lightA, inactiveLight, null, lightB };
-            manager.PointLightVolumeInstances = new[] { pointA, inactivePoint, pointA, null, pointB };
-
-            manager.gameObject.SetActive(true);
-            manager.UpdateVolumes();
-
-            Assert.That(manager.LightVolumeInstances[0], Is.SameAs(lightA));
-            Assert.That(manager.LightVolumeInstances[1], Is.Null);
-            Assert.That(manager.LightVolumeInstances[2], Is.Null);
-            Assert.That(ContainsLightVolume(manager.LightVolumeInstances, inactiveLight), Is.False);
-            Assert.That(manager.PointLightVolumeInstances[0], Is.SameAs(pointA));
-            Assert.That(manager.PointLightVolumeInstances[1], Is.Null);
-            Assert.That(manager.PointLightVolumeInstances[2], Is.Null);
-            Assert.That(ContainsPointLightVolume(manager.PointLightVolumeInstances, inactivePoint), Is.False);
-            AssertGlobalFloat(_lightVolumeEnabledID, 1);
-            AssertGlobalFloat(_lightVolumeCountID, 2);
-            AssertGlobalFloat(_pointLightCountID, 2);
-        }
-
         // Verifies inactive, black, and zero-intensity entries are removed from the final shader-visible arrays.
         [Test]
         public void DisabledAndZeroBrightnessInstancesAreExcludedFromFinalGlobals() {
@@ -252,10 +206,6 @@ namespace VRCLightVolumes.Tests {
 
             manager.UpdateVolumes();
 
-            Assert.That(manager.LightVolumeInstances[1], Is.Null);
-            Assert.That(manager.PointLightVolumeInstances[2], Is.Null);
-            Assert.That(ContainsLightVolume(manager.LightVolumeInstances, inactiveVolume), Is.False);
-            Assert.That(ContainsPointLightVolume(manager.PointLightVolumeInstances, inactivePoint), Is.False);
             AssertGlobalFloat(_lightVolumeEnabledID, 1);
             AssertGlobalFloat(_lightVolumeCountID, 1);
             AssertGlobalFloat(_pointLightCountID, 1);
@@ -466,7 +416,7 @@ namespace VRCLightVolumes.Tests {
             manager.ReinitializeCustomTextures();
             manager.UpdateVolumes();
 
-            Assert.That(point.IsLut(), Is.True);
+            Assert.That(point.ProjectionMode, Is.EqualTo(1)); // 1: LUT
             AssertPointCustomData(point, 1, -1);
             AssertVectorClose(ExpectedPointLightPosition(point), Shader.GetGlobalVectorArray(_pointLightPositionID)[0]);
 
@@ -477,7 +427,7 @@ namespace VRCLightVolumes.Tests {
             manager.UpdateVolumes();
 
             Quaternion expectedCookieRotation = Quaternion.Inverse(point.transform.rotation);
-            Assert.That(point.IsSpotLight(), Is.True);
+            Assert.That(point.LightType, Is.EqualTo(1)); // 1: spot
             AssertPointCustomData(point, -1, -1);
             AssertVectorClose(ExpectedPointLightColor(point), Shader.GetGlobalVectorArray(_pointLightColorID)[0]);
             AssertVectorClose(new Vector4(expectedCookieRotation.x, expectedCookieRotation.y, expectedCookieRotation.z, expectedCookieRotation.w), Shader.GetGlobalVectorArray(_pointLightDirectionID)[0]);
@@ -489,7 +439,7 @@ namespace VRCLightVolumes.Tests {
             manager.UpdateVolumes();
 
             Quaternion expectedAreaRotation = point.transform.rotation;
-            Assert.That(point.IsAreaLight(), Is.True);
+            Assert.That(point.LightType, Is.EqualTo(2)); // 2: area
             AssertVectorClose(ExpectedPointLightPosition(point), Shader.GetGlobalVectorArray(_pointLightPositionID)[0]);
             AssertVectorClose(ExpectedPointLightColor(point), Shader.GetGlobalVectorArray(_pointLightColorID)[0]);
             AssertVectorClose(new Vector4(expectedAreaRotation.x, expectedAreaRotation.y, expectedAreaRotation.z, expectedAreaRotation.w), Shader.GetGlobalVectorArray(_pointLightDirectionID)[0]);
@@ -592,6 +542,7 @@ namespace VRCLightVolumes.Tests {
             AssertPointCustomData(point, -1, 0);
 
             point.SetCustomTexture(null, false, false);
+            manager.UpdateVolumes();
 
             Assert.That(point.CustomTexture, Is.Null);
             Assert.That(point.ProjectionType, Is.EqualTo(0)); // 0: none
@@ -757,21 +708,19 @@ namespace VRCLightVolumes.Tests {
             Assert.That(manager.ShadowTextures.autoGenerateMips, Is.False);
         }
 
-        // Verifies startup cleanup clears serialized manager-owned shadow output arrays.
+        // Verifies destruction cleanup releases manager-owned shadow output arrays.
         [Test]
-        public void RuntimeShadowOutputResetClearsSerializedRuntimeTexture() {
+        public void RuntimeShadowOutputDestroyClearsManagerOwnedRuntimeTexture() {
             LightVolumeManager manager = CreateManager("Runtime Shadow Output Reset Manager", false);
             RenderTexture staleOutput = CreateRenderTexture("LightVolumeManager_ShadowTextures", 64, 64, 6, TextureDimension.Tex2DArray);
+            staleOutput.hideFlags = HideFlags.HideAndDontSave;
             manager.ShadowTextures = staleOutput;
             manager.ShadowMapsCount = 1;
             SetManagerField(manager, _shadowTexturesDepthField, staleOutput.volumeDepth);
             manager.ShadowTexturesWidth = 256;
             manager.ShadowTexturesHeight = 256;
 
-            MethodInfo resetMethod = typeof(LightVolumeManager).GetMethod("ResetRuntimeTextureArrays", _lifecycleMethodFlags);
-            Assert.That(resetMethod, Is.Not.Null);
-
-            resetMethod.Invoke(manager, null);
+            InvokeLifecycleMethod(manager, "OnDestroy");
 
             Assert.That(manager.ShadowTextures, Is.Null);
         }
@@ -962,6 +911,7 @@ namespace VRCLightVolumes.Tests {
         public void RuntimeShadowBakerDetectsRealtimeShadowMetadataChanges() {
             LightVolumeManager manager = CreateManager("Runtime Shadow Metadata Manager", false);
             PointLightVolumeInstance point = CreatePointLight(manager, "Runtime Shadow Metadata Light", true);
+            point.WorldSpaceShadows = true;
             RenderTexture source = CreateRenderTexture("Runtime Shadow Metadata Source", 4, 4, 1, TextureDimension.Cube);
 
             GameObject bakerObject = CreateGameObject("Runtime Shadow Metadata Baker", true);
@@ -985,6 +935,103 @@ namespace VRCLightVolumes.Tests {
 
             Assert.That((bool)applyMethod.Invoke(baker, new object[] { bakePosition, 12f, 0.25f }), Is.False);
             Assert.That((bool)applyMethod.Invoke(baker, new object[] { bakePosition + Vector3.right, 12f, 0.25f }), Is.True);
+        }
+
+        // Verifies direct runtime baker output reserves a manager shadow slot without entering the auto shadow update cache.
+        [Test]
+        public void RuntimeShadowBakerDirectOutputDoesNotEnterAutoShadowUpdateCache() {
+            LightVolumeManager manager = CreateManager("Runtime Shadow Direct Auto Cache Manager", false);
+            manager.ShadowTexturesWidth = 8;
+            manager.ShadowTexturesHeight = 8;
+            PointLightVolumeInstance point = CreatePointLight(manager, "Runtime Shadow Direct Auto Cache Light", true);
+            point.AutoUpdateShadowMap = true;
+            manager.PointLightVolumeInstances = new[] { point };
+
+            GameObject bakerObject = CreateGameObject("Runtime Shadow Direct Auto Cache Baker", true);
+            PointLightShadowRuntimeBaker baker = bakerObject.AddComponent<PointLightShadowRuntimeBaker>();
+            baker.TargetPointLightVolume = point;
+            baker.Realtime = true;
+            baker.Resolution = 8;
+            AddRuntimeShadowCamera(baker);
+
+            RenderTexture registrationTexture = CreateRenderTexture("Runtime Shadow Direct Registration", 1, 1, 6, TextureDimension.Tex2DArray);
+            FieldInfo registrationTextureField = typeof(PointLightShadowRuntimeBaker).GetField("_registrationTexture", _lifecycleMethodFlags);
+            FieldInfo useDirectOutputField = typeof(PointLightShadowRuntimeBaker).GetField("_useDirectOutput", _lifecycleMethodFlags);
+            MethodInfo cacheMethod = typeof(PointLightShadowRuntimeBaker).GetMethod("CacheRuntimeReferences", _lifecycleMethodFlags);
+            MethodInfo refreshSettingsMethod = typeof(PointLightShadowRuntimeBaker).GetMethod("RefreshBakeSettings", _lifecycleMethodFlags);
+            MethodInfo applyMethod = typeof(PointLightShadowRuntimeBaker).GetMethod("ApplyTargetShadowSourceInternal", _lifecycleMethodFlags);
+            Assert.That(registrationTextureField, Is.Not.Null);
+            Assert.That(useDirectOutputField, Is.Not.Null);
+            Assert.That(cacheMethod, Is.Not.Null);
+            Assert.That(refreshSettingsMethod, Is.Not.Null);
+            Assert.That(applyMethod, Is.Not.Null);
+
+            cacheMethod.Invoke(baker, null);
+            refreshSettingsMethod.Invoke(baker, null);
+            registrationTextureField.SetValue(baker, registrationTexture);
+            Assert.That((bool)useDirectOutputField.GetValue(baker), Is.True);
+
+            Assert.That((bool)applyMethod.Invoke(baker, new object[] { Vector3.zero, 8f, 0.1f, true }), Is.True);
+            manager.ReinitializeShadowTextures();
+
+            Assert.That(point.AutoUpdateShadowMap, Is.False);
+            Assert.That(manager.HasAutoShadowTextureUpdates, Is.False);
+        }
+
+        // Verifies local-space shadows do not report metadata changes for a bake position that the shader does not read.
+        [Test]
+        public void RuntimeShadowBakerIgnoresLocalSpaceBakePositionMetadataChanges() {
+            LightVolumeManager manager = CreateManager("Runtime Shadow Local Metadata Manager", false);
+            PointLightVolumeInstance point = CreatePointLight(manager, "Runtime Shadow Local Metadata Light", true);
+            point.WorldSpaceShadows = false;
+            RenderTexture source = CreateRenderTexture("Runtime Shadow Local Metadata Source", 4, 4, 6, TextureDimension.Tex2DArray);
+
+            GameObject bakerObject = CreateGameObject("Runtime Shadow Local Metadata Baker", true);
+            PointLightShadowRuntimeBaker baker = bakerObject.AddComponent<PointLightShadowRuntimeBaker>();
+            baker.TargetPointLightVolume = point;
+            AddRuntimeShadowCamera(baker);
+
+            FieldInfo shadowMapTextureField = typeof(PointLightShadowRuntimeBaker).GetField("_shadowTexture", _lifecycleMethodFlags);
+            MethodInfo applyMethod = typeof(PointLightShadowRuntimeBaker).GetMethod("ApplyTargetShadowSource", _lifecycleMethodFlags);
+            Assert.That(shadowMapTextureField, Is.Not.Null);
+            Assert.That(applyMethod, Is.Not.Null);
+            shadowMapTextureField.SetValue(baker, source);
+
+            Vector3 bakePosition = new Vector3(1, 2, 3);
+            Assert.That((bool)applyMethod.Invoke(baker, new object[] { bakePosition, 12f, 0.25f }), Is.True);
+            Assert.That((bool)applyMethod.Invoke(baker, new object[] { bakePosition + Vector3.right, 12f, 0.25f }), Is.False);
+        }
+
+        // Verifies realtime baker settings refresh does not notify the manager for local-space transform-only movement.
+        [Test]
+        public void RuntimeShadowBakerRefreshSettingsDoesNotDirtyManagerOnLocalSpaceMove() {
+            LightVolumeManager manager = CreateManager("Runtime Shadow Local Move Manager", false);
+            PointLightVolumeInstance point = CreatePointLight(manager, "Runtime Shadow Local Move Light", true);
+            point.WorldSpaceShadows = false;
+            manager.PointLightVolumeInstances = new[] { point };
+            manager.UpdateVolumes();
+
+            GameObject bakerObject = CreateGameObject("Runtime Shadow Local Move Baker", true);
+            PointLightShadowRuntimeBaker baker = bakerObject.AddComponent<PointLightShadowRuntimeBaker>();
+            baker.TargetPointLightVolume = point;
+            AddRuntimeShadowCamera(baker);
+
+            MethodInfo cacheMethod = typeof(PointLightShadowRuntimeBaker).GetMethod("CacheRuntimeReferences", _lifecycleMethodFlags);
+            MethodInfo refreshSettingsMethod = typeof(PointLightShadowRuntimeBaker).GetMethod("RefreshBakeSettings", _lifecycleMethodFlags);
+            Assert.That(cacheMethod, Is.Not.Null);
+            Assert.That(refreshSettingsMethod, Is.Not.Null);
+            Assert.That(_pointLightArraysDirtyField, Is.Not.Null);
+
+            cacheMethod.Invoke(baker, null);
+            point.IsRangeDirty = false;
+            SetManagerField(manager, _pointLightArraysDirtyField, false);
+
+            point.transform.position = new Vector3(3, 4, 5);
+            point.transform.rotation = Quaternion.Euler(0, 45, 0);
+
+            refreshSettingsMethod.Invoke(baker, null);
+
+            Assert.That(GetManagerField<bool>(manager, _pointLightArraysDirtyField), Is.False);
         }
 
         // Verifies runtime blur publishes the local shadow texture array used for final blurred output.
@@ -1094,7 +1141,7 @@ namespace VRCLightVolumes.Tests {
             MethodInfo method = typeof(LightVolumeManager).GetMethod("SetMaterialBlitProperties", _lifecycleMethodFlags);
             Assert.That(method, Is.Not.Null);
 
-            method.Invoke(manager, new object[] { material, 4, 10, true, manager.CustomTextures, 12 });
+            method.Invoke(manager, new object[] { material, 4, 10, true, manager.CustomTextures });
 
             AssertVectorClose(new Vector4(16, 8, 1, 4), material.GetVector(CustomRenderTextureInfoProperty));
         }
@@ -1148,8 +1195,8 @@ namespace VRCLightVolumes.Tests {
             Assert.That(manager.CustomTextures, Is.Not.Null);
             Assert.That(manager.CustomTextures.volumeDepth, Is.EqualTo(8));
             Assert.That(manager.CubemapsCount, Is.EqualTo(1));
-            Assert.That(GetManagerField<Texture[]>(manager, _customCubemapTexturesField).Length, Is.EqualTo(1));
-            Assert.That(GetManagerField<Texture[]>(manager, _customSingleTexturesField).Length, Is.EqualTo(2));
+            Assert.That(GetManagerField<int>(manager, _customCubemapTextureCountField), Is.EqualTo(1));
+            Assert.That(GetManagerField<int>(manager, _customSingleTextureCountField), Is.EqualTo(2));
             Assert.That(GetManagerField<int[]>(manager, _pointLightCustomIDsField), Is.EqualTo(new[] { 0, 0, 1, 2, 1 }));
             AssertPointCustomData(0, cubemapPointA, -1, 0);
             AssertPointCustomData(1, cubemapPointB, -1, 0);

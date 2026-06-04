@@ -1,9 +1,6 @@
 using UnityEngine;
-using UnityEngine.Serialization;
 #if UDONSHARP
 using UdonSharp;
-using VRC.SDKBase;
-using VRC.Udon;
 #endif
 
 namespace VRCLightVolumes {
@@ -54,12 +51,13 @@ namespace VRCLightVolumes {
         [Min(0.001f)] public float Height = 1f;
 
         [Header("Runtime State")]
-        [Tooltip("Squared range after which light will be culled. Should be recalculated by executing UpdateRange() method.")]
+        [Tooltip("Squared range after which light will be culled. Recalculated by the Light Volume Manager.")]
         public float SquaredRange = 1f;
         [Tooltip("Average squared lossy scale of the light. Light Source Size gets multiplied by it at the end. Updates with UpdateTransform() method.")]
         public float SquaredScale = 1f;
         [Tooltip("Reference to the Light Volume Manager. Needed for runtime initialization.")]
         public LightVolumeManager LightVolumeManager;
+        [HideInInspector] public bool IsActive = true;
 
         [Header("Projection Source")]
         [Tooltip("Texture source used by this light's active LUT, cookie or cubemap projection.")]
@@ -89,22 +87,16 @@ namespace VRCLightVolumes {
 
         [Header("Shadow Bake Settings")]
         [Tooltip("Layer mask used by the shadow bake camera. Only these layers can write into the shadow depth pass.")]
-        [FormerlySerializedAs("ShadowCullingMask")]
         public int LayerMask = -1;
         [Tooltip("Near clip plane used by the shadow bake camera. Higher values improve depth precision but clip nearby occluders.")]
-        [FormerlySerializedAs("ShadowNearClip")]
         [Min(0.0001f)] public float NearClip = 0.01f;
         [Tooltip("World-space bias in meters applied while baking this light's shadow map. Larger values reduce self-shadow artifacts, but can detach contact edges. Requires rebaking.")]
-        [FormerlySerializedAs("ShadowBias")]
         [Min(0)] public float Bias = 0.03f;
         [Tooltip("Far clip distance used when the EVSM shadow map was baked. 0 falls back to this light's current culling range.")]
-        [FormerlySerializedAs("ShadowFarClip")]
         [Min(0)] public float FarClip = 0f;
         [Tooltip("Editor-only Gaussian blur radius in shadow texels applied after baking. 0 keeps the baked shadow map unblurred.")]
-        [FormerlySerializedAs("ShadowBlur")]
         [Min(0)] public float Blur = 1f;
         [Tooltip("Hardens shadows near the contact areas. Can produce artefacts, so use with caution! Requires rebaking.")]
-        [FormerlySerializedAs("ShadowBlurDepth")]
         [Range(0, 1)] public float ContactHardening = 0f;
 
         // Internal projection metadata copied from the authoring PointLightVolume
@@ -123,6 +115,7 @@ namespace VRCLightVolumes {
 
         private Color _old_Color = Color.white;
         private float _old_Intensity = 1;
+        private bool _isRegisteredWithManager = false;
 
 #if UDONSHARP
         // Works only when changing values directly on UdonBehaviour
@@ -130,10 +123,16 @@ namespace VRCLightVolumes {
         // _old_(Name) variables are the old values of the variables
         // _onVarChange_(Name) methods (events) are called when the variable changes
         public void _onVarChange_Color() {
-            if (_old_Color != Color) MarkRangeDirtyAndUpdateVolumes();
+            if (_old_Color != Color) {
+                _old_Color = Color;
+                MarkRangeDirtyAndNotify(false, false, false);
+            }
         }
         public void _onVarChange_Intensity() {
-            if (_old_Intensity != Intensity) MarkRangeDirtyAndUpdateVolumes();
+            if (_old_Intensity != Intensity) {
+                _old_Intensity = Intensity;
+                MarkRangeDirtyAndNotify(false, false, false);
+            }
         }
 #endif
 
@@ -143,10 +142,30 @@ namespace VRCLightVolumes {
             if (_old_Color != Color || _old_Intensity != Intensity) {
                 _old_Color = Color;
                 _old_Intensity = Intensity;
-                if (LightVolumeManager != null) LightVolumeManager.RequestUpdateVolumes();
+                MarkRangeDirtyAndNotify(false, false, false);
             }
         }
 #endif
+
+        // Sends this instance change to the manager when it is active.
+        private void NotifyManager(bool rebuildFinalData, bool customTexturesChanged, bool shadowTexturesChanged) {
+            bool wasActive = IsActive;
+            IsActive = gameObject.activeInHierarchy && Intensity != 0 && Color != Color.black;
+            if (LightVolumeManager == null || !gameObject.activeInHierarchy) return;
+            if (wasActive != IsActive) {
+                if (CustomTexture != null || CustomTextureMaterial != null) customTexturesChanged = true;
+                if (ShadowMapID >= 0) shadowTexturesChanged = true;
+            }
+            LightVolumeManager.NotifyPointLightVolumeChanged(this, rebuildFinalData, customTexturesChanged, shadowTexturesChanged);
+        }
+
+        // Registers this instance once for the current active lifecycle.
+        private void RegisterWithManager() {
+            IsActive = gameObject.activeInHierarchy && Intensity != 0 && Color != Color.black;
+            if (LightVolumeManager == null || _isRegisteredWithManager) return;
+            LightVolumeManager.InitializePointLightVolume(this);
+            _isRegisteredWithManager = true;
+        }
 
         private void Start() {
 #if !UDONSHARP
@@ -154,53 +173,21 @@ namespace VRCLightVolumes {
                 LightVolumeManager = FindObjectOfType<LightVolumeManager>();
             }
 #endif
-            if (LightVolumeManager != null) {
-                LightVolumeManager.InitializePointLightVolume(this);
-            }
+            RegisterWithManager();
         }
 
         private void OnEnable() {
-            if (LightVolumeManager != null) {
-                LightVolumeManager.InitializePointLightVolume(this);
-            }
-            if (LightVolumeManager != null) LightVolumeManager.RequestUpdateVolumes();
+            RegisterWithManager();
         }
 
         private void OnDisable() {
+            bool customTexturesChanged = IsActive && (CustomTexture != null || CustomTextureMaterial != null);
+            bool shadowTexturesChanged = IsActive && ShadowMapID >= 0;
+            IsActive = false;
             if (LightVolumeManager != null) {
-                LightVolumeManager.UnregisterPointLightVolume(this);
+                LightVolumeManager.DeinitializePointLightVolume(this, customTexturesChanged, shadowTexturesChanged);
             }
-            if (LightVolumeManager != null) LightVolumeManager.RequestUpdateVolumes();
-        }
-
-        // Checks whether this instance is a spotlight
-        public bool IsSpotLight() {
-            return LightType == 1; // 1: spot
-        }
-        
-        // Checks whether this instance is a point light
-        public bool IsPointLight() {
-            return LightType == 0; // 0: point
-        }
-
-        // Checks whether this instance is an area light
-        public bool IsAreaLight() {
-            return LightType == 2; // 2: area
-        }
-
-        // Checks whether this instance uses a custom texture
-        public bool IsCustomTexture() {
-            return ProjectionMode == 2; // 2: custom cookie or cubemap
-        }
-
-        // Checks whether this instance uses a LUT
-        public bool IsLut() {
-            return ProjectionMode == 1; // 1: LUT
-        }
-
-        // Checks whether this instance uses parametric mode
-        public bool IsParametric() {
-            return ProjectionMode == 0; // 0: parametric
+            _isRegisteredWithManager = false;
         }
 
         // Sets light source size or range data for LUT mode
@@ -208,7 +195,7 @@ namespace VRCLightVolumes {
             float safeSize = Mathf.Max(Mathf.Abs(size), 0.0001f);
             LightSourceSize = safeSize;
             InverseSquaredRange = 1f / (safeSize * safeSize);
-            MarkRangeDirtyAndUpdateVolumes();
+            MarkRangeDirtyAndNotify(false, false, false);
         }
 
         // Sets LUT mode
@@ -216,16 +203,16 @@ namespace VRCLightVolumes {
             ProjectionMode = 1; // 1: LUT
             OuterAngleCos = Mathf.Cos(Angle);
             UpdateRotation();
-            MarkRangeDirtyAndUpdateVolumes();
+            MarkRangeDirtyAndNotify(true, CustomTexture != null || CustomTextureMaterial != null, false);
         }
 
         // Sets cubemap or cookie projection mode
         public void SetCustomTexture() {
             SetCustomProjectionMode();
-            MarkRangeDirtyAndUpdateVolumes();
+            MarkRangeDirtyAndNotify(true, CustomTexture != null || CustomTextureMaterial != null, false);
         }
 
-        // Sets a texture source for this light's custom projection and refreshes manager runtime texture caches
+        // Sets a texture source for this light's custom projection and schedules manager runtime texture cache refresh
         public void SetCustomTexture(Texture texture, bool isCubemap, bool autoUpdate) {
             CustomTexture = texture;
             CustomTextureMaterial = null;
@@ -248,10 +235,10 @@ namespace VRCLightVolumes {
             } else {
                 SetParametricMode();
             }
-            ReinitializeCustomTexturesAndUpdateVolumes();
+            MarkRangeDirtyAndNotify(true, true, false);
         }
 
-        // Sets a material source for this light's custom projection and refreshes manager runtime texture caches
+        // Sets a material source for this light's custom projection and schedules manager runtime texture cache refresh
         public void SetCustomMaterial(Material material, bool autoUpdate) {
             CustomTexture = null;
             CustomTextureMaterial = material;
@@ -267,13 +254,13 @@ namespace VRCLightVolumes {
             } else {
                 SetParametricMode();
             }
-            ReinitializeCustomTexturesAndUpdateVolumes();
+            MarkRangeDirtyAndNotify(true, true, false);
         }
 
         // Sets the light into parametric mode
         public void SetParametric() {
             SetParametricMode();
-            MarkRangeDirtyAndUpdateVolumes();
+            MarkRangeDirtyAndNotify(true, CustomTexture != null || CustomTextureMaterial != null, false);
         }
 
         // Sets the light into the point light type
@@ -281,14 +268,14 @@ namespace VRCLightVolumes {
             LightType = 0; // 0: point
             Position = transform.position;
             UpdateRotation();
-            MarkRangeDirtyAndUpdateVolumes();
+            MarkRangeDirtyAndNotify(true, CustomTexture != null || CustomTextureMaterial != null, false);
         }
 
         // Sets the light into the spotlight type with both angle and falloff because angle is required to determine falloff
         public void SetSpotLight(float angleDeg, float falloff) {
             LightType = 1; // 1: spot
             Angle = angleDeg * Mathf.Deg2Rad * 0.5f;
-            if (IsCustomTexture()) {
+            if (ProjectionMode == 2) { // 2: custom cookie or cubemap
                 OuterAngleTan = Mathf.Tan(Angle);
             } else {
                 OuterAngleCos = Mathf.Cos(Angle);
@@ -296,21 +283,21 @@ namespace VRCLightVolumes {
             }
             Position = transform.position;
             UpdateRotation();
-            MarkRangeDirtyAndUpdateVolumes();
+            MarkRangeDirtyAndNotify(true, CustomTexture != null || CustomTextureMaterial != null, false);
         }
 
         // Sets the light into the spotlight type with a specified angle
         public void SetSpotLight(float angleDeg) {
             LightType = 1; // 1: spot
             Angle = angleDeg * Mathf.Deg2Rad * 0.5f;
-            if (IsCustomTexture()) {
+            if (ProjectionMode == 2) { // 2: custom cookie or cubemap
                 OuterAngleTan = Mathf.Tan(Angle);
             } else {
                 OuterAngleCos = Mathf.Cos(Angle);
             }
             Position = transform.position;
             UpdateRotation();
-            MarkRangeDirtyAndUpdateVolumes();
+            MarkRangeDirtyAndNotify(true, CustomTexture != null || CustomTextureMaterial != null, false);
         }
         
         // Sets the light into the area light type
@@ -320,41 +307,31 @@ namespace VRCLightVolumes {
             Width = Mathf.Max(Mathf.Abs(transform.lossyScale.x), 0.001f);
             Height = Mathf.Max(Mathf.Abs(transform.lossyScale.y), 0.001f);
             UpdateRotation();
-            MarkRangeDirtyAndUpdateVolumes();
+            MarkRangeDirtyAndNotify(true, CustomTexture != null || CustomTextureMaterial != null, false);
         }
 
         // Sets light source color
         public void SetColor(Color color) {
             Color = color;
-            MarkRangeDirtyAndUpdateVolumes();
+            MarkRangeDirtyAndNotify(false, false, false);
         }
 
         // Sets light source intensity
         public void SetIntensity(float intensity) {
             Intensity = intensity;
-            MarkRangeDirtyAndUpdateVolumes();
+            MarkRangeDirtyAndNotify(false, false, false);
         }
 
-        // Marks this light range dirty and immediately refreshes the manager shader data
-        private void MarkRangeDirtyAndUpdateVolumes() {
+        // Marks this light range dirty and tells the manager which runtime data needs rebuilding.
+        private void MarkRangeDirtyAndNotify(bool rebuildFinalData, bool customTexturesChanged, bool shadowTexturesChanged) {
             IsRangeDirty = true;
-            if (LightVolumeManager != null) LightVolumeManager.RequestUpdateVolumes();
-        }
-
-        // Marks projection source caches dirty by rebuilding them before the shader data refresh
-        private void ReinitializeCustomTexturesAndUpdateVolumes() {
-            IsRangeDirty = true;
-            if (LightVolumeManager == null) return;
-            LightVolumeManager.ReinitializeCustomTextures();
-            LightVolumeManager.RequestUpdateVolumes();
+            NotifyManager(rebuildFinalData, customTexturesChanged, shadowTexturesChanged);
         }
 
         // Applies the internal custom projection mode without touching texture source fields
         private void SetCustomProjectionMode() {
             ProjectionMode = 2; // 2: custom cookie or cubemap
-            if (IsSpotLight()) {
-                OuterAngleTan = Mathf.Tan(Angle);
-            }
+            if (LightType == 1) OuterAngleTan = Mathf.Tan(Angle); // 1: spot
             UpdateRotation();
         }
 
@@ -394,6 +371,7 @@ namespace VRCLightVolumes {
         // Force update position
         public void UpdatePosition() {
             Position = transform.position;
+            NotifyManager(false, false, false);
         }
         
         // Force update rotation
@@ -407,6 +385,7 @@ namespace VRCLightVolumes {
                 rot = Quaternion.Inverse(rot);
                 Rotation = rot;
             }
+            NotifyManager(false, false, false);
         }
 
         // Force update scale
@@ -419,39 +398,7 @@ namespace VRCLightVolumes {
             }
             SquaredScale = (lscale.x + lscale.y + lscale.z) / 3;
             SquaredScale *= SquaredScale;
-            MarkRangeDirtyAndUpdateVolumes();
-        }
-
-        // Recalculates squared culling range for the light
-        public void UpdateRange() {
-            float cutoff = LightVolumeManager != null ? LightVolumeManager.LightsBrightnessCutoff : 0.35f;
-            if (LightType == 2) { // 2: area
-                SquaredRange = ComputeAreaLightSquaredBoundingSphere(Mathf.Abs(SquaredScale / Width), Height, Color, Intensity * Mathf.PI, cutoff);
-            } else if (ProjectionMode == 1) { // 1: LUT
-                SquaredRange = Mathf.Abs(SquaredScale / InverseSquaredRange);
-            } else { // Spot and Point light squared distance math
-                SquaredRange = ComputePointLightSquaredBoundingSphere(Color, Intensity, Mathf.Abs(SquaredScale * LightSourceSize * LightSourceSize), cutoff);
-            }
-            IsRangeDirty = false;
-        }
-
-        private float ComputeAreaLightSquaredBoundingSphere(float width, float height, Color color, float intensity, float cutoff) {
-            float minSolidAngle = Mathf.Clamp(cutoff / (Mathf.Max(color.r, Mathf.Max(color.g, color.b)) * intensity), -Mathf.PI * 2f, Mathf.PI * 2);
-            float A = width * height;
-            float w2 = width * width;
-            float h2 = height * height;
-            float B = 0.25f * (w2 + h2);
-            float t = Mathf.Tan(0.25f * minSolidAngle);
-            float T = t * t;
-            float TB = T * B;
-            float discriminant = Mathf.Sqrt(TB * TB + 4.0f * T * A * A);
-            float d2 = (discriminant - TB) * 0.125f / T;
-            return d2;
-        }
-
-        private float ComputePointLightSquaredBoundingSphere(Color color, float intensity, float sqSize, float cutoff) {
-            float L = Mathf.Max(color.r, Mathf.Max(color.g, color.b));
-            return Mathf.Max(Mathf.PI * 2 * L * Mathf.Abs(intensity) / (cutoff * cutoff) - 1, 0) * sqSize;
+            MarkRangeDirtyAndNotify(false, false, false);
         }
 
     }

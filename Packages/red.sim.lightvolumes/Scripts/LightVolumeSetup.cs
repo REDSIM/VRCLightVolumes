@@ -372,7 +372,7 @@ namespace VRCLightVolumes {
             }
             if (!Application.isPlaying && LightVolumeManager != null) {
                 LightVolumeManager.UpdateVolumes();
-                if (LightVolumeManager.HasAutoTextureUpdates()) {
+                if (LightVolumeManager.AutoUpdateTextures && (LightVolumeManager.HasAutoCustomTextureUpdates || LightVolumeManager.HasAutoShadowTextureUpdates)) {
                     LightVolumeManager.UpdateAutoCustomTextures();
                     LightVolumeManager.UpdateAutoShadowTextures();
                     EditorApplication.QueuePlayerLoopUpdate();
@@ -536,7 +536,7 @@ namespace VRCLightVolumes {
             if (_lightVolumeManagerBehaviour == null) SetupDependencies();
 #endif
             if (_lightVolumeManagerBehaviour == null) return false;
-            _lightVolumeManagerBehaviour.SendCustomEvent("UpdateVolumes");
+            _lightVolumeManagerBehaviour.SendCustomEvent("RequestUpdateVolumes");
             return true;
         }
 #endif
@@ -588,8 +588,8 @@ namespace VRCLightVolumes {
                     }
                     _lightVolumeManagerBehaviour.SetProgramVariable("PointLightVolumeInstances", pointLightVolumeInstances);
                 }
-                // General setup changes must not rebuild point light texture arrays; explicit Reinitialize* paths sync point light texture sources first
-                _lightVolumeManagerBehaviour.SendCustomEvent(AutoUpdateVolumes || AutoUpdateTextures ? "RequestUpdateVolumes" : "UpdateVolumes");
+                // General setup changes are applied by the manager on the next scheduled Udon update frame
+                _lightVolumeManagerBehaviour.SendCustomEvent("RequestUpdateVolumes");
 
             } else {
 #endif

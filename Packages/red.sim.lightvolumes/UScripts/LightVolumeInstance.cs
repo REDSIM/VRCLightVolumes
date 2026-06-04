@@ -48,33 +48,56 @@ namespace VRCLightVolumes {
         [Header("Runtime State")]
         [Tooltip("Reference to the Light Volume Manager. Needed for runtime initialization.")]
         public LightVolumeManager LightVolumeManager;
+        [HideInInspector] public bool IsActive = true;
 
         private Color _old_Color = Color.white;
         private float _old_Intensity = 1f;
+        private bool _isRegisteredWithManager = false;
 
 #if UDONSHARP
         // Low level Udon hacks:
         // _old_(Name) variables are the old values of the variables.
         // _onVarChange_(Name) methods (events) are called when the variable changes.
-        // Without udon it should be chacked in update
+        // Without Udon it should be checked in Update
         public void _onVarChange_Color() {
-            if (_old_Color != Color && LightVolumeManager != null) LightVolumeManager.RequestUpdateVolumes();
+            if (_old_Color != Color) {
+                _old_Color = Color;
+                NotifyManager(false);
+            }
         }
         public void _onVarChange_Intensity() {
-            if (_old_Intensity != Intensity && LightVolumeManager != null) LightVolumeManager.RequestUpdateVolumes();
+            if (_old_Intensity != Intensity) {
+                _old_Intensity = Intensity;
+                NotifyManager(false);
+            }
         }
 #endif
 
 #if !UDONSHARP || UNITY_EDITOR
         // To make it work when changing values on UdonSharpBehaviour in editor
-        private void Update() { 
+        private void Update() {
             if (_old_Color != Color || _old_Intensity != Intensity) {
                 _old_Color = Color;
                 _old_Intensity = Intensity;
-                if (LightVolumeManager != null) LightVolumeManager.RequestUpdateVolumes();
+                NotifyManager(false);
             }
         }
 #endif
+
+        // Sends this instance change to the manager when it is active.
+        private void NotifyManager(bool rebuildFinalData) {
+            IsActive = gameObject.activeInHierarchy && Intensity != 0 && Color != Color.black;
+            if (LightVolumeManager == null || !gameObject.activeInHierarchy) return;
+            LightVolumeManager.NotifyLightVolumeChanged(this, rebuildFinalData);
+        }
+
+        // Registers this instance once for the current active lifecycle.
+        private void RegisterWithManager() {
+            IsActive = gameObject.activeInHierarchy && Intensity != 0 && Color != Color.black;
+            if (LightVolumeManager == null || _isRegisteredWithManager) return;
+            LightVolumeManager.InitializeLightVolume(this);
+            _isRegisteredWithManager = true;
+        }
 
         private void Start() {
 #if !UDONSHARP
@@ -82,30 +105,26 @@ namespace VRCLightVolumes {
                 LightVolumeManager = FindObjectOfType<LightVolumeManager>();
             }
 #endif
-            if (LightVolumeManager != null) {
-                LightVolumeManager.InitializeLightVolume(this);
-            }
+            RegisterWithManager();
         }
 
         private void OnEnable() {
-            if (LightVolumeManager != null) {
-                LightVolumeManager.InitializeLightVolume(this);
-            }
-            if (LightVolumeManager != null) LightVolumeManager.RequestUpdateVolumes();
+            RegisterWithManager();
         }
 
         private void OnDisable() {
+            IsActive = false;
             if (LightVolumeManager != null) {
-                LightVolumeManager.UnregisterLightVolume(this);
+                LightVolumeManager.DeinitializeLightVolume(this);
             }
-            if (LightVolumeManager != null) LightVolumeManager.RequestUpdateVolumes();
+            _isRegisteredWithManager = false;
         }
 
         // Calculates and sets invLocalEdgeBlending
         public void SetSmoothBlending(float radius) {
             Vector3 scl = transform.lossyScale;
             InvLocalEdgeSmoothing = scl / Mathf.Max(radius, 0.00001f);
-            if (LightVolumeManager != null) LightVolumeManager.RequestUpdateVolumes();
+            NotifyManager(true);
         }
 
         // Recalculates inv TRS matrix and Relative L1 rotation
@@ -116,13 +135,9 @@ namespace VRCLightVolumes {
             IsRotated = Quaternion.Dot(rot, Quaternion.identity) < 0.999999f;
 
             Matrix4x4 m = Matrix4x4.Rotate(rot);
-
-            Vector4 row0 = m.GetRow(0);
-            row0.w = 0;
-            RelativeRotationRow0 = row0;
-            Vector4 row1 = m.GetRow(1);
-            row1.w = 0;
-            RelativeRotationRow1 = row1;
+            RelativeRotationRow0 = m.GetRow(0);
+            RelativeRotationRow1 = m.GetRow(1);
+            NotifyManager(false);
         }
 
     }

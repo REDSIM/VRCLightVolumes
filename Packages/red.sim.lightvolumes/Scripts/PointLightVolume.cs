@@ -267,6 +267,7 @@ namespace VRCLightVolumes {
                 _pointLightVolumeBehaviour.SetProgramVariable("WorldSpaceShadows", UseWorldSpace);
                 _pointLightVolumeBehaviour.SetProgramVariable("Bias", Bias);
                 _pointLightVolumeBehaviour.SetProgramVariable("LayerMask", LayerMask.value);
+                _pointLightVolumeBehaviour.SetProgramVariable("NearClip", GetShadowNearClip());
                 _pointLightVolumeBehaviour.SetProgramVariable("Blur", Mathf.Max(Blur, 0));
                 _pointLightVolumeBehaviour.SetProgramVariable("ContactHardening", Mathf.Clamp01(ContactHardening));
                 _pointLightVolumeBehaviour.SetProgramVariable("ShadowBakePosition", PointLightVolumeInstance.ShadowBakePosition);
@@ -305,6 +306,7 @@ namespace VRCLightVolumes {
                 PointLightVolumeInstance.WorldSpaceShadows = UseWorldSpace;
                 PointLightVolumeInstance.Bias = Bias;
                 PointLightVolumeInstance.LayerMask = LayerMask.value;
+                PointLightVolumeInstance.NearClip = GetShadowNearClip();
                 PointLightVolumeInstance.Blur = Mathf.Max(Blur, 0);
                 PointLightVolumeInstance.ContactHardening = Mathf.Clamp01(ContactHardening);
                 if (syncTextureSources) SyncTextureSourcesToInstance();

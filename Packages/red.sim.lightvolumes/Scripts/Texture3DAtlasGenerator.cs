@@ -26,6 +26,7 @@ namespace VRCLightVolumes {
         public static IEnumerator CreateAtlas(LightVolume[] volumes, Action<Atlas3D> onComplete, int downscaleCount = 0, TexturePackingStrategy packingStrategy = TexturePackingStrategy.MinimumVRAM) {
 
             Texture3D[] texs = null;
+            Texture3D[] reservedTextures = null;
             const int padding = 1;
 
 #if UNITY_EDITOR
@@ -39,37 +40,65 @@ namespace VRCLightVolumes {
 
                 // Stacking textures into array
                 Texture3D[] textures = new Texture3D[volumes.Length * 3];
+                bool[] forceUniqueTextures = new bool[textures.Length];
+                reservedTextures = new Texture3D[textures.Length];
                 for (int i = 0; i < volumes.Length; i++) {
 
                     if (volumes[i] == null) {
                         Debug.LogError("[LightVolumeSetup] One of the light volumes is not setuped!");
                         yield break;
                     }
-                    if (volumes[i].Texture0 == null || volumes[i].Texture1 == null || volumes[i].Texture2 == null) {
-                        Debug.LogError($"[LightVolumeSetup] Light volume \"{volumes[i].gameObject.name}\" is not baked!");
-                        yield break;
-                    }
-
-                    Texture3D tex0 = volumes[i].Texture0;
-                    Texture3D tex1 = volumes[i].Texture1;
-                    Texture3D tex2 = volumes[i].Texture2;
-
-#if UNITY_EDITOR
-                    // Downscaling progress bar
-                    if (downscaleCount != 0) {
-                        Progress.Report(progressId, (float) (i / volumes.Length) / progressStepsCount, $"Downscaling volumes {i + 1}/{volumes.Length}");
-                    }
-#endif
-
-                    // Downscaling textures multiple times
-                    for (int j = 0; j < downscaleCount; j++) {
-                        tex0 = LVUtils.DownscaleTexture3D(tex0);
-                        tex1 = LVUtils.DownscaleTexture3D(tex1);
-                        tex2 = LVUtils.DownscaleTexture3D(tex2);
-                        yield return null;
-                    }
 
                     int textureIndex = i * 3;
+                    bool reserveUVSpace = !volumes[i].Bake && volumes[i].ReserveUVSpace;
+                    Texture3D tex0;
+                    Texture3D tex1;
+                    Texture3D tex2;
+
+                    if (reserveUVSpace) {
+                        int w = GetReservedTextureSize(volumes[i].Resolution.x, downscaleCount);
+                        int h = GetReservedTextureSize(volumes[i].Resolution.y, downscaleCount);
+                        int d = GetReservedTextureSize(volumes[i].Resolution.z, downscaleCount);
+                        int reservedVoxelCount = GetReservedVoxelCount(w, h, d);
+                        if (reservedVoxelCount < 0) {
+                            Debug.LogError($"[LightVolumeSetup] Reserved UV space for light volume \"{volumes[i].gameObject.name}\" is too large!");
+                            yield break;
+                        }
+
+                        tex0 = CreateReservedTexture3D(w, h, d, new Color(1, 1, 1, 0));
+                        tex1 = CreateReservedTexture3D(w, h, d, Color.clear);
+                        tex2 = CreateReservedTexture3D(w, h, d, Color.clear);
+                        reservedTextures[textureIndex] = tex0;
+                        reservedTextures[textureIndex + 1] = tex1;
+                        reservedTextures[textureIndex + 2] = tex2;
+                        forceUniqueTextures[textureIndex] = true;
+                        forceUniqueTextures[textureIndex + 1] = true;
+                        forceUniqueTextures[textureIndex + 2] = true;
+                    } else {
+                        if (volumes[i].Texture0 == null || volumes[i].Texture1 == null || volumes[i].Texture2 == null) {
+                            Debug.LogError($"[LightVolumeSetup] Light volume \"{volumes[i].gameObject.name}\" is not baked!");
+                            yield break;
+                        }
+
+                        tex0 = volumes[i].Texture0;
+                        tex1 = volumes[i].Texture1;
+                        tex2 = volumes[i].Texture2;
+#if UNITY_EDITOR
+                        // Downscaling progress bar
+                        if (downscaleCount != 0) {
+                            Progress.Report(progressId, (float) (i / volumes.Length) / progressStepsCount, $"Downscaling volumes {i + 1}/{volumes.Length}");
+                        }
+#endif
+
+                        // Downscaling textures multiple times
+                        for (int j = 0; j < downscaleCount; j++) {
+                            tex0 = LVUtils.DownscaleTexture3D(tex0);
+                            tex1 = LVUtils.DownscaleTexture3D(tex1);
+                            tex2 = LVUtils.DownscaleTexture3D(tex2);
+                            yield return null;
+                        }
+                    }
+
                     textures[textureIndex] = tex0;
                     textures[textureIndex + 1] = tex1;
                     textures[textureIndex + 2] = tex2;
@@ -85,6 +114,15 @@ namespace VRCLightVolumes {
 #endif
 
                     int textureIndex = i * 3;
+
+                    if (forceUniqueTextures[textureIndex]) {
+                        texs[textureIndex] = textures[textureIndex];
+                        texs[textureIndex + 1] = textures[textureIndex + 1];
+                        texs[textureIndex + 2] = textures[textureIndex + 2];
+                        yield return null;
+                        continue;
+                    }
+
                     Texture3D[] bundle = { textures[textureIndex], textures[textureIndex + 1], textures[textureIndex + 2] };
 
                     float dark = -volumes[i].Shadows * 0.5f;
@@ -114,6 +152,12 @@ namespace VRCLightVolumes {
                     Texture3D t = texs[i];
                     if (t == null) {
                         origToUnique[i] = -1; // Missing optional texture
+                        continue;
+                    }
+
+                    if (forceUniqueTextures[i]) {
+                        origToUnique[i] = uniqueTexs.Count;
+                        uniqueTexs.Add(t);
                         continue;
                     }
                     
@@ -340,18 +384,51 @@ namespace VRCLightVolumes {
 #if UNITY_EDITOR
                 Progress.Finish(progressId);
                 Progress.Remove(progressId);
-                // Clear temporary 3D textures
-                if (texs != null) {
-                    for (int i = 0; i < texs.Length; i++) {
-                        if (!EditorUtility.IsPersistent(texs[i])) {
-                            UnityEngine.Object.DestroyImmediate(texs[i]);
-                        }
-                    }
-                }
+                DestroyTemporaryTextures(texs);
+                DestroyTemporaryTextures(reservedTextures);
 #endif
             }
 
         }
+
+        // Returns the reserved texture dimension after atlas downscaling.
+        private static int GetReservedTextureSize(int size, int downscaleCount) {
+            size = Mathf.Max(size, 1);
+            for (int i = 0; i < downscaleCount; i++) size = Mathf.Max(1, size / 2);
+            return size;
+        }
+
+        // Returns voxel count for a reserved texture, or -1 if it cannot fit in a managed array.
+        private static int GetReservedVoxelCount(int width, int height, int depth) {
+            ulong voxelCount = (ulong)width * (ulong)height * (ulong)depth;
+            return voxelCount > int.MaxValue ? -1 : (int)voxelCount;
+        }
+
+        // Creates an in-memory texture used only to reserve an atlas island.
+        private static Texture3D CreateReservedTexture3D(int width, int height, int depth, Color color) {
+            int voxelCount = GetReservedVoxelCount(width, height, depth);
+            Texture3D texture = new Texture3D(width, height, depth, TextureFormat.RGBAHalf, false) { wrapMode = TextureWrapMode.Clamp, filterMode = FilterMode.Trilinear };
+            Color[] colors = new Color[voxelCount];
+            if (color != Color.clear) {
+                for (int i = 0; i < voxelCount; i++) colors[i] = color;
+            }
+            LVUtils.Apply3DTextureData(texture, colors);
+            return texture;
+        }
+
+#if UNITY_EDITOR
+        // Destroys non-persistent temporary 3D textures created during atlas generation.
+        private static void DestroyTemporaryTextures(Texture3D[] textures) {
+            if (textures == null) return;
+            for (int i = 0; i < textures.Length; i++) {
+                Texture3D texture = textures[i];
+                if (texture != null && !EditorUtility.IsPersistent(texture)) {
+                    UnityEngine.Object.DestroyImmediate(texture);
+                    textures[i] = null;
+                }
+            }
+        }
+#endif
 
         // Simple color correction
         private static Vector3 CorrectVector(Vector3 v, float dark, float bright, float expo) {

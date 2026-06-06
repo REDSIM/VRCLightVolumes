@@ -1,3 +1,4 @@
+using System.Collections;
 using System.Collections.Generic;
 using System.Reflection;
 using NUnit.Framework;
@@ -7,6 +8,7 @@ using UnityEngine.Rendering;
 namespace VRCLightVolumes.Tests {
     [Category("Editor")]
     public class LightVolumeEditorPipelineTests {
+        private const float Epsilon = 0.0001f;
         private static readonly BindingFlags _nonPublicInstanceFlags = BindingFlags.Instance | BindingFlags.NonPublic;
 
         private readonly List<UnityEngine.Object> _createdObjects = new List<UnityEngine.Object>();
@@ -235,6 +237,29 @@ namespace VRCLightVolumes.Tests {
             Assert.That(manager.LightVolumeInstances[1], Is.SameAs(regularInstance));
         }
 
+        // Verifies reserved UV space creates unique atlas islands filled with neutral SH data.
+        [Test]
+        public void ReservedUVSpaceCreatesUniqueWhiteAtlasIslands() {
+            LightVolume first = CreateReservedLightVolume("Reserved UV Space A");
+            LightVolume second = CreateReservedLightVolume("Reserved UV Space B");
+            Atlas3D result = new Atlas3D();
+
+            IEnumerator routine = Texture3DAtlasGenerator.CreateAtlas(new[] { first, second }, atlas => {
+                result = atlas;
+                _createdObjects.Add(atlas.Texture);
+            });
+            RunEnumerator(routine);
+
+            Assert.That(result.Texture, Is.Not.Null);
+            Assert.That(result.BoundsUvwMin, Has.Length.EqualTo(6));
+            Assert.That(BoundsDiffer(result.BoundsUvwMin[0], result.BoundsUvwMin[1]), Is.True);
+            Assert.That(BoundsDiffer(result.BoundsUvwMin[1], result.BoundsUvwMin[2]), Is.True);
+            Assert.That(BoundsDiffer(result.BoundsUvwMin[0], result.BoundsUvwMin[3]), Is.True);
+            AssertColorClose(new Color(1, 1, 1, 0), SampleAtlasPixel(result.Texture, result.BoundsUvwMin[0]));
+            AssertColorClose(Color.clear, SampleAtlasPixel(result.Texture, result.BoundsUvwMin[1]));
+            AssertColorClose(Color.clear, SampleAtlasPixel(result.Texture, result.BoundsUvwMin[2]));
+        }
+
         // Creates a manager with deterministic defaults.
         private LightVolumeManager CreateManager(string name, bool withAtlas) {
             GameObject gameObject = CreateGameObject(name, false);
@@ -281,6 +306,50 @@ namespace VRCLightVolumes.Tests {
             instance.IsAdditive = additive;
             setup.LightVolumes.Add(volume);
             return instance;
+        }
+
+        // Creates a Light Volume configured to reserve atlas space instead of using baked textures.
+        private LightVolume CreateReservedLightVolume(string name) {
+            GameObject gameObject = CreateGameObject(name, false);
+            LightVolume volume = gameObject.AddComponent<LightVolume>();
+            volume.Bake = false;
+            volume.ReserveUVSpace = true;
+            volume.Resolution = new Vector3Int(2, 2, 2);
+            volume.Exposure = 2;
+            volume.Highlights = 1;
+            volume.Shadows = -1;
+            return volume;
+        }
+
+        // Runs a simple iterator-based editor coroutine to completion in a synchronous test.
+        private static void RunEnumerator(IEnumerator routine) {
+            int guard = 10000;
+            while (routine.MoveNext()) {
+                guard--;
+                if (guard < 0) Assert.Fail("Atlas generation coroutine did not finish.");
+            }
+        }
+
+        // Samples the first voxel inside a packed atlas island.
+        private static Color SampleAtlasPixel(Texture3D atlas, Vector3 boundsMin) {
+            int x = Mathf.Clamp(Mathf.RoundToInt(boundsMin.x * atlas.width), 0, atlas.width - 1);
+            int y = Mathf.Clamp(Mathf.RoundToInt(boundsMin.y * atlas.height), 0, atlas.height - 1);
+            int z = Mathf.Clamp(Mathf.RoundToInt(boundsMin.z * atlas.depth), 0, atlas.depth - 1);
+            Color[] pixels = atlas.GetPixels();
+            return pixels[x + y * atlas.width + z * atlas.width * atlas.height];
+        }
+
+        // Checks whether two atlas bounds point to different islands.
+        private static bool BoundsDiffer(Vector3 a, Vector3 b) {
+            return Mathf.Abs(a.x - b.x) > Epsilon || Mathf.Abs(a.y - b.y) > Epsilon || Mathf.Abs(a.z - b.z) > Epsilon;
+        }
+
+        // Asserts colors with the shared editor-test tolerance.
+        private static void AssertColorClose(Color expected, Color actual) {
+            Assert.That(actual.r, Is.EqualTo(expected.r).Within(Epsilon));
+            Assert.That(actual.g, Is.EqualTo(expected.g).Within(Epsilon));
+            Assert.That(actual.b, Is.EqualTo(expected.b).Within(Epsilon));
+            Assert.That(actual.a, Is.EqualTo(expected.a).Within(Epsilon));
         }
 
         // Creates a temporary GameObject tracked by teardown.

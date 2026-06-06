@@ -372,8 +372,8 @@ MonoBehaviour:
       Data: 22|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Controls Normal Masking and shadow contrast for this point light volume.
-        1 keeps full shading, 0 disables both effects.
+      Data: Controls shading based on surface normal and shadows opacity for this
+        point light volume.
     - Name: 
       Entry: 8
       Data: 

@@ -415,6 +415,7 @@ namespace VRCLightVolumes {
                     var lightVolumeInstance = LightVolumes[i].LightVolumeInstance;
 
                     if (lightVolumeInstance == null) continue;
+                    if (!LightVolumes[i].Bake && LightVolumes[i].ReserveUVSpace) lightVolumeInstance.InvBakedRotation = Quaternion.Inverse(LightVolumes[i].GetRotation());
 
                     int atlasIndex = i * 3;
                     Vector3 scale = atlas.BoundsUvwMax[atlasIndex] - atlas.BoundsUvwMin[atlasIndex];

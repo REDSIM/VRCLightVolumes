@@ -47,6 +47,8 @@ namespace VRCLightVolumes {
         [Header("Baking Setup")]
         [Tooltip("Uncheck it if you don't want to rebake this volume's textures.")]
         public bool Bake = true;
+        [Tooltip("Reserves atlas UV space for this volume without baking its lighting data. Reserved voxels are written as white L0 and zero L1.")]
+        public bool ReserveUVSpace = false;
         [Tooltip("Automatically sets the resolution based on the Voxels Per Unit value.")]
         public bool AdaptiveResolution = true;
         [Tooltip("Number of voxels used per meter, linearly. This value increases the Light Volume file size cubically.")]

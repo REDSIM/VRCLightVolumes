@@ -126,7 +126,9 @@ namespace VRCLightVolumes {
             hiddenFields.Add("BakeryVolume");
 #endif
 
-            if (!LightVolume.Bake) {
+            if (LightVolume.Bake) {
+                hiddenFields.Add("ReserveUVSpace");
+            } else if (!LightVolume.ReserveUVSpace) {
                 hiddenFields.Add("AdaptiveResolution");
                 hiddenFields.Add("Resolution");
                 hiddenFields.Add("VoxelsPerUnit");

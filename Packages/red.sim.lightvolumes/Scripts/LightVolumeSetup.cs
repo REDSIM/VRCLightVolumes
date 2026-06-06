@@ -45,7 +45,10 @@ namespace VRCLightVolumes {
         public Baking BakingMode = Baking.Progressive;
 #endif
         [Tooltip("Light from Bakery light sources with this bitmask will affect Light Volumes.")]
-        public int BakeryBitmask = 1;
+        [FormerlySerializedAs("BakeryBitmask")]
+        public int VolumeBitmask = 1;
+        [Tooltip("Light from Bakery light sources with this bitmask will affect light probes.")]
+        public int ProbeBitmask = 1;
         [Tooltip("Removes baked noise in Light Volumes but may slightly reduce sharpness. Recommended to keep it enabled.")]
         public bool Denoise = true;
         [Tooltip("Whether to dilate valid probe data into invalid probes, such as probes that are inside geometry. Helps mitigate light leaking.")]
@@ -164,6 +167,7 @@ namespace VRCLightVolumes {
         private bool _subscribedToBakery = false;
         private bool _bakeryBitmaskOverridePrepared = false;
         private bool _bakeryBitmaskOverridePending = false;
+        private static readonly System.Reflection.FieldInfo _bakeryLightProbeGroupField = typeof(ftBuildGraphics).GetField("lightProbeLMGroup", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic);
         private static readonly System.Reflection.FieldInfo _bakeryVolumeGroupField = typeof(ftBuildGraphics).GetField("volumeLMGroup", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic);
 #endif
         private bool _subscribedToUnityLightmapper = false;
@@ -290,7 +294,7 @@ namespace VRCLightVolumes {
 
 #if BAKERY_INCLUDED
 
-        // Prepares Bakery volumes and marks the bitmask override as needed for the current bake.
+        // Prepares Bakery probe groups and marks the bitmask override as needed for the current bake.
         private void PrepareBakeryBitmaskOverride() {
             if (_bakeryBitmaskOverridePrepared) return;
 
@@ -300,18 +304,16 @@ namespace VRCLightVolumes {
             if (!IsBakeryMode) return;
 
             var volumes = FindObjectsOfType<LightVolume>(true);
-            bool hasBakeVolumes = false;
             for (int i = 0; i < volumes.Length; i++) {
                 volumes[i].SetupDependencies();
                 if (volumes[i].LightVolumeSetup != this) continue;
 
                 // Attempt to fix a bakery bug
                 volumes[i].SetupBakeryDependencies();
-                hasBakeVolumes = hasBakeVolumes || volumes[i].Bake;
             }
-            if (!hasBakeVolumes) return;
 
             ApplyBakeryBitmaskToStoredGroups();
+            _bakeryLightProbeGroupField?.SetValue(null, null);
             _bakeryVolumeGroupField?.SetValue(null, null);
             _bakeryBitmaskOverridePending = true;
         }
@@ -350,14 +352,17 @@ namespace VRCLightVolumes {
             PrepareBakeryBitmaskOverride();
             if (!_bakeryBitmaskOverridePending) return;
 
+            var lightProbeGroup = _bakeryLightProbeGroupField?.GetValue(null) as BakeryLightmapGroup;
             var volumeGroup = _bakeryVolumeGroupField?.GetValue(null) as BakeryLightmapGroup;
-            if (volumeGroup == null) return;
+            if (lightProbeGroup == null && volumeGroup == null) return;
 
-            volumeGroup.bitmask = BakeryBitmask;
+            if (lightProbeGroup != null) lightProbeGroup.bitmask = ProbeBitmask;
+            if (volumeGroup != null) volumeGroup.bitmask = VolumeBitmask;
+            ApplyBakeryBitmaskToStoredGroups();
             _bakeryBitmaskOverridePending = false;
         }
 
-        // Applies the configured bitmask to Bakery's stored implicit volume groups.
+        // Applies the configured bitmask to Bakery's stored implicit probe groups.
         private void ApplyBakeryBitmaskToStoredGroups() {
             for (int i = 0; i < SceneManager.sceneCount; i++) {
                 Scene scene = EditorSceneManager.GetSceneAt(i);
@@ -371,7 +376,7 @@ namespace VRCLightVolumes {
 
                 for (int j = 0; j < storage.implicitGroups.Count; j++) {
                     BakeryLightmapGroup group = storage.implicitGroups[j] as BakeryLightmapGroup;
-                    if (group != null && group.isImplicit && group.probes && group.fixPos3D) group.bitmask = BakeryBitmask;
+                    if (group != null && group.isImplicit && group.probes) group.bitmask = group.name == "volumes" ? VolumeBitmask : ProbeBitmask;
                 }
             }
         }

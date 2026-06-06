@@ -13,16 +13,16 @@ namespace VRCLightVolumes {
 
         private SerializedProperty _pointLightVolumesProp;
         private SerializedProperty _bakingModeProp;
-        private SerializedProperty _bakeryBitmaskProp;
+        private SerializedProperty _volumeBitmaskProp;
+        private SerializedProperty _probeBitmaskProp;
         private ReorderableList _pointLightVolumesList;
 
         private LightVolumeSetup _lightVolumeSetup;
 
         private bool _isMultipleInstancesError = false;
-        private static readonly string[] _bakeryBitmaskLabels = new string[] { "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10",
-            "11", "12", "13", "14", "15", "16", "17", "18", "19", "20",
-            "21", "22", "23", "24", "25", "26", "27", "28", "29", "30" };
-        private static readonly GUIContent _bakeryBitmaskContent = new GUIContent("Bakery Bitmask", "Lights only affect volumes with overlapping bits.");
+        private static readonly string[] _bakeryBitmaskLabels = new string[] { "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "29", "30" };
+        private static readonly GUIContent _volumeBitmaskContent = new GUIContent("Volume Bitmask", "Light from Bakery light sources with this bitmask will affect Light Volumes.");
+        private static readonly GUIContent _probeBitmaskContent = new GUIContent("Probe Bitmask", "Light from Bakery light sources with this bitmask will affect light probes.");
         private static readonly GUIContent _cookieResolutionContent = new GUIContent("Cookie Resolution", "Resolution used for point light cookie, LUT and cubemap projection textures.");
         private static readonly GUIContent _shadowResolutionContent = new GUIContent("Shadow Resolution", "Resolution used for per-light shadow maps.");
         private static readonly GUIContent _shadowTextureFormatContent = new GUIContent("Shadow Texture Format", "Precision used for baked EVSM shadow cubemaps and the runtime shadow texture array. Half is cheaper, Float reduces EVSM precision artifacts.");
@@ -38,7 +38,8 @@ namespace VRCLightVolumes {
             _volumesProp = serializedObject.FindProperty("LightVolumes");
             _weightsProp = serializedObject.FindProperty("LightVolumesWeights");
             _bakingModeProp = serializedObject.FindProperty("BakingMode");
-            _bakeryBitmaskProp = serializedObject.FindProperty("BakeryBitmask");
+            _volumeBitmaskProp = serializedObject.FindProperty("VolumeBitmask");
+            _probeBitmaskProp = serializedObject.FindProperty("ProbeBitmask");
 
             // ============ LIGHT VOLUMES LIST ===============
 
@@ -285,7 +286,7 @@ namespace VRCLightVolumes {
 
             GUILayout.Space(10);
 
-            List<string> hiddenFields = new List<string>() { "m_Script", "LightVolumes", "PointLightVolumes", "LightVolumesWeights", "LightVolumeAtlas", "LightVolumeDataList", "LightVolumeManager", "_bakingModePrev", "BakingMode", "BakeryBitmask" };
+            List<string> hiddenFields = new List<string>() { "m_Script", "LightVolumes", "PointLightVolumes", "LightVolumesWeights", "LightVolumeAtlas", "LightVolumeDataList", "LightVolumeManager", "_bakingModePrev", "BakingMode", "VolumeBitmask", "ProbeBitmask" };
             hiddenFields.Add("CookieResolution");
             hiddenFields.Add("BrightnessCutoff");
             hiddenFields.Add("ShadowResolution");
@@ -329,7 +330,7 @@ namespace VRCLightVolumes {
             EditorGUILayout.PropertyField(_bakingModeProp);
             bool isBakeryMode = (LightVolumeSetup.Baking)_bakingModeProp.enumValueIndex == LightVolumeSetup.Baking.Bakery;
 #if BAKERY_INCLUDED
-            if (isBakeryMode) DrawBakeryBitmask();
+            if (isBakeryMode) DrawBakeryBitmasks();
 #endif
 
             if (!isBakeryMode) {
@@ -388,11 +389,15 @@ namespace VRCLightVolumes {
             return mb.ToString("0.00");
         }
 
-        // Draws Bakery bitmask using Bakery's zero-based mask popup labels.
-        private void DrawBakeryBitmask() {
-            int prevValue = _bakeryBitmaskProp.intValue;
-            int newValue = EditorGUILayout.MaskField(_bakeryBitmaskContent, prevValue, _bakeryBitmaskLabels);
-            if (prevValue != newValue) _bakeryBitmaskProp.intValue = newValue;
+        // Draws Bakery bitmasks using Bakery's zero-based mask popup labels.
+        private void DrawBakeryBitmasks() {
+            int prevValue = _volumeBitmaskProp.intValue;
+            int newValue = EditorGUILayout.MaskField(_volumeBitmaskContent, prevValue, _bakeryBitmaskLabels);
+            if (prevValue != newValue) _volumeBitmaskProp.intValue = newValue;
+
+            prevValue = _probeBitmaskProp.intValue;
+            newValue = EditorGUILayout.MaskField(_probeBitmaskContent, prevValue, _bakeryBitmaskLabels);
+            if (prevValue != newValue) _probeBitmaskProp.intValue = newValue;
         }
 
     }

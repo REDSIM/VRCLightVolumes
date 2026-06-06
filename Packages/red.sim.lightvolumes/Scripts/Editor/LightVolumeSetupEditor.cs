@@ -12,11 +12,17 @@ namespace VRCLightVolumes {
         private ReorderableList _lightVolumesList;
 
         private SerializedProperty _pointLightVolumesProp;
+        private SerializedProperty _bakingModeProp;
+        private SerializedProperty _bakeryBitmaskProp;
         private ReorderableList _pointLightVolumesList;
 
         private LightVolumeSetup _lightVolumeSetup;
 
         private bool _isMultipleInstancesError = false;
+        private static readonly string[] _bakeryBitmaskLabels = new string[] { "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10",
+            "11", "12", "13", "14", "15", "16", "17", "18", "19", "20",
+            "21", "22", "23", "24", "25", "26", "27", "28", "29", "30" };
+        private static readonly GUIContent _bakeryBitmaskContent = new GUIContent("Bakery Bitmask", "Lights only affect volumes with overlapping bits.");
         private static readonly GUIContent _cookieResolutionContent = new GUIContent("Cookie Resolution", "Resolution used for point light cookie, LUT and cubemap projection textures.");
         private static readonly GUIContent _shadowResolutionContent = new GUIContent("Shadow Resolution", "Resolution used for per-light shadow maps.");
         private static readonly GUIContent _shadowTextureFormatContent = new GUIContent("Shadow Texture Format", "Precision used for baked EVSM shadow cubemaps and the runtime shadow texture array. Half is cheaper, Float reduces EVSM precision artifacts.");
@@ -31,6 +37,8 @@ namespace VRCLightVolumes {
 
             _volumesProp = serializedObject.FindProperty("LightVolumes");
             _weightsProp = serializedObject.FindProperty("LightVolumesWeights");
+            _bakingModeProp = serializedObject.FindProperty("BakingMode");
+            _bakeryBitmaskProp = serializedObject.FindProperty("BakeryBitmask");
 
             // ============ LIGHT VOLUMES LIST ===============
 
@@ -277,7 +285,7 @@ namespace VRCLightVolumes {
 
             GUILayout.Space(10);
 
-            List<string> hiddenFields = new List<string>() { "m_Script", "LightVolumes", "PointLightVolumes", "LightVolumesWeights", "LightVolumeAtlas", "LightVolumeDataList", "LightVolumeManager", "_bakingModePrev" };
+            List<string> hiddenFields = new List<string>() { "m_Script", "LightVolumes", "PointLightVolumes", "LightVolumesWeights", "LightVolumeAtlas", "LightVolumeDataList", "LightVolumeManager", "_bakingModePrev", "BakingMode", "BakeryBitmask" };
             hiddenFields.Add("CookieResolution");
             hiddenFields.Add("BrightnessCutoff");
             hiddenFields.Add("ShadowResolution");
@@ -318,7 +326,13 @@ namespace VRCLightVolumes {
                 EditorGUILayout.PropertyField(serializedObject.FindProperty("BrightnessCutoff"), _brightnessCutoffContent);
             }
 
-            if (_lightVolumeSetup.BakingMode != LightVolumeSetup.Baking.Bakery) {
+            EditorGUILayout.PropertyField(_bakingModeProp);
+            bool isBakeryMode = (LightVolumeSetup.Baking)_bakingModeProp.enumValueIndex == LightVolumeSetup.Baking.Bakery;
+#if BAKERY_INCLUDED
+            if (isBakeryMode) DrawBakeryBitmask();
+#endif
+
+            if (!isBakeryMode) {
                 hiddenFields.Add("FixLightProbesL1");
                 if (!_lightVolumeSetup.DilateInvalidProbes) {
                     hiddenFields.Add("DilationIterations");
@@ -372,6 +386,13 @@ namespace VRCLightVolumes {
         private string SizeInBundle(ulong atlasVoxelCount) {
             double mb = atlasVoxelCount * 8 * 0.315f / (double)(1024 * 1024);
             return mb.ToString("0.00");
+        }
+
+        // Draws Bakery bitmask using Bakery's zero-based mask popup labels.
+        private void DrawBakeryBitmask() {
+            int prevValue = _bakeryBitmaskProp.intValue;
+            int newValue = EditorGUILayout.MaskField(_bakeryBitmaskContent, prevValue, _bakeryBitmaskLabels);
+            if (prevValue != newValue) _bakeryBitmaskProp.intValue = newValue;
         }
 
     }

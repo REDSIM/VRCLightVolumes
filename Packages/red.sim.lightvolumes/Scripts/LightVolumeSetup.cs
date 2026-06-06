@@ -44,6 +44,8 @@ namespace VRCLightVolumes {
 #else
         public Baking BakingMode = Baking.Progressive;
 #endif
+        [Tooltip("Light from Bakery light sources with this bitmask will affect Light Volumes.")]
+        public int BakeryBitmask = 1;
         [Tooltip("Removes baked noise in Light Volumes but may slightly reduce sharpness. Recommended to keep it enabled.")]
         public bool Denoise = true;
         [Tooltip("Whether to dilate valid probe data into invalid probes, such as probes that are inside geometry. Helps mitigate light leaking.")]
@@ -160,6 +162,9 @@ namespace VRCLightVolumes {
 
 #if BAKERY_INCLUDED
         private bool _subscribedToBakery = false;
+        private bool _bakeryBitmaskOverridePrepared = false;
+        private bool _bakeryBitmaskOverridePending = false;
+        private static readonly System.Reflection.FieldInfo _bakeryVolumeGroupField = typeof(ftBuildGraphics).GetField("volumeLMGroup", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic);
 #endif
         private bool _subscribedToUnityLightmapper = false;
 
@@ -241,7 +246,7 @@ namespace VRCLightVolumes {
 #if BAKERY_INCLUDED
             if (!Application.isPlaying && !_subscribedToBakery) {
                 ftRenderLightmap.OnFinishedFullRender += OnBakeryFinishedRender;
-                ftRenderLightmap.OnPreFullRender += OnBakeryStartedRender;
+                EditorApplication.update += WatchBakeryBitmaskOverride;
                 _subscribedToBakery = true;
             }
 #endif
@@ -260,7 +265,7 @@ namespace VRCLightVolumes {
 #if BAKERY_INCLUDED
             if (!Application.isPlaying && _subscribedToBakery) {
                 ftRenderLightmap.OnFinishedFullRender -= OnBakeryFinishedRender;
-                ftRenderLightmap.OnPreFullRender -= OnBakeryStartedRender;
+                EditorApplication.update -= WatchBakeryBitmaskOverride;
                 _subscribedToBakery = false;
             }
 #endif
@@ -285,17 +290,37 @@ namespace VRCLightVolumes {
 
 #if BAKERY_INCLUDED
 
-        // On Bakery Started baking
-        private void OnBakeryStartedRender(object sender, EventArgs e) {
-            // Attempt to fix a bakery bug
+        // Prepares Bakery volumes and marks the bitmask override as needed for the current bake.
+        private void PrepareBakeryBitmaskOverride() {
+            if (_bakeryBitmaskOverridePrepared) return;
+
+            _bakeryBitmaskOverridePrepared = true;
+            _bakeryBitmaskOverridePending = false;
+
+            if (!IsBakeryMode) return;
+
             var volumes = FindObjectsOfType<LightVolume>(true);
+            bool hasBakeVolumes = false;
             for (int i = 0; i < volumes.Length; i++) {
+                volumes[i].SetupDependencies();
+                if (volumes[i].LightVolumeSetup != this) continue;
+
+                // Attempt to fix a bakery bug
                 volumes[i].SetupBakeryDependencies();
+                hasBakeVolumes = hasBakeVolumes || volumes[i].Bake;
             }
+            if (!hasBakeVolumes) return;
+
+            ApplyBakeryBitmaskToStoredGroups();
+            _bakeryVolumeGroupField?.SetValue(null, null);
+            _bakeryBitmaskOverridePending = true;
         }
 
         // On Bakery Finished baking
         private void OnBakeryFinishedRender(object sender, EventArgs e) {
+            _bakeryBitmaskOverridePrepared = false;
+            _bakeryBitmaskOverridePending = false;
+
             LightVolume[] volumes = FindObjectsByType<LightVolume>(FindObjectsInactive.Exclude, FindObjectsSortMode.None);
             for (int i = 0; i < volumes.Length; i++) {
                 if (volumes[i].Bake && volumes[i].LightVolumeInstance != null) {
@@ -309,8 +334,46 @@ namespace VRCLightVolumes {
                 }
             }
             if (FixLightProbesL1) FixLightProbes();
+            BakeShadowMaps();
             GenerateAtlas();
             Debug.Log($"[LightVolumeSetup] Generating 3D Atlas finished!");
+        }
+
+        // Watches Bakery bakes started from paths that don't invoke OnPreFullRender.
+        private void WatchBakeryBitmaskOverride() {
+            if (!ftRenderLightmap.bakeInProgress) {
+                _bakeryBitmaskOverridePrepared = false;
+                _bakeryBitmaskOverridePending = false;
+                return;
+            }
+
+            PrepareBakeryBitmaskOverride();
+            if (!_bakeryBitmaskOverridePending) return;
+
+            var volumeGroup = _bakeryVolumeGroupField?.GetValue(null) as BakeryLightmapGroup;
+            if (volumeGroup == null) return;
+
+            volumeGroup.bitmask = BakeryBitmask;
+            _bakeryBitmaskOverridePending = false;
+        }
+
+        // Applies the configured bitmask to Bakery's stored implicit volume groups.
+        private void ApplyBakeryBitmaskToStoredGroups() {
+            for (int i = 0; i < SceneManager.sceneCount; i++) {
+                Scene scene = EditorSceneManager.GetSceneAt(i);
+                if (!scene.isLoaded) continue;
+
+                GameObject storageObject = ftLightmaps.FindInScene("!ftraceLightmaps", scene);
+                if (storageObject == null) continue;
+
+                ftLightmapsStorage storage = storageObject.GetComponent<ftLightmapsStorage>();
+                if (storage == null || storage.implicitGroups == null) continue;
+
+                for (int j = 0; j < storage.implicitGroups.Count; j++) {
+                    BakeryLightmapGroup group = storage.implicitGroups[j] as BakeryLightmapGroup;
+                    if (group != null && group.isImplicit && group.probes && group.fixPos3D) group.bitmask = BakeryBitmask;
+                }
+            }
         }
 
 #endif
@@ -344,6 +407,7 @@ namespace VRCLightVolumes {
                 }
             }
             Debug.Log($"[LightVolumeSetup] Additional probes baking finished! Generating 3D Atlas...");
+            BakeShadowMaps();
             GenerateAtlas();
             Debug.Log($"[LightVolumeSetup] Generating 3D Atlas finished!");
 

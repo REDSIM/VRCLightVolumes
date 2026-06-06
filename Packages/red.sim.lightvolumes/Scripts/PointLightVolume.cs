@@ -22,6 +22,8 @@ namespace VRCLightVolumes {
         [ColorUsage(showAlpha: false)] public Color Color = Color.white;
         [Tooltip("Brightness of the point light volume.")]
         public float Intensity = 1f;
+        [Tooltip("Controls shading based on surface normal and shadows opacity for this point light volume.")]
+        [Range(0, 1)] public float ShadingStrength = 1f;
         [Tooltip("Parametric uses settings to compute light falloff. LUT uses a texture: X - cone falloff, Y - attenuation (Y only for point lights). Cookie projects a texture for spot lights. Cubemap projects a cubemap for point lights.")]
         [FormerlySerializedAs("Shape")] public LightProjection Projection = LightProjection.Parametric;
         [Tooltip("Angle of a spotlight cone in degrees.")]
@@ -247,13 +249,8 @@ namespace VRCLightVolumes {
 #endif
         }
 
-        // Syncs all editable data into the runtime PointLightVolumeInstance
-        public void SyncUdonScript() {
-            SyncUdonScript(true);
-        }
-
         // Syncs this authoring component into the runtime instance, optionally refreshing projection texture references
-        private void SyncUdonScript(bool syncTextureSources) {
+        public void SyncUdonScript(bool syncTextureSources = true) {
             if (gameObject == null) return;
             SetupDependencies();
 #if UDONSHARP
@@ -262,6 +259,7 @@ namespace VRCLightVolumes {
                 _pointLightVolumeBehaviour.SetProgramVariable("IsDynamic", Dynamic);
                 _pointLightVolumeBehaviour.SetProgramVariable("Color", Color);
                 _pointLightVolumeBehaviour.SetProgramVariable("Intensity", Intensity);
+                _pointLightVolumeBehaviour.SetProgramVariable("ShadingStrength", Mathf.Clamp01(ShadingStrength));
                 _pointLightVolumeBehaviour.SetProgramVariable("IsRangeDirty", true);
                 _pointLightVolumeBehaviour.SetProgramVariable("ShadowMapID", (float)GetShadowRuntimeID());
                 _pointLightVolumeBehaviour.SetProgramVariable("WorldSpaceShadows", UseWorldSpace);
@@ -301,6 +299,7 @@ namespace VRCLightVolumes {
                 PointLightVolumeInstance.IsDynamic = Dynamic;
                 PointLightVolumeInstance.Color = Color;
                 PointLightVolumeInstance.Intensity = Intensity;
+                PointLightVolumeInstance.ShadingStrength = Mathf.Clamp01(ShadingStrength);
                 PointLightVolumeInstance.IsRangeDirty = true;
                 PointLightVolumeInstance.ShadowMapID = GetShadowRuntimeID();
                 PointLightVolumeInstance.WorldSpaceShadows = UseWorldSpace;

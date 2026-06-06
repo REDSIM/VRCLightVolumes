@@ -34,6 +34,7 @@ namespace VRCLightVolumes {
         private const int MaxLightVolumeUvwScaleVectors = MaxLightVolumeCount * 3;
         private const int MaxLightVolumeLegacyUvwVectors = MaxLightVolumeCount * 6;
         private const RenderTextureFormat FixedCustomTexturesFormat = RenderTextureFormat.ARGBHalf;
+        private const float DisabledShadingShadowId = 10000f;
 #endregion
 
 #region Inspector And Runtime References
@@ -1462,7 +1463,9 @@ namespace VRCLightVolumes {
             }
 
             int resolvedShadowId = sourceIndex < _pointLightShadowIDs.Length ? _pointLightShadowIDs[sourceIndex] : -1;
-            bool hasShadow = ShadowMapsCount > 0 && resolvedShadowId >= 0 && resolvedShadowId < ShadowMapsCount;
+            float shadingStrength = Mathf.Clamp01(instance.ShadingStrength);
+            bool hasShading = shadingStrength > 0f;
+            bool hasShadow = hasShading && ShadowMapsCount > 0 && resolvedShadowId >= 0 && resolvedShadowId < ShadowMapsCount;
             if (countActiveShadow && hasShadow) _activeShadowCount++;
             float shadowFarClip = 0;
             if (hasShadow) {
@@ -1470,7 +1473,12 @@ namespace VRCLightVolumes {
                 shadowFarClip = farClip > 0 ? farClip : Mathf.Sqrt(Mathf.Max(squaredRange, 0.000001f));
             }
             bool useLocalSpaceShadows = hasShadow && !instance.WorldSpaceShadows;
-            float shadowMapID = hasShadow ? (useLocalSpaceShadows ? -resolvedShadowId - 1 : resolvedShadowId + 1) : 0;
+            float shadowMapID = DisabledShadingShadowId;
+            if (hasShading) {
+                shadowMapID = hasShadow ? (useLocalSpaceShadows ? -resolvedShadowId - 1f : resolvedShadowId + 1f) : 0f;
+                float shadingFade = 1f - shadingStrength;
+                if (shadingFade > 0f) shadowMapID += shadowMapID < 0f ? -shadingFade : shadingFade;
+            }
             _pointLightCustomId[shaderIndex] = new Vector4(shaderCustomId, shadowMapID, squaredRange, shadowFarClip);
 
             if (useLocalSpaceShadows) {

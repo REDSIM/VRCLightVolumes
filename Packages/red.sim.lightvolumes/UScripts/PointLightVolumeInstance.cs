@@ -21,6 +21,8 @@ namespace VRCLightVolumes {
         [ColorUsage(showAlpha: false)] public Color Color = Color.white;
         [Tooltip("Brightness of the point light volume.")]
         public float Intensity = 1f;
+        [Tooltip("Controls shading based on surface normal and shadows opacity for this point light volume.")]
+        [Range(0, 1)] public float ShadingStrength = 1f;
 
         [Header("Position Data")]
         [Tooltip("World-space position used by this point light volume.")]
@@ -115,6 +117,7 @@ namespace VRCLightVolumes {
 
         private Color _old_Color = Color.white;
         private float _old_Intensity = 1;
+        private float _old_ShadingStrength = 1;
         private bool _isRegisteredWithManager = false;
 
 #if UDONSHARP
@@ -134,6 +137,13 @@ namespace VRCLightVolumes {
                 MarkRangeDirtyAndNotify(false, false, false);
             }
         }
+        public void _onVarChange_ShadingStrength() {
+            if (_old_ShadingStrength != ShadingStrength) {
+                float oldStrength = _old_ShadingStrength;
+                _old_ShadingStrength = ShadingStrength;
+                NotifyManager((Mathf.Clamp01(oldStrength) <= 0) != (Mathf.Clamp01(ShadingStrength) <= 0), false, false);
+            }
+        }
 #endif
 
 #if !UDONSHARP || UNITY_EDITOR
@@ -143,6 +153,11 @@ namespace VRCLightVolumes {
                 _old_Color = Color;
                 _old_Intensity = Intensity;
                 MarkRangeDirtyAndNotify(false, false, false);
+            }
+            if (_old_ShadingStrength != ShadingStrength) {
+                float oldStrength = _old_ShadingStrength;
+                _old_ShadingStrength = ShadingStrength;
+                NotifyManager((Mathf.Clamp01(oldStrength) <= 0) != (Mathf.Clamp01(ShadingStrength) <= 0), false, false);
             }
         }
 #endif
@@ -320,6 +335,15 @@ namespace VRCLightVolumes {
         public void SetIntensity(float intensity) {
             Intensity = intensity;
             MarkRangeDirtyAndNotify(false, false, false);
+        }
+
+        // Sets Normal Masking and shadow strength
+        public void SetShadingStrength(float shadingStrength) {
+            float strength = Mathf.Clamp01(shadingStrength);
+            if (ShadingStrength == strength) return;
+            float oldStrength = ShadingStrength;
+            ShadingStrength = strength;
+            NotifyManager((Mathf.Clamp01(oldStrength) <= 0) != (strength <= 0), false, false);
         }
 
         // Marks this light range dirty and tells the manager which runtime data needs rebuilding.

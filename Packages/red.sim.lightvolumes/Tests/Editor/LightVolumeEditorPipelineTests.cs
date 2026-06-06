@@ -56,9 +56,7 @@ namespace VRCLightVolumes.Tests {
             Assert.That(instance.ProjectionType, Is.EqualTo(2)); // 2: material
 
             pointLight.Cookie = CreateTexture2D("Static Cookie Source After Refresh");
-            MethodInfo syncWithoutTextureSources = typeof(PointLightVolume).GetMethod("SyncUdonScript", _nonPublicInstanceFlags, null, new[] { typeof(bool) }, null);
-            Assert.That(syncWithoutTextureSources, Is.Not.Null);
-            syncWithoutTextureSources.Invoke(pointLight, new object[] { false });
+            pointLight.SyncUdonScript(false);
 
             Assert.That(instance.AutoUpdateCustomTexture, Is.True);
 
@@ -90,6 +88,7 @@ namespace VRCLightVolumes.Tests {
             pointLight.NearPlane = 0.15f;
             pointLight.Blur = 2.5f;
             pointLight.ContactHardening = 0.08f;
+            pointLight.ShadingStrength = 0.42f;
             pointLight.ShadowMap = CreateRenderTexture("Animated Shadow Cubemap Source", 4, 4, 1, TextureDimension.Cube);
             instance.LightVolumeManager = manager;
 
@@ -104,6 +103,45 @@ namespace VRCLightVolumes.Tests {
             Assert.That(instance.NearClip, Is.EqualTo(0.15f).Within(0.0001f));
             Assert.That(instance.Blur, Is.EqualTo(2.5f).Within(0.0001f));
             Assert.That(instance.ContactHardening, Is.EqualTo(0.08f).Within(0.0001f));
+            Assert.That(instance.ShadingStrength, Is.EqualTo(0.42f).Within(0.0001f));
+
+            Texture shadowSource = instance.ShadowMapTexture;
+            pointLight.ShadowMap = CreateCubemap("Static Shadow Cubemap After Data Sync");
+            pointLight.Intensity = 2.25f;
+            pointLight.Bias = 0.5f;
+            pointLight.SyncUdonScript(false);
+
+            Assert.That(instance.Intensity, Is.EqualTo(2.25f).Within(0.0001f));
+            Assert.That(instance.Bias, Is.EqualTo(0.5f).Within(0.0001f));
+            Assert.That(instance.ShadowMapTexture, Is.SameAs(shadowSource));
+            Assert.That(instance.AutoUpdateShadowMap, Is.True);
+        }
+
+        // Verifies data-only sync updates Shading Strength without refreshing projection or shadow texture metadata.
+        [Test]
+        public void PointLightVolumeDataOnlySyncUpdatesShadingStrength() {
+            GameObject setupObject = CreateGameObject("Shading Strength Setup", true);
+            LightVolumeSetup setup = setupObject.AddComponent<LightVolumeSetup>();
+            setup.SetupDependencies();
+
+            GameObject lightObject = CreateGameObject("Shading Strength Light", true);
+            PointLightVolumeInstance instance = lightObject.AddComponent<PointLightVolumeInstance>();
+            PointLightVolume pointLight = lightObject.AddComponent<PointLightVolume>();
+            pointLight.LightVolumeSetup = setup;
+            pointLight.PointLightVolumeInstance = instance;
+            pointLight.Type = PointLightVolume.LightType.SpotLight;
+            pointLight.Projection = PointLightVolume.LightProjection.Custom;
+            pointLight.Cookie = CreateRenderTexture("Animated Cookie Before Shading Sync", 4, 4, 1, TextureDimension.Tex2D);
+
+            pointLight.SyncUdonScript();
+            Assert.That(instance.AutoUpdateCustomTexture, Is.True);
+
+            pointLight.Cookie = CreateTexture2D("Static Cookie After Shading Sync");
+            pointLight.ShadingStrength = 0.25f;
+            pointLight.SyncUdonScript(false);
+
+            Assert.That(instance.ShadingStrength, Is.EqualTo(0.25f).Within(0.0001f));
+            Assert.That(instance.AutoUpdateCustomTexture, Is.True);
         }
 
         // Verifies the authoring Shadows toggle controls runtime shadow usage even when a shadow map asset exists.

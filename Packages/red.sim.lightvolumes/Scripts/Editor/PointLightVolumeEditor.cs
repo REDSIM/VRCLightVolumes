@@ -31,6 +31,23 @@ namespace VRCLightVolumes {
         public override void OnInspectorGUI() {
 
             serializedObject.Update();
+            int targetCount = targets.Length;
+            PointLightVolume[] pointLightVolumes = new PointLightVolume[targetCount];
+            PointLightVolume.LightType[] previousTypes = new PointLightVolume.LightType[targetCount];
+            PointLightVolume.LightProjection[] previousProjections = new PointLightVolume.LightProjection[targetCount];
+            UnityEngine.Object[] previousProjectionSources = new UnityEngine.Object[targetCount];
+            UnityEngine.Object[] previousShadowMaps = new UnityEngine.Object[targetCount];
+            bool[] previousShadows = new bool[targetCount];
+            for (int i = 0; i < targetCount; i++) {
+                PointLightVolume pointLightVolume = targets[i] as PointLightVolume;
+                pointLightVolumes[i] = pointLightVolume;
+                if (pointLightVolume == null) continue;
+                previousTypes[i] = pointLightVolume.Type;
+                previousProjections[i] = pointLightVolume.Projection;
+                previousProjectionSources[i] = pointLightVolume.GetProjectionSource();
+                previousShadowMaps[i] = pointLightVolume.ShadowMap;
+                previousShadows[i] = pointLightVolume.Shadows;
+            }
 
             List<string> hiddenFields = new List<string> { "m_Script", "PointLightVolumeInstance", "LightVolumeSetup" };
             hiddenFields.Add("ShadowID");
@@ -47,6 +64,8 @@ namespace VRCLightVolumes {
             hiddenFields.Add("Cubemap");
             hiddenFields.Add("Cookie");
             hiddenFields.Add("Shadows");
+            hiddenFields.Add("ShadingStrength");
+            hiddenFields.Add("DebugRange");
             
             if(PointLightVolume.Type == PointLightVolume.LightType.PointLight) {
                 hiddenFields.Add("Angle");
@@ -75,6 +94,8 @@ namespace VRCLightVolumes {
             }
 
             DrawPropertiesExcluding(serializedObject, hiddenFields.ToArray());
+            EditorGUILayout.PropertyField(serializedObject.FindProperty("ShadingStrength"));
+            EditorGUILayout.PropertyField(serializedObject.FindProperty("DebugRange"));
             DrawActiveProjectionSourceField();
             EditorGUILayout.PropertyField(serializedObject.FindProperty("Shadows"));
 
@@ -108,20 +129,28 @@ namespace VRCLightVolumes {
 
             propertiesChanged |= serializedObject.ApplyModifiedProperties();
             if (propertiesChanged) {
-                SyncTargets();
+                bool customTexturesChanged = false;
+                bool shadowTexturesChanged = false;
+                for (int i = 0; i < targetCount; i++) {
+                    PointLightVolume pointLightVolume = pointLightVolumes[i];
+                    if (pointLightVolume == null) continue;
+                    if (previousTypes[i] != pointLightVolume.Type || previousProjections[i] != pointLightVolume.Projection || previousProjectionSources[i] != pointLightVolume.GetProjectionSource()) customTexturesChanged = true;
+                    if (previousShadows[i] != pointLightVolume.Shadows || previousShadowMaps[i] != pointLightVolume.ShadowMap) shadowTexturesChanged = true;
+                }
+                SyncTargets(customTexturesChanged, shadowTexturesChanged);
             }
 
         }
 
         // Syncs changed inspector values into runtime instances and shader globals immediately.
-        private void SyncTargets() {
+        private void SyncTargets(bool customTexturesChanged, bool shadowTexturesChanged) {
             for (int i = 0; i < targets.Length; i++) {
                 PointLightVolume pointLightVolume = targets[i] as PointLightVolume;
                 if (pointLightVolume == null) continue;
-                pointLightVolume.SyncUdonScript();
+                pointLightVolume.SyncUdonScript(false);
                 if (pointLightVolume.LightVolumeSetup != null) {
-                    pointLightVolume.LightVolumeSetup.ReinitializeCustomTextures();
-                    pointLightVolume.LightVolumeSetup.ReinitializeShadowTextures();
+                    if (customTexturesChanged) pointLightVolume.LightVolumeSetup.ReinitializeCustomTextures();
+                    if (shadowTexturesChanged) pointLightVolume.LightVolumeSetup.ReinitializeShadowTextures();
                 }
             }
         }

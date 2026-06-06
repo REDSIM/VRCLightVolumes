@@ -380,6 +380,11 @@ namespace VRCLightVolumes.Tests {
             AssertVectorClose(ExpectedPointLightColor(point), Shader.GetGlobalVectorArray(_pointLightColorID)[0]);
             AssertPointCustomData(point, 0, 0);
 
+            point.ShadingStrength = 0.25f;
+            manager.UpdateVolumes();
+            AssertPointCustomData(point, 0, 0.75f);
+            point.ShadingStrength = 1;
+
             point.SetColor(Color.black);
             manager.UpdateVolumes();
 
@@ -399,6 +404,18 @@ namespace VRCLightVolumes.Tests {
             AssertGlobalFloat(_pointLightShadowCountID, 1);
             AssertPointCustomData(point, 0, 1);
             AssertVectorClose(new Vector4(5, 6, 7, 1), Shader.GetGlobalVectorArray(_pointLightShadowReprojectionDataID)[0]);
+
+            point.ShadingStrength = 0.5f;
+            manager.UpdateVolumes();
+            AssertPointCustomData(point, 0, 1.5f);
+
+            point.ShadingStrength = 0;
+            manager.UpdateVolumes();
+            Vector4 disabledShadingData = Shader.GetGlobalVectorArray(_pointLightCustomIdID)[0];
+            AssertGlobalFloat(_pointLightShadowCountID, 0);
+            Assert.That(disabledShadingData.y, Is.EqualTo(10000).Within(Epsilon));
+            Assert.That(disabledShadingData.w, Is.EqualTo(0).Within(Epsilon));
+            point.ShadingStrength = 1;
 
             point.WorldSpaceShadows = false;
 

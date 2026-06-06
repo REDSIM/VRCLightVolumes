@@ -77,7 +77,7 @@ uniform float4 _UdonPointLightVolumeDirection[VRCLV_MAX_LIGHTS_COUNT];
 //   If parametric: X stores 0
 //   If uses custom lut: X stores LUT ID with positive sign
 //   If uses custom texture: X stores texture ID with negative sign
-// Y = EVSM shadow cubemap ID when _UdonLightVolumeOcclusionCount is 0. Old v2 shadow data is ignored when occlusion count is non-zero.
+// Y = EVSM shadow cubemap ID when _UdonLightVolumeOcclusionCount is 0. Fraction stores inverted shading strength. Abs >= 10000 disables shading.
 // Z = Squared Culling Range. Just a precalculated culling range to not recalculate it in shader.
 // W = EVSM shadow far clip used to normalize shadow depth. 0 for lights without shadows.
 uniform float4 _UdonPointLightVolumeCustomID[VRCLV_MAX_LIGHTS_COUNT];
@@ -361,8 +361,11 @@ void LV_PointLight(uint id, float3 worldPos, inout float3 L0, inout float3 L1r, 
     float4 color = _UdonPointLightVolumeColor[id]; // Color, angle
     float4 ldir = _UdonPointLightVolumeDirection[id]; // Dir + falloff or Rotation
     float shadowIdData = customID_data.y;
-    float shadowIndex = abs(shadowIdData) - 1;
-    bool hasShadow = _UdonLightVolumeOcclusionCount == 0 && shadowIndex >= 0 && shadowIndex < _UdonPointLightVolumeShadowCount;
+    float shadowIdAbs = abs(shadowIdData);
+    bool hasShading = shadowIdAbs < 10000;
+    float shadingStrength = hasShading ? 1 - frac(shadowIdAbs) : 0;
+    float shadowIndex = floor(shadowIdAbs) - 1;
+    bool hasShadow = hasShading && _UdonLightVolumeOcclusionCount == 0 && shadowIndex >= 0 && shadowIndex < _UdonPointLightVolumeShadowCount;
 
     float invLen;
     float3 dirN;
@@ -373,7 +376,7 @@ void LV_PointLight(uint id, float3 worldPos, inout float3 L0, inout float3 L1r, 
     float4 areaLightSH = 0;
     float areaAttenuation = 0;
     float normalAttenuation = 1;
-    bool useNormalMask = hasShadow && any(worldNormal != 0);
+    bool useNormalMask = hasShading && any(worldNormal != 0);
 
     invLen = rsqrt(sqlen);
     dirN = dir * invLen;
@@ -391,7 +394,7 @@ void LV_PointLight(uint id, float3 worldPos, inout float3 L0, inout float3 L1r, 
         
         // Normal Mask
         [branch] if (useNormalMask) {
-            normalAttenuation = LV_PointLightNormalMask(worldNormal, dirN);
+            normalAttenuation = lerp(1, LV_PointLightNormalMask(worldNormal, dirN), shadingStrength);
             [branch] if (normalAttenuation <= 0) return;
         }
         count++;
@@ -420,7 +423,7 @@ void LV_PointLight(uint id, float3 worldPos, inout float3 L0, inout float3 L1r, 
         
         // Normal Mask
         [branch] if (useNormalMask) {
-            normalAttenuation = LV_PointLightNormalMask(worldNormal, dirN);
+            normalAttenuation = lerp(1, LV_PointLightNormalMask(worldNormal, dirN), shadingStrength);
             [branch] if (normalAttenuation <= 0) return;
         }
         
@@ -446,7 +449,7 @@ void LV_PointLight(uint id, float3 worldPos, inout float3 L0, inout float3 L1r, 
         
         // Normal Mask
         [branch] if (useNormalMask) {
-            normalAttenuation = LV_AreaLightNormalMask(worldNormal, dirN, areaNormal);
+            normalAttenuation = lerp(1, LV_AreaLightNormalMask(worldNormal, dirN, areaNormal), shadingStrength);
             [branch] if (normalAttenuation <= 0) return;
         }
 
@@ -454,8 +457,10 @@ void LV_PointLight(uint id, float3 worldPos, inout float3 L0, inout float3 L1r, 
     }
 
     // Apply shared shadow attenuation after the light type has been resolved and culled
-    float shadowAttenuation = LV_PointLightShadow(id, pos.xyz, worldPos, dirN, sqlen, invLen, customID_data.w, shadowIdData, shadowIndex);
-    float lightAttenuation = shadowAttenuation * normalAttenuation;
+    float lightAttenuation = normalAttenuation;
+    [branch] if (hasShadow) {
+        lightAttenuation *= lerp(1, LV_PointLightShadow(id, pos.xyz, worldPos, dirN, sqlen, invLen, customID_data.w, shadowIdData, shadowIndex), shadingStrength);
+    }
     [branch] if (lightAttenuation <= 0) return;
 
     [branch] if (pos.w < 0) { // Accumulate spot light contribution

@@ -1179,6 +1179,14 @@ namespace VRCLightVolumes {
             VRCShader.SetGlobalTexture(_pointLightTextureID, texture);
         }
 
+        // Returns the resolved custom projection texture ID for a point light instance
+        public int GetPointLightCustomID(PointLightVolumeInstance instance) {
+            if (instance == null || PointLightVolumeInstances == null) return -1;
+            int index = Array.IndexOf((Array)PointLightVolumeInstances, instance, 0, PointLightVolumeInstances.Length);
+            if (index < 0 || index >= _pointLightCustomIDs.Length) return -1;
+            return _pointLightCustomIDs[index];
+        }
+
         // Applies the active shadow texture array to the manager and shader globals
         private void ApplyShadowTextures(RenderTexture texture) {
             ShadowTextures = texture;

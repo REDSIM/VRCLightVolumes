@@ -1,0 +1,47 @@
+#pragma kernel BakePointLightVolumesIntoProbes
+
+#define sampler_UdonLightVolume sampler_linear_clamp_lightvolume
+#define sampler_UdonPointLightVolumeShadowTexture sampler_linear_clamp_lightvolumeshadow
+
+float4 unity_SHAr;
+float4 unity_SHAg;
+float4 unity_SHAb;
+
+#include "Packages/red.sim.lightvolumes/Shaders/LightVolumes.cginc"
+
+StructuredBuffer<float3> _ProbePositions;
+RWStructuredBuffer<float4> _ProbeSH;
+uint _ProbeCount;
+
+[numthreads(64, 1, 1)]
+void BakePointLightVolumesIntoProbes(uint3 id : SV_DispatchThreadID) {
+    uint probeIndex = id.x;
+    if (probeIndex >= _ProbeCount) return;
+
+    float3 L0 = 0;
+    float3 L1r = 0;
+    float3 L1g = 0;
+    float3 L1b = 0;
+    uint count = 0;
+
+    uint lightCount = min((uint)_UdonPointLightVolumeCount, (uint)VRCLV_MAX_LIGHTS_COUNT);
+    [loop] for (uint i = 0; i < lightCount; i++) {
+        LV_PointLight(i, _ProbePositions[probeIndex], L0, L1r, L1g, L1b, count);
+    }
+
+    uint shIndex = probeIndex * 3;
+    float4 shR = _ProbeSH[shIndex];
+    float4 shG = _ProbeSH[shIndex + 1];
+    float4 shB = _ProbeSH[shIndex + 2];
+
+    shR.xyz += L1r;
+    shG.xyz += L1g;
+    shB.xyz += L1b;
+    shR.w += L0.r;
+    shG.w += L0.g;
+    shB.w += L0.b;
+
+    _ProbeSH[shIndex] = shR;
+    _ProbeSH[shIndex + 1] = shG;
+    _ProbeSH[shIndex + 2] = shB;
+}

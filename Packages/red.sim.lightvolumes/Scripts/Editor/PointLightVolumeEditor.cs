@@ -65,6 +65,7 @@ namespace VRCLightVolumes {
             hiddenFields.Add("Cookie");
             hiddenFields.Add("Shadows");
             hiddenFields.Add("ShadingStrength");
+            hiddenFields.Add("BakeIntoProbes");
             hiddenFields.Add("DebugRange");
             
             if(PointLightVolume.Type == PointLightVolume.LightType.PointLight) {
@@ -95,6 +96,7 @@ namespace VRCLightVolumes {
 
             DrawPropertiesExcluding(serializedObject, hiddenFields.ToArray());
             EditorGUILayout.PropertyField(serializedObject.FindProperty("ShadingStrength"));
+            EditorGUILayout.PropertyField(serializedObject.FindProperty("BakeIntoProbes"));
             EditorGUILayout.PropertyField(serializedObject.FindProperty("DebugRange"));
             DrawActiveProjectionSourceField();
             EditorGUILayout.PropertyField(serializedObject.FindProperty("Shadows"));

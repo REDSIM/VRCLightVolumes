@@ -36,6 +36,10 @@ namespace VRCLightVolumes {
         public UnityEngine.Object Cookie = null;
         [Tooltip("Projects a cubemap for point lights.")]
         public UnityEngine.Object Cubemap = null;
+#if UNITY_EDITOR
+        [Tooltip("Bakes light from this Point Light Volume into light probes. Useful for static Point Light Volumes to make them affect objects with no Light Volumes support.")]
+        public bool BakeIntoProbes = false;
+#endif
         [Tooltip("Shows overdrawing range gizmo. Less point light volumes intersections - more performance!")]
         public bool DebugRange = false;
         [Space]
@@ -466,7 +470,6 @@ namespace VRCLightVolumes {
 
 #if UNITY_EDITOR
         // Bakes or re-bakes the shadow map for this light
-        [ContextMenu("Bake Shadow Map")]
         public void BakeShadowMap() {
             BakeShadowMap("", true);
         }

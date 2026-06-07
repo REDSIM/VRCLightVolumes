@@ -171,6 +171,7 @@ namespace VRCLightVolumes {
         private static readonly System.Reflection.FieldInfo _bakeryVolumeGroupField = typeof(ftBuildGraphics).GetField("volumeLMGroup", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic);
 #endif
         private bool _subscribedToUnityLightmapper = false;
+        private bool _unityLightProbePostProcessApplied = false;
 
         private void OnSelectionChanged() {
             if (Selection.activeObject == gameObject) {
@@ -257,6 +258,7 @@ namespace VRCLightVolumes {
             if (!Application.isPlaying && !_subscribedToUnityLightmapper) {
                 UnityEditor.Experimental.Lightmapping.additionalBakedProbesCompleted += OnAdditionalProbesCompleted;
                 Lightmapping.bakeStarted += OnUnityBakingStarted;
+                Lightmapping.bakeCompleted += OnUnityBakingCompleted;
                 _subscribedToUnityLightmapper = true;
             }
 
@@ -276,6 +278,7 @@ namespace VRCLightVolumes {
             if (!Application.isPlaying && _subscribedToUnityLightmapper) {
                 UnityEditor.Experimental.Lightmapping.additionalBakedProbesCompleted -= OnAdditionalProbesCompleted;
                 Lightmapping.bakeStarted -= OnUnityBakingStarted;
+                Lightmapping.bakeCompleted -= OnUnityBakingCompleted;
                 _subscribedToUnityLightmapper = false;
 
             }
@@ -335,7 +338,7 @@ namespace VRCLightVolumes {
                     }
                 }
             }
-            if (FixLightProbesL1) FixLightProbes();
+            PostProcessLightProbes(FixLightProbesL1);
             BakeShadowMaps();
             GenerateAtlas();
             Debug.Log($"[LightVolumeSetup] Generating 3D Atlas finished!");
@@ -385,6 +388,7 @@ namespace VRCLightVolumes {
 
         // On Unity Lightmapper started baking
         private void OnUnityBakingStarted() {
+            _unityLightProbePostProcessApplied = false;
             if (BakingMode == Baking.Bakery) {
                 return;
             }
@@ -395,6 +399,12 @@ namespace VRCLightVolumes {
                     volumes[i].SetAdditionalProbes(i);
                 }
             }
+        }
+
+        // On Unity Lightmapper finished baking
+        private void OnUnityBakingCompleted() {
+            if (BakingMode == Baking.Bakery || _unityLightProbePostProcessApplied) return;
+            _unityLightProbePostProcessApplied = PostProcessLightProbes(false);
         }
 
         // On Unity Lightmapper baked additional probes
@@ -536,22 +546,38 @@ namespace VRCLightVolumes {
 #endif
         }
 
-        // Fixes light probes baked with Bakery L1
-        private static void FixLightProbes() {
+        private const int MaxProbeBakedPointLightCount = 128;
+        private const int ProbeBakeThreadGroupSize = 64;
+        private const float DisabledProbeBakeShadowId = 10000f;
+        private const string ProbeBakeComputePath = "Packages/red.sim.lightvolumes/Scripts/Editor/PointLightProbeBake.compute";
+        private const string ProbeBakeKernelName = "BakePointLightVolumesIntoProbes";
+        private static Texture3D _probeBakeDummyVolumeTexture = null;
+        private static Texture2DArray _probeBakeDummyTextureArray = null;
+
+        // Applies all Light Volume light probe post processing steps
+        private bool PostProcessLightProbes(bool dering) {
+            bool bakePointLights = HasProbeBakedPointLightVolumes();
+            if (!dering && !bakePointLights) return false;
 
             var probes = LightmapSettings.lightProbes;
             if (probes == null || probes.count == 0) {
-                Debug.LogWarning("[LightVolumeSetup] No Light Probes found to fix.");
-                return;
-            } else if (LVUtils.CheckSHL2(probes.bakedProbes[0])) {
-                Debug.Log("[LightVolumeSetup] L2 Light Probes detected - no need to apply L1 Bakery fix.");
-                return;
+                Debug.LogWarning("[LightVolumeSetup] No Light Probes found to postprocess.");
+                return false;
             }
 
             var shs = probes.bakedProbes;
-            for (int i = 0; i < shs.Length; ++i) {
-                shs[i] = LVUtils.DeringSH(shs[i]);
+            if (shs == null || shs.Length == 0) return false;
+            bool didDering = dering && !LVUtils.CheckSHL2(shs[0]);
+            if (dering && !didDering) {
+                Debug.Log("[LightVolumeSetup] L2 Light Probes detected - no need to apply L1 Bakery fix.");
             }
+
+            if (didDering)
+                for (int i = 0; i < shs.Length; ++i)
+                    shs[i] = LVUtils.DeringSH(shs[i]);
+
+            int bakedPointLightCount = bakePointLights ? BakePointLightVolumesIntoProbesGPU(shs, probes.positions) : 0;
+            if (!didDering && bakedPointLightCount == 0) return false;
 
             probes.bakedProbes = shs;
             EditorUtility.SetDirty(probes);
@@ -560,8 +586,266 @@ namespace VRCLightVolumes {
             AssetDatabase.SaveAssets();
             EditorSceneManager.SaveOpenScenes();
 
-            Debug.Log($"[LightVolumeSetup] {shs.Length} Light Probes fixed!");
+            string fixLog = didDering ? $"{shs.Length} Light Probes fixed" : "";
+            string pointLightLog = bakedPointLightCount > 0 ? $"{bakedPointLightCount} Point Light Volumes baked into Light Probes" : "";
+            Debug.Log($"[LightVolumeSetup] {fixLog}{(didDering && bakedPointLightCount > 0 ? ", " : "")}{pointLightLog}!");
+            return true;
 
+        }
+
+        // Checks if any Point Light Volume should be added to baked light probes
+        private bool HasProbeBakedPointLightVolumes() {
+            for (int i = 0; i < PointLightVolumes.Count; i++)
+                if (IsProbeBakedPointLightVolume(PointLightVolumes[i]))
+                    return true;
+            return false;
+        }
+
+        // Checks if one Point Light Volume is valid for probe baking
+        private static bool IsProbeBakedPointLightVolume(PointLightVolume pointLightVolume) {
+            return pointLightVolume != null && pointLightVolume.BakeIntoProbes && pointLightVolume.isActiveAndEnabled && !pointLightVolume.CompareTag("EditorOnly") && pointLightVolume.Intensity != 0 && pointLightVolume.Color != Color.black;
+        }
+
+        // Dispatches the probe bake compute shader and writes the result back into baked probes
+        private int BakePointLightVolumesIntoProbesGPU(UnityEngine.Rendering.SphericalHarmonicsL2[] shs, Vector3[] probePositions) {
+            if (shs == null || probePositions == null || shs.Length == 0 || probePositions.Length == 0) return 0;
+            if (!SystemInfo.supportsComputeShaders) {
+                Debug.LogError("[LightVolumeSetup] Compute shaders are not supported on this editor graphics device. Point Light Volumes were not baked into Light Probes.");
+                return 0;
+            }
+
+            Vector4[] pointPositions = new Vector4[MaxProbeBakedPointLightCount];
+            Vector4[] pointColors = new Vector4[MaxProbeBakedPointLightCount];
+            Vector4[] pointDirections = new Vector4[MaxProbeBakedPointLightCount];
+            Vector4[] pointCustomIds = new Vector4[MaxProbeBakedPointLightCount];
+            Texture customTextureArray = GetProbeBakeCustomTextureArray();
+            int pointLightCount = BuildProbeBakePointLightData(pointPositions, pointColors, pointDirections, pointCustomIds, customTextureArray != null);
+            if (pointLightCount == 0) return 0;
+
+            ComputeShader compute = AssetDatabase.LoadAssetAtPath<ComputeShader>(ProbeBakeComputePath);
+            if (compute == null) {
+                Debug.LogError($"[LightVolumeSetup] Missing probe bake compute shader at {ProbeBakeComputePath}.");
+                return 0;
+            }
+            if (!compute.HasKernel(ProbeBakeKernelName)) {
+                Debug.LogError($"[LightVolumeSetup] Probe bake compute shader has no valid '{ProbeBakeKernelName}' kernel. Reimport {ProbeBakeComputePath} and check shader compiler errors.");
+                return 0;
+            }
+
+            int probeCount = Mathf.Min(shs.Length, probePositions.Length);
+            Vector4[] probeSH = new Vector4[probeCount * 3];
+            PackProbeSH(shs, probeSH, probeCount);
+
+            ComputeBuffer probePositionsBuffer = null;
+            ComputeBuffer probeSHBuffer = null;
+            try {
+                probePositionsBuffer = new ComputeBuffer(probeCount, 12);
+                probeSHBuffer = new ComputeBuffer(probeSH.Length, 16);
+                probePositionsBuffer.SetData(probePositions, 0, 0, probeCount);
+                probeSHBuffer.SetData(probeSH);
+
+                int kernel = compute.FindKernel(ProbeBakeKernelName);
+                compute.SetInt("_ProbeCount", probeCount);
+                compute.SetFloat("_UdonLightVolumeVersion", 3f);
+                compute.SetFloat("_UdonPointLightVolumeCount", pointLightCount);
+                compute.SetFloat("_UdonPointLightVolumeCubeCount", customTextureArray != null && LightVolumeManager != null ? LightVolumeManager.CubemapsCount : 0f);
+                compute.SetFloat("_UdonPointLightVolumeShadowCount", 0f);
+                compute.SetFloat("_UdonLightVolumeOcclusionCount", 0f);
+                compute.SetTexture(kernel, "_UdonLightVolume", GetProbeBakeDummyVolumeTexture());
+                compute.SetTexture(kernel, "_UdonPointLightVolumeTexture", customTextureArray != null ? customTextureArray : GetProbeBakeDummyTextureArray());
+                compute.SetTexture(kernel, "_UdonPointLightVolumeShadowTexture", GetProbeBakeDummyTextureArray());
+                compute.SetVectorArray("_UdonPointLightVolumePosition", pointPositions);
+                compute.SetVectorArray("_UdonPointLightVolumeColor", pointColors);
+                compute.SetVectorArray("_UdonPointLightVolumeDirection", pointDirections);
+                compute.SetVectorArray("_UdonPointLightVolumeCustomID", pointCustomIds);
+                compute.SetBuffer(kernel, "_ProbePositions", probePositionsBuffer);
+                compute.SetBuffer(kernel, "_ProbeSH", probeSHBuffer);
+                compute.Dispatch(kernel, Mathf.CeilToInt(probeCount / (float)ProbeBakeThreadGroupSize), 1, 1);
+                probeSHBuffer.GetData(probeSH);
+            } finally {
+                if (probePositionsBuffer != null) probePositionsBuffer.Release();
+                if (probeSHBuffer != null) probeSHBuffer.Release();
+            }
+
+            UnpackProbeSH(probeSH, shs, probeCount);
+            return pointLightCount;
+        }
+
+        // Returns a dummy 3D texture for probe bake compute resource bindings
+        private static Texture3D GetProbeBakeDummyVolumeTexture() {
+            if (_probeBakeDummyVolumeTexture != null) return _probeBakeDummyVolumeTexture;
+            _probeBakeDummyVolumeTexture = new Texture3D(1, 1, 1, TextureFormat.RGBA32, false);
+            _probeBakeDummyVolumeTexture.hideFlags = HideFlags.HideAndDontSave;
+            _probeBakeDummyVolumeTexture.Apply(false, true);
+            return _probeBakeDummyVolumeTexture;
+        }
+
+        // Returns a dummy 2D array texture for probe bake compute resource bindings
+        private static Texture2DArray GetProbeBakeDummyTextureArray() {
+            if (_probeBakeDummyTextureArray != null) return _probeBakeDummyTextureArray;
+            _probeBakeDummyTextureArray = new Texture2DArray(1, 1, 1, TextureFormat.RGBA32, false);
+            _probeBakeDummyTextureArray.hideFlags = HideFlags.HideAndDontSave;
+            _probeBakeDummyTextureArray.Apply(false, true);
+            return _probeBakeDummyTextureArray;
+        }
+
+        // Returns already built point light projection texture array without refreshing it
+        private Texture GetProbeBakeCustomTextureArray() {
+            RenderTexture customTextures = LightVolumeManager != null ? LightVolumeManager.CustomTextures : null;
+            return customTextures != null && customTextures.volumeDepth > 0 && customTextures.IsCreated() ? customTextures : null;
+        }
+
+        // Builds compute shader uniforms for Point Light Volumes marked for probe baking
+        private int BuildProbeBakePointLightData(Vector4[] pointPositions, Vector4[] pointColors, Vector4[] pointDirections, Vector4[] pointCustomIds, bool hasCustomTextureArray) {
+            int pointLightCount = 0;
+            int missingTextureCount = 0;
+            int overflowCount = 0;
+            for (int i = 0; i < PointLightVolumes.Count; i++) {
+                PointLightVolume pointLightVolume = PointLightVolumes[i];
+                if (!IsProbeBakedPointLightVolume(pointLightVolume)) continue;
+
+                if (pointLightCount >= MaxProbeBakedPointLightCount) {
+                    overflowCount++;
+                    continue;
+                }
+
+                if (!TryGetProbeBakeCustomId(pointLightVolume, hasCustomTextureArray, out float customId)) {
+                    missingTextureCount++;
+                    continue;
+                }
+
+                if (TryWriteProbeBakePointLightData(pointLightVolume, pointLightCount, customId, pointPositions, pointColors, pointDirections, pointCustomIds)) pointLightCount++;
+            }
+
+            if (missingTextureCount > 0) Debug.LogWarning($"[LightVolumeSetup] Skipped {missingTextureCount} Point Light Volumes while baking into Light Probes because their projection texture data is not available in the current Point Light Volume texture array.");
+            if (overflowCount > 0) Debug.LogWarning($"[LightVolumeSetup] Skipped {overflowCount} Point Light Volumes while baking into Light Probes. Maximum supported count is {MaxProbeBakedPointLightCount}.");
+            return pointLightCount;
+        }
+
+        // Resolves the shader custom ID for a Point Light Volume projection using existing manager texture array data
+        private bool TryGetProbeBakeCustomId(PointLightVolume pointLightVolume, bool hasCustomTextureArray, out float customId) {
+            customId = 0;
+            if (pointLightVolume.Type == PointLightVolume.LightType.AreaLight || pointLightVolume.Projection == PointLightVolume.LightProjection.Parametric || !pointLightVolume.HasProjectionSource()) return true;
+            if (!hasCustomTextureArray || LightVolumeManager == null) return false;
+
+            int resolvedCustomId = LightVolumeManager.GetPointLightCustomID(pointLightVolume.PointLightVolumeInstance);
+            if (resolvedCustomId < 0) return false;
+            customId = pointLightVolume.Projection == PointLightVolume.LightProjection.LUT ? resolvedCustomId + 1f : -resolvedCustomId - 1f;
+            return true;
+        }
+
+        // Writes one Point Light Volume into compute shader uniform arrays
+        private bool TryWriteProbeBakePointLightData(PointLightVolume pointLightVolume, int index, float customId, Vector4[] pointPositions, Vector4[] pointColors, Vector4[] pointDirections, Vector4[] pointCustomIds) {
+            Transform lightTransform = pointLightVolume.transform;
+            Color linearColor = pointLightVolume.Color.linear;
+            Vector4 color = new Vector4(linearColor.r, linearColor.g, linearColor.b, 1f) * pointLightVolume.Intensity;
+            if (color.x == 0 && color.y == 0 && color.z == 0) return false;
+
+            Vector4 position = lightTransform.position;
+            Vector4 direction;
+            bool isArea = pointLightVolume.Type == PointLightVolume.LightType.AreaLight;
+            bool isSpot = pointLightVolume.Type == PointLightVolume.LightType.SpotLight;
+            bool isLut = customId > 0;
+            bool isCustomProjection = customId < 0;
+            float farClip = pointLightVolume.GetShadowFarClip();
+            float squaredRange = farClip * farClip;
+            if (squaredRange <= 0) return false;
+
+            if (isArea) {
+                Vector3 scale = lightTransform.lossyScale;
+                float width = Mathf.Max(Mathf.Abs(scale.x), 0.001f);
+                float height = Mathf.Max(Mathf.Abs(scale.y), 0.001f);
+                Quaternion rotation = lightTransform.rotation;
+                position.w = width;
+                color.w = 2f + height;
+                direction = new Vector4(rotation.x, rotation.y, rotation.z, rotation.w);
+            } else {
+                Vector3 scale = lightTransform.lossyScale;
+                float averageScale = (Mathf.Abs(scale.x) + Mathf.Abs(scale.y) + Mathf.Abs(scale.z)) * 0.3333333333f;
+                float typeSign = isSpot ? -1f : 1f;
+                if (isLut) {
+                    float range = Mathf.Max(Mathf.Abs(pointLightVolume.Range * averageScale), 0.0001f);
+                    position.w = typeSign / (range * range);
+                } else {
+                    float lightSourceSize = Mathf.Max(Mathf.Abs(pointLightVolume.LightSourceSize * averageScale), 0.0001f);
+                    float squaredSize = lightSourceSize * lightSourceSize;
+                    position.w = typeSign * squaredSize;
+                }
+
+                if (isSpot) {
+                    float angle = Mathf.Clamp(pointLightVolume.Angle, 0.1f, 360f) * Mathf.Deg2Rad * 0.5f;
+                    if (isCustomProjection) {
+                        color.w = Mathf.Tan(angle);
+                        Quaternion rotation = Quaternion.Inverse(lightTransform.rotation);
+                        direction = new Vector4(rotation.x, rotation.y, rotation.z, rotation.w);
+                    } else {
+                        float outerAngleCos = Mathf.Cos(angle);
+                        float coneFalloff = 1f / Mathf.Max(Mathf.Cos(angle * (1f - Mathf.Clamp01(pointLightVolume.Falloff))) - outerAngleCos, 0.000001f);
+                        Vector3 forward = lightTransform.forward;
+                        color.w = outerAngleCos;
+                        direction = new Vector4(forward.x, forward.y, forward.z, coneFalloff);
+                    }
+                } else {
+                    color.w = 1f;
+                    if (isCustomProjection) {
+                        Quaternion rotation = Quaternion.Inverse(lightTransform.rotation);
+                        direction = new Vector4(rotation.x, rotation.y, rotation.z, rotation.w);
+                    } else {
+                        direction = new Vector4(0, 0, 0, 1);
+                    }
+                }
+            }
+
+            pointPositions[index] = position;
+            pointColors[index] = color;
+            pointDirections[index] = direction;
+            pointCustomIds[index] = new Vector4(customId, DisabledProbeBakeShadowId, squaredRange, 0);
+            return true;
+        }
+
+        // Packs Unity SphericalHarmonicsL2 data into the same L0/L1 layout used by LightVolumes.cginc
+        private static void PackProbeSH(UnityEngine.Rendering.SphericalHarmonicsL2[] shs, Vector4[] probeSH, int probeCount) {
+            const int r = 0;
+            const int g = 1;
+            const int b = 2;
+            const int a = 0;
+            const int x = 3;
+            const int y = 1;
+            const int z = 2;
+
+            for (int i = 0; i < probeCount; i++) {
+                int index = i * 3;
+                probeSH[index] = new Vector4(shs[i][r, x], shs[i][r, y], shs[i][r, z], shs[i][r, a]);
+                probeSH[index + 1] = new Vector4(shs[i][g, x], shs[i][g, y], shs[i][g, z], shs[i][g, a]);
+                probeSH[index + 2] = new Vector4(shs[i][b, x], shs[i][b, y], shs[i][b, z], shs[i][b, a]);
+            }
+        }
+
+        // Unpacks compute shader L0/L1 data back into Unity SphericalHarmonicsL2 coefficients
+        private static void UnpackProbeSH(Vector4[] probeSH, UnityEngine.Rendering.SphericalHarmonicsL2[] shs, int probeCount) {
+            const int r = 0;
+            const int g = 1;
+            const int b = 2;
+            const int a = 0;
+            const int x = 3;
+            const int y = 1;
+            const int z = 2;
+
+            for (int i = 0; i < probeCount; i++) {
+                int index = i * 3;
+                shs[i][r, x] = probeSH[index].x;
+                shs[i][r, y] = probeSH[index].y;
+                shs[i][r, z] = probeSH[index].z;
+                shs[i][r, a] = probeSH[index].w;
+                shs[i][g, x] = probeSH[index + 1].x;
+                shs[i][g, y] = probeSH[index + 1].y;
+                shs[i][g, z] = probeSH[index + 1].z;
+                shs[i][g, a] = probeSH[index + 1].w;
+                shs[i][b, x] = probeSH[index + 2].x;
+                shs[i][b, y] = probeSH[index + 2].y;
+                shs[i][b, z] = probeSH[index + 2].z;
+                shs[i][b, a] = probeSH[index + 2].w;
+            }
         }
 
 #endif

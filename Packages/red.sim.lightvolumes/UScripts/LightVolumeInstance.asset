@@ -224,7 +224,7 @@ MonoBehaviour:
       Data: 13|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Multiplies the volume's color by this value.
+      Data: "Multiplies the volume\u2019s color by this value."
     - Name: 
       Entry: 8
       Data: 

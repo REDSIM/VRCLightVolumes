@@ -724,7 +724,7 @@ MonoBehaviour:
       Data: Automatically updates most of the volumes properties in runtime. Enabling/Disabling,
         Color and Intensity updates automatically even without this option enabled.
         Position, Rotation and Scale gets updated only for volumes that are marked
-        dynamic.
+        dynamic. It's more performant to keep it off.
     - Name: 
       Entry: 8
       Data: 
@@ -782,7 +782,7 @@ MonoBehaviour:
     - Name: tooltip
       Entry: 1
       Data: Automatically updates dynamic point light cookie and shadow texture sources
-        in runtime.
+        in runtime. It's more performant to keep it off.
     - Name: 
       Entry: 8
       Data: 
@@ -900,8 +900,9 @@ MonoBehaviour:
     - Name: tooltip
       Entry: 1
       Data: Disables min/max brightness limits for modern avatar shaders such as
-        lilToon or Poiyomi. Check this only if you're sure your scene lighting is
-        properly configured.
+        lilToon or Poiyomi. This feature prevents avatars from standing out from
+        the scene due to their brightness. Check this only if you're sure your scene
+        lighting is properly configured.
     - Name: 
       Entry: 8
       Data: 

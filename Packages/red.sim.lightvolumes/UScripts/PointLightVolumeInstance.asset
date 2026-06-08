@@ -228,7 +228,7 @@ MonoBehaviour:
       Data: 14|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Multiplies the point light volume's color by this value.
+      Data: "Multiplies the point light volume\u2019s color by this value."
     - Name: 
       Entry: 8
       Data: 
@@ -372,7 +372,7 @@ MonoBehaviour:
       Data: 22|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Controls shading based on surface normal and shadows opacity for this
+      Data: Controls shading and shadows opacity based on surface normal for this
         point light volume.
     - Name: 
       Entry: 8
@@ -1943,8 +1943,9 @@ MonoBehaviour:
       Data: 114|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Enables World Space Shadows using the bake position. Disable for Local
-        Space Shadows that move and rotate with this light.
+      Data: Use it if you don't want to move baked shadows together with their light.
+        Attaches shadows to the world space basically. Less optimized when turned
+        on.
     - Name: 
       Entry: 8
       Data: 
@@ -2069,8 +2070,7 @@ MonoBehaviour:
       Data: 121|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Layer mask used by the shadow bake camera. Only these layers can write
-        into the shadow depth pass.
+      Data: Layers that can cast shadows.
     - Name: 
       Entry: 8
       Data: 
@@ -2128,8 +2128,8 @@ MonoBehaviour:
       Data: 124|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Near clip plane used by the shadow bake camera. Higher values improve
-        depth precision but clip nearby occluders.
+      Data: Near clip plane used by the shadow bake camera. Higher values can clip
+        nearby occluders.
     - Name: 
       Entry: 8
       Data: 
@@ -2333,8 +2333,9 @@ MonoBehaviour:
       Data: 136|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Editor-only Gaussian blur radius in shadow texels applied after baking.
-        0 keeps the baked shadow map unblurred.
+      Data: Gaussian blur radius in shadow texels applied after baking. 0 keeps the
+        baked shadow map unblurred. Useful to get a visible shadow penumbra. Requires
+        rebaking.
     - Name: 
       Entry: 8
       Data: 

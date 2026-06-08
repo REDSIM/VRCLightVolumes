@@ -18,7 +18,7 @@ namespace VRCLightVolumes {
         public bool IsDynamic = false;
         [Tooltip("Additive volumes apply their light on top of others as an overlay. Useful for movable and togglable lights. They can also project light onto static lightmapped objects if the surface shader supports it.")]
         public bool IsAdditive = false;
-        [Tooltip("Multiplies the volume's color by this value.")]
+        [Tooltip("Multiplies the volume’s color by this value.")]
         [ColorUsage(showAlpha: false)] public Color Color = Color.white;
         [Tooltip("Brightness of the volume.")]
         public float Intensity = 1f;

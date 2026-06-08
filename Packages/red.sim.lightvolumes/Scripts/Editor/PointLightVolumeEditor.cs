@@ -9,14 +9,7 @@ namespace VRCLightVolumes {
     public class PointLightVolumeEditor : Editor {
 
         PointLightVolume PointLightVolume;
-        private static readonly GUIContent _shadowMapContent = new GUIContent("Shadow Map", "Generated EVSM Texture2DArray, cubemap, RenderTexture, CustomRenderTexture or Material used by the shared shadow texture array.");
-        private static readonly GUIContent _shadowLayerMaskContent = new GUIContent("Layer Mask", "Layer mask used by the shadow bake camera. Only these layers can write into the shadow depth pass.");
-        private static readonly GUIContent _shadowNearPlaneContent = new GUIContent("Near Plane", "Near clip plane used by the shadow bake camera. Higher values improve depth precision but clip nearby occluders.");
-        private static readonly GUIContent _useWorldSpaceContent = new GUIContent("Use World Space", "Enables World Space Shadows using the bake position. Disable for Local Space Shadows that move and rotate with this light.");
         private static readonly GUIContent _bakeShadowsButtonContent = new GUIContent("Bake Shadows", "Bakes or re-bakes a shadow map for this light.");
-        private static readonly GUIContent _falloffLutContent = new GUIContent("Falloff LUT", "Texture2D, RenderTexture, CustomRenderTexture or Material used by LUT projection.");
-        private static readonly GUIContent _cookieContent = new GUIContent("Cookie", "Texture2D, RenderTexture, CustomRenderTexture or Material used by spot cookie projection.");
-        private static readonly GUIContent _cubemapContent = new GUIContent("Cubemap", "Cubemap, RenderTexture, CustomRenderTexture or Material used by point cubemap projection.");
         private static readonly GUIContent _emptyContent = GUIContent.none;
         private static readonly string _textureMaterialHint = "None (Texture/Material)";
         private static readonly string _cubemapMaterialHint = "None (Texture/Material)";
@@ -50,7 +43,6 @@ namespace VRCLightVolumes {
             }
 
             List<string> hiddenFields = new List<string> { "m_Script", "PointLightVolumeInstance", "LightVolumeSetup" };
-            hiddenFields.Add("ShadowID");
             hiddenFields.Add("ShadowMap");
             hiddenFields.Add("RebakeShadows");
             hiddenFields.Add("Bias");
@@ -99,22 +91,21 @@ namespace VRCLightVolumes {
             EditorGUILayout.PropertyField(serializedObject.FindProperty("BakeIntoProbes"));
             EditorGUILayout.PropertyField(serializedObject.FindProperty("DebugRange"));
             DrawActiveProjectionSourceField();
-            EditorGUILayout.PropertyField(serializedObject.FindProperty("Shadows"));
+            SerializedProperty shadowsProperty = serializedObject.FindProperty("Shadows");
+            EditorGUILayout.PropertyField(shadowsProperty);
+            bool drawShadowFields = shadowsProperty.hasMultipleDifferentValues || shadowsProperty.boolValue;
 
             bool propertiesChanged = serializedObject.ApplyModifiedProperties();
 
-            SerializedProperty shadowsProperty = serializedObject.FindProperty("Shadows");
-            bool drawShadowFields = shadowsProperty.hasMultipleDifferentValues || shadowsProperty.boolValue;
             if (drawShadowFields) {
-                SerializedProperty shadowMapProperty = serializedObject.FindProperty("ShadowMap");
-                DrawTextureMaterialField(shadowMapProperty, _shadowMapContent, _cubemapMaterialHint, true);
-                EditorGUILayout.PropertyField(serializedObject.FindProperty("LayerMask"), _shadowLayerMaskContent);
+                DrawTextureMaterialField("ShadowMap", _cubemapMaterialHint, true);
+                EditorGUILayout.PropertyField(serializedObject.FindProperty("LayerMask"));
                 EditorGUILayout.PropertyField(serializedObject.FindProperty("ObjectMask"));
-                EditorGUILayout.PropertyField(serializedObject.FindProperty("NearPlane"), _shadowNearPlaneContent);
+                EditorGUILayout.PropertyField(serializedObject.FindProperty("NearPlane"));
                 EditorGUILayout.PropertyField(serializedObject.FindProperty("Bias"));
                 EditorGUILayout.PropertyField(serializedObject.FindProperty("Blur"));
                 EditorGUILayout.PropertyField(serializedObject.FindProperty("ContactHardening"));
-                EditorGUILayout.PropertyField(serializedObject.FindProperty("UseWorldSpace"), _useWorldSpaceContent);
+                EditorGUILayout.PropertyField(serializedObject.FindProperty("UseWorldSpace"));
                 EditorGUILayout.PropertyField(serializedObject.FindProperty("RebakeShadows"));
 
                 if (GUILayout.Button(_bakeShadowsButtonContent)) {
@@ -161,12 +152,18 @@ namespace VRCLightVolumes {
         private void DrawActiveProjectionSourceField() {
             if (PointLightVolume.Type == PointLightVolume.LightType.AreaLight || PointLightVolume.Projection == PointLightVolume.LightProjection.Parametric) return;
             if (PointLightVolume.Projection == PointLightVolume.LightProjection.LUT) {
-                DrawTextureMaterialField(serializedObject.FindProperty("FalloffLUT"), _falloffLutContent, _textureMaterialHint, false);
+                DrawTextureMaterialField("FalloffLUT", _textureMaterialHint, false);
             } else if (PointLightVolume.Type == PointLightVolume.LightType.PointLight) {
-                DrawTextureMaterialField(serializedObject.FindProperty("Cubemap"), _cubemapContent, _cubemapMaterialHint, false);
+                DrawTextureMaterialField("Cubemap", _cubemapMaterialHint, false);
             } else if (PointLightVolume.Type == PointLightVolume.LightType.SpotLight) {
-                DrawTextureMaterialField(serializedObject.FindProperty("Cookie"), _cookieContent, _textureMaterialHint, false);
+                DrawTextureMaterialField("Cookie", _textureMaterialHint, false);
             }
+        }
+
+        // Draws a named texture/material source field using the original serialized label and tooltip.
+        private void DrawTextureMaterialField(string propertyName, string acceptedTypesHint, bool isShadowSource) {
+            SerializedProperty property = serializedObject.FindProperty(propertyName);
+            DrawTextureMaterialField(property, EditorGUIUtility.TrTextContent(property.displayName, property.tooltip), acceptedTypesHint, isShadowSource);
         }
 
         // Draws and validates a compact texture/material source object field.

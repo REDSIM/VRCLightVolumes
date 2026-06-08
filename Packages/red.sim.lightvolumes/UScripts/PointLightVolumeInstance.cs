@@ -17,11 +17,11 @@ namespace VRCLightVolumes {
         public bool IsDynamic = false;
         [Tooltip("Point light volume shape. 0 = point, 1 = spot, 2 = area.")]
         public int LightType = 0; // 0: point, 1: spot, 2: area
-        [Tooltip("Multiplies the point light volume's color by this value.")]
+        [Tooltip("Multiplies the point light volume’s color by this value.")]
         [ColorUsage(showAlpha: false)] public Color Color = Color.white;
         [Tooltip("Brightness of the point light volume.")]
         public float Intensity = 1f;
-        [Tooltip("Controls shading based on surface normal and shadows opacity for this point light volume.")]
+        [Tooltip("Controls shading and shadows opacity based on surface normal for this point light volume.")]
         [Range(0, 1)] public float ShadingStrength = 1f;
 
         [Header("Position Data")]
@@ -82,21 +82,21 @@ namespace VRCLightVolumes {
         public bool AutoUpdateShadowMap = false;
         [Tooltip("Index of the shadow map used by this light. -1 means no shadow.")]
         public float ShadowMapID = -1f;
-        [Tooltip("Enables World Space Shadows using the bake position. Disable for Local Space Shadows that move and rotate with this light.")]
+        [Tooltip("Use it if you don't want to move baked shadows together with their light. Attaches shadows to the world space basically. Less optimized when turned on.")]
         public bool WorldSpaceShadows = false;
         [Tooltip("World-space position where the shadow map was baked.")]
         public Vector3 ShadowBakePosition = Vector3.zero;
 
         [Header("Shadow Bake Settings")]
-        [Tooltip("Layer mask used by the shadow bake camera. Only these layers can write into the shadow depth pass.")]
+        [Tooltip("Layers that can cast shadows.")]
         public int LayerMask = -1;
-        [Tooltip("Near clip plane used by the shadow bake camera. Higher values improve depth precision but clip nearby occluders.")]
+        [Tooltip("Near clip plane used by the shadow bake camera. Higher values can clip nearby occluders.")]
         [Min(0.0001f)] public float NearClip = 0.01f;
         [Tooltip("World-space bias in meters applied while baking this light's shadow map. Larger values reduce self-shadow artifacts, but can detach contact edges. Requires rebaking.")]
         [Min(0)] public float Bias = 0.03f;
         [Tooltip("Far clip distance used when the EVSM shadow map was baked. 0 falls back to this light's current culling range.")]
         [Min(0)] public float FarClip = 0f;
-        [Tooltip("Editor-only Gaussian blur radius in shadow texels applied after baking. 0 keeps the baked shadow map unblurred.")]
+        [Tooltip("Gaussian blur radius in shadow texels applied after baking. 0 keeps the baked shadow map unblurred. Useful to get a visible shadow penumbra. Requires rebaking.")]
         [Min(0)] public float Blur = 1f;
         [Tooltip("Hardens shadows near the contact areas. Can produce artefacts, so use with caution! Requires rebaking.")]
         [Range(0, 1)] public float ContactHardening = 0f;

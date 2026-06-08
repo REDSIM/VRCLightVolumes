@@ -21,12 +21,6 @@ namespace VRCLightVolumes {
 
         private bool _isMultipleInstancesError = false;
         private static readonly string[] _bakeryBitmaskLabels = new string[] { "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "29", "30" };
-        private static readonly GUIContent _volumeBitmaskContent = new GUIContent("Volume Bitmask", "Light from Bakery light sources with this bitmask will affect Light Volumes.");
-        private static readonly GUIContent _probeBitmaskContent = new GUIContent("Probe Bitmask", "Light from Bakery light sources with this bitmask will affect light probes.");
-        private static readonly GUIContent _cookieResolutionContent = new GUIContent("Cookie Resolution", "Resolution used for point light cookie, LUT and cubemap projection textures.");
-        private static readonly GUIContent _shadowResolutionContent = new GUIContent("Shadow Resolution", "Resolution used for per-light shadow maps.");
-        private static readonly GUIContent _shadowTextureFormatContent = new GUIContent("Shadow Texture Format", "Precision used for baked EVSM shadow cubemaps and the runtime shadow texture array. Half is cheaper, Float reduces EVSM precision artifacts.");
-        private static readonly GUIContent _brightnessCutoffContent = new GUIContent("Brightness Cutoff", "The minimum brightness at a point due to lighting from a Point Light Volume, before the light is culled.");
 
         private void OnEnable() {
 
@@ -319,12 +313,12 @@ namespace VRCLightVolumes {
             GUILayout.Space(-15);
 
             if (plvCount > 0) {
-                EditorGUILayout.PropertyField(serializedObject.FindProperty("CookieResolution"), _cookieResolutionContent);
+                EditorGUILayout.PropertyField(serializedObject.FindProperty("CookieResolution"));
                 if (isShadow) {
-                    EditorGUILayout.PropertyField(serializedObject.FindProperty("ShadowResolution"), _shadowResolutionContent);
-                    EditorGUILayout.PropertyField(serializedObject.FindProperty("ShadowTextureFormat"), _shadowTextureFormatContent);
+                    EditorGUILayout.PropertyField(serializedObject.FindProperty("ShadowResolution"));
+                    EditorGUILayout.PropertyField(serializedObject.FindProperty("ShadowTextureFormat"));
                 }
-                EditorGUILayout.PropertyField(serializedObject.FindProperty("BrightnessCutoff"), _brightnessCutoffContent);
+                EditorGUILayout.PropertyField(serializedObject.FindProperty("BrightnessCutoff"));
             }
 
             EditorGUILayout.PropertyField(_bakingModeProp);
@@ -392,11 +386,11 @@ namespace VRCLightVolumes {
         // Draws Bakery bitmasks using Bakery's zero-based mask popup labels.
         private void DrawBakeryBitmasks() {
             int prevValue = _volumeBitmaskProp.intValue;
-            int newValue = EditorGUILayout.MaskField(_volumeBitmaskContent, prevValue, _bakeryBitmaskLabels);
+            int newValue = EditorGUILayout.MaskField(EditorGUIUtility.TrTextContent(_volumeBitmaskProp.displayName, _volumeBitmaskProp.tooltip), prevValue, _bakeryBitmaskLabels);
             if (prevValue != newValue) _volumeBitmaskProp.intValue = newValue;
 
             prevValue = _probeBitmaskProp.intValue;
-            newValue = EditorGUILayout.MaskField(_probeBitmaskContent, prevValue, _bakeryBitmaskLabels);
+            newValue = EditorGUILayout.MaskField(EditorGUIUtility.TrTextContent(_probeBitmaskProp.displayName, _probeBitmaskProp.tooltip), prevValue, _bakeryBitmaskLabels);
             if (prevValue != newValue) _probeBitmaskProp.intValue = newValue;
         }
 

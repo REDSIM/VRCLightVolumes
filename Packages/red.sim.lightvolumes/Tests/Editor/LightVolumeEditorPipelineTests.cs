@@ -156,7 +156,6 @@ namespace VRCLightVolumes.Tests {
             Assert.That(method, Is.Not.Null);
 
             pointLightVolume.ShadowMap = shadowMap;
-            pointLightVolume.ShadowID = 2;
             pointLightVolume.Shadows = false;
 
             Assert.That((int)method.Invoke(pointLightVolume, null), Is.EqualTo(-1));

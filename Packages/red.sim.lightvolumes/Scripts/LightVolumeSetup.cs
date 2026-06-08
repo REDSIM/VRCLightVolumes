@@ -32,7 +32,7 @@ namespace VRCLightVolumes {
         [Tooltip("The minimum brightness at a point due to lighting from a Point Light Volume, before the light is culled. Larger values will result in better performance, but light attenuation will be less physically correct.")]
         [FormerlySerializedAs("LightsBrightnessCutoff")]
         [Range(0.05f, 1f)] public float BrightnessCutoff = 0.35f;
-        [Tooltip("Resolution used for per-light shadow maps.")]
+        [Tooltip("Resolution used for per-light shadow maps. Resolution represents a single cubemap side, so it's actually x6 for each light with shadow.")]
         public TextureArrayResolution ShadowResolution = TextureArrayResolution._128x128;
         [Tooltip("Precision used for baked EVSM shadow cubemaps and the runtime shadow texture array. Half is cheaper, Float reduces EVSM precision artifacts.")]
         public ShadowTexturePrecision ShadowTextureFormat = ShadowTexturePrecision.Float;
@@ -59,7 +59,7 @@ namespace VRCLightVolumes {
         [Tooltip("The percentage of rays shot from a probe that should hit backfaces before the probe is considered invalid for the purpose of dilation. 0 means every probe is invalid, 1 means every probe is valid.")] 
         [Range(0, 1)]
         public float DilationBackfaceBias = 0.1f;
-        [Tooltip("Automatically fixes Bakery's \"burned\" light probes after a scene bake. But decreases their contrast slightly.")]
+        [Tooltip("Probes deringing. Automatically fixes Bakery's \"burned\" light probes after a scene bake. But decreases their contrast slightly.")]
         public bool FixLightProbesL1 = true;
         [Tooltip("Downscales each light volume. Useful to make a lower atlas resolution for mobile platforms or to increase overall sharpness and decrease aliasing.")]
         public Downscale DownscaleVolumes = Downscale.None;
@@ -68,13 +68,13 @@ namespace VRCLightVolumes {
         public bool LightProbesBlending = true;
         [Tooltip("Disables smooth blending with areas outside Light Volumes. Use it if your entire scene's play area is covered by Light Volumes. It also improves performance.")]
         public bool SharpBounds = true;
-        [Tooltip("Automatically updates most of the volumes properties in runtime. Enabling/Disabling, Color and Intensity updates automatically even without this option enabled. Position, Rotation and Scale gets updated only for volumes that are marked dynamic.")]
+        [Tooltip("Automatically updates most of the volumes properties in runtime. Enabling/Disabling, Color and Intensity updates automatically even without this option enabled. Position, Rotation and Scale gets updated only for volumes that are marked dynamic. It's more performant to keep it off.")]
         public bool AutoUpdateVolumes = true;
-        [Tooltip("Automatically updates dynamic point light cookie and shadow texture sources in runtime.")]
+        [Tooltip("Automatically updates dynamic point light cookie and shadow texture sources in runtime. It's more performant to keep it off.")]
         public bool AutoUpdateTextures = true;
         [Tooltip("Limits the maximum number of additive volumes and point light volumes that can affect a single pixel. If you have many dynamic additive or point light volumes that may overlap, it's good practice to limit overdraw to maintain performance.")]
         [Min(1)]public int AdditiveMaxOverdraw = 4;
-        [Tooltip("Disables min/max brightness limits for modern avatar shaders such as lilToon or Poiyomi. Check this only if you're sure your scene lighting is properly configured.")]
+        [Tooltip("Disables min/max brightness limits for modern avatar shaders such as lilToon or Poiyomi. This feature prevents avatars from standing out from the scene due to their brightness. Check this only if you're sure your scene lighting is properly configured.")]
         public bool ForceSceneLighting = false;
         [Header("Debug")]
         [Tooltip("Removes all Light Volume scripts in play mode, except Udon components. Useful for testing in a clean setup, just like in VRChat. For example, Auto Update Volumes and Dynamic Light Volumes will work just like in VRChat.")]

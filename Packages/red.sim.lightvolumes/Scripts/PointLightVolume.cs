@@ -12,9 +12,9 @@ namespace VRCLightVolumes {
 
         [Tooltip("Defines whether this point light volume can be moved in runtime. Disabling this option slightly improves performance. Don't forget to enable \"Auto Update Volumes\" in your Light Volumes Setup to have this dynamic updates!")]
         public bool Dynamic = false;
-        [Tooltip("Point light is the most performant type. Area light is the heaviest and best suited for dynamic, movable sources. For static lighting, it's recommended to bake regular additive light volumes instead.")]
+        [Tooltip("Point light is the most performant type. For static lighting, it's recommended to bake regular additive light volumes instead.")]
         public LightType Type = LightType.PointLight;
-        [Tooltip("Physical radius of a light source if it was a matte glowing sphere for a point light, or a flashlight reflector for a spot light. Larger size emmits more light without increasing overall intensity.")]
+        [Tooltip("Physical radius of a light source if it was a matte glowing sphere for a point light, or a flashlight reflector for a spot light. Larger size emits more light without increasing overall intensity.")]
         [Min(0.0001f)] public float LightSourceSize = 0.25f;
         [Tooltip("Radius in meters beyond which light is culled. Fewer overlapping lights result in better performance.")]
         [Min(0.0001f)] public float Range = 10f;
@@ -22,7 +22,7 @@ namespace VRCLightVolumes {
         [ColorUsage(showAlpha: false)] public Color Color = Color.white;
         [Tooltip("Brightness of the point light volume.")]
         public float Intensity = 1f;
-        [Tooltip("Controls shading based on surface normal and shadows opacity for this point light volume.")]
+        [Tooltip("Controls shading and shadows opacity based on surface normal for this point light volume.")]
         [Range(0, 1)] public float ShadingStrength = 1f;
         [Tooltip("Parametric uses settings to compute light falloff. LUT uses a texture: X - cone falloff, Y - attenuation (Y only for point lights). Cookie projects a texture for spot lights. Cubemap projects a cubemap for point lights.")]
         [FormerlySerializedAs("Shape")] public LightProjection Projection = LightProjection.Parametric;
@@ -43,26 +43,26 @@ namespace VRCLightVolumes {
         [Tooltip("Shows overdrawing range gizmo. Less point light volumes intersections - more performance!")]
         public bool DebugRange = false;
         [Space]
-        [Tooltip("Enables baked shadow map rendering for this light. When disabled, an assigned or baked Shadow Map is kept but ignored at runtime.")]
+        [Tooltip("Enables baked shadow map rendering for this light. This shadows are baked, but can affect dynamic objects in runtime, like avatars. It's more performant not to use shadows.")]
         public bool Shadows = false;
         [Tooltip("Rebakes shadows for this point light automatically when you click \"Bake Shadows\" in Light Volume Setup. Alternatively, you can bake it manually pressing the \"Bake Shadows\" button here.")]
         public bool RebakeShadows = false;
-        [Tooltip("Layer mask used by the shadow bake camera. Only these layers can write into the shadow depth pass.")]
-        public LayerMask LayerMask = -1;
-        [Tooltip("If empty, all objects in the scene are baked. If not empty, only children of the listed objects cast shadows during bake.")]
+        [Tooltip("Layers that can cast shadows.")]
+        public LayerMask LayerMask = 270849;
+        [Tooltip("If empty, all objects in the scene will cast shadows. If not empty, only children of the listed objects cast shadows during bake.")]
         public GameObject[] ObjectMask = new GameObject[0];
         [Tooltip("World-space bias in meters applied while baking this light's shadow map. Larger values reduce self-shadow artifacts, but can detach contact edges. Requires rebaking.")]
         [Min(0)] public float Bias = 0.1f;
-        [Tooltip("Near clip plane used by the shadow bake camera. Higher values improve depth precision but clip nearby occluders.")]
+        [Tooltip("Near clip plane used by the shadow bake camera. Higher values can clip nearby occluders.")]
         [Min(0.0001f)] public float NearPlane = 0.01f;
-        [Tooltip("Editor-only Gaussian blur radius in shadow texels applied after baking. 0 keeps the baked shadow map unblurred.")]
+        [Tooltip("Gaussian blur radius in shadow texels applied after baking. 0 keeps the baked shadow map unblurred. Useful to get a visible shadow penumbra. Requires rebaking.")]
         [Min(0)] public float Blur = 1f;
         [Tooltip("Hardens shadows near the contact areas. Can produce artefacts, so use with caution! Requires rebaking.")]
         [Range(0, 1)] public float ContactHardening = 0f;
         [Tooltip("Use it if you don't want to move baked shadows together with their light. Attaches shadows to the world space basically. Less optimized when turned on.")]
         public bool UseWorldSpace = false;
 
-        [HideInInspector] public int ShadowID = -1;
+        //G enerated EVSM Texture2DArray, cubemap, RenderTexture, CustomRenderTexture or Material used by the shared shadow texture array.
         [HideInInspector] public UnityEngine.Object ShadowMap = null;
 
         public PointLightVolumeInstance PointLightVolumeInstance;

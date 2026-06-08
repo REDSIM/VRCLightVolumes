@@ -64,13 +64,13 @@ namespace VRCLightVolumes {
         public bool LightProbesBlending = true;
         [Tooltip("Disables smooth blending with areas outside Light Volumes. Use it if your entire scene's play area is covered by Light Volumes. It also improves performance.")]
         public bool SharpBounds = true;
-        [Tooltip("Automatically updates most of the volumes properties in runtime. Enabling/Disabling, Color and Intensity updates automatically even without this option enabled. Position, Rotation and Scale gets updated only for volumes that are marked dynamic.")]
+        [Tooltip("Automatically updates most of the volumes properties in runtime. Enabling/Disabling, Color and Intensity updates automatically even without this option enabled. Position, Rotation and Scale gets updated only for volumes that are marked dynamic. It's more performant to keep it off.")]
         public bool AutoUpdateVolumes = true;
-        [Tooltip("Automatically updates dynamic point light cookie and shadow texture sources in runtime.")]
+        [Tooltip("Automatically updates dynamic point light cookie and shadow texture sources in runtime. It's more performant to keep it off.")]
         public bool AutoUpdateTextures = true;
         [Tooltip("Limits the maximum number of additive volumes and point light volumes that can affect a single pixel. If you have many dynamic additive or point light volumes that may overlap, it's good practice to limit overdraw to maintain performance.")]
         public int AdditiveMaxOverdraw = 4;
-        [Tooltip("Disables min/max brightness limits for modern avatar shaders such as lilToon or Poiyomi. Check this only if you're sure your scene lighting is properly configured.")]
+        [Tooltip("Disables min/max brightness limits for modern avatar shaders such as lilToon or Poiyomi. This feature prevents avatars from standing out from the scene due to their brightness. Check this only if you're sure your scene lighting is properly configured.")]
         public bool ForceSceneLighting = false;
 
         [Header("Runtime Registries")]

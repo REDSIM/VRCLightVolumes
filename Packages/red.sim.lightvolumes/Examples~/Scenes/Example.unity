@@ -179,19 +179,15 @@ MonoBehaviour:
     PrefabModifications: []
     SerializationNodes: []
   _udonSharpBackingUdonBehaviour: {fileID: 42751784}
-  Color: {r: 1, g: 1, b: 1, a: 0}
-  Intensity: 1
   IsDynamic: 0
   IsAdditive: 0
-  InvBakedRotation: {x: 0, y: 0, z: 0, w: 1}
+  Color: {r: 1, g: 1, b: 1, a: 0}
+  Intensity: 1
+  InvLocalEdgeSmoothing: {x: 33.444817, y: 20.06689, z: 33.444817, w: 0}
   BoundsUvwMin0: {x: 0.014285714, y: 0.5, z: 0.76256984, w: 0.2857143}
   BoundsUvwMin1: {x: 0.014285714, y: 0.65789473, z: 0.9357542, w: 0.31578946}
   BoundsUvwMin2: {x: 0.014285714, y: 0.5, z: 0.82402235, w: 0.055865884}
-  BoundsUvwMinOcclusion: {x: 0, y: 0, z: 0, w: 1}
-  BoundsUvwMax0: {x: 0.3, y: 0.81578946, z: 0.8184357, w: 0}
-  BoundsUvwMax1: {x: 0.3, y: 0.9736842, z: 0.9916201, w: 0}
-  BoundsUvwMax2: {x: 0.3, y: 0.81578946, z: 0.8798883, w: 0}
-  InvLocalEdgeSmoothing: {x: 33.444817, y: 20.06689, z: 33.444817, w: 0}
+  InvBakedRotation: {x: 0, y: 0, z: 0, w: 1}
   InvWorldMatrix:
     e00: 0.1
     e01: 0
@@ -209,14 +205,11 @@ MonoBehaviour:
     e31: 0
     e32: 0
     e33: 1
-  RelativeRotation: {x: 0, y: 0, z: 0, w: 1}
   RelativeRotationRow0: {x: 1, y: 0, z: 0}
   RelativeRotationRow1: {x: 0, y: 1, z: 0}
   IsRotated: 0
-  BakeOcclusion: 0
-  IsInitialized: 1
   LightVolumeManager: {fileID: 446951794}
-  IsIterartedThrough: 0
+  IsActive: 1
 --- !u!114 &42751782
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -237,18 +230,15 @@ MonoBehaviour:
   Texture0: {fileID: 11700000, guid: 179a7704eb03068448e6823cf9bdf033, type: 2}
   Texture1: {fileID: 11700000, guid: fdfd648dc6994ff4c9f435ae410445f0, type: 2}
   Texture2: {fileID: 11700000, guid: 9411b35f244775045a967a7428ff3a79, type: 2}
-  ShadowsTexture: {fileID: 0}
   Exposure: 0
   Shadows: 0
   Highlights: 0
   Bake: 1
-  PointLightShadows: 1
-  ShadowsScale: 1
-  BlurShadows: 1
+  ReserveUVSpace: 0
   AdaptiveResolution: 1
   VoxelsPerUnit: 2
   Resolution: {x: 20, y: 12, z: 20}
-  PreviewVoxels: 0
+  BakeryVolume: {fileID: 0}
   LightVolumeInstance: {fileID: 42751781}
   LightVolumeSetup: {fileID: 446951793}
 --- !u!114 &42751784
@@ -332,19 +322,15 @@ MonoBehaviour:
     PrefabModifications: []
     SerializationNodes: []
   _udonSharpBackingUdonBehaviour: {fileID: 110763778}
-  Color: {r: 1, g: 1, b: 1, a: 0}
-  Intensity: 1
   IsDynamic: 0
   IsAdditive: 0
-  InvBakedRotation: {x: 0, y: 0, z: 0, w: 1}
+  Color: {r: 1, g: 1, b: 1, a: 0}
+  Intensity: 1
+  InvLocalEdgeSmoothing: {x: 16, y: 20, z: 44, w: 0}
   BoundsUvwMin0: {x: 0.78571427, y: 0.5, z: 0.9357542, w: 0.11428571}
   BoundsUvwMin1: {x: 0.78571427, y: 0.5, z: 0.76256984, w: 0.2631579}
   BoundsUvwMin2: {x: 0.78571427, y: 0.02631579, z: 0.9357542, w: 0.061452508}
-  BoundsUvwMinOcclusion: {x: 0, y: 0, z: 0, w: 1}
-  BoundsUvwMax0: {x: 0.9, y: 0.7631579, z: 0.9972067, w: 0}
-  BoundsUvwMax1: {x: 0.9, y: 0.7631579, z: 0.82402235, w: 0}
-  BoundsUvwMax2: {x: 0.9, y: 0.28947368, z: 0.9972067, w: 0}
-  InvLocalEdgeSmoothing: {x: 16, y: 20, z: 44, w: 0}
+  InvBakedRotation: {x: 0, y: 0, z: 0, w: 1}
   InvWorldMatrix:
     e00: 0.25
     e01: 0
@@ -362,14 +348,11 @@ MonoBehaviour:
     e31: 0
     e32: 0
     e33: 1
-  RelativeRotation: {x: 0, y: 0, z: 0, w: 1}
   RelativeRotationRow0: {x: 1, y: 0, z: 0}
   RelativeRotationRow1: {x: 0, y: 1, z: 0}
   IsRotated: 0
-  BakeOcclusion: 0
-  IsInitialized: 1
   LightVolumeManager: {fileID: 446951794}
-  IsIterartedThrough: 0
+  IsActive: 1
 --- !u!114 &110763776
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -390,18 +373,15 @@ MonoBehaviour:
   Texture0: {fileID: 11700000, guid: 44547d51170f50940a5bc9302ed04ae9, type: 2}
   Texture1: {fileID: 11700000, guid: 5ac37e379668bc34a93329a8e445220e, type: 2}
   Texture2: {fileID: 11700000, guid: f9aa1fb0afac9aa4c96beff3d9107b86, type: 2}
-  ShadowsTexture: {fileID: 0}
   Exposure: 0
   Shadows: 0
   Highlights: 0
   Bake: 1
-  PointLightShadows: 1
-  ShadowsScale: 1
-  BlurShadows: 1
+  ReserveUVSpace: 0
   AdaptiveResolution: 1
   VoxelsPerUnit: 2
   Resolution: {x: 8, y: 10, z: 22}
-  PreviewVoxels: 0
+  BakeryVolume: {fileID: 0}
   LightVolumeInstance: {fileID: 110763775}
   LightVolumeSetup: {fileID: 446951793}
 --- !u!114 &110763778
@@ -541,22 +521,28 @@ MonoBehaviour:
   - 4
   - 5
   - 0
-  PointLightVolumes: []
-  Resolution: 512
-  Format: 17
-  LightsBrightnessCutoff: 0.35
+  PointLightVolumes:
+  - {fileID: 0}
+  CookieResolution: 512
+  BrightnessCutoff: 0.35
+  ShadowResolution: 128
+  ShadowTextureFormat: 1
   BakingMode: 0
+  VolumeBitmask: 1
+  ProbeBitmask: 1
   Denoise: 1
   DilateInvalidProbes: 1
   DilationIterations: 1
   DilationBackfaceBias: 0.1
   FixLightProbesL1: 1
+  DownscaleVolumes: 0
   LightProbesBlending: 1
   SharpBounds: 1
   AutoUpdateVolumes: 1
+  AutoUpdateTextures: 1
   AdditiveMaxOverdraw: 4
-  DestroyInPlayMode: 1
-  DownscaleVolumes: 0
+  ForceSceneLighting: 0
+  DestroyInPlayMode: 0
   LightVolumeDataList:
   - Weight: 0
     LightVolumeInstance: {fileID: 42751781}
@@ -572,9 +558,9 @@ MonoBehaviour:
     LightVolumeInstance: {fileID: 1665989575}
   - Weight: 0
     LightVolumeInstance: {fileID: 449199669}
+  AtlasPostProcessors: []
   LightVolumeManager: {fileID: 446951794}
   _bakingModePrev: 0
-  IsLegacyUVWConverted: 1
 --- !u!114 &446951794
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -597,14 +583,20 @@ MonoBehaviour:
     PrefabModifications: []
     SerializationNodes: []
   _udonSharpBackingUdonBehaviour: {fileID: 446951797}
-  LightVolumeAtlas: {fileID: 11700000, guid: 7e660c03267fa1348ac5d7b4b3d85030, type: 2}
   LightVolumeAtlasBase: {fileID: 11700000, guid: 7e660c03267fa1348ac5d7b4b3d85030, type: 2}
-  AtlasPostProcessors: []
+  LightVolumeAtlas: {fileID: 11700000, guid: 7e660c03267fa1348ac5d7b4b3d85030, type: 2}
+  CustomTexturesWidth: 512
+  CustomTexturesHeight: 512
+  LightsBrightnessCutoff: 0.35
+  ShadowTexturesWidth: 128
+  ShadowTexturesHeight: 128
+  ShadowTextureFormat: 1
   LightProbesBlending: 1
   SharpBounds: 1
   AutoUpdateVolumes: 1
+  AutoUpdateTextures: 1
   AdditiveMaxOverdraw: 4
-  LightsBrightnessCutoff: 0.35
+  ForceSceneLighting: 0
   LightVolumeInstances:
   - {fileID: 449199669}
   - {fileID: 1665989575}
@@ -613,10 +605,15 @@ MonoBehaviour:
   - {fileID: 110763775}
   - {fileID: 1819868269}
   - {fileID: 42751781}
-  PointLightVolumeInstances: []
+  PointLightVolumeInstances:
+  - {fileID: 0}
   CustomTextures: {fileID: 0}
   CubemapsCount: 0
-  IsRangeDirty: 0
+  ShadowTextures: {fileID: 0}
+  ShadowMapsCount: 0
+  CubemapFaceMaterial: {fileID: 0}
+  HasAutoCustomTextureUpdates: 0
+  HasAutoShadowTextureUpdates: 0
 --- !u!4 &446951796
 Transform:
   m_ObjectHideFlags: 0
@@ -1556,15 +1553,14 @@ MonoBehaviour:
   useAssignedLayers: 0
   DynamicPrefabs: []
   DynamicMaterials:
-  - {fileID: 2100000, guid: e589b68a425774842a53ce06d0e402fc, type: 2}
-  - {fileID: 2100000, guid: 7c585b132fe0e0547943e27b6db50c43, type: 2}
-  - {fileID: 2100000, guid: 7cd8219b2223a14459b4fcc39e1e0edb, type: 2}
-  - {fileID: 2100000, guid: 64028782a454b1f46ae8c6b415024546, type: 2}
-  - {fileID: 2100000, guid: 39587cf21953c2a459a9f90d27b451ea, type: 2}
-  - {fileID: 2100000, guid: 12a5139a31f84464381c92aad42d14a9, type: 2}
   - {fileID: 2100000, guid: d102c05e48d614a489538849889bb3bd, type: 2}
   - {fileID: 2100000, guid: d05590ed9a5a6d143a1fcee2fc90b71b, type: 2}
   - {fileID: 2100000, guid: 71429951089f80e40815e5771e768997, type: 2}
+  - {fileID: 2100000, guid: 7c585b132fe0e0547943e27b6db50c43, type: 2}
+  - {fileID: 2100000, guid: 39587cf21953c2a459a9f90d27b451ea, type: 2}
+  - {fileID: 2100000, guid: 64028782a454b1f46ae8c6b415024546, type: 2}
+  - {fileID: 2100000, guid: 7cd8219b2223a14459b4fcc39e1e0edb, type: 2}
+  - {fileID: 2100000, guid: 12a5139a31f84464381c92aad42d14a9, type: 2}
   LightMapsNear: []
   LightMapsFar: []
   LightMode: 0
@@ -1800,7 +1796,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 2129285262713602144, guid: 39efc0387abc72a4fbe5aa958ca92df1, type: 3}
       propertyPath: m_IsActive
-      value: 0
+      value: 1
       objectReference: {fileID: 0}
     - target: {fileID: 2618398258993937561, guid: 39efc0387abc72a4fbe5aa958ca92df1, type: 3}
       propertyPath: m_IsActive
@@ -1978,6 +1974,7 @@ MonoBehaviour:
   currentlyHeldBy: {fileID: 0}
   pickupable: 1
   proximity: 2
+  version: 0
 --- !u!54 &1472140455
 Rigidbody:
   m_ObjectHideFlags: 0
@@ -2507,19 +2504,15 @@ MonoBehaviour:
     PrefabModifications: []
     SerializationNodes: []
   _udonSharpBackingUdonBehaviour: {fileID: 1665989579}
-  Color: {r: 1, g: 1, b: 1, a: 0}
-  Intensity: 1
   IsDynamic: 0
   IsAdditive: 0
-  InvBakedRotation: {x: 0, y: 0, z: 0, w: 1}
+  Color: {r: 1, g: 1, b: 1, a: 0}
+  Intensity: 1
+  InvLocalEdgeSmoothing: {x: 25, y: 22, z: 9.759556, w: 0}
   BoundsUvwMin0: {x: 0.014285714, y: 0.02631579, z: 0.96927375, w: 0.35714287}
   BoundsUvwMin1: {x: 0.4, y: 0.02631579, z: 0.9357542, w: 0.57894737}
   BoundsUvwMin2: {x: 0.014285714, y: 0.02631579, z: 0.9357542, w: 0.027932942}
-  BoundsUvwMinOcclusion: {x: 0, y: 0, z: 0, w: 1}
-  BoundsUvwMax0: {x: 0.37142858, y: 0.6052632, z: 0.9972067, w: 0}
-  BoundsUvwMax1: {x: 0.75714284, y: 0.6052632, z: 0.9636871, w: 0}
-  BoundsUvwMax2: {x: 0.37142858, y: 0.6052632, z: 0.9636871, w: 0}
-  InvLocalEdgeSmoothing: {x: 25, y: 22, z: 9.759556, w: 0}
+  InvBakedRotation: {x: 0, y: 0, z: 0, w: 1}
   InvWorldMatrix:
     e00: 0.4
     e01: 0
@@ -2537,14 +2530,11 @@ MonoBehaviour:
     e31: 0
     e32: 0
     e33: 1
-  RelativeRotation: {x: 0, y: 0, z: 0, w: 1}
   RelativeRotationRow0: {x: 1, y: 0, z: 0}
   RelativeRotationRow1: {x: 0, y: 1, z: 0}
   IsRotated: 0
-  BakeOcclusion: 0
-  IsInitialized: 1
   LightVolumeManager: {fileID: 446951794}
-  IsIterartedThrough: 0
+  IsActive: 1
 --- !u!4 &1665989577
 Transform:
   m_ObjectHideFlags: 0
@@ -2580,18 +2570,15 @@ MonoBehaviour:
   Texture0: {fileID: 11700000, guid: 7adbfeffd5b4b5d42b2f256d71b4e796, type: 2}
   Texture1: {fileID: 11700000, guid: 4be1b0d9b6971fc42be784889dbcdd69, type: 2}
   Texture2: {fileID: 11700000, guid: 4b7a1d3aa49261642b89c555478eeb2b, type: 2}
-  ShadowsTexture: {fileID: 0}
   Exposure: 0
   Shadows: 0
   Highlights: 0
   Bake: 1
-  PointLightShadows: 1
-  ShadowsScale: 1
-  BlurShadows: 1
+  ReserveUVSpace: 0
   AdaptiveResolution: 1
   VoxelsPerUnit: 10
   Resolution: {x: 25, y: 22, z: 10}
-  PreviewVoxels: 0
+  BakeryVolume: {fileID: 0}
   LightVolumeInstance: {fileID: 1665989575}
   LightVolumeSetup: {fileID: 446951793}
 --- !u!114 &1665989579
@@ -2746,6 +2733,151 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: b7fa80e7116296f4eb4f49ec1544ee22, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
+  renderSettingsBounces: 5
+  renderSettingsGISamples: 16
+  renderSettingsGIBackFaceWeight: 0
+  renderSettingsTileSize: 512
+  renderSettingsPriority: 2
+  renderSettingsTexelsPerUnit: 20
+  renderSettingsForceRefresh: 1
+  renderSettingsForceRebuildGeometry: 1
+  renderSettingsPerformRendering: 1
+  renderSettingsUserRenderMode: 0
+  renderSettingsDistanceShadowmask: 0
+  renderSettingsSettingsMode: 0
+  renderSettingsFixSeams: 1
+  renderSettingsDenoise: 1
+  renderSettingsDenoise2x: 0
+  renderSettingsEncode: 1
+  renderSettingsEncodeMode: 0
+  renderSettingsOverwriteWarning: 0
+  renderSettingsAutoAtlas: 1
+  renderSettingsUnwrapUVs: 1
+  renderSettingsForceDisableUnwrapUVs: 0
+  renderSettingsMaxAutoResolution: 4096
+  renderSettingsMinAutoResolution: 16
+  renderSettingsUnloadScenes: 1
+  renderSettingsAdjustSamples: 1
+  renderSettingsCheckOverlaps: 0
+  renderSettingsSkipOutOfBoundsUVs: 1
+  renderSettingsHackEmissiveBoost: 1
+  renderSettingsHackIndirectBoost: 1
+  renderSettingsTempPath: 
+  renderSettingsOutPath: BakeryLightmaps
+  renderSettingsUseScenePath: 0
+  renderSettingsHackAOIntensity: 0
+  renderSettingsHackAOSamples: 16
+  renderSettingsHackAOSofter: 0
+  renderSettingsHackAORadius: 1
+  renderSettingsShowAOSettings: 0
+  renderSettingsShowTasks: 1
+  renderSettingsShowTasks2: 0
+  renderSettingsShowPaths: 1
+  renderSettingsShowNet: 1
+  renderSettingsShowSettingsAsset: 0
+  renderSettingsShowAPV: 0
+  renderSettingsUseAPVSkyOcclusion: 0
+  renderSettingsOcclusionProbes: 0
+  renderSettingsTexelsPerMap: 0
+  renderSettingsTexelsColor: 1
+  renderSettingsTexelsMask: 1
+  renderSettingsTexelsDir: 1
+  renderSettingsShowDirWarning: 1
+  renderSettingsRenderDirMode: 0
+  renderSettingsShowCheckerSettings: 0
+  renderSettingsSamplesWarning: 1
+  renderSettingsSuppressPopups: 0
+  renderSettingsSectorWarning: 0
+  renderSettingsPrefabWarning: 1
+  renderSettingsSplitByScene: 0
+  renderSettingsSplitByTag: 0
+  renderSettingsUVPaddingMax: 0
+  renderSettingsUVPaddingPreserveIfExisted: 0
+  renderSettingsPostPacking: 1
+  renderSettingsHoleFilling: 0
+  renderSettingsBruteForce: 1
+  renderSettingsAlphaDithering: 0
+  renderSettingsBeepOnFinish: 0
+  renderSettingsExportTerrainAsHeightmap: 0
+  renderSettingsTraceInstances: 0
+  renderSettingsRTXMode: 0
+  renderSettingsLightProbeMode: 1
+  renderSettingsClientMode: 0
+  renderSettingsServerAddress: 127.0.0.1
+  renderSettingsUnwrapper: 0
+  renderSettingsDenoiserType: 100
+  renderSettingsExportTerrainTrees: 0
+  renderSettingsShowPerf: 1
+  renderSettingsSampleDiv: 1
+  renderSettingsAtlasPacker: 1
+  renderSettingsBatchPoints: 1
+  renderSettingsCompressVolumes: 0
+  renderSettingsBatchAreaLightSampleLimit: 0
+  renderSettingsSector: {fileID: 0}
+  renderSettingsAsset: {fileID: 0}
+  renderSettingsRTPVExport: 1
+  renderSettingsRTPVSceneView: 0
+  renderSettingsRTPVHDR: 0
+  renderSettingsRTPVWidth: 640
+  renderSettingsRTPVHeight: 360
+  renderSettingsRTPVExposure: 1
+  renderSettingsRemoveDuplicateLightmaps: 0
+  renderSettingsAdaptiveLightScale: 0
+  lastBakeTime: 0
+  enlightenWarningShown: 0
+  enlightenWarningShown2: 0
+  uniqueLights: []
+  implicitGroups: []
+  implicitGroupedObjects: []
+  bounds: []
+  hasEmissive: 
+  uvBuffOffsets: 
+  uvBuffLengths: 
+  uvSrcBuff: []
+  uvDestBuff: []
+  lmrIndicesOffsets: 
+  lmrIndicesLengths: 
+  lmrIndicesBuff: 
+  lmGroupLODResFlags: 
+  lmGroupMinLOD: 
+  lmGroupLODMatrix: 
+  serverGetFileList: []
+  lightmapHasColor: 
+  lightmapHasMask: 
+  lightmapHasDir: 
+  lightmapHasRNM: 
+  lights: []
+  modifiedAssetPathList: []
+  modifiedAssets: []
+  bakedRenderers: []
+  nonBakedRenderers: []
+  bakedLights: []
+  bakedRenderersTerrain: []
+  maps: []
+  masks: []
+  dirMaps: []
+  rnmMaps0: []
+  rnmMaps1: []
+  rnmMaps2: []
+  mapsMode: 
+  bakedIDs: 
+  bakedScaleOffset: []
+  bakedVertexOffset: 
+  bakedVertexColorMesh: []
+  bakedLightChannels: 
+  bakedIDsTerrain: 
+  bakedScaleOffsetTerrain: []
+  assetList: []
+  uvOverlapAssetList: 
+  idremap: 
+  usesRealtimeGI: 0
+  emptyDirectionTex: {fileID: 0}
+  anyVolumes: 0
+  compressedVolumes: 0
+  sectors: []
+  prevBakedProbes: []
+  prevBakedProbePos: []
+  refreshOnAwakeAndStart: 1
 --- !u!4 &1776304555
 Transform:
   m_ObjectHideFlags: 1
@@ -2817,19 +2949,15 @@ MonoBehaviour:
     PrefabModifications: []
     SerializationNodes: []
   _udonSharpBackingUdonBehaviour: {fileID: 1819868272}
-  Color: {r: 1, g: 1, b: 1, a: 0}
-  Intensity: 1
   IsDynamic: 0
   IsAdditive: 0
-  InvBakedRotation: {x: 0, y: 0, z: 0, w: 1}
+  Color: {r: 1, g: 1, b: 1, a: 0}
+  Intensity: 1
+  InvLocalEdgeSmoothing: {x: 40, y: 11, z: 40, w: 0}
   BoundsUvwMin0: {x: 0.014285714, y: 0.02631579, z: 0.58938545, w: 0.8571428}
   BoundsUvwMin1: {x: 0.014285714, y: 0.5, z: 0.58938545, w: 0.42105263}
   BoundsUvwMin2: {x: 0.014285714, y: 0.02631579, z: 0.76256984, w: 0.16759777}
-  BoundsUvwMinOcclusion: {x: 0, y: 0, z: 0, w: 1}
-  BoundsUvwMax0: {x: 0.87142855, y: 0.4473684, z: 0.7569832, w: 0}
-  BoundsUvwMax1: {x: 0.87142855, y: 0.92105263, z: 0.7569832, w: 0}
-  BoundsUvwMax2: {x: 0.87142855, y: 0.4473684, z: 0.9301676, w: 0}
-  InvLocalEdgeSmoothing: {x: 40, y: 11, z: 40, w: 0}
+  InvBakedRotation: {x: 0, y: 0, z: 0, w: 1}
   InvWorldMatrix:
     e00: 0.1
     e01: 0
@@ -2847,14 +2975,11 @@ MonoBehaviour:
     e31: 0
     e32: 0
     e33: 1
-  RelativeRotation: {x: 0, y: 0, z: 0, w: 1}
   RelativeRotationRow0: {x: 1, y: 0, z: 0}
   RelativeRotationRow1: {x: 0, y: 1, z: 0}
   IsRotated: 0
-  BakeOcclusion: 0
-  IsInitialized: 1
   LightVolumeManager: {fileID: 446951794}
-  IsIterartedThrough: 0
+  IsActive: 1
 --- !u!114 &1819868270
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -2875,18 +3000,15 @@ MonoBehaviour:
   Texture0: {fileID: 11700000, guid: 0e65c37b8700b8c4b954bea61c25489a, type: 2}
   Texture1: {fileID: 11700000, guid: 597866e8c10019a409729aaebd6e4ea3, type: 2}
   Texture2: {fileID: 11700000, guid: 17f0ed40c5ecf4342876ea0041316818, type: 2}
-  ShadowsTexture: {fileID: 0}
   Exposure: 0
   Shadows: 0
   Highlights: 0
   Bake: 1
-  PointLightShadows: 1
-  ShadowsScale: 1
-  BlurShadows: 1
+  ReserveUVSpace: 0
   AdaptiveResolution: 1
   VoxelsPerUnit: 6
   Resolution: {x: 60, y: 16, z: 60}
-  PreviewVoxels: 0
+  BakeryVolume: {fileID: 0}
   LightVolumeInstance: {fileID: 1819868269}
   LightVolumeSetup: {fileID: 446951793}
 --- !u!114 &1819868272
@@ -2970,19 +3092,15 @@ MonoBehaviour:
     PrefabModifications: []
     SerializationNodes: []
   _udonSharpBackingUdonBehaviour: {fileID: 1900080574}
-  Color: {r: 1, g: 1, b: 1, a: 0}
-  Intensity: 1
   IsDynamic: 0
   IsAdditive: 0
-  InvBakedRotation: {x: 0, y: 0, z: 0, w: 1}
+  Color: {r: 1, g: 1, b: 1, a: 0}
+  Intensity: 1
+  InvLocalEdgeSmoothing: {x: 32, y: 16, z: 32, w: 0}
   BoundsUvwMin0: {x: 0.4, y: 0.5, z: 0.88547486, w: 0.22857144}
   BoundsUvwMin1: {x: 0.4, y: 0.65789473, z: 0.9357542, w: 0.21052629}
   BoundsUvwMin2: {x: 0.4, y: 0.5, z: 0.82402235, w: 0.044692755}
-  BoundsUvwMinOcclusion: {x: 0, y: 0, z: 0, w: 1}
-  BoundsUvwMax0: {x: 0.62857145, y: 0.7105263, z: 0.9301676, w: 0}
-  BoundsUvwMax1: {x: 0.62857145, y: 0.8684211, z: 0.98044693, w: 0}
-  BoundsUvwMax2: {x: 0.62857145, y: 0.7105263, z: 0.8687151, w: 0}
-  InvLocalEdgeSmoothing: {x: 32, y: 16, z: 32, w: 0}
+  InvBakedRotation: {x: 0, y: 0, z: 0, w: 1}
   InvWorldMatrix:
     e00: 0.125
     e01: 0
@@ -3000,14 +3118,11 @@ MonoBehaviour:
     e31: 0
     e32: 0
     e33: 1
-  RelativeRotation: {x: 0, y: 0, z: 0, w: 1}
   RelativeRotationRow0: {x: 1, y: 0, z: 0}
   RelativeRotationRow1: {x: 0, y: 1, z: 0}
   IsRotated: 0
-  BakeOcclusion: 0
-  IsInitialized: 1
   LightVolumeManager: {fileID: 446951794}
-  IsIterartedThrough: 0
+  IsActive: 1
 --- !u!114 &1900080572
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -3028,18 +3143,15 @@ MonoBehaviour:
   Texture0: {fileID: 11700000, guid: d77214637bf96a740877805bee2ae039, type: 2}
   Texture1: {fileID: 11700000, guid: d483636375fe1a3449a9a4fda407a426, type: 2}
   Texture2: {fileID: 11700000, guid: a15c1613de40f4b4f9a030629c2b063b, type: 2}
-  ShadowsTexture: {fileID: 0}
   Exposure: 0
   Shadows: 0
   Highlights: 0
   Bake: 1
-  PointLightShadows: 1
-  ShadowsScale: 1
-  BlurShadows: 1
+  ReserveUVSpace: 0
   AdaptiveResolution: 1
   VoxelsPerUnit: 2
   Resolution: {x: 16, y: 8, z: 16}
-  PreviewVoxels: 0
+  BakeryVolume: {fileID: 0}
   LightVolumeInstance: {fileID: 1900080571}
   LightVolumeSetup: {fileID: 446951793}
 --- !u!114 &1900080574
@@ -3248,19 +3360,15 @@ MonoBehaviour:
     PrefabModifications: []
     SerializationNodes: []
   _udonSharpBackingUdonBehaviour: {fileID: 1964208430}
-  Color: {r: 1, g: 1, b: 1, a: 0}
-  Intensity: 1
   IsDynamic: 0
   IsAdditive: 0
-  InvBakedRotation: {x: 0, y: 0, z: 0, w: 1}
+  Color: {r: 1, g: 1, b: 1, a: 0}
+  Intensity: 1
+  InvLocalEdgeSmoothing: {x: 20, y: 17.5, z: 9.75, w: 0}
   BoundsUvwMin0: {x: 0.014285714, y: 0.5, z: 0.88547486, w: 0.2857143}
   BoundsUvwMin1: {x: 0.4, y: 0.02631579, z: 0.96927375, w: 0.4736842}
   BoundsUvwMin2: {x: 0.4, y: 0.5, z: 0.76256984, w: 0.027932942}
-  BoundsUvwMinOcclusion: {x: 0, y: 0, z: 0, w: 1}
-  BoundsUvwMax0: {x: 0.3, y: 0.9736842, z: 0.9134078, w: 0}
-  BoundsUvwMax1: {x: 0.6857143, y: 0.5, z: 0.9972067, w: 0}
-  BoundsUvwMax2: {x: 0.6857143, y: 0.9736842, z: 0.7905028, w: 0}
-  InvLocalEdgeSmoothing: {x: 20, y: 17.5, z: 9.75, w: 0}
+  InvBakedRotation: {x: 0, y: 0, z: 0, w: 1}
   InvWorldMatrix:
     e00: 0.5
     e01: 0
@@ -3278,14 +3386,11 @@ MonoBehaviour:
     e31: 0
     e32: 0
     e33: 1
-  RelativeRotation: {x: 0, y: 0, z: 0, w: 1}
   RelativeRotationRow0: {x: 1, y: 0, z: 0}
   RelativeRotationRow1: {x: 0, y: 1, z: 0}
   IsRotated: 0
-  BakeOcclusion: 0
-  IsInitialized: 1
   LightVolumeManager: {fileID: 446951794}
-  IsIterartedThrough: 0
+  IsActive: 1
 --- !u!114 &1964208428
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -3306,18 +3411,15 @@ MonoBehaviour:
   Texture0: {fileID: 11700000, guid: 49d454ed6e8b5a640a5950f4e523b8e8, type: 2}
   Texture1: {fileID: 11700000, guid: d911867c68a54b349a7f57cb9204f412, type: 2}
   Texture2: {fileID: 11700000, guid: 23a8ebdb2fd773e42b8da6192d78b1e7, type: 2}
-  ShadowsTexture: {fileID: 0}
   Exposure: 0
   Shadows: 0
   Highlights: 0
   Bake: 1
-  PointLightShadows: 1
-  ShadowsScale: 1
-  BlurShadows: 1
+  ReserveUVSpace: 0
   AdaptiveResolution: 1
   VoxelsPerUnit: 10
   Resolution: {x: 20, y: 18, z: 10}
-  PreviewVoxels: 0
+  BakeryVolume: {fileID: 0}
   LightVolumeInstance: {fileID: 1964208427}
   LightVolumeSetup: {fileID: 446951793}
 --- !u!114 &1964208430

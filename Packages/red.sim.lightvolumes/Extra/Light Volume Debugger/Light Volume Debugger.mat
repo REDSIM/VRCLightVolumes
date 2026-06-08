@@ -33,12 +33,12 @@ Material:
     - _DebugAutoVolumeID: 0
     - _DebugBoundsThickness: 0.02
     - _DebugDrawMode: 0
-    - _DebugLightIconCutoff: 0.363
+    - _DebugLightIconCutoff: 0.5
     - _DebugLightIconSize: 0.5
     - _DebugMeshCardCount: 163830
-    - _DebugSphereRadius: 0.605
-    - _DebugVisibleFraction: 1
-    - _DebugVolumeID: 1
+    - _DebugSphereRadius: 0
+    - _DebugVisibleFraction: 0
+    - _DebugVolumeID: 0
     m_Colors:
     - _DebugAdditiveBoundsColor: {r: 1, g: 0.5, b: 0, a: 1}
     - _DebugAreaLightRectColor: {r: 1, g: 1, b: 0, a: 1}

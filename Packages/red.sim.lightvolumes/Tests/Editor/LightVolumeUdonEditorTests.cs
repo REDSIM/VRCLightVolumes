@@ -830,6 +830,46 @@ namespace VRCLightVolumes.Tests {
             Assert.That((float)bakeFarClipField.GetValue(baker), Is.EqualTo(3).Within(Epsilon));
         }
 
+        // Verifies runtime-published FarClip remains metadata and does not become a stale manual override.
+        [Test]
+        public void RuntimeShadowBakerRefreshesPublishedFarClipAfterRangeChanges() {
+            LightVolumeManager manager = CreateManager("Runtime Shadow Published Far Clip Manager", false);
+            PointLightVolumeInstance point = CreatePointLight(manager, "Runtime Shadow Published Far Clip Light", true);
+            point.SquaredRange = 64;
+            point.FarClip = 0;
+
+            GameObject bakerObject = CreateGameObject("Runtime Shadow Published Far Clip Baker", true);
+            PointLightShadowRuntimeBaker baker = bakerObject.AddComponent<PointLightShadowRuntimeBaker>();
+            baker.TargetPointLightVolume = point;
+            AddRuntimeShadowCamera(baker);
+
+            MethodInfo cacheMethod = typeof(PointLightShadowRuntimeBaker).GetMethod("CacheRuntimeReferences", _lifecycleMethodFlags);
+            MethodInfo refreshSettingsMethod = typeof(PointLightShadowRuntimeBaker).GetMethod("RefreshBakeSettings", _lifecycleMethodFlags);
+            MethodInfo applyMethod = typeof(PointLightShadowRuntimeBaker).GetMethod("ApplyTargetShadowSource", _lifecycleMethodFlags);
+            FieldInfo bakeFarClipField = typeof(PointLightShadowRuntimeBaker).GetField("_bakeFarClip", _lifecycleMethodFlags);
+            Assert.That(cacheMethod, Is.Not.Null);
+            Assert.That(refreshSettingsMethod, Is.Not.Null);
+            Assert.That(applyMethod, Is.Not.Null);
+            Assert.That(bakeFarClipField, Is.Not.Null);
+
+            cacheMethod.Invoke(baker, null);
+            point.SquaredRange = 64;
+            point.IsRangeDirty = false;
+            refreshSettingsMethod.Invoke(baker, null);
+            float firstFarClip = (float)bakeFarClipField.GetValue(baker);
+            Assert.That(firstFarClip, Is.EqualTo(8).Within(Epsilon));
+            Assert.That((bool)applyMethod.Invoke(baker, new object[] { Vector3.zero, firstFarClip, 0.1f }), Is.True);
+            Assert.That(point.FarClip, Is.EqualTo(8).Within(Epsilon));
+
+            point.SquaredRange = 4;
+            point.IsRangeDirty = false;
+            refreshSettingsMethod.Invoke(baker, null);
+            float secondFarClip = (float)bakeFarClipField.GetValue(baker);
+            Assert.That(secondFarClip, Is.EqualTo(2).Within(Epsilon));
+            Assert.That((bool)applyMethod.Invoke(baker, new object[] { Vector3.zero, secondFarClip, 0.1f }), Is.True);
+            Assert.That(point.FarClip, Is.EqualTo(2).Within(Epsilon));
+        }
+
         // Verifies realtime EVSM baking uses the target light bias so it matches editor shadow bakes.
         [Test]
         public void RuntimeShadowBakerUsesTargetBakeBias() {

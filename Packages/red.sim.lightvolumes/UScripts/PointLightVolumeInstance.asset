@@ -2461,7 +2461,8 @@ MonoBehaviour:
     - Name: tooltip
       Entry: 1
       Data: Hardens shadows near the contact areas. Can produce artefacts, so use
-        with caution! Requires rebaking.
+        with caution! Requires rebaking. More Performant when it's set to 0 in real-time
+        mode.
     - Name: 
       Entry: 8
       Data: 

@@ -87,6 +87,7 @@ namespace VRCLightVolumes {
         private float _bakeNearClip = 0.01f;
         private float _bakeFieldOfView = 90f;
         private float _bakeTanHalfFov = 1f;
+        private float _publishedFarClip = 0f;
         private float _bakeBias = 0f;
         private float _bakeBlur = 0f;
         private float _bakeBlurDepth = 0f;
@@ -100,6 +101,7 @@ namespace VRCLightVolumes {
         private bool _cycleUseDirectOutput = false;
         private bool _useCubemapShadow = true;
         private bool _useBlur = false;
+        private bool _hasPublishedFarClip = false;
         private Vector3 _cycleBakePosition = Vector3.zero;
         private Quaternion _cycleBakeRotation = Quaternion.identity;
 
@@ -152,7 +154,9 @@ namespace VRCLightVolumes {
             CacheRuntimeReferences();
             RefreshBakeSettings();
             ConfigureCamera(_bakeFarClip, _bakeNearClip, _bakeCullingMask, _bakeFieldOfView);
-            RunInitialBake(false);
+#if !UDONSHARP
+            if (BakeOnEnable || Realtime) StartBakeLoopCycle();
+#endif
         }
 
         // Starts deferred Udon baking when this behaviour becomes active
@@ -163,7 +167,9 @@ namespace VRCLightVolumes {
             // The shared manager texture can be reinitialized while this baker is disabled without changing the RenderTexture reference
             _hasCompletedFullBake = false;
             _deferBlurUntilFullCycle = true;
-            RunInitialBake(true);
+#if UDONSHARP
+            if (BakeOnEnable || Realtime) StartBakeLoopCycle();
+#endif
         }
 
         // Stops pending realtime work from rescheduling itself
@@ -200,7 +206,12 @@ namespace VRCLightVolumes {
             if (_useDirectOutput && _manager != null) {
                 _currentOutputTexture = _manager.ShadowTextures;
                 int shadowId = _target != null ? (int)_target.ShadowMapID : -1;
-                _currentOutputBaseSlice = GetOutputBaseSlice(shadowId);
+                if (shadowId < 0) _currentOutputBaseSlice = 0;
+                else if (_useCubemapShadow) _currentOutputBaseSlice = shadowId * 6;
+                else {
+                    int cubemapCount = _manager.ShadowCubemapsCount;
+                    _currentOutputBaseSlice = cubemapCount * 6 + shadowId - cubemapCount;
+                }
             } else {
                 _currentOutputTexture = _shadowTexture;
                 _currentOutputBaseSlice = 0;
@@ -245,17 +256,6 @@ namespace VRCLightVolumes {
 
 #endif
 
-        // Starts the initial bake in the event that is correct for the current runtime backend
-        private void RunInitialBake(bool calledFromEnable) {
-#if UDONSHARP
-            if (!calledFromEnable) return;
-            if (BakeOnEnable || Realtime) StartBakeLoopCycle();
-#else
-            if (calledFromEnable) return;
-            if (BakeOnEnable || Realtime) StartBakeLoopCycle();
-#endif
-        }
-
         // Starts one shadow bake loop cycle if one is not already in progress
         private void StartBakeLoopCycle() {
             if (_bakeLoopRemainingFaces <= 0) {
@@ -298,15 +298,27 @@ namespace VRCLightVolumes {
 
             if (!EnsureDepthTexture(_bakeResolution)) return false;
             if (_useDirectOutput) {
-                if (!EnsureRegistrationTexture(format, _bakeSliceCount)) return false;
+                _registrationTexture = EnsureOwnedArrayTexture(_registrationTexture, format, 1, _bakeSliceCount, FilterMode.Point);
+                if (_registrationTexture == null) return false;
                 if (_shadowTexture != null) {
                     ReleaseRuntimeRenderTexture(_shadowTexture);
                     _shadowTexture = null;
                 }
-            } else if (!EnsureShadowTexture(format, _bakeResolution, _bakeSliceCount)) return false;
+            } else {
+                _shadowTexture = EnsureOwnedArrayTexture(_shadowTexture, format, _bakeResolution, _bakeSliceCount, FilterMode.Bilinear);
+                if (_shadowTexture == null) return false;
+            }
 
             if (_useBlur) {
-                if (!EnsureBlurTextures(format, _bakeResolution, _bakeSliceCount)) return false;
+                bool blurTextureCompatible = _blurTempTexture != null && _blurTempTexture.width == _bakeResolution && _blurTempTexture.height == _bakeResolution && _blurTempTexture.dimension == TextureDimension.Tex2DArray && _blurTempTexture.volumeDepth == _bakeSliceCount && !_blurTempTexture.useMipMap && _blurTempTexture.filterMode == FilterMode.Bilinear;
+#if !COMPILER_UDONSHARP
+                blurTextureCompatible = blurTextureCompatible && _blurTempTexture.format == format && !_blurTempTexture.autoGenerateMips;
+#endif
+                if (!blurTextureCompatible) {
+                    ReleaseBlurTempTexture();
+                    _blurTempTexture = CreateArrayTexture(format, _bakeResolution, _bakeSliceCount, FilterMode.Bilinear);
+                }
+                if (_blurTempTexture == null) return false;
             } else {
                 if (_blurTempTexture != null) ReleaseBlurTempTexture();
             }
@@ -326,7 +338,15 @@ namespace VRCLightVolumes {
                 _completedOutputTexture = null;
                 _completedOutputBaseSlice = -1;
                 _cycleBakeSettingsValid = false;
-                if (_target != null) _target.IsRangeDirty = true;
+                _publishedFarClip = 0f;
+                _hasPublishedFarClip = false;
+                if (_target != null) {
+#if UDONSHARP
+                    _target.SetProgramVariable("IsRangeDirty", true);
+#else
+                    _target.IsRangeDirty = true;
+#endif
+                }
             } else if (_target != null && _manager != _target.LightVolumeManager) {
                 _manager = _target.LightVolumeManager;
                 _shadowSourceInitialized = false;
@@ -335,7 +355,11 @@ namespace VRCLightVolumes {
                 _completedOutputTexture = null;
                 _completedOutputBaseSlice = -1;
                 _cycleBakeSettingsValid = false;
+#if UDONSHARP
+                _target.SetProgramVariable("IsRangeDirty", true);
+#else
                 _target.IsRangeDirty = true;
+#endif
             }
 
             if (ShadowCamera != null) {
@@ -364,7 +388,9 @@ namespace VRCLightVolumes {
             _bakeBias = _target.Bias;
             _bakeBlur = _target.Blur;
             _bakeBlurDepth = _target.ContactHardening;
-            _bakeFarClip = _target.FarClip > 0f ? _target.FarClip : Mathf.Sqrt(_target.SquaredRange);
+            float targetFarClip = _target.FarClip;
+            bool useTargetFarClip = targetFarClip > 0f && (!_hasPublishedFarClip || Mathf.Abs(targetFarClip - _publishedFarClip) > 0.0001f);
+            _bakeFarClip = useTargetFarClip ? Mathf.Max(targetFarClip, 0.0001f) : Mathf.Sqrt(Mathf.Max(_target.SquaredRange, 0.000001f));
             bool useCubemapShadow = _target.LightType != 1 || _target.ShadowMapUsesCubemap; // 1: spot
             int bakeSliceCount = useCubemapShadow ? 6 : 1;
             if (_useCubemapShadow != useCubemapShadow || _bakeSliceCount != bakeSliceCount) {
@@ -396,13 +422,26 @@ namespace VRCLightVolumes {
             if (_target.IsDynamic && _targetTransform != null) {
                 Vector3 scale = _targetTransform.lossyScale;
                 if (_target.LightType == 2) { // 2: area
-                    _target.Width = Mathf.Max(Mathf.Abs(scale.x), 0.001f);
-                    _target.Height = Mathf.Max(Mathf.Abs(scale.y), 0.001f);
+                    float width = Mathf.Max(Mathf.Abs(scale.x), 0.001f);
+                    float height = Mathf.Max(Mathf.Abs(scale.y), 0.001f);
+#if UDONSHARP
+                    _target.SetProgramVariable("Width", width);
+                    _target.SetProgramVariable("Height", height);
+#else
+                    _target.Width = width;
+                    _target.Height = height;
+#endif
                 }
                 float averageScale = (scale.x + scale.y + scale.z) * 0.3333333333f;
-                _target.SquaredScale = averageScale * averageScale;
+                float squaredScale = averageScale * averageScale;
+#if UDONSHARP
+                _target.SetProgramVariable("SquaredScale", squaredScale);
+#else
+                _target.SquaredScale = squaredScale;
+#endif
             }
             float cutoff = _manager != null ? _manager.LightsBrightnessCutoff : 0.35f;
+            float squaredRange;
             if (_target.LightType == 2) { // 2: area
                 float minSolidAngle = Mathf.Clamp(cutoff / (Mathf.Max(_target.Color.r, Mathf.Max(_target.Color.g, _target.Color.b)) * _target.Intensity * Mathf.PI), -Mathf.PI * 2f, Mathf.PI * 2f);
                 float width = Mathf.Abs(_target.SquaredScale / _target.Width);
@@ -415,20 +454,32 @@ namespace VRCLightVolumes {
                 float tangentSquared = tangent * tangent;
                 float tangentHalfExtent = tangentSquared * halfExtentSquared;
                 float discriminant = Mathf.Sqrt(tangentHalfExtent * tangentHalfExtent + 4.0f * tangentSquared * area * area);
-                _target.SquaredRange = (discriminant - tangentHalfExtent) * 0.125f / tangentSquared;
+                squaredRange = (discriminant - tangentHalfExtent) * 0.125f / tangentSquared;
             } else if (_target.ProjectionMode == 1) { // 1: LUT
-                _target.SquaredRange = Mathf.Abs(_target.SquaredScale / _target.InverseSquaredRange);
+                squaredRange = Mathf.Abs(_target.SquaredScale / _target.InverseSquaredRange);
             } else {
                 float maxColor = Mathf.Max(_target.Color.r, Mathf.Max(_target.Color.g, _target.Color.b));
                 float squaredSize = Mathf.Abs(_target.SquaredScale * _target.LightSourceSize * _target.LightSourceSize);
-                _target.SquaredRange = Mathf.Max(Mathf.PI * 2f * maxColor * Mathf.Abs(_target.Intensity) / (cutoff * cutoff) - 1f, 0f) * squaredSize;
+                squaredRange = Mathf.Max(Mathf.PI * 2f * maxColor * Mathf.Abs(_target.Intensity) / (cutoff * cutoff) - 1f, 0f) * squaredSize;
             }
+#if UDONSHARP
+            _target.SetProgramVariable("SquaredRange", squaredRange);
+            _target.SetProgramVariable("IsRangeDirty", false);
+#else
+            _target.SquaredRange = squaredRange;
             _target.IsRangeDirty = false;
+#endif
         }
 
         // Creates or validates the camera depth render target
         private bool EnsureDepthTexture(int resolution) {
-            if (IsDepthTextureCompatible(_depthTexture, resolution)) return true;
+            if (_depthTexture != null && _depthTexture.width == resolution && _depthTexture.height == resolution && _depthTexture.dimension == TextureDimension.Tex2D && !_depthTexture.useMipMap && _depthTexture.filterMode == FilterMode.Point) {
+#if COMPILER_UDONSHARP
+                return true;
+#else
+                if (_depthTexture.format == RenderTextureFormat.Depth && !_depthTexture.autoGenerateMips) return true;
+#endif
+            }
             ReleaseRuntimeRenderTexture(_depthTexture);
             _depthTexture = new RenderTexture(resolution, resolution, 32, RenderTextureFormat.Depth, RenderTextureReadWrite.Linear);
             _depthTexture.dimension = TextureDimension.Tex2D;
@@ -437,44 +488,22 @@ namespace VRCLightVolumes {
             _depthTexture.wrapMode = TextureWrapMode.Clamp;
             _depthTexture.filterMode = FilterMode.Point;
             _depthTexture.anisoLevel = 0;
-            SetRuntimeTextureHideFlags(_depthTexture);
+#if !COMPILER_UDONSHARP
+            _depthTexture.hideFlags = HideFlags.HideAndDontSave;
+#endif
             _depthTexture.Create();
             return _depthTexture != null;
         }
 
-        // Checks whether the current camera depth render target can be reused
-        private bool IsDepthTextureCompatible(RenderTexture texture, int resolution) {
-            if (texture == null) return false;
-            if (texture.width != resolution || texture.height != resolution) return false;
-            if (texture.dimension != TextureDimension.Tex2D) return false;
-            if (texture.useMipMap || texture.filterMode != FilterMode.Point) return false;
-            return RuntimeTextureFormatMatches(texture, RenderTextureFormat.Depth);
-        }
-
-        // Creates or validates the local EVSM output
-        private bool EnsureShadowTexture(RenderTextureFormat format, int resolution, int sliceCount) {
-            _shadowTexture = EnsureOwnedArrayTexture(_shadowTexture, format, resolution, sliceCount, FilterMode.Bilinear);
-            return _shadowTexture != null;
-        }
-
-        // Creates or validates the tiny texture used only to reserve a manager shadow ID for direct output
-        private bool EnsureRegistrationTexture(RenderTextureFormat format, int sliceCount) {
-            _registrationTexture = EnsureOwnedArrayTexture(_registrationTexture, format, 1, sliceCount, FilterMode.Point);
-            return _registrationTexture != null;
-        }
-
-        // Creates or validates blur scratch textures
-        private bool EnsureBlurTextures(RenderTextureFormat format, int resolution, int sliceCount) {
-            if (!IsArrayTextureCompatible(_blurTempTexture, format, resolution, sliceCount, FilterMode.Bilinear)) {
-                ReleaseBlurTempTexture();
-                _blurTempTexture = CreateArrayTexture(format, resolution, sliceCount, FilterMode.Bilinear);
-            }
-            return _blurTempTexture != null;
-        }
-
         // Reuses or recreates a locally-owned texture array
         private RenderTexture EnsureOwnedArrayTexture(RenderTexture texture, RenderTextureFormat format, int resolution, int sliceCount, FilterMode filterMode) {
-            if (IsArrayTextureCompatible(texture, format, resolution, sliceCount, filterMode)) return texture;
+            if (texture != null && texture.width == resolution && texture.height == resolution && texture.dimension == TextureDimension.Tex2DArray && texture.volumeDepth == sliceCount && !texture.useMipMap && texture.filterMode == filterMode) {
+#if COMPILER_UDONSHARP
+                return texture;
+#else
+                if (texture.format == format && !texture.autoGenerateMips) return texture;
+#endif
+            }
             ReleaseRuntimeRenderTexture(texture);
             return CreateArrayTexture(format, resolution, sliceCount, filterMode);
         }
@@ -489,18 +518,11 @@ namespace VRCLightVolumes {
             texture.wrapMode = TextureWrapMode.Clamp;
             texture.filterMode = filterMode;
             texture.anisoLevel = 0;
-            SetRuntimeTextureHideFlags(texture);
+#if !COMPILER_UDONSHARP
+            texture.hideFlags = HideFlags.HideAndDontSave;
+#endif
             texture.Create();
             return texture;
-        }
-
-        // Checks whether a texture array matches the requested layout
-        private bool IsArrayTextureCompatible(RenderTexture texture, RenderTextureFormat format, int resolution, int sliceCount, FilterMode filterMode) {
-            if (texture == null) return false;
-            if (texture.width != resolution || texture.height != resolution) return false;
-            if (texture.dimension != TextureDimension.Tex2DArray || texture.volumeDepth != sliceCount) return false;
-            if (texture.useMipMap || texture.filterMode != filterMode) return false;
-            return RuntimeTextureFormatMatches(texture, format);
         }
 
         // Configures the depth camera for one shadow render
@@ -534,14 +556,6 @@ namespace VRCLightVolumes {
             _configuredFieldOfView = safeFieldOfView;
         }
 
-        // Resolves the first destination slice for the active shadow layout
-        private int GetOutputBaseSlice(int shadowId) {
-            if (shadowId < 0) return 0;
-            if (_useCubemapShadow) return shadowId * 6;
-            int cubemapCount = _manager != null ? _manager.ShadowCubemapsCount : 0;
-            return cubemapCount * 6 + shadowId - cubemapCount;
-        }
-
         // Registers the output texture and refreshes manager metadata before a bake writes pixels
         private bool PrepareOutput(Vector3 bakePosition, float farClip, float bias, bool useDirectOutput) {
             bool shadowDataChanged = ApplyTargetShadowSourceInternal(bakePosition, farClip, bias, useDirectOutput);
@@ -565,13 +579,6 @@ namespace VRCLightVolumes {
         }
 
         // Updates the target light shadow source and returns whether shader-side metadata changed
-        private bool ApplyTargetShadowSource(Vector3 bakePosition, float farClip, float bias) {
-            if (!CacheRuntimeReferences()) return false;
-            RefreshBakeSettings();
-            return ApplyTargetShadowSourceInternal(bakePosition, farClip, bias, _useDirectOutput);
-        }
-
-        // Updates the target light shadow source and returns whether shader-side metadata changed
         private bool ApplyTargetShadowSourceInternal(Vector3 bakePosition, float farClip, float bias, bool useDirectOutput) {
             Texture sourceTexture = useDirectOutput ? _registrationTexture : _shadowTexture;
             bool sourceIsCubemap = sourceTexture != null && sourceTexture.dimension == TextureDimension.Cube;
@@ -579,29 +586,75 @@ namespace VRCLightVolumes {
             bool sourceUsesCubemap = _useCubemapShadow;
             bool sourceChanged = _target.ShadowMapID < 0 || _target.ShadowMapTexture != sourceTexture || _target.ShadowMapMaterial != null || _target.AutoUpdateShadowMap || _target.ShadowMapTextureIsCubemap != sourceIsCubemap || _target.ShadowMapTextureHasDepthSlices != sourceHasSlices || _target.ShadowMapUsesCubemap != sourceUsesCubemap;
             bool bakePositionChanged = _target.ShadowBakePosition != bakePosition;
-            bool bakeRotationChanged = _target.ShadowBakeRotation != _targetTransform.rotation;
+            Quaternion bakeRotation = _targetTransform.rotation;
+            bool bakeRotationChanged = _target.ShadowBakeRotation != bakeRotation;
             bool metadataChanged = sourceChanged || _target.FarClip != farClip || (_target.WorldSpaceShadows && (bakePositionChanged || bakeRotationChanged));
 
-            if (_target.ShadowMapID < 0) _target.ShadowMapID = 0;
+            if (_target.ShadowMapID < 0) {
+#if UDONSHARP
+                _target.SetProgramVariable("ShadowMapID", 0f);
+#else
+                _target.ShadowMapID = 0f;
+#endif
+            }
             if (sourceChanged) {
+#if UDONSHARP
+                _target.SetProgramVariable("ShadowMapTexture", sourceTexture);
+                _target.SetProgramVariable("ShadowMapMaterial", null);
+                _target.SetProgramVariable("AutoUpdateShadowMap", false);
+                _target.SetProgramVariable("ShadowMapTextureIsCubemap", sourceIsCubemap);
+                _target.SetProgramVariable("ShadowMapTextureHasDepthSlices", sourceHasSlices);
+                _target.SetProgramVariable("ShadowMapUsesCubemap", sourceUsesCubemap);
+#else
                 _target.ShadowMapTexture = sourceTexture;
                 _target.ShadowMapMaterial = null;
                 _target.AutoUpdateShadowMap = false;
                 _target.ShadowMapTextureIsCubemap = sourceIsCubemap;
                 _target.ShadowMapTextureHasDepthSlices = sourceHasSlices;
                 _target.ShadowMapUsesCubemap = sourceUsesCubemap;
+#endif
                 _shadowSourceInitialized = false;
             }
-            if (_target.Bias != bias) _target.Bias = bias;
-            if (_target.FarClip != farClip) _target.FarClip = farClip;
-            if (bakePositionChanged) _target.ShadowBakePosition = bakePosition;
-            if (bakeRotationChanged) _target.ShadowBakeRotation = _targetTransform.rotation;
+            if (_target.Bias != bias) {
+#if UDONSHARP
+                _target.SetProgramVariable("Bias", bias);
+#else
+                _target.Bias = bias;
+#endif
+            }
+            if (_target.FarClip != farClip) {
+#if UDONSHARP
+                _target.SetProgramVariable("FarClip", farClip);
+#else
+                _target.FarClip = farClip;
+#endif
+            }
+            _publishedFarClip = farClip;
+            _hasPublishedFarClip = true;
+            if (bakePositionChanged) {
+#if UDONSHARP
+                _target.SetProgramVariable("ShadowBakePosition", bakePosition);
+#else
+                _target.ShadowBakePosition = bakePosition;
+#endif
+            }
+            if (bakeRotationChanged) {
+#if UDONSHARP
+                _target.SetProgramVariable("ShadowBakeRotation", bakeRotation);
+#else
+                _target.ShadowBakeRotation = bakeRotation;
+#endif
+            }
             return metadataChanged;
         }
 
         // Renders six point-light depth faces and encodes them into the active output texture
         private void RenderDepthFacesToShadowMap(Vector3 bakePosition, Quaternion bakeRotation, float farClip, float bias) {
-            PrepareDepthEncodeMaterial(farClip, bias);
+            _shadowDepthEncodeMaterial.SetFloat(_farClipID, farClip);
+            _shadowDepthEncodeMaterial.SetFloat(_nearClipID, _configuredNearClip);
+            _shadowDepthEncodeMaterial.SetFloat(_biasID, bias);
+            _shadowDepthEncodeMaterial.SetFloat(_tanHalfFovID, _bakeTanHalfFov);
+            _shadowDepthEncodeMaterial.SetTexture(_depthTextureID, _depthTexture, RenderTextureSubElement.Depth);
 
             Quaternion previousCameraRotation = _cameraTransform.rotation;
             _cameraTransform.position = bakePosition;
@@ -627,7 +680,11 @@ namespace VRCLightVolumes {
 
         // Renders one spotlight depth view and encodes it into the active output texture
         private void RenderDepthSingleToShadowMap(Vector3 bakePosition, Quaternion bakeRotation, float farClip, float bias) {
-            PrepareDepthEncodeMaterial(farClip, bias);
+            _shadowDepthEncodeMaterial.SetFloat(_farClipID, farClip);
+            _shadowDepthEncodeMaterial.SetFloat(_nearClipID, _configuredNearClip);
+            _shadowDepthEncodeMaterial.SetFloat(_biasID, bias);
+            _shadowDepthEncodeMaterial.SetFloat(_tanHalfFovID, _bakeTanHalfFov);
+            _shadowDepthEncodeMaterial.SetTexture(_depthTextureID, _depthTexture, RenderTextureSubElement.Depth);
 
             Quaternion previousCameraRotation = _cameraTransform.rotation;
             _cameraTransform.position = bakePosition;
@@ -673,7 +730,12 @@ namespace VRCLightVolumes {
             if (_useDirectOutput && _manager != null) {
                 _currentOutputTexture = _manager.ShadowTextures;
                 int shadowId = _target != null ? (int)_target.ShadowMapID : -1;
-                _currentOutputBaseSlice = GetOutputBaseSlice(shadowId);
+                if (shadowId < 0) _currentOutputBaseSlice = 0;
+                else if (_useCubemapShadow) _currentOutputBaseSlice = shadowId * 6;
+                else {
+                    int cubemapCount = _manager.ShadowCubemapsCount;
+                    _currentOutputBaseSlice = cubemapCount * 6 + shadowId - cubemapCount;
+                }
             } else {
                 _currentOutputTexture = _shadowTexture;
                 _currentOutputBaseSlice = 0;
@@ -685,7 +747,11 @@ namespace VRCLightVolumes {
                 _deferBlurUntilFullCycle = true;
             }
             ConfigureCamera(bakeFarClip, bakeNearClip, bakeCullingMask, _bakeFieldOfView);
-            PrepareDepthEncodeMaterial(bakeFarClip, bakeBias);
+            _shadowDepthEncodeMaterial.SetFloat(_farClipID, bakeFarClip);
+            _shadowDepthEncodeMaterial.SetFloat(_nearClipID, _configuredNearClip);
+            _shadowDepthEncodeMaterial.SetFloat(_biasID, bakeBias);
+            _shadowDepthEncodeMaterial.SetFloat(_tanHalfFovID, _bakeTanHalfFov);
+            _shadowDepthEncodeMaterial.SetTexture(_depthTextureID, _depthTexture, RenderTextureSubElement.Depth);
             if (_useBlur) PrepareShadowBlurMaterial();
 
             Quaternion previousCameraRotation = _cameraTransform.rotation;
@@ -769,15 +835,6 @@ namespace VRCLightVolumes {
             return true;
         }
 
-        // Sets depth encode uniforms used by all slices in the current bake
-        private void PrepareDepthEncodeMaterial(float farClip, float bias) {
-            _shadowDepthEncodeMaterial.SetFloat(_farClipID, farClip);
-            _shadowDepthEncodeMaterial.SetFloat(_nearClipID, _configuredNearClip);
-            _shadowDepthEncodeMaterial.SetFloat(_biasID, bias);
-            _shadowDepthEncodeMaterial.SetFloat(_tanHalfFovID, _bakeTanHalfFov);
-            _shadowDepthEncodeMaterial.SetTexture(_depthTextureID, _depthTexture, RenderTextureSubElement.Depth);
-        }
-
         // Applies horizontal blur to all requested slices first, then vertical blur, so seam-aware sampling sees a coherent cubemap
         private void BlurFaces(int firstFace, int faceCount, bool useDirectOutput, bool copyToManager) {
             if (_currentOutputTexture == null || _blurTempTexture == null || _shadowBlurMaterial == null) return;
@@ -836,7 +893,30 @@ namespace VRCLightVolumes {
             if (!_useBlur) return false;
             _blurUsesUniformRadius = _bakeBlurDepth <= 0f;
 
-            ConfigureShadowBlurMaterialKeywords(_blurUsesUniformRadius, !_useCubemapShadow);
+            int qualityPreset = ShadowBlurSamplePreset;
+            if (qualityPreset <= 0) qualityPreset = 0;
+            else if (qualityPreset >= 2) qualityPreset = 2;
+            else qualityPreset = 1;
+            int uniformKeyword = _blurUsesUniformRadius ? 1 : 0;
+            int directKeyword = !_useCubemapShadow ? 1 : 0;
+            if (_lastShadowQualityPreset != qualityPreset || _lastUniformBlurKeyword != uniformKeyword || _lastDirectBlurKeyword != directKeyword) {
+                _shadowBlurMaterial.DisableKeyword(ShadowQualityKeywordLow);
+                _shadowBlurMaterial.DisableKeyword(ShadowQualityKeywordMedium);
+                _shadowBlurMaterial.DisableKeyword(ShadowQualityKeywordHigh);
+                if (qualityPreset == 0) _shadowBlurMaterial.EnableKeyword(ShadowQualityKeywordLow);
+                else if (qualityPreset == 2) _shadowBlurMaterial.EnableKeyword(ShadowQualityKeywordHigh);
+                else _shadowBlurMaterial.EnableKeyword(ShadowQualityKeywordMedium);
+
+                if (_blurUsesUniformRadius) _shadowBlurMaterial.EnableKeyword(ShadowBlurKeywordUniform);
+                else _shadowBlurMaterial.DisableKeyword(ShadowBlurKeywordUniform);
+
+                if (!_useCubemapShadow) _shadowBlurMaterial.EnableKeyword(ShadowBlurKeywordDirect);
+                else _shadowBlurMaterial.DisableKeyword(ShadowBlurKeywordDirect);
+
+                _lastShadowQualityPreset = qualityPreset;
+                _lastUniformBlurKeyword = uniformKeyword;
+                _lastDirectBlurKeyword = directKeyword;
+            }
             _shadowBlurMaterial.SetFloat(_blurRadiusID, _bakeBlur * (Mathf.Max(_bakeResolution, 1) / ShadowBlurBaseResolution));
             // Depth <= 0 selects the cheaper uniform blur shader path; otherwise map inspector value logarithmically
             if (_blurUsesUniformRadius) _shadowBlurMaterial.SetFloat(_blurDepthID, 0f);
@@ -897,39 +977,18 @@ namespace VRCLightVolumes {
             _runtimeMaterialsInitialized = true;
         }
 
-        // Applies blur keywords only when the requested blur variant changes
-        private void ConfigureShadowBlurMaterialKeywords(bool useUniformBlur, bool useDirectBlur) {
-            int qualityPreset = ShadowBlurSamplePreset;
-            if (qualityPreset <= 0) qualityPreset = 0;
-            else if (qualityPreset >= 2) qualityPreset = 2;
-            else qualityPreset = 1;
-            int uniformKeyword = useUniformBlur ? 1 : 0;
-            int directKeyword = useDirectBlur ? 1 : 0;
-            if (_lastShadowQualityPreset == qualityPreset && _lastUniformBlurKeyword == uniformKeyword && _lastDirectBlurKeyword == directKeyword) return;
-
-            _shadowBlurMaterial.DisableKeyword(ShadowQualityKeywordLow);
-            _shadowBlurMaterial.DisableKeyword(ShadowQualityKeywordMedium);
-            _shadowBlurMaterial.DisableKeyword(ShadowQualityKeywordHigh);
-            if (qualityPreset == 0) _shadowBlurMaterial.EnableKeyword(ShadowQualityKeywordLow);
-            else if (qualityPreset == 2) _shadowBlurMaterial.EnableKeyword(ShadowQualityKeywordHigh);
-            else _shadowBlurMaterial.EnableKeyword(ShadowQualityKeywordMedium);
-
-            if (useUniformBlur) _shadowBlurMaterial.EnableKeyword(ShadowBlurKeywordUniform);
-            else _shadowBlurMaterial.DisableKeyword(ShadowBlurKeywordUniform);
-
-            if (useDirectBlur) _shadowBlurMaterial.EnableKeyword(ShadowBlurKeywordDirect);
-            else _shadowBlurMaterial.DisableKeyword(ShadowBlurKeywordDirect);
-
-            _lastShadowQualityPreset = qualityPreset;
-            _lastUniformBlurKeyword = uniformKeyword;
-            _lastDirectBlurKeyword = directKeyword;
-        }
-
         // Renders one material pass into a destination texture-array slice
         private void BlitMaterialToSlice(Texture sourceTexture, Material material, int pass, RenderTexture destination, int targetSlice) {
             if (material == null || destination == null) return;
 #if COMPILER_UDONSHARP
-            Texture blitSource = GetMaterialBlitInputTexture();
+            if (_materialBlitInputTexture == null) {
+                _materialBlitInputTexture = new RenderTexture(1, 1, 0, RenderTextureFormat.ARGB32, RenderTextureReadWrite.Linear);
+                _materialBlitInputTexture.dimension = TextureDimension.Tex2D;
+                _materialBlitInputTexture.useMipMap = false;
+                _materialBlitInputTexture.autoGenerateMips = false;
+                _materialBlitInputTexture.Create();
+            }
+            Texture blitSource = _materialBlitInputTexture;
             VRCGraphics.Blit(blitSource, destination, 0, targetSlice);
             VRCGraphics.Blit(blitSource, material, pass, targetSlice);
 #else
@@ -938,17 +997,6 @@ namespace VRCLightVolumes {
             VRCGraphics.Blit(sourceTexture, material, pass);
             RenderTexture.active = previousRenderTexture;
 #endif
-        }
-
-        // Returns a stable source texture used to bind material-only blits
-        private Texture GetMaterialBlitInputTexture() {
-            if (_materialBlitInputTexture != null) return _materialBlitInputTexture;
-            _materialBlitInputTexture = new RenderTexture(1, 1, 0, RenderTextureFormat.ARGB32, RenderTextureReadWrite.Linear);
-            _materialBlitInputTexture.dimension = TextureDimension.Tex2D;
-            _materialBlitInputTexture.useMipMap = false;
-            _materialBlitInputTexture.autoGenerateMips = false;
-            _materialBlitInputTexture.Create();
-            return _materialBlitInputTexture;
         }
 
         // Releases the local blur scratch texture used by this baker
@@ -1018,22 +1066,6 @@ namespace VRCLightVolumes {
             _deferBlurUntilFullCycle = false;
             _cycleUseDirectOutput = false;
             _cycleBakeSettingsValid = false;
-        }
-
-        // Applies editor-only hide flags without adding preprocessor branches to texture creation
-        private void SetRuntimeTextureHideFlags(RenderTexture texture) {
-#if !COMPILER_UDONSHARP
-            texture.hideFlags = HideFlags.HideAndDontSave;
-#endif
-        }
-
-        // Checks render texture format only outside Udon, where the API is reliably available
-        private bool RuntimeTextureFormatMatches(RenderTexture texture, RenderTextureFormat format) {
-#if COMPILER_UDONSHARP
-            return true;
-#else
-            return texture.format == format && !texture.autoGenerateMips;
-#endif
         }
 
     }

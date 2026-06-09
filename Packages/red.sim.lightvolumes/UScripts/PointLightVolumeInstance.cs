@@ -100,7 +100,7 @@ namespace VRCLightVolumes {
         [Min(0)] public float FarClip = 0f;
         [Tooltip("Gaussian blur radius applied after baking, normalized to 128x128 shadow resolution. 0 keeps the baked shadow map unblurred. Useful to get a visible shadow penumbra. Requires rebaking.")]
         [Min(0)] public float Blur = 1f;
-        [Tooltip("Hardens shadows near the contact areas. Can produce artefacts, so use with caution! Requires rebaking.")]
+        [Tooltip("Hardens shadows near the contact areas. Can produce artefacts, so use with caution! Requires rebaking. More Performant when it's set to 0 in real-time mode.")]
         [Range(0, 1)] public float ContactHardening = 0f;
 
         // Internal projection metadata copied from the authoring PointLightVolume

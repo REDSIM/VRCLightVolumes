@@ -57,7 +57,7 @@ namespace VRCLightVolumes {
         [Min(0.0001f)] public float NearPlane = 0.01f;
         [Tooltip("Gaussian blur radius applied after baking, normalized to 128x128 shadow resolution. 0 keeps the baked shadow map unblurred. Useful to get a visible shadow penumbra. Requires rebaking.")]
         [Min(0)] public float Blur = 1f;
-        [Tooltip("Hardens shadows near the contact areas. Can produce artefacts, so use with caution! Requires rebaking.")]
+        [Tooltip("Hardens shadows near the contact areas. Can produce artefacts, so use with caution! Requires rebaking. More Performant when it's set to 0 in real-time mode.")]
         [Range(0, 1)] public float ContactHardening = 0f;
         [Tooltip("Use it if you don't want to move baked shadows together with their light. Attaches shadows to the world space basically. Less optimized when turned on.")]
         public bool UseWorldSpace = false;

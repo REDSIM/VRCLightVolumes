@@ -86,7 +86,9 @@ namespace VRCLightVolumes {
         public int CubemapsCount = 0;
         [Tooltip("Runtime texture array that stores per-light shadow maps.")]
         public RenderTexture ShadowTextures;
-        [Tooltip("Shadow maps count stored in ShadowTextures. Each cubemap uses 6 array elements.")]
+        [Tooltip("Cubemap shadow maps count stored in ShadowTextures. Cubemap array elements start from the beginning, 6 elements each.")]
+        public int ShadowCubemapsCount = 0;
+        [Tooltip("Shadow maps count stored in ShadowTextures. Cubemaps use 6 array elements, single projected shadows use 1 array element.")]
         public int ShadowMapsCount = 0;
 
         // Material used to copy cubemap source faces into the animated projection texture array
@@ -127,14 +129,21 @@ namespace VRCLightVolumes {
         private int _shadowTextureArrayDepth = 0;
         private int _shadowCubemapTextureCount = 0;
         private int _shadowCubemapMaterialCount = 0;
+        private int _shadowSingleTextureCount = 0;
+        private int _shadowSingleMaterialCount = 0;
 
         // Unique shadow sources and resolved per-point-light shadow IDs
         private Texture[] _shadowCubemapTextures = new Texture[0];
         private Material[] _shadowCubemapMaterials = new Material[0];
+        private Texture[] _shadowSingleTextures = new Texture[0];
+        private Material[] _shadowSingleMaterials = new Material[0];
         private int[] _shadowCubemapTextureModes = new int[0]; // Texture layouts: 0 = single 2D texture copied to all faces, 1 = Texture2DArray slices 0..5, 2 = native Cubemap faces
         private bool[] _shadowCubemapTextureAutoUpdates = new bool[0];
         private bool[] _shadowCubemapMaterialAutoUpdates = new bool[0];
+        private bool[] _shadowSingleTextureAutoUpdates = new bool[0];
+        private bool[] _shadowSingleMaterialAutoUpdates = new bool[0];
         private int[] _pointLightShadowIDs = new int[0];
+        private int[] _shadowSourceTypes = new int[0]; // Source types per point light: 0 = none, 1 = cubemap texture, 2 = cubemap material, 3 = single texture, 4 = single material
         [HideInInspector] public bool HasAutoShadowTextureUpdates = false;
 
         // Dummy RT required by VRCGraphics material blits when a material generates pixels without a real input texture
@@ -172,6 +181,7 @@ namespace VRCLightVolumes {
         private Vector4[] _pointLightDirection = new Vector4[MaxPointLightCount];
         private Vector4[] _pointLightCustomId = new Vector4[MaxPointLightCount];
         private Vector4[] _pointLightShadowReprojectionData = new Vector4[MaxPointLightCount];
+        private Vector4[] _pointLightShadowRotationData = new Vector4[MaxPointLightCount];
 
         // Matrix upload buffer for active regular volumes
         private Matrix4x4[] _invWorldMatrix = new Matrix4x4[MaxLightVolumeCount];
@@ -242,7 +252,9 @@ namespace VRCLightVolumes {
         private int _pointLightCubeCountID;
         private int _pointLightTextureID;
         private int _pointLightShadowReprojectionDataID;
+        private int _pointLightShadowRotationDataID;
         private int _pointLightShadowCountID;
+        private int _pointLightShadowCubeCountID;
         private int _pointLightShadowTextureID;
         private int _lightBrightnessCutoffID;
         // Other
@@ -449,7 +461,9 @@ namespace VRCLightVolumes {
             _pointLightCubeCountID = VRCShader.PropertyToID("_UdonPointLightVolumeCubeCount");
             _pointLightTextureID = VRCShader.PropertyToID("_UdonPointLightVolumeTexture");
             _pointLightShadowReprojectionDataID = VRCShader.PropertyToID("_UdonPointLightVolumeShadowReprojectionData");
+            _pointLightShadowRotationDataID = VRCShader.PropertyToID("_UdonPointLightVolumeShadowRotationData");
             _pointLightShadowCountID = VRCShader.PropertyToID("_UdonPointLightVolumeShadowCount");
+            _pointLightShadowCubeCountID = VRCShader.PropertyToID("_UdonPointLightVolumeShadowCubeCount");
             _pointLightShadowTextureID = VRCShader.PropertyToID("_UdonPointLightVolumeShadowTexture");
             _lightBrightnessCutoffID = VRCShader.PropertyToID("_UdonLightBrightnessCutoff");
             // Other
@@ -475,6 +489,7 @@ namespace VRCLightVolumes {
             VRCShader.SetGlobalVectorArray(_pointLightDirectionID, _pointLightDirection);
             VRCShader.SetGlobalVectorArray(_pointLightCustomIdID, _pointLightCustomId);
             VRCShader.SetGlobalVectorArray(_pointLightShadowReprojectionDataID, _pointLightShadowReprojectionData);
+            VRCShader.SetGlobalVectorArray(_pointLightShadowRotationDataID, _pointLightShadowRotationData);
             _isInitialized = true;
         }
 
@@ -484,6 +499,7 @@ namespace VRCLightVolumes {
             VRCShader.SetGlobalFloat(_lightVolumeAdditiveCountID, 0);
             VRCShader.SetGlobalFloat(_pointLightCountID, 0);
             VRCShader.SetGlobalFloat(_pointLightCubeCountID, 0);
+            VRCShader.SetGlobalFloat(_pointLightShadowCubeCountID, 0);
             VRCShader.SetGlobalFloat(_pointLightShadowCountID, 0);
             VRCShader.SetGlobalFloat(_lightVolumeEnabledID, 0);
         }
@@ -597,15 +613,17 @@ namespace VRCLightVolumes {
         public void InitializePointLightVolume(PointLightVolumeInstance pointLightVolume) {
             if (pointLightVolume == null) return;
             int count = PointLightVolumeInstances.Length;
+            bool invalidateCustomTextures = _customTexturesInitialized && pointLightVolume.IsActive && (pointLightVolume.CustomTexture != null || pointLightVolume.CustomTextureMaterial != null);
+            bool invalidateShadowTextures = _shadowTexturesInitialized && pointLightVolume.IsActive && pointLightVolume.ShadowMapID >= 0;
             // Reuse an existing slot so repeated OnEnable calls do not duplicate the same point light
             int existingIndex = Array.IndexOf((Array)PointLightVolumeInstances, pointLightVolume, 0, count);
             if (existingIndex >= 0) {
                 pointLightVolume.LightVolumeManager = this;
+                if (invalidateCustomTextures) _customTexturesInitialized = false;
+                if (invalidateShadowTextures) _shadowTexturesInitialized = false;
                 RequestUpdateVolumes();
                 return;
             }
-            bool invalidateCustomTextures = _customTexturesInitialized && pointLightVolume.IsActive && (pointLightVolume.CustomTexture != null || pointLightVolume.CustomTextureMaterial != null);
-            bool invalidateShadowTextures = _shadowTexturesInitialized && pointLightVolume.IsActive && pointLightVolume.ShadowMapID >= 0;
             // Fill the first stale/null slot before growing the registry array
             int emptyIndex = Array.IndexOf((Array)PointLightVolumeInstances, null, 0, count);
             if (emptyIndex >= 0) {
@@ -897,8 +915,9 @@ namespace VRCLightVolumes {
             int shadowId = (int)instance.ShadowMapID;
             if (shadowId < 0) return;
 
-            sourceSlice = Mathf.Clamp(sourceSlice, 0, 5);
-            int targetSlice = shadowId * 6 + sourceSlice;
+            bool isCubemapShadow = shadowId < ShadowCubemapsCount;
+            sourceSlice = isCubemapShadow ? Mathf.Clamp(sourceSlice, 0, 5) : 0;
+            int targetSlice = isCubemapShadow ? shadowId * 6 + sourceSlice : ShadowCubemapsCount * 6 + shadowId - ShadowCubemapsCount;
             if (targetSlice >= _shadowTextureArrayDepth) return;
 
             if (instance.ShadowMapTextureIsCubemap) {
@@ -914,20 +933,29 @@ namespace VRCLightVolumes {
             int count = PointLightVolumeInstances.Length;
 
             // Prepare reusable shadow texture source cache arrays for a full rebuild
-            if (_pointLightShadowIDs.Length < count) {
+            if (_pointLightShadowIDs.Length < count || _shadowSourceTypes.Length < count) {
                 _shadowCubemapTextures = new Texture[count];
                 _shadowCubemapMaterials = new Material[count];
+                _shadowSingleTextures = new Texture[count];
+                _shadowSingleMaterials = new Material[count];
                 _shadowCubemapTextureModes = new int[count];
                 _shadowCubemapTextureAutoUpdates = new bool[count];
                 _shadowCubemapMaterialAutoUpdates = new bool[count];
+                _shadowSingleTextureAutoUpdates = new bool[count];
+                _shadowSingleMaterialAutoUpdates = new bool[count];
                 _pointLightShadowIDs = new int[count];
+                _shadowSourceTypes = new int[count];
             } else {
                 for (int i = 0; i < _shadowCubemapTextureCount; i++) _shadowCubemapTextures[i] = null;
                 for (int i = 0; i < _shadowCubemapMaterialCount; i++) _shadowCubemapMaterials[i] = null;
+                for (int i = 0; i < _shadowSingleTextureCount; i++) _shadowSingleTextures[i] = null;
+                for (int i = 0; i < _shadowSingleMaterialCount; i++) _shadowSingleMaterials[i] = null;
             }
 
             int cubemapTextureCount = 0;
             int cubemapMaterialCount = 0;
+            int singleTextureCount = 0;
+            int singleMaterialCount = 0;
             HasAutoShadowTextureUpdates = false;
 
             // Iterate the registry once and collect unique shadow sources in reusable arrays
@@ -943,38 +971,77 @@ namespace VRCLightVolumes {
                 }
 
                 Texture textureSource = instance.ShadowMapTexture;
+                bool usesCubemapShadow = instance.ShadowMapUsesCubemap;
 
                 if (textureSource != null) { // Texture shadows mode
 
                     bool autoUpdate = instance.AutoUpdateShadowMap;
-                    int index = Array.IndexOf((Array)_shadowCubemapTextures, textureSource, 0, cubemapTextureCount);
-                    if (index < 0) { // First use of this texture: append it and reset this source's auto-update flag for the new cache build
-                        index = cubemapTextureCount;
-                        _shadowCubemapTextures[cubemapTextureCount] = textureSource;
-                        _shadowCubemapTextureModes[cubemapTextureCount] = instance.ShadowMapTextureIsCubemap ? 2 : (instance.ShadowMapTextureHasDepthSlices ? 1 : 0); // Texture layout: 0 = single 2D texture, 1 = Texture2DArray face slices, 2 = native Cubemap.
-                        _shadowCubemapTextureAutoUpdates[cubemapTextureCount] = autoUpdate;
-                        cubemapTextureCount++;
-                    } else if (autoUpdate) { // Shared texture source: at least one auto-updated user already makes the shared source auto-updated
-                        _shadowCubemapTextureAutoUpdates[index] = true;
+                    if (usesCubemapShadow) { // TEXTURE CUBEMAP SHADOW
+
+                        int index = Array.IndexOf((Array)_shadowCubemapTextures, textureSource, 0, cubemapTextureCount);
+                        if (index < 0) { // First use of this texture: append it and reset this source's auto-update flag for the new cache build
+                            index = cubemapTextureCount;
+                            _shadowCubemapTextures[cubemapTextureCount] = textureSource;
+                            _shadowCubemapTextureModes[cubemapTextureCount] = instance.ShadowMapTextureIsCubemap ? 2 : (instance.ShadowMapTextureHasDepthSlices ? 1 : 0); // Texture layout: 0 = single 2D texture, 1 = Texture2DArray face slices, 2 = native Cubemap.
+                            _shadowCubemapTextureAutoUpdates[cubemapTextureCount] = autoUpdate;
+                            cubemapTextureCount++;
+                        } else if (autoUpdate) { // Shared texture source: at least one auto-updated user already makes the shared source auto-updated
+                            _shadowCubemapTextureAutoUpdates[index] = true;
+                        }
+                        _pointLightShadowIDs[i] = index;
+                        _shadowSourceTypes[i] = 1; // 1: cubemap texture source, already indexed from the start of the cubemap source block
+
+                    } else { // TEXTURE SINGLE SHADOW
+
+                        int index = Array.IndexOf((Array)_shadowSingleTextures, textureSource, 0, singleTextureCount);
+                        if (index < 0) { // First use of this texture: append it and reset this source's auto-update flag for the new cache build
+                            index = singleTextureCount;
+                            _shadowSingleTextures[singleTextureCount] = textureSource;
+                            _shadowSingleTextureAutoUpdates[singleTextureCount] = autoUpdate;
+                            singleTextureCount++;
+                        } else if (autoUpdate) { // Shared texture source: at least one auto-updated user already makes the shared source auto-updated
+                            _shadowSingleTextureAutoUpdates[index] = true;
+                        }
+                        _pointLightShadowIDs[i] = index;
+                        _shadowSourceTypes[i] = 3; // 3: single texture source, offset after all cubemap sources during final ID assignment
+
                     }
                     if (autoUpdate) HasAutoShadowTextureUpdates = true;
-                    _pointLightShadowIDs[i] = index;
 
                 } else if (instance.ShadowMapMaterial != null) { // Material shadows mode
 
                     Material materialSource = instance.ShadowMapMaterial;
                     bool autoUpdate = instance.AutoUpdateShadowMap;
-                    int index = Array.IndexOf((Array)_shadowCubemapMaterials, materialSource, 0, cubemapMaterialCount);
-                    if (index < 0) { // First use of this material: append it and reset this source's auto-update flag for the new cache build
-                        index = cubemapMaterialCount;
-                        _shadowCubemapMaterials[cubemapMaterialCount] = materialSource;
-                        _shadowCubemapMaterialAutoUpdates[cubemapMaterialCount] = autoUpdate;
-                        cubemapMaterialCount++;
-                    } else if (autoUpdate) { // Shared material source: at least one auto-updated user already makes the shared source auto-updated
-                        _shadowCubemapMaterialAutoUpdates[index] = true;
+                    if (usesCubemapShadow) { // MATERIAL CUBEMAP SHADOW
+
+                        int index = Array.IndexOf((Array)_shadowCubemapMaterials, materialSource, 0, cubemapMaterialCount);
+                        if (index < 0) { // First use of this material: append it and reset this source's auto-update flag for the new cache build
+                            index = cubemapMaterialCount;
+                            _shadowCubemapMaterials[cubemapMaterialCount] = materialSource;
+                            _shadowCubemapMaterialAutoUpdates[cubemapMaterialCount] = autoUpdate;
+                            cubemapMaterialCount++;
+                        } else if (autoUpdate) { // Shared material source: at least one auto-updated user already makes the shared source auto-updated
+                            _shadowCubemapMaterialAutoUpdates[index] = true;
+                        }
+                        _pointLightShadowIDs[i] = index;
+                        _shadowSourceTypes[i] = 2; // 2: cubemap material source, offset after cubemap texture sources during final ID assignment
+
+                    } else { // MATERIAL SINGLE SHADOW
+
+                        int index = Array.IndexOf((Array)_shadowSingleMaterials, materialSource, 0, singleMaterialCount);
+                        if (index < 0) { // First use of this material: append it and reset this source's auto-update flag for the new cache build
+                            index = singleMaterialCount;
+                            _shadowSingleMaterials[singleMaterialCount] = materialSource;
+                            _shadowSingleMaterialAutoUpdates[singleMaterialCount] = autoUpdate;
+                            singleMaterialCount++;
+                        } else if (autoUpdate) { // Shared material source: at least one auto-updated user already makes the shared source auto-updated
+                            _shadowSingleMaterialAutoUpdates[index] = true;
+                        }
+                        _pointLightShadowIDs[i] = index;
+                        _shadowSourceTypes[i] = 4; // 4: single material source, offset after cubemap and single texture sources during final ID assignment
+
                     }
                     if (autoUpdate) HasAutoShadowTextureUpdates = true;
-                    _pointLightShadowIDs[i] = index;
 
                 }
 
@@ -983,22 +1050,29 @@ namespace VRCLightVolumes {
             // Updating counts
             _shadowCubemapTextureCount = cubemapTextureCount;
             _shadowCubemapMaterialCount = cubemapMaterialCount;
-            ShadowMapsCount = cubemapTextureCount + cubemapMaterialCount;
-            _shadowTextureArrayDepth = ShadowMapsCount * 6;
+            _shadowSingleTextureCount = singleTextureCount;
+            _shadowSingleMaterialCount = singleMaterialCount;
+            int cubemapsCount = cubemapTextureCount + cubemapMaterialCount;
+            ShadowCubemapsCount = cubemapsCount;
+            ShadowMapsCount = cubemapsCount + singleTextureCount + singleMaterialCount;
+            _shadowTextureArrayDepth = cubemapsCount * 6 + singleTextureCount + singleMaterialCount;
 
-            // Material shadow sources are stored after texture sources in the final array
+            // Convert local source indices into final shadow-map IDs after final counts are known
             for (int i = 0; i < count; i++) {
                 int index = _pointLightShadowIDs[i];
                 if (index < 0) continue;
+                int sourceType = _shadowSourceTypes[i];
+                // SourceType 1 already uses the local cubemap texture index as the final ID; 2/3/4 need offsets.
+                if (sourceType == 2) _pointLightShadowIDs[i] = cubemapTextureCount + index; // 2: cubemap materials follow cubemap textures
+                else if (sourceType == 3) _pointLightShadowIDs[i] = cubemapsCount + index; // 3: single textures follow every six-slice cubemap source
+                else if (sourceType == 4) _pointLightShadowIDs[i] = cubemapsCount + singleTextureCount + index; // 4: single materials follow single textures
                 PointLightVolumeInstance instance = PointLightVolumeInstances[i];
-                if (instance.ShadowMapTexture == null) index += cubemapTextureCount;
-                _pointLightShadowIDs[i] = index;
-                instance.ShadowMapID = index;
+                instance.ShadowMapID = _pointLightShadowIDs[i];
             }
 
         }
 
-        // Copies shadow cubemap sources into the runtime array. autoUpdatePass copies only sources cached for Auto Update Textures
+        // Copies shadow sources into the runtime array. autoUpdatePass copies only sources cached for Auto Update Textures
         private void BlitShadowTextures(bool autoUpdatePass) {
             // Shadow texture sources occupy the first shadow slices, six slices per cubemap
             int cubemapTextureCount = _shadowCubemapTextureCount;
@@ -1011,6 +1085,23 @@ namespace VRCLightVolumes {
             for (int i = 0; i < cubemapMaterialCount; i++) {
                 if (autoUpdatePass && !_shadowCubemapMaterialAutoUpdates[i]) continue;
                 BlitCubemapMaterial(_shadowCubemapMaterials[i], (cubemapTextureCount + i) * 6, ShadowTextures);
+            }
+            // Single shadow textures follow cubemap sources and occupy one array slice each
+            int singleBaseSlice = ShadowCubemapsCount * 6;
+            int singleTextureCount = _shadowSingleTextureCount;
+            for (int i = 0; i < singleTextureCount; i++) {
+                if (autoUpdatePass && !_shadowSingleTextureAutoUpdates[i]) continue;
+                Texture sourceTexture = _shadowSingleTextures[i];
+                if (sourceTexture == null) continue;
+                VRCGraphics.Blit(sourceTexture, ShadowTextures, 0, singleBaseSlice + i);
+            }
+            // Single shadow materials follow single texture sources and occupy one array slice each
+            int singleMaterialCount = _shadowSingleMaterialCount;
+            for (int i = 0; i < singleMaterialCount; i++) {
+                if (autoUpdatePass && !_shadowSingleMaterialAutoUpdates[i]) continue;
+                Material sourceMaterial = _shadowSingleMaterials[i];
+                if (sourceMaterial == null) continue;
+                BlitMaterialSlice(sourceMaterial, 0, singleBaseSlice + singleTextureCount + i, false, ShadowTextures);
             }
         }
 
@@ -1043,7 +1134,6 @@ namespace VRCLightVolumes {
 #if !COMPILER_UDONSHARP
             ShadowTextures.name = "ShadowTextures";
 #endif
-            ShadowMapsCount = depth / 6;
             _shadowTextureArrayDepth = depth;
             return true;
         }
@@ -1302,7 +1392,10 @@ namespace VRCLightVolumes {
                 VRCShader.SetGlobalVectorArray(_pointLightPositionID, _pointLightPosition);
                 VRCShader.SetGlobalVectorArray(_pointLightDirectionID, _pointLightDirection);
                 VRCShader.SetGlobalVectorArray(_pointLightCustomIdID, _pointLightCustomId);
-                if (_activeShadowCount > 0) VRCShader.SetGlobalVectorArray(_pointLightShadowReprojectionDataID, _pointLightShadowReprojectionData);
+                if (_activeShadowCount > 0) {
+                    VRCShader.SetGlobalVectorArray(_pointLightShadowReprojectionDataID, _pointLightShadowReprojectionData);
+                    VRCShader.SetGlobalVectorArray(_pointLightShadowRotationDataID, _pointLightShadowRotationData);
+                }
             }
             _updateLightVolumeBuffers = false;
             _updatePointLightBuffers = false;
@@ -1489,14 +1582,13 @@ namespace VRCLightVolumes {
             }
             _pointLightCustomId[shaderIndex] = new Vector4(shaderCustomId, shadowMapID, squaredRange, shadowFarClip);
 
-            if (useLocalSpaceShadows) {
-                Quaternion r = Quaternion.Inverse(instance.transform.rotation);
-                _pointLightShadowReprojectionData[shaderIndex] = new Vector4(r.x, r.y, r.z, r.w);
-            } else {
-                Vector4 shadowBakePosition = instance.ShadowBakePosition;
-                shadowBakePosition.w = hasShadow ? 1 : 0;
-                _pointLightShadowReprojectionData[shaderIndex] = shadowBakePosition;
-            }
+            Vector3 shadowBakePosition = instance.ShadowBakePosition;
+            float shadowTanAngle = isSpot ? instance.OuterAngleTan : 0f;
+            if (isSpot && shadowTanAngle <= 0f) shadowTanAngle = Mathf.Tan(instance.Angle);
+            _pointLightShadowReprojectionData[shaderIndex] = new Vector4(shadowBakePosition.x, shadowBakePosition.y, shadowBakePosition.z, shadowTanAngle);
+
+            Quaternion shadowRotation = useLocalSpaceShadows ? Quaternion.Inverse(instance.transform.rotation) : Quaternion.Inverse(instance.ShadowBakeRotation);
+            _pointLightShadowRotationData[shaderIndex] = new Vector4(shadowRotation.x, shadowRotation.y, shadowRotation.z, shadowRotation.w);
 
         }
 
@@ -1649,13 +1741,17 @@ namespace VRCLightVolumes {
                 VRCShader.SetGlobalFloat(_pointLightCountID, _pointLightCount);
                 VRCShader.SetGlobalFloat(_pointLightCubeCountID, CubemapsCount);
                 int shadowCount = _activeShadowCount > 0 ? ShadowMapsCount : 0;
+                VRCShader.SetGlobalFloat(_pointLightShadowCubeCountID, _activeShadowCount > 0 ? ShadowCubemapsCount : 0);
                 VRCShader.SetGlobalFloat(_pointLightShadowCountID, shadowCount);
                 if (_pointLightCount != 0) {
                     VRCShader.SetGlobalVectorArray(_pointLightColorID, _pointLightColor);
                     VRCShader.SetGlobalVectorArray(_pointLightPositionID, _pointLightPosition);
                     VRCShader.SetGlobalVectorArray(_pointLightDirectionID, _pointLightDirection);
                     VRCShader.SetGlobalVectorArray(_pointLightCustomIdID, _pointLightCustomId);
-                    if (_activeShadowCount > 0) VRCShader.SetGlobalVectorArray(_pointLightShadowReprojectionDataID, _pointLightShadowReprojectionData);
+                    if (_activeShadowCount > 0) {
+                        VRCShader.SetGlobalVectorArray(_pointLightShadowReprojectionDataID, _pointLightShadowReprojectionData);
+                        VRCShader.SetGlobalVectorArray(_pointLightShadowRotationDataID, _pointLightShadowRotationData);
+                    }
                     VRCShader.SetGlobalFloat(_lightBrightnessCutoffID, LightsBrightnessCutoff);
                 }
                 if (CustomTextures != null) VRCShader.SetGlobalTexture(_pointLightTextureID, CustomTextures);

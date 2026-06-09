@@ -649,6 +649,7 @@ namespace VRCLightVolumes {
                 compute.SetFloat("_UdonLightVolumeVersion", 3f);
                 compute.SetFloat("_UdonPointLightVolumeCount", pointLightCount);
                 compute.SetFloat("_UdonPointLightVolumeCubeCount", customTextureArray != null && LightVolumeManager != null ? LightVolumeManager.CubemapsCount : 0f);
+                compute.SetFloat("_UdonPointLightVolumeShadowCubeCount", 0f);
                 compute.SetFloat("_UdonPointLightVolumeShadowCount", 0f);
                 compute.SetFloat("_UdonLightVolumeOcclusionCount", 0f);
                 compute.SetTexture(kernel, "_UdonLightVolume", GetProbeBakeDummyVolumeTexture());

@@ -55,12 +55,14 @@ namespace VRCLightVolumes {
         [Min(0)] public float Bias = 0.1f;
         [Tooltip("Near clip plane used by the shadow bake camera. Higher values can clip nearby occluders.")]
         [Min(0.0001f)] public float NearPlane = 0.01f;
-        [Tooltip("Gaussian blur radius in shadow texels applied after baking. 0 keeps the baked shadow map unblurred. Useful to get a visible shadow penumbra. Requires rebaking.")]
+        [Tooltip("Gaussian blur radius applied after baking, normalized to 128x128 shadow resolution. 0 keeps the baked shadow map unblurred. Useful to get a visible shadow penumbra. Requires rebaking.")]
         [Min(0)] public float Blur = 1f;
         [Tooltip("Hardens shadows near the contact areas. Can produce artefacts, so use with caution! Requires rebaking.")]
         [Range(0, 1)] public float ContactHardening = 0f;
         [Tooltip("Use it if you don't want to move baked shadows together with their light. Attaches shadows to the world space basically. Less optimized when turned on.")]
         public bool UseWorldSpace = false;
+        [Tooltip("Forces spotlight shadows to bake and store as a cubemap even when the spot angle is below 180 degrees.")]
+        public bool ForceCubemapShadows = false;
 
         //G enerated EVSM Texture2DArray, cubemap, RenderTexture, CustomRenderTexture or Material used by the shared shadow texture array.
         [HideInInspector] public UnityEngine.Object ShadowMap = null;
@@ -74,6 +76,7 @@ namespace VRCLightVolumes {
 
         private UnityEngine.Object _shadowMapPrev = null;
         private bool _shadowsPrev = false;
+        private bool _forceCubemapShadowsPrev = false;
 
         // To check if object was edited this frame
         private Vector3 _prevPos = Vector3.zero;
@@ -201,6 +204,17 @@ namespace VRCLightVolumes {
             return IsCubemapTexture(ShadowMap as Texture);
         }
 
+        // Returns true when this light should bake a six-face cubemap shadow map
+        public bool ShouldBakeCubemapShadows() {
+            return Type != LightType.SpotLight || ForceCubemapShadows || Angle >= 180f;
+        }
+
+        // Returns true when the assigned shadow source occupies six cubemap slices in the runtime shadow array
+        public bool UsesCubemapShadows() {
+            if (IsShadowMapTextureCubemap() || ShadowMapTextureHasDepthSlices()) return true;
+            return ShouldBakeCubemapShadows();
+        }
+
         // Returns true when a texture should be unfolded as six cubemap faces
         private static bool IsCubemapTexture(Texture texture) {
             if (texture is Cubemap) return true;
@@ -238,6 +252,10 @@ namespace VRCLightVolumes {
                 _shadowsPrev = Shadows;
                 LightVolumeSetup.ReinitializeShadowTextures();
             }
+            if (_forceCubemapShadowsPrev != ForceCubemapShadows) {
+                _forceCubemapShadowsPrev = ForceCubemapShadows;
+                LightVolumeSetup.ReinitializeShadowTextures();
+            }
             // Sync udon script
             if (_prevPos != transform.position || _prevRot != transform.rotation || _prevScl != transform.localScale) {
                 _prevPos = transform.position;
@@ -273,6 +291,7 @@ namespace VRCLightVolumes {
                 _pointLightVolumeBehaviour.SetProgramVariable("Blur", Mathf.Max(Blur, 0));
                 _pointLightVolumeBehaviour.SetProgramVariable("ContactHardening", Mathf.Clamp01(ContactHardening));
                 _pointLightVolumeBehaviour.SetProgramVariable("ShadowBakePosition", PointLightVolumeInstance.ShadowBakePosition);
+                _pointLightVolumeBehaviour.SetProgramVariable("ShadowBakeRotation", PointLightVolumeInstance.ShadowBakeRotation);
                 if (syncTextureSources) SyncTextureSourcesToUdon();
                 // Udon does not support parameterized methods, so the values are passed through temporary program variables
                 // Set the parameters first, then execute a parameterless method
@@ -353,6 +372,7 @@ namespace VRCLightVolumes {
             _pointLightVolumeBehaviour.SetProgramVariable("AutoUpdateShadowMap", ShouldAutoUpdateShadowMap());
             _pointLightVolumeBehaviour.SetProgramVariable("ShadowMapTextureIsCubemap", IsShadowMapTextureCubemap());
             _pointLightVolumeBehaviour.SetProgramVariable("ShadowMapTextureHasDepthSlices", ShadowMapTextureHasDepthSlices());
+            _pointLightVolumeBehaviour.SetProgramVariable("ShadowMapUsesCubemap", UsesCubemapShadows());
         }
 #endif
 
@@ -365,11 +385,19 @@ namespace VRCLightVolumes {
             PointLightVolumeInstance.AutoUpdateCustomTexture = ShouldAutoUpdateCustomTexture();
             PointLightVolumeInstance.CustomTextureIsCubemap = IsProjectionTextureCubemap();
             PointLightVolumeInstance.CustomTextureHasDepthSlices = ProjectionTextureHasDepthSlices();
-            PointLightVolumeInstance.ShadowMapTexture = GetShadowMapTexture();
-            PointLightVolumeInstance.ShadowMapMaterial = ShadowMap as Material;
+            Texture shadowMapTexture = GetShadowMapTexture();
+            Material shadowMapMaterial = ShadowMap as Material;
+            bool shadowSourceChanged = PointLightVolumeInstance.ShadowMapTexture != shadowMapTexture || PointLightVolumeInstance.ShadowMapMaterial != shadowMapMaterial;
+            PointLightVolumeInstance.ShadowMapTexture = shadowMapTexture;
+            PointLightVolumeInstance.ShadowMapMaterial = shadowMapMaterial;
             PointLightVolumeInstance.AutoUpdateShadowMap = ShouldAutoUpdateShadowMap();
             PointLightVolumeInstance.ShadowMapTextureIsCubemap = IsShadowMapTextureCubemap();
             PointLightVolumeInstance.ShadowMapTextureHasDepthSlices = ShadowMapTextureHasDepthSlices();
+            PointLightVolumeInstance.ShadowMapUsesCubemap = UsesCubemapShadows();
+            if (shadowSourceChanged) {
+                PointLightVolumeInstance.ShadowBakePosition = transform.position;
+                PointLightVolumeInstance.ShadowBakeRotation = transform.rotation;
+            }
         }
 
         private void Reset() {
@@ -483,18 +511,19 @@ namespace VRCLightVolumes {
             if (nearClip >= farClip) nearClip = farClip * 0.5f;
             int resolution = LightVolumeSetup != null ? (int)LightVolumeSetup.ShadowResolution : 128;
             TextureFormat format = LightVolumeSetup != null ? LightVolumeSetup.GetShadowMapBakeFormat() : TextureFormat.RGBAFloat;
-            Cubemap cubemap = PointLightShadowBaker.BakeShadowMap(this, resolution, farClip, format, Blur, ContactHardening, infoString);
-            if (cubemap == null) return false;
+            UnityEngine.Object shadowTexture = ShouldBakeCubemapShadows() ? (UnityEngine.Object)PointLightShadowBaker.BakeShadowMap(this, resolution, farClip, format, Blur, ContactHardening, infoString) : PointLightShadowBaker.BakeSingleShadowMap(this, resolution, farClip, format, Blur, ContactHardening, infoString);
+            if (shadowTexture == null) return false;
 
             string scenePath = UnityEngine.SceneManagement.SceneManager.GetActiveScene().path;
             string path = $"{System.IO.Path.GetDirectoryName(scenePath)}/{UnityEngine.SceneManagement.SceneManager.GetActiveScene().name}/VRCLightVolumes/Temp/{gameObject.name}_shadows.asset";
             if (UnityEditor.AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(path) != null) {
                 UnityEditor.AssetDatabase.DeleteAsset(path);
             }
-            LVUtils.SaveAsAsset(cubemap, path);
+            LVUtils.SaveAsAsset(shadowTexture, path);
 
-            ShadowMap = cubemap;
+            ShadowMap = shadowTexture;
             PointLightVolumeInstance.ShadowBakePosition = transform.position;
+            PointLightVolumeInstance.ShadowBakeRotation = transform.rotation;
             PointLightVolumeInstance.FarClip = farClip;
             PointLightVolumeInstance.NearClip = nearClip;
             _shadowMapPrev = ShadowMap;

@@ -35,17 +35,17 @@ Shader "Hidden/VRCLV/PointLightShadowRuntimeBlur" {
         #endif
 
         #if defined(VRCLV_EDITOR_SHADOW_BLUR_QUALITY)
-            #define VRCLV_BLUR_SAMPLE_RADIUS 32
-            #define VRCLV_BLUR_INV_SAMPLE_RADIUS 0.03125f
+            #define VRCLV_BLUR_SAMPLE_RADIUS 63
+            #define VRCLV_BLUR_INV_SAMPLE_RADIUS 0.0158730159f
         #elif defined(VRCLV_RUNTIME_SHADOW_QUALITY_HIGH)
-            #define VRCLV_BLUR_SAMPLE_RADIUS 8
-            #define VRCLV_BLUR_INV_SAMPLE_RADIUS 0.125f
+            #define VRCLV_BLUR_SAMPLE_RADIUS 31
+            #define VRCLV_BLUR_INV_SAMPLE_RADIUS 0.0322580645f
         #elif defined(VRCLV_RUNTIME_SHADOW_QUALITY_LOW)
-            #define VRCLV_BLUR_SAMPLE_RADIUS 3
-            #define VRCLV_BLUR_INV_SAMPLE_RADIUS 0.3333333333f
+            #define VRCLV_BLUR_SAMPLE_RADIUS 7
+            #define VRCLV_BLUR_INV_SAMPLE_RADIUS 0.1428571429f
         #else
-            #define VRCLV_BLUR_SAMPLE_RADIUS 5
-            #define VRCLV_BLUR_INV_SAMPLE_RADIUS 0.2f
+            #define VRCLV_BLUR_SAMPLE_RADIUS 15
+            #define VRCLV_BLUR_INV_SAMPLE_RADIUS 0.0666666667f
         #endif
 
         #if !defined(VRCLV_RUNTIME_SHADOW_BLUR_UNIFORM)
@@ -237,8 +237,12 @@ Shader "Hidden/VRCLV/PointLightShadowRuntimeBlur" {
                 float2 contrastSampleScale = _InvResolution * max(radius, 0.0001f) * 2.0f;
                 float2 contrastExtent = contrastSampleScale * VRCLV_CONTRAST_MAX_RING_RADIUS;
                 float depthDifference;
-                [branch] if (KernelFitsFace(uv, contrastExtent)) depthDifference = AverageDepthDifferenceDirect(uv, centerDepth, contrastSampleScale);
-                else depthDifference = AverageDepthDifference(uv, centerDepth, contrastSampleScale);
+                #if defined(VRCLV_RUNTIME_SHADOW_BLUR_DIRECT)
+                    depthDifference = AverageDepthDifferenceDirect(uv, centerDepth, contrastSampleScale);
+                #else
+                    [branch] if (KernelFitsFace(uv, contrastExtent)) depthDifference = AverageDepthDifferenceDirect(uv, centerDepth, contrastSampleScale);
+                    else depthDifference = AverageDepthDifference(uv, centerDepth, contrastSampleScale);
+                #endif
                 radius *= saturate(depthDifference * rcp(_BlurDepth));
             #endif
             return _BlurDirection * (_InvResolution * radius * (2.0f * VRCLV_BLUR_INV_SAMPLE_RADIUS));
@@ -276,7 +280,11 @@ Shader "Hidden/VRCLV/PointLightShadowRuntimeBlur" {
         }
 
         float4 fragArray(v2f i) : SV_Target {
+#if defined(VRCLV_RUNTIME_SHADOW_BLUR_DIRECT)
+            return BlurArrayDirect(i.uv, RuntimeBlurStep(i.uv));
+#else
             return BlurArray(i.uv);
+#endif
         }
         ENDCG
 
@@ -287,6 +295,7 @@ Shader "Hidden/VRCLV/PointLightShadowRuntimeBlur" {
             #pragma fragment fragArray
             #pragma multi_compile_local_fragment VRCLV_RUNTIME_SHADOW_QUALITY_LOW VRCLV_RUNTIME_SHADOW_QUALITY_MEDIUM VRCLV_RUNTIME_SHADOW_QUALITY_HIGH
             #pragma multi_compile_local_fragment __ VRCLV_RUNTIME_SHADOW_BLUR_UNIFORM
+            #pragma shader_feature_local_fragment __ VRCLV_RUNTIME_SHADOW_BLUR_DIRECT
             #pragma shader_feature_local_fragment __ VRCLV_EDITOR_SHADOW_BLUR_QUALITY
             ENDCG
         }

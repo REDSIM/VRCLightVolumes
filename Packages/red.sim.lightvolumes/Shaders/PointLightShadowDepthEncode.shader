@@ -4,6 +4,7 @@ Shader "Hidden/VRCLV/PointLightShadowDepthEncode" {
         _ShadowFarClip("Shadow Far Clip", Float) = 16
         _ShadowNearClip("Shadow Near Clip", Float) = 0.01
         _ShadowBakeBias("Shadow Bake Bias", Float) = 0
+        _ShadowTanHalfFov("Shadow Tan Half FOV", Float) = 1
     }
 
     SubShader {
@@ -22,6 +23,7 @@ Shader "Hidden/VRCLV/PointLightShadowDepthEncode" {
             float _ShadowFarClip;
             float _ShadowNearClip;
             float _ShadowBakeBias;
+            float _ShadowTanHalfFov;
 
             #define VRCLV_EVSM_POSITIVE_EXPONENT 5.54f
             #define VRCLV_EVSM_NEGATIVE_EXPONENT 5.0f
@@ -63,7 +65,7 @@ Shader "Hidden/VRCLV/PointLightShadowDepthEncode" {
             float DynamicDepth01(float2 uv) {
                 float rawDepth = SAMPLE_DEPTH_TEXTURE(_ShadowDepthTex, uv);
                 float eyeDepth = LinearShadowEyeDepth(rawDepth);
-                float2 ndc = uv * 2.0f - 1.0f;
+                float2 ndc = (uv * 2.0f - 1.0f) * _ShadowTanHalfFov;
                 float radialDepth = eyeDepth * sqrt(dot(ndc, ndc) + 1.0f);
                 return saturate((radialDepth + max(_ShadowBakeBias, 0.0f)) * rcp(max(_ShadowFarClip, 0.0001f)));
             }

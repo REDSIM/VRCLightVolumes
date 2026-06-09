@@ -119,6 +119,45 @@ namespace VRCLightVolumes.Tests {
             Assert.That(instance.AutoUpdateShadowMap, Is.True);
         }
 
+        // Verifies spot shadow authoring selects single texture layout unless the source or force flag requires a cubemap.
+        [Test]
+        public void PointLightVolumeSyncsSpotSingleShadowMetadata() {
+            GameObject setupObject = CreateGameObject("Spot Single Shadow Metadata Setup", true);
+            LightVolumeSetup setup = setupObject.AddComponent<LightVolumeSetup>();
+            setup.SetupDependencies();
+
+            GameObject lightObject = CreateGameObject("Spot Single Shadow Metadata Light", true);
+            PointLightVolumeInstance instance = lightObject.AddComponent<PointLightVolumeInstance>();
+            PointLightVolume pointLight = lightObject.AddComponent<PointLightVolume>();
+            pointLight.LightVolumeSetup = setup;
+            pointLight.PointLightVolumeInstance = instance;
+            pointLight.Type = PointLightVolume.LightType.SpotLight;
+            pointLight.Angle = 60f;
+            pointLight.Shadows = true;
+            pointLight.ShadowMap = CreateTexture2D("Spot Single Shadow Texture");
+
+            pointLight.SyncUdonScript();
+
+            Assert.That(pointLight.ShouldBakeCubemapShadows(), Is.False);
+            Assert.That(pointLight.UsesCubemapShadows(), Is.False);
+            Assert.That(instance.ShadowMapUsesCubemap, Is.False);
+
+            pointLight.ForceCubemapShadows = true;
+            pointLight.SyncUdonScript();
+
+            Assert.That(pointLight.ShouldBakeCubemapShadows(), Is.True);
+            Assert.That(pointLight.UsesCubemapShadows(), Is.True);
+            Assert.That(instance.ShadowMapUsesCubemap, Is.True);
+
+            pointLight.ForceCubemapShadows = false;
+            pointLight.ShadowMap = CreateCubemap("Spot Existing Cubemap Shadow");
+            pointLight.SyncUdonScript();
+
+            Assert.That(pointLight.ShouldBakeCubemapShadows(), Is.False);
+            Assert.That(pointLight.UsesCubemapShadows(), Is.True);
+            Assert.That(instance.ShadowMapUsesCubemap, Is.True);
+        }
+
         // Verifies data-only sync updates Shading Strength without refreshing projection or shadow texture metadata.
         [Test]
         public void PointLightVolumeDataOnlySyncUpdatesShadingStrength() {

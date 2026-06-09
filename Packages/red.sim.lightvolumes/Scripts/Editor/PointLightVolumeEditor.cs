@@ -31,6 +31,7 @@ namespace VRCLightVolumes {
             UnityEngine.Object[] previousProjectionSources = new UnityEngine.Object[targetCount];
             UnityEngine.Object[] previousShadowMaps = new UnityEngine.Object[targetCount];
             bool[] previousShadows = new bool[targetCount];
+            bool[] previousForceCubemapShadows = new bool[targetCount];
             for (int i = 0; i < targetCount; i++) {
                 PointLightVolume pointLightVolume = targets[i] as PointLightVolume;
                 pointLightVolumes[i] = pointLightVolume;
@@ -40,6 +41,7 @@ namespace VRCLightVolumes {
                 previousProjectionSources[i] = pointLightVolume.GetProjectionSource();
                 previousShadowMaps[i] = pointLightVolume.ShadowMap;
                 previousShadows[i] = pointLightVolume.Shadows;
+                previousForceCubemapShadows[i] = pointLightVolume.ForceCubemapShadows;
             }
 
             List<string> hiddenFields = new List<string> { "m_Script", "PointLightVolumeInstance", "LightVolumeSetup" };
@@ -52,6 +54,7 @@ namespace VRCLightVolumes {
             hiddenFields.Add("Blur");
             hiddenFields.Add("ContactHardening");
             hiddenFields.Add("UseWorldSpace");
+            hiddenFields.Add("ForceCubemapShadows");
             hiddenFields.Add("FalloffLUT");
             hiddenFields.Add("Cubemap");
             hiddenFields.Add("Cookie");
@@ -106,6 +109,7 @@ namespace VRCLightVolumes {
                 EditorGUILayout.PropertyField(serializedObject.FindProperty("Blur"));
                 EditorGUILayout.PropertyField(serializedObject.FindProperty("ContactHardening"));
                 EditorGUILayout.PropertyField(serializedObject.FindProperty("UseWorldSpace"));
+                if (PointLightVolume.Type == PointLightVolume.LightType.SpotLight) EditorGUILayout.PropertyField(serializedObject.FindProperty("ForceCubemapShadows"));
                 EditorGUILayout.PropertyField(serializedObject.FindProperty("RebakeShadows"));
 
                 if (GUILayout.Button(_bakeShadowsButtonContent)) {
@@ -128,7 +132,7 @@ namespace VRCLightVolumes {
                     PointLightVolume pointLightVolume = pointLightVolumes[i];
                     if (pointLightVolume == null) continue;
                     if (previousTypes[i] != pointLightVolume.Type || previousProjections[i] != pointLightVolume.Projection || previousProjectionSources[i] != pointLightVolume.GetProjectionSource()) customTexturesChanged = true;
-                    if (previousShadows[i] != pointLightVolume.Shadows || previousShadowMaps[i] != pointLightVolume.ShadowMap) shadowTexturesChanged = true;
+                    if (previousShadows[i] != pointLightVolume.Shadows || previousShadowMaps[i] != pointLightVolume.ShadowMap || previousForceCubemapShadows[i] != pointLightVolume.ForceCubemapShadows) shadowTexturesChanged = true;
                 }
                 SyncTargets(customTexturesChanged, shadowTexturesChanged);
             }

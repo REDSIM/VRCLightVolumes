@@ -12,6 +12,7 @@ namespace VRCLightVolumes {
             public const string EditorShadowBlurQualityKeyword = "VRCLV_EDITOR_SHADOW_BLUR_QUALITY";
             public const string RuntimeShadowQualityHighKeyword = "VRCLV_RUNTIME_SHADOW_QUALITY_HIGH";
             public const string RuntimeShadowBlurUniformKeyword = "VRCLV_RUNTIME_SHADOW_BLUR_UNIFORM";
+            public const string RuntimeShadowBlurDirectKeyword = "VRCLV_RUNTIME_SHADOW_BLUR_DIRECT";
         }
 
         private struct RendererState {
@@ -23,6 +24,7 @@ namespace VRCLightVolumes {
         private static readonly int _shadowFarClipID = Shader.PropertyToID("_ShadowFarClip");
         private static readonly int _shadowNearClipID = Shader.PropertyToID("_ShadowNearClip");
         private static readonly int _shadowBakeBiasID = Shader.PropertyToID("_ShadowBakeBias");
+        private static readonly int _shadowTanHalfFovID = Shader.PropertyToID("_ShadowTanHalfFov");
         private static readonly int _sourceArrayTexID = Shader.PropertyToID("_SourceArrayTex");
         private static readonly int _depthArrayTexID = Shader.PropertyToID("_DepthArrayTex");
         private static readonly int _faceIndexID = Shader.PropertyToID("_FaceIndex");
@@ -32,6 +34,7 @@ namespace VRCLightVolumes {
         private static readonly int _blurRadiusID = Shader.PropertyToID("_BlurRadius");
         private static readonly int _blurDepthID = Shader.PropertyToID("_BlurDepth");
         private static readonly int _invResolutionID = Shader.PropertyToID("_InvResolution");
+        private const float ShadowBlurBaseResolution = 128f;
 
         private static readonly CubemapFace[] _cubemapFaces = {
             CubemapFace.PositiveX,
@@ -112,8 +115,35 @@ namespace VRCLightVolumes {
             }
         }
 
+        // Bakes an EVSM shadow texture from a spotlight position and direction.
+        public static Texture2D BakeSingleShadowMap(PointLightVolume pointLightVolume, int resolution, float farClip, TextureFormat textureFormat, float blurRadius, float blurDepth, string infoString = "") {
+            RenderTexture textureRT = BakeShadowMapRenderTexture(pointLightVolume, resolution, farClip, textureFormat, blurRadius, blurDepth, false, infoString);
+            if (textureRT == null) return null;
+
+            TextureFormat safeTextureFormat = textureFormat == TextureFormat.RGBAFloat ? TextureFormat.RGBAFloat : TextureFormat.RGBAHalf;
+            Texture2D texture = new Texture2D(textureRT.width, textureRT.height, safeTextureFormat, false, true) {
+                wrapMode = TextureWrapMode.Clamp,
+                filterMode = FilterMode.Bilinear,
+                anisoLevel = 0
+            };
+
+            try {
+                ReadRenderTextureToTexture2D(textureRT, texture, textureRT.width);
+                return texture;
+            } finally {
+                if (RenderTexture.active == textureRT) RenderTexture.active = null;
+                textureRT.Release();
+                Object.DestroyImmediate(textureRT);
+            }
+        }
+
         // Bakes an EVSM shadow texture into a live RenderTexture.
         public static RenderTexture BakeShadowMapRenderTexture(PointLightVolume pointLightVolume, int resolution, float farClip, TextureFormat textureFormat, float blurRadius, float blurDepth, string infoString = "") {
+            return BakeShadowMapRenderTexture(pointLightVolume, resolution, farClip, textureFormat, blurRadius, blurDepth, true, infoString);
+        }
+
+        // Bakes an EVSM shadow texture into a live RenderTexture with either six cubemap faces or one spotlight slice.
+        private static RenderTexture BakeShadowMapRenderTexture(PointLightVolume pointLightVolume, int resolution, float farClip, TextureFormat textureFormat, float blurRadius, float blurDepth, bool cubemapShadows, string infoString) {
             if (pointLightVolume == null) return null;
 
             Shader shadowDepthEncodeShader = Shader.Find(ShaderConstants.ShadowDepthEncodeShaderName);
@@ -129,6 +159,7 @@ namespace VRCLightVolumes {
             float safeBias = Mathf.Max(pointLightVolume.Bias, 0);
             bool useBlur = blurRadius > 0.0001f && shadowBlurShader != null;
             RenderTextureFormat renderTextureFormat = textureFormat == TextureFormat.RGBAFloat ? RenderTextureFormat.ARGBFloat : RenderTextureFormat.ARGBHalf;
+            int shadowSliceCount = cubemapShadows ? 6 : 1;
 
             RenderTexture oldActive = RenderTexture.active;
             RenderTexture depthTexture = null;
@@ -149,19 +180,20 @@ namespace VRCLightVolumes {
                 };
 
                 Camera shadowCamera = bakerObject.AddComponent<Camera>();
-                ConfigureShadowCamera(shadowCamera, safeNearClip, safeFarClip, pointLightVolume.LayerMask.value);
+                ConfigureShadowCamera(shadowCamera, safeNearClip, safeFarClip, pointLightVolume.LayerMask.value, cubemapShadows ? 90f : GetSpotShadowFieldOfView(pointLightVolume));
 
                 depthTexture = CreateDepthTexture(safeResolution);
-                rawTexture = CreateShadowArrayTexture(safeResolution, renderTextureFormat);
+                rawTexture = CreateShadowArrayTexture(safeResolution, renderTextureFormat, shadowSliceCount);
                 shadowDepthEncodeMaterial = new Material(shadowDepthEncodeShader) { hideFlags = HideFlags.HideAndDontSave };
-                BakeRawShadowFaces(pointLightVolume, shadowCamera, depthTexture, rawTexture, shadowDepthEncodeMaterial, safeBias);
+                if (cubemapShadows) BakeRawShadowFaces(pointLightVolume, shadowCamera, depthTexture, rawTexture, shadowDepthEncodeMaterial, safeBias);
+                else BakeRawSingleShadow(pointLightVolume, shadowCamera, depthTexture, rawTexture, shadowDepthEncodeMaterial, safeBias);
 
                 if (useBlur) {
-                    blurTempTexture = CreateShadowArrayTexture(safeResolution, renderTextureFormat);
-                    blurTexture = CreateShadowArrayTexture(safeResolution, renderTextureFormat);
+                    blurTempTexture = CreateShadowArrayTexture(safeResolution, renderTextureFormat, shadowSliceCount);
+                    blurTexture = CreateShadowArrayTexture(safeResolution, renderTextureFormat, shadowSliceCount);
                     editorShadowBlurMaterial = new Material(shadowBlurShader) { hideFlags = HideFlags.HideAndDontSave };
-                    ConfigureEditorBlurMaterial(editorShadowBlurMaterial, Mathf.Max(blurRadius, 0), Mathf.Clamp01(blurDepth), safeResolution);
-                    BlurShadowFaces(rawTexture, blurTempTexture, blurTexture, editorShadowBlurMaterial);
+                    ConfigureEditorBlurMaterial(editorShadowBlurMaterial, Mathf.Max(blurRadius, 0), Mathf.Clamp01(blurDepth), safeResolution, !cubemapShadows);
+                    BlurShadowFaces(rawTexture, blurTempTexture, blurTexture, editorShadowBlurMaterial, shadowSliceCount);
                     resultTexture = blurTexture;
                 } else {
                     resultTexture = rawTexture;
@@ -182,8 +214,8 @@ namespace VRCLightVolumes {
             }
         }
 
-        // Configures a temporary perspective camera for point-light depth face rendering.
-        private static void ConfigureShadowCamera(Camera shadowCamera, float nearClip, float farClip, int cullingMask) {
+        // Configures a temporary perspective camera for shadow depth rendering.
+        private static void ConfigureShadowCamera(Camera shadowCamera, float nearClip, float farClip, int cullingMask, float fieldOfView) {
             float safeFarClip = Mathf.Max(farClip, 0.0001f);
             float safeNearClip = Mathf.Max(nearClip, 0.0001f);
             if (safeNearClip >= safeFarClip) safeNearClip = safeFarClip * 0.5f;
@@ -192,7 +224,7 @@ namespace VRCLightVolumes {
             shadowCamera.clearFlags = CameraClearFlags.Depth;
             shadowCamera.backgroundColor = Color.white;
             shadowCamera.orthographic = false;
-            shadowCamera.fieldOfView = 90f;
+            shadowCamera.fieldOfView = Mathf.Clamp(fieldOfView, 0.1f, 179.9f);
             shadowCamera.aspect = 1f;
             shadowCamera.nearClipPlane = safeNearClip;
             shadowCamera.farClipPlane = safeFarClip;
@@ -204,6 +236,12 @@ namespace VRCLightVolumes {
             shadowCamera.cullingMask = cullingMask;
             shadowCamera.stereoTargetEye = StereoTargetEyeMask.None;
             shadowCamera.ResetReplacementShader();
+        }
+
+        // Returns a safe spotlight field of view for single-slice shadow baking
+        private static float GetSpotShadowFieldOfView(PointLightVolume pointLightVolume) {
+            if (pointLightVolume == null) return 90f;
+            return Mathf.Clamp(pointLightVolume.Angle, 0.1f, 179.9f);
         }
 
         // Creates the explicit depth target sampled by the EVSM encode pass.
@@ -220,11 +258,11 @@ namespace VRCLightVolumes {
             return texture;
         }
 
-        // Creates a six-slice EVSM texture array for editor shadow baking.
-        private static RenderTexture CreateShadowArrayTexture(int resolution, RenderTextureFormat format) {
+        // Creates an EVSM texture array for editor shadow baking.
+        private static RenderTexture CreateShadowArrayTexture(int resolution, RenderTextureFormat format, int sliceCount) {
             RenderTexture texture = new RenderTexture(resolution, resolution, 0, format, RenderTextureReadWrite.Linear);
             texture.dimension = TextureDimension.Tex2DArray;
-            texture.volumeDepth = 6;
+            texture.volumeDepth = Mathf.Max(sliceCount, 1);
             texture.useMipMap = false;
             texture.autoGenerateMips = false;
             texture.wrapMode = TextureWrapMode.Clamp;
@@ -239,11 +277,12 @@ namespace VRCLightVolumes {
         private static void BakeRawShadowFaces(PointLightVolume pointLightVolume, Camera shadowCamera, RenderTexture depthTexture, RenderTexture outputTexture, Material encodeMaterial, float bias) {
             Transform cameraTransform = shadowCamera.transform;
             Transform lightTransform = pointLightVolume.transform;
-            Quaternion bakeRotation = pointLightVolume.UseWorldSpace ? Quaternion.identity : lightTransform.rotation;
+            Quaternion bakeRotation = lightTransform.rotation;
 
             encodeMaterial.SetFloat(_shadowFarClipID, shadowCamera.farClipPlane);
             encodeMaterial.SetFloat(_shadowNearClipID, shadowCamera.nearClipPlane);
             encodeMaterial.SetFloat(_shadowBakeBiasID, bias);
+            encodeMaterial.SetFloat(_shadowTanHalfFovID, 1f);
             encodeMaterial.SetTexture(_shadowDepthTexID, depthTexture, RenderTextureSubElement.Depth);
 
             RenderTexture previousTargetTexture = shadowCamera.targetTexture;
@@ -257,14 +296,36 @@ namespace VRCLightVolumes {
             shadowCamera.targetTexture = previousTargetTexture;
         }
 
+        // Renders depth and encodes EVSM moments for one spotlight shadow slice.
+        private static void BakeRawSingleShadow(PointLightVolume pointLightVolume, Camera shadowCamera, RenderTexture depthTexture, RenderTexture outputTexture, Material encodeMaterial, float bias) {
+            Transform cameraTransform = shadowCamera.transform;
+            Transform lightTransform = pointLightVolume.transform;
+
+            encodeMaterial.SetFloat(_shadowFarClipID, shadowCamera.farClipPlane);
+            encodeMaterial.SetFloat(_shadowNearClipID, shadowCamera.nearClipPlane);
+            encodeMaterial.SetFloat(_shadowBakeBiasID, bias);
+            encodeMaterial.SetFloat(_shadowTanHalfFovID, Mathf.Tan(shadowCamera.fieldOfView * 0.5f * Mathf.Deg2Rad));
+            encodeMaterial.SetTexture(_shadowDepthTexID, depthTexture, RenderTextureSubElement.Depth);
+
+            RenderTexture previousTargetTexture = shadowCamera.targetTexture;
+            shadowCamera.targetTexture = depthTexture;
+            cameraTransform.position = lightTransform.position;
+            cameraTransform.rotation = lightTransform.rotation;
+            shadowCamera.Render();
+            BlitMaterialToSlice(depthTexture, encodeMaterial, 0, outputTexture, 0);
+            shadowCamera.targetTexture = previousTargetTexture;
+        }
+
         // Configures the high-quality editor blur material.
-        private static void ConfigureEditorBlurMaterial(Material blurMaterial, float blurRadius, float blurDepth, int resolution) {
+        private static void ConfigureEditorBlurMaterial(Material blurMaterial, float blurRadius, float blurDepth, int resolution, bool directBlur) {
             blurMaterial.EnableKeyword(ShaderConstants.EditorShadowBlurQualityKeyword);
             blurMaterial.EnableKeyword(ShaderConstants.RuntimeShadowQualityHighKeyword);
             if (blurDepth <= 0f) blurMaterial.EnableKeyword(ShaderConstants.RuntimeShadowBlurUniformKeyword);
             else blurMaterial.DisableKeyword(ShaderConstants.RuntimeShadowBlurUniformKeyword);
+            if (directBlur) blurMaterial.EnableKeyword(ShaderConstants.RuntimeShadowBlurDirectKeyword);
+            else blurMaterial.DisableKeyword(ShaderConstants.RuntimeShadowBlurDirectKeyword);
 
-            blurMaterial.SetFloat(_blurRadiusID, blurRadius);
+            blurMaterial.SetFloat(_blurRadiusID, blurRadius * (Mathf.Max(resolution, 1) / ShadowBlurBaseResolution));
             if (blurDepth <= 0f) blurMaterial.SetFloat(_blurDepthID, 0f);
             else {
                 float normalizedBlurDepth = Mathf.Clamp01(blurDepth);
@@ -274,9 +335,9 @@ namespace VRCLightVolumes {
         }
 
         // Applies two-pass seam-aware blur to a complete six-face EVSM texture array.
-        private static void BlurShadowFaces(RenderTexture rawTexture, RenderTexture tempTexture, RenderTexture outputTexture, Material blurMaterial) {
-            for (int i = 0; i < 6; i++) BlitShadowBlurFace(rawTexture, tempTexture, blurMaterial, i, Vector2.right, 0, 0, rawTexture, 0);
-            for (int i = 0; i < 6; i++) BlitShadowBlurFace(tempTexture, outputTexture, blurMaterial, i, Vector2.up, 0, 0, rawTexture, 0);
+        private static void BlurShadowFaces(RenderTexture rawTexture, RenderTexture tempTexture, RenderTexture outputTexture, Material blurMaterial, int faceCount) {
+            for (int i = 0; i < faceCount; i++) BlitShadowBlurFace(rawTexture, tempTexture, blurMaterial, i, Vector2.right, 0, 0, rawTexture, 0);
+            for (int i = 0; i < faceCount; i++) BlitShadowBlurFace(tempTexture, outputTexture, blurMaterial, i, Vector2.up, 0, 0, rawTexture, 0);
         }
 
         // Applies one directional blur pass to one texture-array face.
@@ -413,6 +474,18 @@ namespace VRCLightVolumes {
             } finally {
                 RenderTexture.active = oldActive;
                 Object.DestroyImmediate(temp);
+            }
+        }
+
+        // Copies the first baked render texture slice to a persistent Texture2D.
+        private static void ReadRenderTextureToTexture2D(RenderTexture source, Texture2D destination, int resolution) {
+            RenderTexture oldActive = RenderTexture.active;
+            try {
+                Graphics.SetRenderTarget(source, 0, CubemapFace.Unknown, 0);
+                destination.ReadPixels(new Rect(0, 0, resolution, resolution), 0, 0);
+                destination.Apply(false);
+            } finally {
+                RenderTexture.active = oldActive;
             }
         }
 

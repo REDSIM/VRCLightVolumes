@@ -86,6 +86,8 @@ namespace VRCLightVolumes {
         public bool WorldSpaceShadows = false;
         [Tooltip("World-space position where the shadow map was baked.")]
         public Vector3 ShadowBakePosition = Vector3.zero;
+        [Tooltip("World-space rotation where the shadow map was baked.")]
+        public Quaternion ShadowBakeRotation = Quaternion.identity;
 
         [Header("Shadow Bake Settings")]
         [Tooltip("Layers that can cast shadows.")]
@@ -96,7 +98,7 @@ namespace VRCLightVolumes {
         [Min(0)] public float Bias = 0.03f;
         [Tooltip("Far clip distance used when the EVSM shadow map was baked. 0 falls back to this light's current culling range.")]
         [Min(0)] public float FarClip = 0f;
-        [Tooltip("Gaussian blur radius in shadow texels applied after baking. 0 keeps the baked shadow map unblurred. Useful to get a visible shadow penumbra. Requires rebaking.")]
+        [Tooltip("Gaussian blur radius applied after baking, normalized to 128x128 shadow resolution. 0 keeps the baked shadow map unblurred. Useful to get a visible shadow penumbra. Requires rebaking.")]
         [Min(0)] public float Blur = 1f;
         [Tooltip("Hardens shadows near the contact areas. Can produce artefacts, so use with caution! Requires rebaking.")]
         [Range(0, 1)] public float ContactHardening = 0f;
@@ -108,6 +110,7 @@ namespace VRCLightVolumes {
         // Internal shadow source metadata copied from the authoring PointLightVolume
         [HideInInspector] public bool ShadowMapTextureIsCubemap = false;
         [HideInInspector] public bool ShadowMapTextureHasDepthSlices = false;
+        [HideInInspector] public bool ShadowMapUsesCubemap = true;
 
         // Internal dirty flag consumed by LightVolumeManager to recalculate this light's range
         [HideInInspector] public bool IsRangeDirty = false;
@@ -216,6 +219,7 @@ namespace VRCLightVolumes {
         // Sets LUT mode
         public void SetLut() {
             ProjectionMode = 1; // 1: LUT
+            if (LightType == 1) OuterAngleTan = Mathf.Tan(Angle); // 1: spot
             OuterAngleCos = Mathf.Cos(Angle);
             UpdateRotation();
             MarkRangeDirtyAndNotify(true, CustomTexture != null || CustomTextureMaterial != null, false);
@@ -290,9 +294,8 @@ namespace VRCLightVolumes {
         public void SetSpotLight(float angleDeg, float falloff) {
             LightType = 1; // 1: spot
             Angle = angleDeg * Mathf.Deg2Rad * 0.5f;
-            if (ProjectionMode == 2) { // 2: custom cookie or cubemap
-                OuterAngleTan = Mathf.Tan(Angle);
-            } else {
+            OuterAngleTan = Mathf.Tan(Angle);
+            if (ProjectionMode != 2) { // 2: custom cookie or cubemap
                 OuterAngleCos = Mathf.Cos(Angle);
                 ConeFalloff = 1f / (Mathf.Cos(Angle * (1.0f - Mathf.Clamp01(falloff))) - OuterAngleCos);
             }
@@ -305,9 +308,8 @@ namespace VRCLightVolumes {
         public void SetSpotLight(float angleDeg) {
             LightType = 1; // 1: spot
             Angle = angleDeg * Mathf.Deg2Rad * 0.5f;
-            if (ProjectionMode == 2) { // 2: custom cookie or cubemap
-                OuterAngleTan = Mathf.Tan(Angle);
-            } else {
+            OuterAngleTan = Mathf.Tan(Angle);
+            if (ProjectionMode != 2) { // 2: custom cookie or cubemap
                 OuterAngleCos = Mathf.Cos(Angle);
             }
             Position = transform.position;
@@ -362,6 +364,7 @@ namespace VRCLightVolumes {
         // Applies the internal parametric projection mode without touching texture source fields
         private void SetParametricMode() {
             ProjectionMode = 0; // 0: parametric
+            if (LightType == 1) OuterAngleTan = Mathf.Tan(Angle); // 1: spot
             OuterAngleCos = Mathf.Cos(Angle);
             UpdateRotation();
         }

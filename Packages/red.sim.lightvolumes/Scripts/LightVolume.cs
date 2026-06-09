@@ -69,6 +69,7 @@ namespace VRCLightVolumes {
         // Light probes world positions
         private Vector3[] _probesPositions = new Vector3[0];
 
+#if UNITY_EDITOR
         // To check if object was edited this frame
         private Vector3 _prevPos = Vector3.zero;
         private Quaternion _prevRot = Quaternion.identity;
@@ -81,6 +82,7 @@ namespace VRCLightVolumes {
 
         // Was it changed on Validate?
         private bool _isValidated = false;
+#endif
 
         // Auto-initialize with a reflection probe bounds
         public void Reset() {

@@ -287,18 +287,12 @@ namespace VRCLightVolumes {
             hiddenFields.Add("ShadowTextureFormat");
             hiddenFields.Add("AtlasPostProcessors");
             int plvCount = _lightVolumeSetup.PointLightVolumes.Count;
-            bool isShadow = false;
             bool isShadowBatchBake = false;
             for (int i = 0; i < plvCount; i++) {
                 PointLightVolume pointLightVolume = _lightVolumeSetup.PointLightVolumes[i];
                 if (pointLightVolume == null) continue;
-                if (pointLightVolume.Shadows && (pointLightVolume.HasShadowMapSource() || pointLightVolume.RebakeShadows)) {
-                    isShadow = true;
-                }
                 if (pointLightVolume.Shadows && pointLightVolume.RebakeShadows) {
                     isShadowBatchBake = true;
-                }
-                if (isShadow && isShadowBatchBake) {
                     break;
                 }
             }
@@ -314,10 +308,8 @@ namespace VRCLightVolumes {
 
             if (plvCount > 0) {
                 EditorGUILayout.PropertyField(serializedObject.FindProperty("CookieResolution"));
-                if (isShadow) {
-                    EditorGUILayout.PropertyField(serializedObject.FindProperty("ShadowResolution"));
-                    EditorGUILayout.PropertyField(serializedObject.FindProperty("ShadowTextureFormat"));
-                }
+                EditorGUILayout.PropertyField(serializedObject.FindProperty("ShadowResolution"));
+                EditorGUILayout.PropertyField(serializedObject.FindProperty("ShadowTextureFormat"));
                 EditorGUILayout.PropertyField(serializedObject.FindProperty("BrightnessCutoff"));
             }
 

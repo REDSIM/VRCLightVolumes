@@ -275,8 +275,11 @@ Shader "Hidden/VRCLV/PointLightShadowRuntimeBlur" {
         float4 BlurArray(float2 uv) {
             float2 sampleStep = RuntimeBlurStep(uv);
             float2 blurExtent = abs(sampleStep) * VRCLV_BLUR_SAMPLE_RADIUS;
-            [branch] if (KernelFitsFace(uv, blurExtent)) return BlurArrayDirect(uv, sampleStep);
-            return BlurArraySeamAware(uv, sampleStep);
+            [branch] if (KernelFitsFace(uv, blurExtent)) {
+                return BlurArrayDirect(uv, sampleStep);
+            } else {
+                return BlurArraySeamAware(uv, sampleStep);
+            }
         }
 
         float4 fragArray(v2f i) : SV_Target {

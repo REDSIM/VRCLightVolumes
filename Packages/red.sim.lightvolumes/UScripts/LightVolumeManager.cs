@@ -215,8 +215,10 @@ namespace VRCLightVolumes {
         // Unified delayed update process state
         private bool _volumeDataUpdateRequested = false;
         private bool _isUpdatingVolumes = false;
+#if !UDONSHARP || UNITY_EDITOR
         private bool _prevAutoUpdateVolumes = false;
         private bool _prevAutoUpdateTextures = false;
+#endif
 #if UDONSHARP
         private bool _isUpdateProcessRunning = false; // True while the single delayed update process is scheduled or running
 #else

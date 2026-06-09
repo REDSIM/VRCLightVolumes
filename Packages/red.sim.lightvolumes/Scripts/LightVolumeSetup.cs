@@ -114,10 +114,10 @@ namespace VRCLightVolumes {
 
         public Baking _bakingModePrev;
 
+#if UNITY_EDITOR
         private TextureArrayResolution _resolutionPrev = TextureArrayResolution._128x128;
         private TextureArrayResolution _shadowResolutionPrev = TextureArrayResolution._64x64;
         private ShadowTexturePrecision _shadowTextureFormatPrev = ShadowTexturePrecision.Float;
-#if UNITY_EDITOR
         private EditorCoroutine _generateAtlasCoroutine = null;
         private const string CubemapFaceShaderName = "Hidden/CubeFace";
 #endif

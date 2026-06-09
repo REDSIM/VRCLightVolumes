@@ -74,6 +74,7 @@ namespace VRCLightVolumes {
         private UdonBehaviour _pointLightVolumeBehaviour = null;
 #endif
 
+#if UNITY_EDITOR
         private UnityEngine.Object _shadowMapPrev = null;
         private bool _shadowsPrev = false;
         private bool _forceCubemapShadowsPrev = false;
@@ -85,6 +86,7 @@ namespace VRCLightVolumes {
 
         // Was it changed on Validate?
         private bool _isValidated = false;
+#endif
 
         // Looks for LightVolumeSetup and LightVolumeInstance udon script and setups them if needed
         public void SetupDependencies() {
@@ -435,9 +437,11 @@ namespace VRCLightVolumes {
             }
         }
 
+#if UNITY_EDITOR
         private void OnValidate() {
             _isValidated = true;
         }
+#endif
 
         // Returns a valid shadow map ID or disables the shadow for runtime
         private int GetShadowRuntimeID() {

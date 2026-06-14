@@ -28,7 +28,7 @@ VRC Light Volumes is fast and optimized nextgen lighting solution for VRChat. It
 You just need to use a [shader that has VRC Light Volumes support](/Documentation/CompatibleShaders.md) and that's it. Nothing else to do!
 
 > [!NOTE]
-> Unfortunately, there is no way to make avatars cast light volumes light, it can only be integrated into worlds.
+> Unfortunately, there is no way to make avatars cast light volumes light; it can only be integrated into worlds.
 
 ## Light Volumes Quick World Setup
 
@@ -42,7 +42,7 @@ You just need to use a [shader that has VRC Light Volumes support](/Documentatio
 4. With `Adaptive Resolution` enabled, adjust `Voxels Per Unit` to control voxel density.
    Keep in mind: doubling the resolution of a 3D volume increases its file size by approximately **8x**. 
    Click `Preview Voxels` to show voxel placement grid to check the density.
-5. Repeat this process to create as much volumes as you need to cover all of your areas.
+5. Repeat this process to create as many volumes as you need to cover all of your areas.
 6. Find the **Light Volume Manager** in your scene.
    It's automatically added when you create a **Light Volume** and lists all the volumes in your scene.
 7. Assign a `Weight` to each volume.
@@ -67,7 +67,7 @@ You just need to use a [shader that has VRC Light Volumes support](/Documentatio
 > [!IMPORTANT]
 >  Point and Spot Lights are the cheapest. Area light can be ~8 times less performant than other light types, so use it only if you need a movable and scalable in runtime soft box, or if you really want to save memory. Otherwise, it's more performant to bake a regular Light Volume in a shape of an area light.
 
-3. In most of the cases you need to leave the `Shape` value as `Parametric` - it's the cheapest and the most useful mode. But if you want to project a light **cookie** (point light volume) or a **cubemap** (spot light volume), select `Custom` shape.
+3. In most cases you need to leave the `Shape` value as `Parametric` - it's the cheapest and the most useful mode. But if you want to project a light **cookie** (point light volume) or a **cubemap** (spot light volume), select `Custom` shape.
 
 4. **Point Light Volumes work differently compared to Unity’s built-in lights.** They use light attenuation that more closely resembles how light behaves in the real world.
 

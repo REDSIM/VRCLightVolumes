@@ -21,7 +21,7 @@ VRC Light Volumes is fast and optimized nextgen lighting solution for VRChat. It
 
 [Regular **Light Volumes**](#Light-Volumes-Quick-World-Setup) is a fast and optimized solution that replaces Unity's light probes with a better per-pixel voxel based lighting. It's similar to Adaptive Probe Volumes (APV) in Unity 6, but with manual ReflectionProbe-like volumes placement and some other extra features.
 
-[**Point Light Volumes**](#Point-Light-Volumes-Quick-World-Setup) is a fast and optimized custom lighting system that has it's own parametric Point Light, Spot Lights and Area Lights. Point Light Volumes are not voxel based, they forms the light parametrically, or based on special LUT textures (similar to IES). They can project light cookies or cubemaps. It can be up to 128 point lights visible in one scene at the same time. However, this system does not support realtime shadows.
+[**Point Light Volumes**](#Point-Light-Volumes-Quick-World-Setup) is a fast and optimized custom lighting system that has its own parametric Point Light, Spot Lights, and Area Lights. Point Light Volumes are not voxel based, they form the light parametrically, or based on special LUT textures (similar to IES). They can project light cookies or cubemaps. It can be up to 128 point lights visible in one scene at the same time. However, this system does not support realtime shadows.
 
 ## Light Volumes for Avatars
 
@@ -35,7 +35,7 @@ You just need to use a [shader that has VRC Light Volumes support](/Documentatio
 ![](../Documentation/Preview_3.png)
 
 1. Right-click in the **Hierarchy** and select `Light Volume`.
-   You can also do it clicking on a **Reflection Probe** object, and new **Light Volume** will inherit its bounds.
+   You can also do it by clicking on a **Reflection Probe** object, and new **Light Volume** will inherit its bounds.
 2. Rename the new **Light Volume** to match the zone you're covering.
    Each volume must have a **unique name**.
 3. In the **Light Volume** component, click `Edit Bounds` and resize the volume to fit your target area - similar to setting up a **Reflection Probe**. You can also just scale it with a scaling tool.

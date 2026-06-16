@@ -14,116 +14,94 @@
 
 ## Point Light Volume Shadows
 
-**Point Light Volumes** can use shadow maps. They are not stored inside regular Light Volumes. Instead, every shadow source is packed into a shared EVSM shadow texture array and sampled by shaders that support VRC Light Volumes.
+**Point Light Volumes** can use shadow maps. Under the hood, every shadow map is packed into a shared EVSM shadow texture array and sampled by shaders that support VRC Light Volumes.
 
 ![](../Documentation/Preview_9.png)
 
-Shadows are available for Point, Spot and Area Light Volumes. They affect VRC Light Volumes compatible shaders, but the shader must pass `World Normal` into the Light Volumes functions to evaluate shadowing and normal masking. Default Unity shaders will not show Point Light Volumes or their shadows.
+Shadows are available for Point, Spot and Area Light Volumes. They affect VRC Light Volumes v.3.0 compatible shaders. Older VRC Light Volumes (v.2.x.x) shaders will work overall, but will not draw shadows. Default Unity shaders will not show Point Light Volumes or their shadows.
 
 ## Shadow Types
 
-### Baked
+### Baked Realtime
 
-Baked shadow maps are generated in the Unity Editor and saved as assets. Use them for static or mostly static lights. They do not render shadow cameras in runtime, so they are much cheaper than realtime shadow baking, but they are still more expensive than the same Point Light Volume without shadows because the shader needs extra shadow data and the world needs extra shadow texture memory.
+Baked shadow maps are generated in the Unity Editor and saved as assets. Use them for static or mostly static lights. They do not render shadow maps in runtime, so they are much cheaper than realtime shadow baking. But they still affect all the dynamic objects with materials that supports VRC Light Volumes. Howewer no dynamic objects will cast shadows in runtime. So technically it's realtime shadows with no runtime baking.
+But they are still more expensive than the same Point Light Volume without shadows because the shader needs extra shadow data and extra VRAM.
 
 Even baked Point Light Volume shadows are sampled at runtime by compatible shaders, so they can still shade moving objects, avatars and props that use VRC Light Volumes shader integration.
 
-### Runtime Updated Texture Source
-
-The `Shadow Map` field can accept a Cubemap, Texture2DArray, RenderTexture, or Material. RenderTextures and Materials can be copied into the shared shadow texture array at runtime when `Auto Update Textures` is enabled in **Light Volume Setup**. In the editor, Point Light Volume automatically marks RenderTexture and Material shadow sources for auto-update during Udon sync.
-
-This mode is useful when another system already produces a shadow-like texture. If you only need static shadows, use editor baking instead.
-
 ### Realtime Shadow Baker
 
-The extra **Realtime Shadow Baker** component, `PointLightShadowRuntimeBaker`, renders shadow maps in runtime for a selected **Point Light Volume Instance**.
+The extra **Point Light Shadow Runtime Baker** component, renders shadow maps in runtime for a selected **Point Light Volume Instance**.
 
 This is the most expensive shadow mode. It renders one or more shadow cameras, encodes EVSM depth, can run blur passes, and then writes the result into the shared shadow texture array. In practice this is more expensive than regular Unity realtime shadows, so use it only for a small number of important lights.
 
+### Runtime Updated Texture Source
+
+It's a highly advanced feature and not something you really need unless you know what you're doing! 
+The `Shadow Map` field can accept a Cubemap, Texture2DArray, RenderTexture, or Material. RenderTextures and Materials can be copied into the shared shadow texture array at runtime when `Auto Update Textures` is enabled in **Light Volume Setup**. In the editor, Point Light Volume automatically marks RenderTexture and Material shadow sources for auto-update during Udon sync.
+This mode is useful when another system already produces a shadow-like texture. If you only need static shadows, use editor baking instead.
+
 ## Baked Shadows Setup
 
-1. Select a **Point Light Volume**.
-2. Enable `Shadows`.
-3. Choose the light `Type`.
-   Point Lights and Area Lights use cubemap shadows. Spot Lights use a single projected shadow texture when `Angle` is below 180 degrees, unless `Force Cubemap Shadows` is enabled.
-4. Configure `Layer Mask`, `Object Mask`, `Near Plane`, `Bias`, `Blur` and `Contact Hardening`.
-5. Press `Bake Shadows` in the **Point Light Volume** inspector.
-6. For batch baking, enable `Rebake Shadows` on the lights you want to update, then press `Bake Shadows` in **Light Volume Setup**.
+1. Enable `Shadows` flag in your **Point Light Volume**.
+2. Configure the `Layer Mask`. Select only layers you want to bake shadows from.
+3. Configure the `Blur` value to control the shadows penumbra.
+4. Press `Bake Shadows` in the **Point Light Volume** inspector.
 
-`Shadow Resolution` and `Shadow Texture Format` are configured in **Light Volume Setup**. `Half` format is cheaper, while `Float` can reduce EVSM precision artifacts. Higher resolution improves detail but increases VRAM usage, especially for Point and Area Lights because cubemap shadows use 6 texture array slices.
-
+Optional:
+Configure `Object Mask` if needed. If not empty, only children of the listed objects are rendered during the bake.
+Increase `Near Plane` value if you want to clip the meshes near the light source.
+Configure `Bias` if you have vsisble artefacts.
+Use `Contact Hardening` if you want to increase shadow sharpness near the shadow casters. However it can cause visible artefacts, fo use it carefully! 
 `Use World Space` keeps the baked shadow projection fixed in world space instead of moving it with the light. This is useful for a light that changes color or intensity but should keep shadows attached to the room. It is less optimized than local-space shadows.
-
-> [!IMPORTANT]
-> Shadow map baking doesn't support transparent or semi-transparent occluders correctly. If you have meshes like glass, water or foliage, disable them or move them to a layer excluded by `Layer Mask` while baking shadows.
+`Shadow Resolution` and `Shadow Texture Format` are configured in **Light Volume Setup**. `Half` format is recommended for **Quest** and **Mobile**, but can cause artefacts. `Float` is recommended for **PC**, it makes no visible artefacts, but consumes x2 VRAM. Higher resolution improves detail but increases VRAM usage, especially for Point and Area Lights because cubemap shadows use 6 texture array slices.
 
 ## Realtime Shadow Baker
 
-Use the extra `PointLightShadowRuntimeBaker` component when a light needs to cast shadows from moving objects in runtime.
+Use the extra `Point Light Shadow Runtime Baker` component when a light needs to cast shadows from moving objects in runtime.
 
-1. Add `PointLightShadowRuntimeBaker` from `Packages/red.sim.lightvolumes/Extra/Shadow Runtime Baker` to a GameObject.
+1. Add `Point Light Shadow Runtime Baker` component to a GameObject.
 2. Assign `Target Point Light Volume` to the target **Point Light Volume Instance**.
 3. Make sure the target Point Light Volume has `Shadows` enabled and its shadow settings configured.
 4. Set `Resolution`.
-   For the cheapest realtime path, keep this equal to `Shadow Resolution` in **Light Volume Setup**. If the values are different, the baker still works, but it has to use a local RenderTexture and copy slices into the manager shadow array.
+> [!NOTE]
+> For the best result, keep `Resolution` equal to `Shadow Resolution` in **Light Volume Setup**. However, you can lower the resolution here if you want to have a lower resolution for some of the light shadows.
 5. Enable `Bake On Enable` if the shadow should be baked once when the component becomes active.
-6. Enable `Realtime` only when the shadow needs to keep updating.
-7. Adjust `Realtime Faces Per Frame`.
-   This only affects cubemap shadows. `1` spreads a full cubemap update across 6 frames, while `6` updates all faces in one bake tick. Single-slice Spot Light shadows always update one slice.
-8. Keep `Shadow Blur Sample Preset` as low as possible for the result you need.
+6. Enable `Realtime` only when the shadow needs to keep updating every frame. Basically this makes the shadows fully realtime.
+7. Adjust `Realtime Faces Per Frame`. This only affects cubemap shadows. `1` spreads a full cubemap update across 6 frames, while `6` updates all faces in one bake tick. Single-slice Spot Light shadows always update one slice.
+> [!NOTE]
+> You usually want to have it as `1` if it's a static light that bakes once at the start. And you usually want to have it as `6` if it's a dynamic light with fully realtime shadows. 
+8. Keep `Shadow Blur Sample Preset` as low as possible for the result you need. Lowering the blur quality improves GPU performance. However, with realtime shadows, sometimes the bottleneck is on CPU side, so it might cause no actual effect. But still can be very noticable on **Quest** and **Mobile**!
+
+> [!IMPORTANT]
+> Realtime shadows will only be visible in **Play Mode** and in **VRChat**. Scene view realtime shadows are not supported yet!
 
 The baker uses the target Point Light Volume shadow settings, including `Layer Mask`, `Near Plane`, `Bias`, `Blur`, `Contact Hardening` and the light culling range. Configure those on the target light before relying on runtime baking.
+**Blur** value `0` completely turns off the blur improving the performance on GPU side, but makes the quality worse, so it's not recommended. 
+**Contact Hardening** value `0` completely turns off the contact hardening effect improving the performance on GPU side. It's recommended to keep it `0` in most scenarios, because it can cause artefacts.
 
-The hidden shadow camera and runtime materials are prepared automatically by the editor and build preprocessor. You don't need to assign them manually.
+> [!TIP]
+> You can leave point light with no shadows baked at all, but keep the `Point Light Shadow Runtime Baker` with `Bake On Enable` option only. It will bake shadows on start in runtime, and you'll save the asset bundle memory. Especially useful for **Quest** and **Mobile** where VRChat limits the world asset bundle to 100mb. 
 
 ### Single-Slice Realtime Spot Shadows
 
-Single-slice Spot Light shadows are the cheapest realtime option.
+Single-slice Spot Light shadows are the cheapest realtime option. It's 6 times cheaper than **Area Lights** and **Point Lights** realtime shadows.
+It's the best choice for flashlights, projectors, small stage lights, or other lights that only need to look in one direction.
 
 To use them:
 
 1. Set the light `Type` to `Spot Light`.
-2. Keep `Angle` below 180 degrees.
+2. Keep `Angle` below 180 degrees. (I personally recommend a value even below 120 degrees to keep the quality decent)
 3. Keep `Force Cubemap Shadows` disabled.
-4. If this light previously used a cubemap shadow source, press `Bake Shadows` once or clear the old cubemap source after changing the settings so the target instance is synced as a single projected shadow.
+4. If this light previously used a cubemap shadow source, delete the baked texture reference in the component.
 5. Use the Realtime Shadow Baker with `Realtime` enabled.
-
-This renders one projected shadow slice instead of a 6-face cubemap, so it is the best choice for flashlights, projectors, small stage lights, or other lights that only need to look in one direction.
 
 ## Runtime Script Control
 
 The runtime baker can be triggered from UdonSharp by calling `BakeShadows()`. If `Realtime` is enabled, this also starts the realtime bake loop.
-
-```csharp
-using UdonSharp;
-using UnityEngine;
-using VRCLightVolumes;
-
-public class ShadowRefreshButton : UdonSharpBehaviour {
-    public PointLightShadowRuntimeBaker ShadowBaker;
-
-    public void RefreshShadow() {
-        ShadowBaker.BakeShadows();
-    }
-}
-```
-
 If you turn realtime mode on from script while the baker is already enabled, call `BakeShadows()` after changing `Realtime` so the loop starts immediately.
 
-```csharp
-public void EnableRealtimeShadows() {
-    ShadowBaker.Realtime = true;
-    ShadowBaker.enabled = true;
-    ShadowBaker.BakeShadows();
-}
-
-public void DisableRealtimeShadows() {
-    ShadowBaker.Realtime = false;
-    ShadowBaker.enabled = false;
-}
-```
-
-If you replace a Point Light Volume shadow source manually from Udon, rebuild the shadow texture cache through the manager after changing the source. Use `NotifyPointLightVolumeChanged(pointLight, true, false, true)` when changing one light, or `ReinitializeShadowTextures()` after broader manual changes.
+If you replace a Point Light Volume shadow source manually from Udon, rebuild the shadow texture cache through the manager after changing the source. Use `NotifyPointLightVolumeChanged()` when changing one light, or `ReinitializeShadowTextures()` after several changes.
 
 If you change `AutoUpdateShadowMap` from Udon, the manager's `AutoUpdateTextures` must also be enabled for the source to update automatically.
 
@@ -133,9 +111,9 @@ Do not call shadow cache rebuild methods every frame. For per-frame shadows, use
 
 No shadows is always the cheapest mode.
 
-Baked shadows are usually reasonable for static lights. They cost extra VRAM and extra shader sampling, but they do not render cameras in runtime. They are still more expensive than the same light without shadows.
+Baked shadows are usually reasonable for static lights. They cost extra VRAM and extra shader sampling, but they do not render shadow maps in runtime. They are still more expensive than the same light without shadows.
 
-Realtime Shadow Baker is expensive. It renders shadow camera views in runtime, encodes the depth into EVSM data, optionally blurs it, and updates the shared shadow array. It is more expensive than Unity realtime shadows, so avoid using it on many lights at the same time.
+Realtime Shadow Baker is very expensive. It renders shadow camera views in runtime, encodes the depth into EVSM data, optionally blurs it, and updates the shared shadow array. It is more expensive than Unity realtime shadows, so avoid using it on many lights at the same time.
 
 For realtime shadows:
 
@@ -145,7 +123,6 @@ For realtime shadows:
 - Keep `Contact Hardening` at `0` unless you really need it.
 - Use `Layer Mask` and `Object Mask` to render only actual shadow casters.
 - Keep `Realtime Faces Per Frame` low for cubemap shadows unless you need all faces updated immediately.
-- Prefer baked shadows when the light or its shadow casters are static.
 
 ## Shadow Parameters
 

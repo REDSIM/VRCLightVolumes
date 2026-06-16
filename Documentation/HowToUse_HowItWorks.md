@@ -7,6 +7,7 @@
 | [VRC Light Volumes System](../Documentation/HowToUse.md) |
 | [Regular Light Volumes](../Documentation/HowToUse_RegularLightVolumes.md)|
 | [Point Light Volumes](../Documentation/HowToUse_PointLightVolumes.md)|
+| [Point Light Volume Shadows](../Documentation/HowToUse_Shadows.md)|
 | [Audio Link Integration](../Documentation/HowToUse_AudioLinkIntegration.md)|
 | [TV Screens Integration](../Documentation/HowToUse_TVScreensIntegration.md)|
 | **How Light Volumes Work?**<br />• [Spherical Harmonics](#Spherical-Harmonics)<br />• [Light Data](#Light-Data)<br />• [Light Data Storage](#Light-Data-Storage)<br />• [Light Volumes Evaluating](#Light-Volumes-Evaluating)<br />• [Point Light Volumes](#Point-Light-Volumes) |
@@ -97,3 +98,7 @@ Mask = \text{Saturate}\left(1 - \frac{\text{DistanceToLight}^2}{\text{CutoffDist
 ```
 
 The `Saturate()` function clamps the value between 0 and 1. The final light color is multiplied by this squared mask.
+
+In Light Volumes 3.0, Point Light Volumes can also apply normal masking and EVSM shadow maps before their SH contribution is added. Shadow maps are stored in a shared runtime texture array. Point and Area lights usually use cubemap shadows, while Spot Lights can use a cheaper single projected shadow texture when the cone angle allows it.
+
+`Additive Max Overdraw` limits how many Point Light Volumes and additive Light Volumes can be accumulated for one pixel. This keeps the worst-case shader cost predictable when many dynamic lights overlap.

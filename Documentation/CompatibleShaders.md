@@ -2,7 +2,11 @@
 
 # Compatible Shaders
 
-## Light Volumes v.2.0.0 compatible
+## Light Volumes v.3.0.0+ compatible
+*Shaders yet to be added. Stay tuned!*
+
+## Light Volumes v.2.0.0+ compatible
+All of these shaders also work with v.3.0.0, but without Point Light Volumes Shadows and normal masking support.
 
 | Shader                                                       | Description                                                  | Supported since |
 | ------------------------------------------------------------ | ------------------------------------------------------------ | :-------------: |

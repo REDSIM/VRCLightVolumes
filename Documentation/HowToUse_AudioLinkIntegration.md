@@ -7,6 +7,7 @@
 |[VRC Light Volumes System](../Documentation/HowToUse.md)|
 |[Regular Light Volumes](../Documentation/HowToUse_RegularLightVolumes.md)|
 | [Point Light Volumes](../Documentation/HowToUse_PointLightVolumes.md)|
+|[Point Light Volume Shadows](../Documentation/HowToUse_Shadows.md)|
 | **Audio Link Integration**<br />• [Audio Link Quick Setup](#Audio-Link-Quick-Setup)<br />• [Light Volume Audio Link Component Description](#Light-Volume-Audio-Link-Component-Description) |
 |[TV Screens Integration](../Documentation/HowToUse_TVScreensIntegration.md)|
 |[How Light Volumes Work?](../Documentation/HowToUse_HowItWorks.md)|
@@ -40,7 +41,7 @@ This package includes a [AudioLink](https://github.com/llealloo/audiolink/) inte
    Add more **LightVolumeAudioLink** components to control other AudioLink bands.
 
 >[!TIP]
->Enabling `Auto Update Volumes` for Audio-Link support is no more required in Light Volumes v.2.0.0
+>Enabling `Auto Update Volumes` for Audio-Link support is no more required in Light Volumes v.2.0.0 and newer.
 
 ## Light Volume Audio Link Component Description
 

@@ -20,12 +20,12 @@ There are few ASE nodes available for you for an easy integration. Look into `Pa
 
 | ASE Node | Description |
 | --- | --- |
-| Light Volume | Required to get the Spherical Harmonics components. Using the output values you get from it, you can calculate the speculars for your custom lighting setup. <br/> `AdditiveOnly` flag specifies if you need to only sample additive volumes. Useful for static lightmapped meshes. |
-| Light Volume L0 | Required to get the L0 spherical harmonics component, or just the overall ambient color, with no directionality. This is much lighter than the LightVolume node, and recommended to use in places where there are no directionality needed. <br/> `AdditiveOnly` flag specifies if you need to only sample additive volumes. Useful for static lightmapped meshes. |
+| Light Volume | Required to get the Spherical Harmonics components. Using the output values you get from it, you can calculate the speculars for your custom lighting setup. <br/> `AdditiveOnly` flag specifies if you need to only sample additive volumes and Point Light Volumes. Useful for static lightmapped meshes. `WorldPositionOffset` offsets only regular Light Volume sampling. `WorldNormal` enables Point Light Volume normal masking and shadows. |
+| Light Volume L0 | Required to get the L0 spherical harmonics component, or just the overall ambient color, with no directionality. This is much lighter than the LightVolume node, and recommended to use in places where there are no directionality needed. <br/> `AdditiveOnly` flag specifies if you need to only sample additive volumes and Point Light Volumes. Useful for static lightmapped meshes. `WorldPositionOffset` offsets only regular Light Volume sampling. `WorldNormal` enables Point Light Volume normal masking and shadows. |
 | Light Volume Evaluate | Calculates the final color you get from the light volume in some kind of a physically realistic way. But alternatively you can implement your own "Evaluate" function to make the result matching your toon shader, for example. <br/> You should usually multiply it by your "Albedo" and add to the final color, as an emission. |
 | Light Volume Specular | Calculates approximated speculars based on SH components. Can be used with Light Volumes or even with any other SH L1 values, like Unity default light probes. The result should be added to the final color, just like emission. You should NOT multiply this by albedo color! <br/> `Dominant Direction` flag specifies if you want to use a simpler and lighter way of generating speculars. Generates one color specular for the dominant light direction instead of three color speculars in a regular method. |
 | Is Light Volumes | Returns `0` if there are no light volumes support on the current scene, or `1` if light volumes system is provided. |
-| Light Volumes Version | Returns the light volumes version. `0` means that light volumes are not presented in the scene. `1`, `2` or any other values in future, shows the global light volumes verison presented in the scene. |
+| Light Volumes Version | Returns the light volumes version. `0` means that light volumes are not presented in the scene. `2`, `3` or any other values in future, shows the global light volumes version presented in the scene. |
 
 ## Light Volume integration through shader code
 
@@ -44,6 +44,8 @@ Evaluate the returned SH data using `LightVolumeEvaluate()` But you can use your
 
 Typically, the result color should be multiplied by the albedo and added to the final fragment color. You may also apply AO or other adjustments before combining it.
 
+If your shader has a reliable world normal, pass it to `LightVolumeSH()` as the optional `worldNormal` argument. This enables Point Light Volume normal masking and shadow strength. Without it, Point Light Volumes still work, but they will not use the per-surface normal mask.
+
 > [!TIP]
 > `LightVolumeSH()` automatically falls back to Unity’s built-in light probes if Light Volumes are not available. No need for a manual check.
 
@@ -51,14 +53,20 @@ Typically, the result color should be multiplied by the albedo and added to the 
 
 Additive light volumes are can cast light on your static lightmapped geometry. To make it work, you need to integrate a function into your lightmapped lighting section of the shader. It's probably somewhere where you use `unity_Lightmap` variable.
 
-Call a `LightVolumeAdditiveSH()` function there to get SH components. This function is even lighter because only samples additive light volumes if they are provided. It returns zeroes if no additive light volumes found or Light Volumes are available in scene.
+Call a `LightVolumeAdditiveSH()` function there to get SH components. This function samples additive Light Volumes and Point Light Volumes, but skips regular non-additive Light Volumes. It returns zeroes if Light Volumes are not available in scene.
 
 Then evaluate the color with `LightVolumeEvaluate()` and **add** the resulting color to your lightmap output.
 
 > [!TIP]
->  You can also check `_UdonLightVolumeEnabled > 0` to skip evaluation entirely when not LightVolumes are not represented in the scene.
+>  You can also check `LightVolumesEnabled() > 0` to skip evaluation entirely when Light Volumes are not represented in the scene.
 
-### 3. Custom SH Evaluation Notes
+### 3. World Position Offset and Normals
+
+`worldPosOffset` is useful when you want to sample regular Light Volumes from a slightly different position, for example to reduce artifacts on custom vertex effects. This offset only affects regular voxel Light Volume sampling. Point Light Volumes still use the original `worldPos`, because their attenuation and shadows are based on the real fragment position.
+
+`worldNormal` is optional, but recommended for surface shaders. Point Light Volumes use it for normal masking and shadow strength. Keep it normalized.
+
+### 4. Custom SH Evaluation Notes
 
 If you use a custom evaluation method instead of `LightVolumeEvaluate()`, make sure you use L1 components too.
 
@@ -66,7 +74,7 @@ If you use a custom evaluation method instead of `LightVolumeEvaluate()`, make s
 > Using L0 only (ambient term) results in unrealistic shading and can make objects look translucent.
 > You must consider L1 directions—or at least the dominant direction and its magnitude for proper shading.
 
-### 4. Specular Lighting (Optional but Recommended)
+### 5. Specular Lighting (Optional but Recommended)
 
 You can enhance gloss and metal surfaces with speculars from SH data:
 
@@ -90,33 +98,37 @@ Required to get the Spherical Harmonics components. Using the output values you 
 Also this values are required to calculate the final light you get from the light volume.
 
 ```hlsl
-void LightVolumeSH(float3 worldPos, out float3 L0, out float3 L1r, out float3 L1g, out float3 L1b)
+void LightVolumeSH(float3 worldPos, out float3 L0, out float3 L1r, out float3 L1g, out float3 L1b, float3 worldPosOffset = 0, float3 worldNormal = 0)
 ```
 | Function argument | Description |
 | --- | --- |
 |`float3 worldPos` | World position of the current fragment.|
 |`out float3 L0` | Outputs ambient color of the current fragment.|
 |`out float3 L1r`<br/>`out float3 L1g`<br/>`out float3 L1b` | Outputs vectors that stores the Red, Green and Blue light directions and power, as a magnitude of these vectors.|
+|`float3 worldPosOffset` | Optional offset applied only to regular Light Volume sampling. Point Light Volumes still use `worldPos`.|
+|`float3 worldNormal` | Optional normalized world normal used by Point Light Volumes for normal masking and shadows.|
 
 ### float3 LightVolumeSH_L0()
 
 Returns ambient color L0, without calculating L1. Cheaper then LightVolumeSH(). Should be used where directionality is not important, like particles or volumetric fog.
 
 ```hlsl
-float3 LightVolumeSH_L0(float3 worldPos)
+float3 LightVolumeSH_L0(float3 worldPos, float3 worldPosOffset = 0, float3 worldNormal = 0)
 ```
 
 | Function argument | Description |
 | --- | --- |
 |`float3 worldPos` | World position of the current fragment.|
+|`float3 worldPosOffset` | Optional offset applied only to regular Light Volume sampling.|
+|`float3 worldNormal` | Optional normalized world normal used by Point Light Volumes for normal masking and shadows.|
 
 ### void LightVolumeAdditiveSH()
-Returns Spherical Harmonics components, just as LightVolumeSH() does, but only for volumes that work in additive mode. This function is much lighter than LightVolumeSH(), and useful for shaders that can be used in baked lightmaps mode.
+Returns Spherical Harmonics components, just as LightVolumeSH() does, but only for additive Light Volumes and Point Light Volumes. This function is much lighter than LightVolumeSH(), and useful for shaders that can be used in baked lightmaps mode.
 
 Evaluate it and add to your lightmaps color if you want to implement the additive volumes support for the baked lightmaps.
 
 ```hlsl
-void LightVolumeAdditiveSH(float3 worldPos, out float3 L0, out float3 L1r, out float3 L1g, out float3 L1b)
+void LightVolumeAdditiveSH(float3 worldPos, out float3 L0, out float3 L1r, out float3 L1g, out float3 L1b, float3 worldPosOffset = 0, float3 worldNormal = 0)
 ```
 
 | Function argument | Description |
@@ -124,20 +136,24 @@ void LightVolumeAdditiveSH(float3 worldPos, out float3 L0, out float3 L1r, out f
 |`float3 worldPos` | World position of the current fragment.|
 |`out float3 L0` | Outputs ambient color of the current fragment.|
 |`out float3 L1r` <br/> `out float3 L1g` <br/> `out float3 L1b` | Outputs vectors that stores the Red, Green and Blue light directions and power, as a magnitude of these vectors.|
+|`float3 worldPosOffset` | Optional offset applied only to regular additive Light Volume sampling. Point Light Volumes still use `worldPos`.|
+|`float3 worldNormal` | Optional normalized world normal used by Point Light Volumes for normal masking and shadows.|
 
 ### float3 LightVolumeAdditiveSH_L0()
 
-Returns ambient color L0, without calculating L1, just as LightVolumeSH_L0() does, but only for volumes that work in additive mode. This function is much lighter than LightVolumeSH_L0(), and useful for shaders that can be used in baked lightmaps mode.
+Returns ambient color L0, without calculating L1, just as LightVolumeSH_L0() does, but only for additive Light Volumes and Point Light Volumes. This function is much lighter than LightVolumeSH_L0(), and useful for shaders that can be used in baked lightmaps mode.
 
 Evaluate it and add to your lightmaps color if you want to implement the additive volumes support for the baked lightmaps.
 
 ```hlsl
-float3 LightVolumeAdditiveSH_L0(float3 worldPos)
+float3 LightVolumeAdditiveSH_L0(float3 worldPos, float3 worldPosOffset = 0, float3 worldNormal = 0)
 ```
 
 | Function argument | Description |
 | --- | --- |
 |`float3 worldPos` | World position of the current fragment. |
+|`float3 worldPosOffset` | Optional offset applied only to regular additive Light Volume sampling.|
+|`float3 worldNormal` | Optional normalized world normal used by Point Light Volumes for normal masking and shadows.|
 
 ### float3 LightVolumeEvaluate()
 
@@ -170,18 +186,23 @@ float3 LightVolumeSpecular(float3 albedo, float smoothness, float metallic, floa
 |`float metallic` | Final surface metalness.|
 |`float3 worldNormal` | World normal of the current fragment. Must be normalized to avoid artefacts.|
 |`float3 viewDir` | World space camera view direction. Must be normalized.|
-|`out float3 L0` | Outputs ambient color of the current fragment.|
-|`out float3 L1r` <br/> `out float3 L1g` <br/> `out float3 L1b` | Outputs vectors that stores the Red, Green and Blue light directions and power, as a magnitude of these vectors.|
+|`float3 L0` | Ambient color component from `LightVolumeSH()`.|
+|`float3 L1r` <br/> `float3 L1g` <br/> `float3 L1b` | Red, Green and Blue light direction vectors from `LightVolumeSH()`.|
 
 You can also provide the surface's specular color directly.
 
 ```hlsl
-float3 LightVolumeSpecular(float3 specColor, float3 worldNormal, float3 viewDir, float3 L0, float3 L1r, float3 L1g, float3 L1b)
+float3 LightVolumeSpecular(float3 specColor, float smoothness, float3 worldNormal, float3 viewDir, float3 L0, float3 L1r, float3 L1g, float3 L1b)
 ```
 
 | Function argument | Description |
 | --- | --- |
 |`float3 specColor` | Final surface specular color. |
+|`float smoothness` | Final surface smoothness.|
+|`float3 worldNormal` | World normal of the current fragment. Must be normalized to avoid artefacts.|
+|`float3 viewDir` | World space camera view direction. Must be normalized.|
+|`float3 L0` | Ambient color component from `LightVolumeSH()`.|
+|`float3 L1r` <br/> `float3 L1g` <br/> `float3 L1b` | Red, Green and Blue light direction vectors from `LightVolumeSH()`.|
 
 ### float3 LightVolumeSpecularDominant()
 Calculates approximated speculars based on SH components. Can be used with Light Volumes or even with any other SH L1 values, like Unity default light probes. The result should be added to the final color, just like emission. You should NOT multiply this by albedo color!
@@ -199,18 +220,23 @@ float3 LightVolumeSpecularDominant(float3 albedo, float smoothness, float metall
 |`float metallic` | Final surface metalness.|
 |`float3 worldNormal` | World normal of the current fragment. Must be normalized to avoid artefacts.|
 |`float3 viewDir` | World space camera view direction. Must be normalized.|
-|`out float3 L0` | Outputs ambient color of the current fragment.|
-|`out float3 L1r` <br/> `out float3 L1g` <br/> `out float3 L1b` | Outputs vectors that stores the Red, Green and Blue light directions and power, as a magnitude of these vectors.|
+|`float3 L0` | Ambient color component from `LightVolumeSH()`.|
+|`float3 L1r` <br/> `float3 L1g` <br/> `float3 L1b` | Red, Green and Blue light direction vectors from `LightVolumeSH()`.|
 
 You can also provide the surface's specular color directly.
 
 ```hlsl
-float3 LightVolumeSpecularDominant(float3 specColor, float3 worldNormal, float3 viewDir, float3 L0, float3 L1r, float3 L1g, float3 L1b)
+float3 LightVolumeSpecularDominant(float3 specColor, float smoothness, float3 worldNormal, float3 viewDir, float3 L0, float3 L1r, float3 L1g, float3 L1b)
 ```
 
 | Function argument | Description |
 | --- | --- |
 |`float3 specColor` | Final surface specular color.|
+|`float smoothness` | Final surface smoothness.|
+|`float3 worldNormal` | World normal of the current fragment. Must be normalized to avoid artefacts.|
+|`float3 viewDir` | World space camera view direction. Must be normalized.|
+|`float3 L0` | Ambient color component from `LightVolumeSH()`.|
+|`float3 L1r` <br/> `float3 L1g` <br/> `float3 L1b` | Red, Green and Blue light direction vectors from `LightVolumeSH()`.|
 
 ### float LightVolumesEnabled()
 Returns `0` if there are no light volumes support on the current scene, or `1` if light volumes system is provided.
@@ -219,4 +245,4 @@ It's not mandatory to check the light volumes support by yourself, because **Lig
 
 ### float LightVolumesVersion()
 
-Returns the light volumes version. `0` means that light volumes are not presented in the scene. `1`, `2` or any other values in future, shows the global light volumes verison presented in the scene.
+Returns the light volumes version. `0` means that light volumes are not presented in the scene. `2`, `3` or any other values in future, shows the global light volumes version presented in the scene.

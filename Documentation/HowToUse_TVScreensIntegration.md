@@ -7,6 +7,7 @@
 |[VRC Light Volumes System](../Documentation/HowToUse.md)|
 |[Regular Light Volumes](../Documentation/HowToUse_RegularLightVolumes.md)|
 | [Point Light Volumes](../Documentation/HowToUse_PointLightVolumes.md)|
+|[Point Light Volume Shadows](../Documentation/HowToUse_Shadows.md)|
 | [Audio Link Integration](../Documentation/HowToUse_AudioLinkIntegration.md)|
 | **TV Screens Integration**<br />• [TV Screen Quick Setup](#TV-Screen-Quick-Setup)<br />• [Light Volume TVGI Component Description](#Light-Volume-TVGI-Component-Description) |
 | [How Light Volumes Work?](../Documentation/HowToUse_HowItWorks.md) |
@@ -49,7 +50,7 @@ It works visually similar to [LTCGI](https://github.com/PiMaker/ltcgi) in some c
 7. Done! The system will now update the light color at runtime, even affecting avatars.
 
 >[!TIP]
-> Enabling `Auto Update Volumes` for Audio-Link support is no more required in Light Volumes v.2.0.0
+> Enabling `Auto Update Volumes` for TVGI support is no more required in Light Volumes v.2.0.0 and newer.
 
 If you see unwanted **sharp color transitions** in your additive volume, try adjusting the **Color Correction** settings in the Light Volume component. Lowering `Shadows` in color correction section usually helps.
 

@@ -7,6 +7,7 @@
 | **VRC Light Volumes System**<br />• [Light Volumes for Avatars](#Light-Volumes-for-Avatars)<br />• [Light Volumes Quick World Setup](#Light-Volumes-Quick-World-Setup)<br />• [Point Light Volumes Quick World Setup](#Point-Light-Volumes-Quick-World-Setup) |
 | [Regular Light Volumes](../Documentation/HowToUse_RegularLightVolumes.md)|
 | [Point Light Volumes](../Documentation/HowToUse_PointLightVolumes.md)|
+| [Point Light Volume Shadows](../Documentation/HowToUse_Shadows.md)|
 | [Audio Link Integration](../Documentation/HowToUse_AudioLinkIntegration.md)|
 | [TV Screens Integration](../Documentation/HowToUse_TVScreensIntegration.md)|
 | [How Light Volumes Work?](../Documentation/HowToUse_HowItWorks.md) |
@@ -21,7 +22,7 @@ VRC Light Volumes is fast and optimized nextgen lighting solution for VRChat. It
 
 [Regular **Light Volumes**](#Light-Volumes-Quick-World-Setup) is a fast and optimized solution that replaces Unity's light probes with a better per-pixel voxel based lighting. It's similar to Adaptive Probe Volumes (APV) in Unity 6, but with manual ReflectionProbe-like volumes placement and some other extra features.
 
-[**Point Light Volumes**](#Point-Light-Volumes-Quick-World-Setup) is a fast and optimized custom lighting system that has it's own parametric Point Light, Spot Lights and Area Lights. Point Light Volumes are not voxel based, they forms the light parametrically, or based on special LUT textures (similar to IES). They can project light cookies or cubemaps. It can be up to 128 point lights visible in one scene at the same time. However, this system does not support realtime shadows.
+[**Point Light Volumes**](#Point-Light-Volumes-Quick-World-Setup) is a fast and optimized custom lighting system that has it's own parametric Point Light, Spot Lights and Area Lights. Point Light Volumes are not voxel based, they forms the light parametrically, or based on special LUT textures (similar to IES). They can project light cookies or cubemaps and can use baked or runtime-updated shadow maps. It can be up to 128 point lights visible in one scene at the same time.
 
 ## Light Volumes for Avatars
 
@@ -65,9 +66,9 @@ You just need to use a [shader that has VRC Light Volumes support](/Documentatio
 2. Select your desired Point Light Volume `Type`. It can be: `Point Light`, `Spot Light`, `Area Light`
 
 > [!IMPORTANT]
->  Point and Spot Lights are the cheapest. Area light can be ~8 times less performant than other light types, so use it only if you need a movable and scalable in runtime soft box, or if you really want to save memory. Otherwise, it's more performant to bake a regular Light Volume in a shape of an area light.
+>  Point and Spot Lights are still the cheapest, but Area Lights are no longer dramatically heavier than other light types. You can use them for movable and scalable soft boxes without special fear. Just avoid excessive overlaps, and still prefer baking a regular Light Volume when the light is fully static and doesn't need runtime control.
 
-3. In most of the cases you need to leave the `Shape` value as `Parametric` - it's the cheapest and the most useful mode. But if you want to project a light **cookie** (point light volume) or a **cubemap** (spot light volume), select `Custom` shape.
+3. In most of the cases you need to leave the `Projection` value as `Parametric` - it's the cheapest and the most useful mode. But if you want to project a light **cubemap** (Point Light) or a **cookie** (Spot Light), select `Custom` projection.
 
 4. **Point Light Volumes work differently compared to Unity’s built-in lights.** They use light attenuation that more closely resembles how light behaves in the real world.
 
@@ -79,10 +80,12 @@ You just need to use a [shader that has VRC Light Volumes support](/Documentatio
 > Scaling the light game object also scales the light source size!
 
 5. `Debug Range` shows the range in which point light volume affects meshes. Try not to overlap a lot of point light volumes. More overlaps means less performance.
-   You can configure the `Light Brightness Cutoff` value in the **Light Volume Setup** to limit the effective range of the light and improve performance. Higher values reduce the light's visible radius, which generally increases performance, but results in less realistic light attenuation.
+   You can configure the `Brightness Cutoff` value in the **Light Volume Setup** to limit the effective range of the light and improve performance. Higher values reduce the light's visible radius, which generally increases performance, but results in less realistic light attenuation.
 
 6. Enable `Dynamic` if your light can move in runtime. Otherwise it will be static, which is a tiny bit cheaper.
    If you want to make `Dynamic` lights auto-update their positions and other parameters in runtime, enable `Auto Update Volumes` in **Light Volume Setup**. Otherwise, they will stay in one place in game.
+
+7. If this light needs shadows, enable `Shadows`, configure the shadow source or press `Bake Shadows` in the Point Light Volume inspector. Shadow maps are stored in the shared shadow texture array controlled by **Shadow Resolution** and **Shadow Texture Format** in **Light Volume Setup**. See [Point Light Volume Shadows](../Documentation/HowToUse_Shadows.md) for baked shadows, realtime shadows and runtime script control.
 
 > [!WARNING]
 > You must use materials with a [shader that has VRC Light Volumes support](/Documentation/CompatibleShaders.md) for your world surfaces and props to see Point Light Volumes! Default Unity's shader will not work!

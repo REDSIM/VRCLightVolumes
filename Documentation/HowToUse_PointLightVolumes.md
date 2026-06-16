@@ -6,7 +6,8 @@
 |----|
 |[VRC Light Volumes System](../Documentation/HowToUse.md)|
 |[Regular Light Volumes](../Documentation/HowToUse_RegularLightVolumes.md)|
-|**Point Light Volumes**<br />• [Point Light Volumes Placement](#Point-Light-Volumes-Placement)<br />• [Light Shape](#Light-Shape)<br />• [Baked Point Light Volume Shadow Masks](#Baked-Point-Light-Volume-Shadow-Masks)<br />• [Point Light Volume Component Description](#Point-Light-Volume-Component-Description)|
+|**Point Light Volumes**<br />• [Point Light Volumes Placement](#Point-Light-Volumes-Placement)<br />• [Light Projection](#Light-Projection)<br />• [Point Light Volume Component Description](#Point-Light-Volume-Component-Description)|
+|[Point Light Volume Shadows](../Documentation/HowToUse_Shadows.md)|
 |[Audio Link Integration](../Documentation/HowToUse_AudioLinkIntegration.md)|
 |[TV Screens Integration](../Documentation/HowToUse_TVScreensIntegration.md)|
 |[How Light Volumes Work?](../Documentation/HowToUse_HowItWorks.md)|
@@ -15,7 +16,7 @@
 
 ![](../Documentation/Preview_4.png)
 
-**Point Light Volumes** is a fast and optimized custom lighting system that has it's own parametric Point Lights, Spot Lights and Area Lights. Point Light Volumes are not voxel based, they forms the light parametrically, or based on special LUT textures (similar to IES). They can project light cookies or cubemaps. It can be up to 128 point lights visible in one scene at the same time. However, this system does not support real-time shadows.
+**Point Light Volumes** is a fast and optimized custom lighting system that has it's own parametric Point Lights, Spot Lights and Area Lights. Point Light Volumes are not voxel based, they forms the light parametrically, or based on special LUT textures (similar to IES). They can project light cookies or cubemaps and can use baked or runtime-updated shadow maps. It can be up to 128 point lights visible in one scene at the same time.
 
 **Point Light Volumes** consist of two components in the editor: `Point Light Volume` and `Point Light Volume Instance`.
 
@@ -29,23 +30,25 @@ The `Point Light Volume Instance` component is a VRChat Udon script that stores 
 
 **Point Light Volumes** are mostly useful in cases when you need independent dynamic lights, that can be individually toggled, moved or changed color in runtime.
 
-If you just have a lot of point light sources that are static and don't change any of their properties in runtime, consider using a regular Light Volume and bake as much lights into it as you want. It is usually much more optimized than placing a lot of individual point lights. However, one point light (Not in Area Light mode!) is usually ~4 times cheaper than a one regular additive light volume.
+If you just have a lot of point light sources that are static and don't change any of their properties in runtime, consider using a regular Light Volume and bake as much lights into it as you want. It is usually much more optimized than placing a lot of individual point lights. However, one Point Light Volume is usually much cheaper than a one regular additive light volume when you need runtime control.
 
-Area light can be ~8 times less performant than other light types, so use it only if you need a movable and scalable in runtime soft box, or if you really want to save memory. Otherwise, it's more performant to bake a regular Light Volume in a shape of an area light.
+Area Lights are a bit heavier than Point and Spot Lights, but they are not dramatically heavier anymore. You can safely use them for movable and scalable runtime soft boxes. Just avoid excessive overlaps, and still prefer baking a regular Light Volume in a shape of an area light when the light is fully static.
 
 Note that more point lights you have active in your scene, the less performance you'll have. So, consider manually turning off unused point lights if you have a lot of them at your scene.
 
 The **more** point light volumes overlap, the **less** performance you'll have! 
 
-**Point light Volumes** calculates the **range** automatically based on their `Light Source Size` value, their scale, `Intensity` and `Color`. You can also configure the `Light Brightness Cutoff` value in the **Light Volume Setup** to limit the effective range of the light and improve performance. Higher values reduce the light's visible radius, which generally increases performance, but results in less realistic light attenuation.
+**Point light Volumes** calculates the **range** automatically based on their `Light Source Size` value, their scale, `Intensity` and `Color`. You can also configure the `Brightness Cutoff` value in the **Light Volume Setup** to limit the effective range of the light and improve performance. Higher values reduce the light's visible radius, which generally increases performance, but results in less realistic light attenuation.
 
 Try not to make an insanely huge range for your lights. Use `Debug Range` flag in your Point Light Volume component to preview the region affected by your point light.
 
-## Light Shape
+If a static Point Light Volume should also affect avatars or props with no Light Volumes shader support, enable `Bake Into Probes` before baking. This bakes the point light contribution into regular Unity Light Probes. It is not needed for objects using shaders with VRC Light Volumes support.
+
+## Light Projection
 
 ### Parametric
 
-Point Light Volumes and Spot Light Volumes use `Parametric` light shape by default. **Point Light Volumes work differently compared to Unity’s built-in lights.** They use inverse-square light attenuation that more closely resembles how light behaves in the real world.
+Point Light Volumes and Spot Light Volumes use `Parametric` projection by default. **Point Light Volumes work differently compared to Unity’s built-in lights.** They use inverse-square light attenuation that more closely resembles how light behaves in the real world.
 
 ![](../Documentation/Preview_7.png)
 
@@ -60,7 +63,7 @@ In Spot Light mode, several additional parametric shape properties are available
 
 ### LUT
 
-If you want to create a complex light shape and attenuation, `LUT` light shape is what you need. For the Spot Light mode, LUT works similar to IES light shape format, but easier for people to create their own LUT presets.
+If you want to create a complex light shape and attenuation, `LUT` projection is what you need. For the Spot Light mode, LUT works similar to IES light shape format, but easier for people to create their own LUT presets.
 
 ![](../Documentation/Preview_6.png)
 
@@ -68,78 +71,70 @@ If you want to create a complex light shape and attenuation, `LUT` light shape i
 
 In Point Light mode, only vertical texture direction is used, as there are no cone. Horizontal data will just be ignored.
 
-So, LUT is the only light shape mode, which can customize the light attenuation. It uses `Range` property to manually define the light range.
+So, LUT is the only projection mode, which can customize the light attenuation. It uses `Range` property to manually define the light range.
 
 > [!IMPORTANT]
 > It’s recommended to completely disable compression for any texture used as a Cookie or a LUT. The Light Volumes system does not inherit the compression settings, but compression artifacts will still remain and affect the result.
 
 ### Custom
 
-If you want just to project a light cookie texture, you can use `Custom` light shape mode. Unlike Unity’s built-in Spot Light, here cookie can project a colored texture, that can work as a projector. Using angle with more than 180 degrees will not create an inversed cone in this case.
+If you want just to project a light cookie texture, you can use `Custom` projection mode. Unlike Unity’s built-in Spot Light, here cookie can project a colored texture, that can work as a projector. Using angle with more than 180 degrees will not create an inversed cone in this case.
 
 ![](../Documentation/Preview_8.png)
 
-Point Light in `Custom` light shape mode can project a cubemap instead of a regular cookie. So it's a perfect solution to make disco balls, lamps that projects stars or anything else you want.
+Point Light in `Custom` projection mode can project a cubemap instead of a regular cookie. So it's a perfect solution to make disco balls, lamps that projects stars or anything else you want.
 
-### Custom Texture Resolution and Format
+### Projection Texture Resolution
 
-When you assign a LUT, Cookie texture, or Cubemap, the **Light Volumes** system automatically packs everything into a single **Texture Array**. The `Resolution` and `Format` of this array can be configured in the **Light Volumes Setup** component.
+When you assign a LUT, Cookie texture, Cubemap, Render Texture, or Material, the **Light Volumes** system automatically packs everything into a shared runtime **Texture Array**. The `Cookie Resolution` of this array can be configured in the **Light Volumes Setup** component.
 
 > [!WARNING]
-> High resolutions may increase packing time and cause temporary lag in the editor.
+> High resolutions increase VRAM usage and can cause temporary lag while the texture array is rebuilt.
 
 LUTs and Cookie textures share the same resolution, as they are packed into the same texture array. Cubemaps, however, require 6 slices per entry (one for each face), so each cubemap takes up six times more space than a LUT or Cookie. If your input textures have a different resolution, they will be automatically rescaled during packing. 
 
 Duplicated LUTs, Cubemaps, and Cookie textures are only uploaded to VRChat once and are reused by all lights that reference them. So don’t worry about using the same textures across multiple Point Light Volumes - it won’t increase the build size.
 
+If you use a `RenderTexture` or a `Material` as the source, the shared texture array can be updated in runtime. This is controlled by `Auto Update Textures` in **Light Volume Setup**. Keep it disabled if all projection sources are static textures.
+
 > [!IMPORTANT]
 > It’s recommended to completely disable compression for any texture used as a Cookie or a LUT. The Light Volumes system does not inherit the compression settings, but compression artifacts will still remain and affect the result.
 
-### Available Texture Formats:
+### Recommended Source Texture Formats:
 
 - **`RGBA32`** – The lightest format, but it does **not** support HDR. Not recommended for LUTs, as it causes visible banding artifacts.
 - **`RGBA Half`** – The recommended format for most cases. Supports HDR and works well with LUTs. It uses half precision, so minimal banding may still be visible, but usually unnoticeable.
 - **`RGBA Float`** – The highest quality format with full HDR support and no banding. It’s also the most memory-heavy and is typically overkill for general use.
 
-## Baked Point Light Volume Shadow Masks
-
-**Point Light Volumes** do not support real-time shadows. However, you can bake static shadows (shadow masks) for them. While this goes against the idea of Point Light Volumes being fully movable, it can still be useful for static lights or lights that move only slightly. That said, this feature is intended for rare and specific use cases.
-
-![](../Documentation/Preview_9.png)
-
-To bake shadows, simply enable the `Baked Shadows` option on the desired **Point Light Volume**. The `Baked Shadow Radius` parameter controls the shadows blur. `Shadows Scale` parameter controls the scale multiplier for the volume texture resolution of the shadow mask. So, the final resolution of the shadow mask volume is the `Resolurion * ShadowsScale`.
-
-Keep in mind that baked shadows are voxel-based and are stored directly inside each Light Volume at its configured resolution. Make sure the `Point Light Shadows` option is enabled on every Light Volume you want to include in the bake. Enabling `Blur Shadows` is also recommended in most cases to reduce blocky aliasing artifacts, though it will make shadows appear softer.
-
-Press `Bake Shadow Mask` in your **Light Volumes Setup** component or simply rebake your scene lighting to bake your shadow mask.
-
-If you bake a shadow mask for an **Additive Volume**, this shadow mask will work as a **Multiplicative** shadow mask. It's very useful if you want to add more shadows on top. Why it's multiplicative instead of additive? It's because shadows works this way: to accumulate more shadows, you need to multiply the masks instead of adding them together.
-
-> [!Important]
-> Shadow Masks baking doesn't support transparent or semi-transparent mesh materials! So, if you have meshes like glass, water or foliage, disable them completely while baking shadow masks!
-
-> [!Warning]
-> If you changed volume `Resolution` and pressed `Bake Shadow Mask` in your **Light Volumes Setup**, it will generate the wrong shadow mask UVW and will just not work correctly. `Resolution` must stay the same as for the baked light volume textures. If you changed `Resolution`, please, rebake the whole scene.
-
-> [!IMPORTANT]
-> Each Light Volume can support a maximum of **4 shadow-casting point lights** that intersects with each other.
+For shadow setup, baked shadows, the Realtime Shadow Baker and runtime script control, see [Point Light Volume Shadows](../Documentation/HowToUse_Shadows.md).
 
 ## Point Light Volume Component Description
 
 | Parameter | Description |
 | --- | --- |
 |`Dynamic` | Defines whether this point light volume can be moved in runtime. Disabling this option slightly improves performance on the CPU side. If you want to make Dynamic lights auto-update their positions and other parameters in runtime, enable **Auto Update Volumes** in **Light Volume Setup**, or call the **UpdateVolumes()** function manually through an Udon script. Otherwise, they will stay in one place in game.|
-|`Baked Shadows` | Enables baked shadows for this light. This setting is only available for static lights, which cannot move. You must re-bake your volumes after changing this setting. This incurs some runtime VRAM and performance overhead.|
-|`Baked Shadow Radius` | Shadow radius for the baked shadows. Higher values will produce softer shadows.|
 |`Type` | Changes the light mode between Point Light, Spot Light and Area Light.|
 |`Light Source Size` | Physical radius of a light source if it was a matte glowing sphere for a point light, or a flashlight reflector for a spot light. Larger size emits more light without increasing overall intensity.|
 |`Range` | Radius in meters beyond which point and spot lights are culled. (Only available in LUT light shape mode)|
 |`Color` | Multiplies the point light volume’s color by this value.|
 |`Intensity` | Brightness of the point light volume.|
-|`Shape` | Parametric uses settings to compute light falloff. LUT uses a texture: X - cone falloff, Y - attenuation (Y only for point lights). Cookie projects a texture for spot lights. Cubemap projects a cubemap for point lights.|
+|`Shading Strength` | Controls normal masking and shadow opacity for this light. Lower values are cheaper and softer. `0` disables this extra shading.|
+|`Bake Into Probes` | Bakes this Point Light Volume into Unity Light Probes. Useful for static lights that should affect objects without Light Volumes shader support.|
+|`Debug Range` | Shows overdrawing range gizmo. Less point light volumes intersections - more performance!|
+|`Projection` | Parametric uses settings to compute light falloff. LUT uses a texture: X - cone falloff, Y - attenuation (Y only for point lights). Cookie projects a texture for spot lights. Cubemap projects a cubemap for point lights.|
 |`Angle` | Angle of a spotlight cone in degrees. (Only available in spotlight mode)|
 |`Falloff` | Spotlight cone falloff. (Only available in parametric spotlight mode)|
 |`Falloff LUT` | Texture that defines custom light shape. Similar to IES. X - cone falloff, Y - attenuation. No compression and RGBA Float or RGBA Half format is recommended.|
-|`Cookie` | Projects a square texture for spot lights.|
-|`Cubemap` | Projects a cubemap for point lights.|
-|`Debug Range` | Shows overdrawing range gizmo. Less point light volumes intersections - more performance!|
+|`Cookie` | Projects a square texture, RenderTexture or Material for spot lights.|
+|`Cubemap` | Projects a texture, Cubemap, Texture2DArray, RenderTexture, or Material for point lights. Cubemap and array sources use independent faces; a single 2D texture is copied to all faces.|
+|`Shadows` | Enables shadow map sampling for this light. Requires a baked or assigned shadow source.|
+|`Shadow Map` | Shadow texture source used by this light. Can be generated by `Bake Shadows`, assigned manually, or updated by the runtime baker.|
+|`Layer Mask` | Layers that can cast shadows during shadow baking.|
+|`Object Mask` | Optional object list. If empty, all objects on the selected layers can cast shadows. If not empty, only children of the listed objects are rendered during the bake.|
+|`Near Plane` | Near clip plane used by the shadow bake camera. Higher values can clip nearby occluders.|
+|`Bias` | World-space bias in meters used while baking shadows. Larger values reduce self-shadow artifacts but can detach contact edges.|
+|`Blur` | Gaussian blur radius applied after baking, normalized to 128x128 shadow resolution. `0` keeps shadows unblurred.|
+|`Contact Hardening` | Hardens shadows near contact areas. Can produce artifacts, so use it carefully. More performant when set to `0` in runtime shadow mode.|
+|`Use World Space` | Keeps baked shadows attached to the baked world-space pose instead of moving them with the light. Less optimized when enabled.|
+|`Force Cubemap Shadows` | Forces spotlight shadows to bake and store as a cubemap even when the spot angle could use a single projected shadow texture.|
+|`Rebake Shadows` | Includes this light when pressing `Bake Shadows` in **Light Volume Setup**.|

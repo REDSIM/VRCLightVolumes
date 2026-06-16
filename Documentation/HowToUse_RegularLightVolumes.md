@@ -6,6 +6,7 @@
 |[VRC Light Volumes System](../Documentation/HowToUse.md)|
 |**Regular Light Volumes**<br />• [Light Volumes Placement](#Light-Volumes-Placement)<br />• [Auto Light Probes Placement](#Auto-Light-Probes-Placement)<br />• [Additive Light Volumes](#Additive-Light-Volumes)<br />• [Light Volumes Color Correction](#Light-Volumes-Color-Correction)<br />• [Light Volume Component Description](#Light-Volume-Component-Description)|
 |[Point Light Volumes](../Documentation/HowToUse_PointLightVolumes.md)|
+|[Point Light Volume Shadows](../Documentation/HowToUse_Shadows.md)|
 |[Audio Link Integration](../Documentation/HowToUse_AudioLinkIntegration.md)|
 |[TV Screens Integration](../Documentation/HowToUse_TVScreensIntegration.md)|
 |[How Light Volumes Work?](../Documentation/HowToUse_HowItWorks.md)|
@@ -125,15 +126,13 @@ Each time you change a value in this section, the **Light Volumes Atlas** will b
 |`Texture 0` | Texture3D with baked SH data required for future atlas packing. It won't be uploaded to VRChat. (L0r, L0g, L0b, L1r.z)|
 |`Texture 1` | Texture3D with baked SH data required for future atlas packing. It won't be uploaded to VRChat. (L1r.x, L1g.x, L1b.x, L1g.z)|
 |`Texture 2` | Texture3D with baked SH data required for future atlas packing. It won't be uploaded to VRChat. (L1r.y, L1g.y, L1b.y, L1b.z)|
-|`Shadows Texture` | Optional Texture3D with baked shadows data for future atlas packing. It won't be uploaded to VRChat. Stores occlusion for up to 4 nearby point light volumes.|
 | **Color Correction** | |
 | `Exposure` | Makes volume brighter or darker.|
 | `Shadows` | Makes dark volume colors brighter or darker.|
 | `Highlights` | Makes bright volume colors brighter or darker.|
 | **Baking Setup** | |
 |`Bake` | Uncheck it if you don't want to rebake this volume's textures.|
-|`Point Light Shadows` | Uncheck it if you don't want to rebake occlusion data required for baked point light volumes shadows.|
-|`Blur Shadows` | Post-processes the baked occlusion texture with a softening blur. This can help mitigate 'blocky' shadows caused by aliasing, but also makes shadows less crispy.|
+|`Reserve UV Space` | Reserves atlas space for this volume without baking new lighting data. This is useful for prefabs or runtime setups that need stable atlas UVW data but should not run a bake. Reserved voxels are written as white L0 and zero L1.|
 |`Adaptive Resolution` | Automatically sets the resolution based on the Voxels Per Unit value.|
 |`Voxels Per Unit` | Number of voxels used per meter, linearly. This value increases the Light Volume file size cubically.|
 |`Resolution` | Manual Light Volume resolution in voxel count.|

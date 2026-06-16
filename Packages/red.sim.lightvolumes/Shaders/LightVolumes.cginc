@@ -109,17 +109,19 @@ uniform Texture3D _UdonLightVolume;
 uniform SamplerState sampler_UdonLightVolume;
 // First elements must be cubemap faces (6 face textures per cubemap). Then goes other textures
 uniform Texture2DArray _UdonPointLightVolumeTexture;
+uniform SamplerState sampler_UdonPointLightVolumeTexture;
 // First elements are baked shadow cubemap faces, 6 face textures per cubemap.
 uniform Texture2DArray _UdonPointLightVolumeShadowTexture;
-uniform SamplerState sampler_UdonPointLightVolumeShadowTexture;
-// Samples a texture using mip 0, and reusing a single sampler
+// Samples textures using mip 0. Point light texture arrays share the same clamp sampler.
 #define LV_SAMPLE(tex, uvw) tex.SampleLevel(sampler_UdonLightVolume, uvw, 0)
-#define LV_SAMPLE_SHADOW(uvw) _UdonPointLightVolumeShadowTexture.SampleLevel(sampler_UdonPointLightVolumeShadowTexture, uvw, 0)
+#define LV_SAMPLE_POINT(uvw) _UdonPointLightVolumeTexture.SampleLevel(sampler_UdonPointLightVolumeTexture, uvw, 0)
+#define LV_SAMPLE_SHADOW(uvw) _UdonPointLightVolumeShadowTexture.SampleLevel(sampler_UdonPointLightVolumeTexture, uvw, 0)
 
 #else
 
 // Dummy macro definition to satisfy MojoShader (surface shaders)
 #define LV_SAMPLE(tex, uvw) float4(0,0,0,0)
+#define LV_SAMPLE_POINT(uvw) float4(0,0,0,0)
 #define LV_SAMPLE_SHADOW(uvw) float4(0,0,0,0)
 
 #endif
@@ -216,7 +218,7 @@ float3 LV_CubemapUvFace(float3 dir) {
 
 // Samples a cubemap from _UdonPointLightVolumeTexture array
 float4 LV_SampleCubemapArray(uint id, float3 dir) {
-    return LV_SAMPLE(_UdonPointLightVolumeTexture, LV_CubemapUvFace(dir) + float3(0, 0, id * 6));
+    return LV_SAMPLE_POINT(LV_CubemapUvFace(dir) + float3(0, 0, id * 6));
 }
 
 // Samples a shadow map array face using face UV
@@ -424,7 +426,7 @@ void LV_PointLight(uint id, float3 worldPos, inout float3 L0, inout float3 L1r, 
                         float spot = 1 - saturate(spotMask * rcp(1 - angle));
                         uint textureId = (uint) _UdonPointLightVolumeCubeCount * 5 + customId - 1;
                         float3 lutUv = float3(sqrt(float2(spot, dirRadius)), textureId);
-                        att = color.rgb * LV_SAMPLE(_UdonPointLightVolumeTexture, lutUv).xyz;
+                        att = color.rgb * LV_SAMPLE_POINT(lutUv).xyz;
                         lightVisible = max(max(att.r, att.g), att.b) > 0;
 
                     } else { // If it uses default parametric attenuation
@@ -432,7 +434,7 @@ void LV_PointLight(uint id, float3 worldPos, inout float3 L0, inout float3 L1r, 
                         att = LV_PointLightAttenuation(sqlen, -pos.w, color.rgb, sqrRange);
                         [branch] if (customId < 0) { // If uses cookie
                             uint textureId = (uint) _UdonPointLightVolumeCubeCount * 5 - customId - 1;
-                            cookie = LV_SAMPLE(_UdonPointLightVolumeTexture, float3(cookieUv * 0.5 + 0.5, textureId));
+                            cookie = LV_SAMPLE_POINT(float3(cookieUv * 0.5 + 0.5, textureId));
                             lightVisible = min(cookie.a, max(max(cookie.r, cookie.g), cookie.b)) > 0;
                         }
                     }
@@ -455,7 +457,7 @@ void LV_PointLight(uint id, float3 worldPos, inout float3 L0, inout float3 L1r, 
                     float dirRadius = sqlen * abs(pos.w);
                     uint textureId = (uint) _UdonPointLightVolumeCubeCount * 5 + customId - 1;
                     float3 uvid = float3(sqrt(float2(0, dirRadius)), textureId);
-                    att = color.rgb * LV_SAMPLE(_UdonPointLightVolumeTexture, uvid).xyz;
+                    att = color.rgb * LV_SAMPLE_POINT(uvid).xyz;
                     lightVisible = max(max(att.r, att.g), att.b) > 0;
 
                 } else { // If it uses default parametric attenuation

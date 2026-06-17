@@ -300,7 +300,7 @@ namespace VRCLightVolumes {
             if (_useDirectOutput) {
                 _registrationTexture = EnsureOwnedArrayTexture(_registrationTexture, format, 1, _bakeSliceCount, FilterMode.Point);
                 if (_registrationTexture == null) return false;
-                if (_shadowTexture != null) {
+                if (_shadowTexture != null && !IsShadowTexturePublished()) {
                     ReleaseRuntimeRenderTexture(_shadowTexture);
                     _shadowTexture = null;
                 }
@@ -798,17 +798,12 @@ namespace VRCLightVolumes {
             if (_useBlur && _deferBlurUntilFullCycle) {
                 if (cycleComplete) {
                     BlurFaces(0, _bakeSliceCount, _useDirectOutput, !_useDirectOutput);
-                    _hasCompletedFullBake = true;
-                    _deferBlurUntilFullCycle = false;
-                    if (!Realtime) _cycleUseDirectOutput = false;
-                    _cycleBakeSettingsValid = false;
+                    FinishBakeLoopCycle(bakePosition, bakeFarClip, bakeBias);
                 }
             } else if (_useBlur) {
                 BlurFaces(firstFace, faceCount, _useDirectOutput, !_useDirectOutput);
                 if (cycleComplete) {
-                    _hasCompletedFullBake = true;
-                    if (!Realtime) _cycleUseDirectOutput = false;
-                    _cycleBakeSettingsValid = false;
+                    FinishBakeLoopCycle(bakePosition, bakeFarClip, bakeBias);
                 }
             } else if (!_useDirectOutput && _manager != null && _target != null) {
                 // Without blur, local output slices can be copied to the manager immediately after encoding
@@ -821,18 +816,35 @@ namespace VRCLightVolumes {
                     if (face >= _bakeSliceCount) face = 0;
                 }
                 if (cycleComplete) {
-                    _hasCompletedFullBake = true;
-                    _deferBlurUntilFullCycle = false;
-                    if (!Realtime) _cycleUseDirectOutput = false;
-                    _cycleBakeSettingsValid = false;
+                    FinishBakeLoopCycle(bakePosition, bakeFarClip, bakeBias);
                 }
             } else if (cycleComplete) {
-                _hasCompletedFullBake = true;
-                _deferBlurUntilFullCycle = false;
-                if (!Realtime) _cycleUseDirectOutput = false;
-                _cycleBakeSettingsValid = false;
+                FinishBakeLoopCycle(bakePosition, bakeFarClip, bakeBias);
             }
             return true;
+        }
+
+        // Finalizes a completed distributed bake cycle and snapshots direct realtime output when the realtime loop stops
+        private void FinishBakeLoopCycle(Vector3 bakePosition, float farClip, float bias) {
+            if (_cycleUseDirectOutput && _useDirectOutput && !Realtime && _manager != null && _target != null && _manager.ShadowTextures != null && _target.ShadowMapID >= 0) {
+                RenderTextureFormat format = _manager.ShadowTextureFormat == 0 ? RenderTextureFormat.ARGBHalf : RenderTextureFormat.ARGBFloat;
+                _shadowTexture = EnsureOwnedArrayTexture(_shadowTexture, format, _bakeResolution, _bakeSliceCount, FilterMode.Bilinear);
+                if (_shadowTexture != null) {
+                    int shadowId = (int)_target.ShadowMapID;
+                    int sourceBaseSlice;
+                    if (_useCubemapShadow) sourceBaseSlice = shadowId * 6;
+                    else {
+                        int cubemapCount = _manager.ShadowCubemapsCount;
+                        sourceBaseSlice = cubemapCount * 6 + shadowId - cubemapCount;
+                    }
+                    for (int i = 0; i < _bakeSliceCount; i++) VRCGraphics.Blit(_manager.ShadowTextures, _shadowTexture, sourceBaseSlice + i, i);
+                    ApplyTargetShadowSourceInternal(bakePosition, farClip, bias, false);
+                }
+            }
+            _hasCompletedFullBake = true;
+            _deferBlurUntilFullCycle = false;
+            if (!Realtime) _cycleUseDirectOutput = false;
+            _cycleBakeSettingsValid = false;
         }
 
         // Applies horizontal blur to all requested slices first, then vertical blur, so seam-aware sampling sees a coherent cubemap
@@ -1027,6 +1039,12 @@ namespace VRCLightVolumes {
 #endif
         }
 
+        // Returns true when the target instance uses this baker's local shadow texture as its rebuild source
+        private bool IsShadowTexturePublished() {
+            PointLightVolumeInstance target = _target != null ? _target : TargetPointLightVolume;
+            return target != null && _shadowTexture != null && target.ShadowMapTexture == _shadowTexture;
+        }
+
         // Releases temporary bake buffers after a one-shot cycle finishes or realtime baking stops
         private void ReleaseIdleBakeTextures() {
             ReleaseRuntimeRenderTexture(_depthTexture);
@@ -1051,7 +1069,7 @@ namespace VRCLightVolumes {
         // Releases all locally-owned runtime textures
         private void ReleaseRuntimeTextures() {
             ReleaseRuntimeRenderTexture(_depthTexture);
-            ReleaseRuntimeRenderTexture(_shadowTexture);
+            if (!IsShadowTexturePublished()) ReleaseRuntimeRenderTexture(_shadowTexture);
             ReleaseRuntimeRenderTexture(_registrationTexture);
             ReleaseBlurTempTexture();
             ReleaseRuntimeRenderTexture(_materialBlitInputTexture);

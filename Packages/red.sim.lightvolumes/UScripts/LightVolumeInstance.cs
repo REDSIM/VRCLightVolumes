@@ -1,4 +1,5 @@
 ﻿using UnityEngine;
+using UnityEngine.Serialization;
 #if UDONSHARP
 using UdonSharp;
 #endif
@@ -50,6 +51,15 @@ namespace VRCLightVolumes {
         public LightVolumeManager LightVolumeManager;
         [HideInInspector] public bool IsActive = true;
 
+#if UNITY_EDITOR && !COMPILER_UDONSHARP
+        [SerializeField, HideInInspector, FormerlySerializedAs("RelativeRotation")] private Vector4 _legacyRelativeRotation = new Vector4(0, 0, 0, 1);
+        [SerializeField, HideInInspector, FormerlySerializedAs("BoundsUvwMax0")] private Vector4 _legacyBoundsUvwMax0 = Vector4.zero;
+        [SerializeField, HideInInspector, FormerlySerializedAs("BoundsUvwMax1")] private Vector4 _legacyBoundsUvwMax1 = Vector4.zero;
+        [SerializeField, HideInInspector, FormerlySerializedAs("BoundsUvwMax2")] private Vector4 _legacyBoundsUvwMax2 = Vector4.zero;
+        [SerializeField, HideInInspector] private bool _legacyVolumeDataMigrated = false;
+        private bool _legacyVolumeDataMigrationNeedsDirty = false;
+#endif
+
         private Color _old_Color = Color.white;
         private float _old_Intensity = 1f;
         private bool _isRegisteredWithManager = false;
@@ -81,6 +91,52 @@ namespace VRCLightVolumes {
                 _old_Intensity = Intensity;
                 NotifyManager(false);
             }
+        }
+#endif
+
+#if UNITY_EDITOR && !COMPILER_UDONSHARP
+        // Runs legacy serialized data migration when Unity reloads or validates this component in editor.
+        private void OnValidate() {
+            MigrateLegacyVolumeData();
+        }
+
+        // Converts serialized 2.x fallback fields into the 3.x compact volume layout when needed.
+        public bool MigrateLegacyVolumeData() {
+            if (_legacyVolumeDataMigrated) return false;
+            bool changed = false;
+
+            if (RelativeRotationRow0 == Vector3.zero && RelativeRotationRow1 == Vector3.zero && _legacyRelativeRotation != new Vector4(0, 0, 0, 1) && _legacyRelativeRotation != Vector4.zero) {
+                Quaternion relativeRotation = new Quaternion(_legacyRelativeRotation.x, _legacyRelativeRotation.y, _legacyRelativeRotation.z, _legacyRelativeRotation.w);
+                Matrix4x4 rotationMatrix = Matrix4x4.Rotate(relativeRotation);
+                RelativeRotationRow0 = rotationMatrix.GetRow(0);
+                RelativeRotationRow1 = rotationMatrix.GetRow(1);
+                IsRotated = Quaternion.Dot(relativeRotation, Quaternion.identity) < 0.999999f;
+                changed = true;
+            }
+
+            changed |= MigrateLegacyBoundsScale(ref BoundsUvwMin0, _legacyBoundsUvwMax0, 0);
+            changed |= MigrateLegacyBoundsScale(ref BoundsUvwMin1, _legacyBoundsUvwMax1, 1);
+            changed |= MigrateLegacyBoundsScale(ref BoundsUvwMin2, _legacyBoundsUvwMax2, 2);
+
+            if (changed) _legacyVolumeDataMigrationNeedsDirty = true;
+            _legacyVolumeDataMigrated = true;
+            return changed;
+        }
+
+        // Returns and clears the delayed dirty request produced by OnValidate migration.
+        public bool ConsumeLegacyVolumeDataMigrationDirty() {
+            bool needsDirty = _legacyVolumeDataMigrationNeedsDirty;
+            _legacyVolumeDataMigrationNeedsDirty = false;
+            return needsDirty;
+        }
+
+        // Restores BoundsUvwMin.w scale from old explicit max vectors if a scene had only legacy bounds serialized.
+        private static bool MigrateLegacyBoundsScale(ref Vector4 uvwMin, Vector4 legacyMax, int axis) {
+            if (uvwMin.w != 0f || legacyMax == Vector4.zero) return false;
+            float min = axis == 0 ? uvwMin.x : axis == 1 ? uvwMin.y : uvwMin.z;
+            float max = axis == 0 ? legacyMax.x : axis == 1 ? legacyMax.y : legacyMax.z;
+            uvwMin.w = max - min;
+            return true;
         }
 #endif
 

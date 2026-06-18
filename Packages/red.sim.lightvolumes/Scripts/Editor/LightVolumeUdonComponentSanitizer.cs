@@ -19,6 +19,7 @@ namespace VRCLightVolumes {
         private static FieldInfo _backingUdonBehaviourField = null;
         private static FieldInfo _programSourceField = null;
         private static Type _programSourceFieldOwner = null;
+        private static bool _needsAuthoringSyncAfterMigration = false;
 
         // Registers delayed cleanup so duplicated UdonSharp proxy components are removed after editor reloads and hierarchy edits
         static LightVolumeUdonComponentSanitizer() {
@@ -40,6 +41,11 @@ namespace VRCLightVolumes {
                     removedCount += SanitizeGameObject(gameObjects[i]);
                 }
 
+                if (_needsAuthoringSyncAfterMigration) {
+                    _needsAuthoringSyncAfterMigration = false;
+                    SyncAuthoringComponentsToMigratedRuntime();
+                }
+
                 return removedCount;
             } finally {
                 _isSanitizing = false;
@@ -54,8 +60,14 @@ namespace VRCLightVolumes {
             removedCount += SanitizeManagers(gameObject);
             removedCount += SanitizeLightVolumeInstances(gameObject);
             removedCount += SanitizePointLightVolumeInstances(gameObject);
+            bool migrated = MigrateLegacyRuntimeComponents(gameObject);
 
-            if (removedCount > 0) MarkSceneDirty(gameObject);
+            if (removedCount > 0 || migrated) MarkSceneDirty(gameObject);
+            if (migrated) _needsAuthoringSyncAfterMigration = true;
+            if (_needsAuthoringSyncAfterMigration && !_isSanitizing) {
+                _needsAuthoringSyncAfterMigration = false;
+                SyncAuthoringComponentsToMigratedRuntime();
+            }
             return removedCount;
         }
 
@@ -135,6 +147,46 @@ namespace VRCLightVolumes {
             }
 
             return RemoveDuplicateComponents(gameObject, instances, keeper);
+        }
+
+        // Migrates serialized 2.x runtime component data after Unity loads the scene with 3.x scripts.
+        private static bool MigrateLegacyRuntimeComponents(GameObject gameObject) {
+            bool migrated = false;
+
+            LightVolumeInstance[] lightVolumes = gameObject.GetComponents<LightVolumeInstance>();
+            for (int i = 0; i < lightVolumes.Length; i++) {
+                LightVolumeInstance lightVolume = lightVolumes[i];
+                if (lightVolume == null) continue;
+                bool wasMigrated = lightVolume.MigrateLegacyVolumeData();
+                bool needsDirty = lightVolume.ConsumeLegacyVolumeDataMigrationDirty();
+                if (!wasMigrated && !needsDirty) continue;
+                MarkObjectDirty(lightVolume);
+                migrated = true;
+            }
+
+            PointLightVolumeInstance[] pointLights = gameObject.GetComponents<PointLightVolumeInstance>();
+            for (int i = 0; i < pointLights.Length; i++) {
+                PointLightVolumeInstance pointLight = pointLights[i];
+                if (pointLight == null) continue;
+                bool wasMigrated = pointLight.MigrateLegacyPackedData();
+                bool needsDirty = pointLight.ConsumeLegacyPackedDataMigrationDirty();
+                if (!wasMigrated && !needsDirty) continue;
+                MarkObjectDirty(pointLight);
+                migrated = true;
+            }
+
+            return migrated;
+        }
+
+        // Re-syncs authoring MonoBehaviours into their runtime Udon components after legacy field migration.
+        private static void SyncAuthoringComponentsToMigratedRuntime() {
+            LightVolumeSetup[] setups = Resources.FindObjectsOfTypeAll<LightVolumeSetup>();
+            for (int i = 0; i < setups.Length; i++) {
+                LightVolumeSetup setup = setups[i];
+                if (!ShouldSanitizeComponent(setup)) continue;
+                setup.SyncUdonScript();
+                MarkObjectDirty(setup);
+            }
         }
 
         // Returns the healthiest manager, preferring valid Udon backing and existing runtime data over possibly stale authoring references

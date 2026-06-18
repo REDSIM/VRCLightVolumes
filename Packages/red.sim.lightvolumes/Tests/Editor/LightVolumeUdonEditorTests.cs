@@ -55,6 +55,70 @@ namespace VRCLightVolumes.Tests {
             ResetShaderGlobals();
         }
 
+        // Verifies 2.x packed point light runtime fields migrate into the explicit 3.x fields.
+        [Test]
+        public void LegacyPackedPointLightDataMigratesToExplicitFields() {
+            GameObject gameObject = CreateGameObject("Legacy Point Migration", false);
+            PointLightVolumeInstance point = gameObject.AddComponent<PointLightVolumeInstance>();
+            point.Angle = 0.5f;
+            SetPrivateField(point, "_legacyPositionData", new Vector4(1, 2, 3, -0.25f));
+            SetPrivateField(point, "_legacyDirectionData", new Vector4(0, 0, 1, 2));
+            SetPrivateField(point, "_legacyCustomID", 0f);
+            SetPrivateField(point, "_legacyAngleData", Mathf.Cos(0.5f));
+            SetPrivateField(point, "_legacyPackedDataMigrated", false);
+
+            Assert.That(point.MigrateLegacyPackedData(), Is.True);
+            Assert.That(point.LightType, Is.EqualTo(1));
+            Assert.That(point.ProjectionMode, Is.EqualTo(0));
+            AssertVectorClose(new Vector4(1, 2, 3, 0), point.Position);
+            Assert.That(point.LightSourceSize, Is.EqualTo(0.5f).Within(Epsilon));
+            AssertVectorClose(new Vector4(0, 0, 1, 0), point.Direction);
+            Assert.That(point.ConeFalloff, Is.EqualTo(2).Within(Epsilon));
+            Assert.That(point.OuterAngleCos, Is.EqualTo(Mathf.Cos(0.5f)).Within(Epsilon));
+            Assert.That(point.ShadowMapID, Is.EqualTo(-1).Within(Epsilon));
+            Assert.That(point.IsRangeDirty, Is.True);
+            Assert.That(GetPrivateField<Vector4>(point, "_legacyPositionData"), Is.EqualTo(new Vector4(1, 2, 3, -0.25f)));
+            Assert.That(GetPrivateField<float>(point, "_legacyCustomID"), Is.EqualTo(0f));
+            Assert.That(IsPrivateFieldSerialized<PointLightVolumeInstance>("_legacyPackedDataMigrated"), Is.True);
+            Assert.That(point.ConsumeLegacyPackedDataMigrationDirty(), Is.True);
+            Assert.That(point.ConsumeLegacyPackedDataMigrationDirty(), Is.False);
+            point.Position = new Vector3(9, 9, 9);
+            Assert.That(point.MigrateLegacyPackedData(), Is.False);
+            AssertVectorClose(new Vector4(9, 9, 9, 0), point.Position);
+        }
+
+        // Verifies 2.x regular volume fallback fields restore rotation rows and compact bounds scale.
+        [Test]
+        public void LegacyLightVolumeDataMigratesRotationAndBoundsScale() {
+            GameObject gameObject = CreateGameObject("Legacy Volume Migration", false);
+            LightVolumeInstance volume = gameObject.AddComponent<LightVolumeInstance>();
+            Quaternion rotation = Quaternion.Euler(0, 90, 0);
+            SetPrivateField(volume, "_legacyRelativeRotation", new Vector4(rotation.x, rotation.y, rotation.z, rotation.w));
+            volume.BoundsUvwMin0 = new Vector4(0.1f, 0.2f, 0.3f, 0);
+            volume.BoundsUvwMin1 = new Vector4(0.2f, 0.3f, 0.4f, 0);
+            volume.BoundsUvwMin2 = new Vector4(0.3f, 0.4f, 0.5f, 0);
+            SetPrivateField(volume, "_legacyBoundsUvwMax0", new Vector4(0.6f, 0.2f, 0.3f, 0));
+            SetPrivateField(volume, "_legacyBoundsUvwMax1", new Vector4(0.2f, 0.8f, 0.4f, 0));
+            SetPrivateField(volume, "_legacyBoundsUvwMax2", new Vector4(0.3f, 0.4f, 1.2f, 0));
+            SetPrivateField(volume, "_legacyVolumeDataMigrated", false);
+
+            Assert.That(volume.MigrateLegacyVolumeData(), Is.True);
+            Matrix4x4 expectedRotation = Matrix4x4.Rotate(rotation);
+            AssertVectorClose(expectedRotation.GetRow(0), volume.RelativeRotationRow0);
+            AssertVectorClose(expectedRotation.GetRow(1), volume.RelativeRotationRow1);
+            Assert.That(volume.IsRotated, Is.True);
+            Assert.That(volume.BoundsUvwMin0.w, Is.EqualTo(0.5f).Within(Epsilon));
+            Assert.That(volume.BoundsUvwMin1.w, Is.EqualTo(0.5f).Within(Epsilon));
+            Assert.That(volume.BoundsUvwMin2.w, Is.EqualTo(0.7f).Within(Epsilon));
+            Assert.That(GetPrivateField<Vector4>(volume, "_legacyBoundsUvwMax0"), Is.EqualTo(new Vector4(0.6f, 0.2f, 0.3f, 0)));
+            Assert.That(IsPrivateFieldSerialized<LightVolumeInstance>("_legacyVolumeDataMigrated"), Is.True);
+            Assert.That(volume.ConsumeLegacyVolumeDataMigrationDirty(), Is.True);
+            Assert.That(volume.ConsumeLegacyVolumeDataMigrationDirty(), Is.False);
+            volume.BoundsUvwMin0.w = 0.25f;
+            Assert.That(volume.MigrateLegacyVolumeData(), Is.False);
+            Assert.That(volume.BoundsUvwMin0.w, Is.EqualTo(0.25f).Within(Epsilon));
+        }
+
         // Destroys all temporary scene and texture objects created by a test case.
         [TearDown]
         public void TearDown() {
@@ -73,6 +137,27 @@ namespace VRCLightVolumes.Tests {
         // Assigns a private LightVolumeManager field used by focused regression tests.
         private static void SetManagerField<T>(LightVolumeManager manager, FieldInfo field, T value) {
             field.SetValue(manager, value);
+        }
+
+        // Assigns a private serialized migration field used by focused regression tests.
+        private static void SetPrivateField<T>(object target, string fieldName, T value) {
+            FieldInfo field = target.GetType().GetField(fieldName, _lifecycleMethodFlags);
+            Assert.That(field, Is.Not.Null, fieldName + " field was not found on " + target.GetType().Name);
+            field.SetValue(target, value);
+        }
+
+        // Reads a private serialized migration field used by focused regression tests.
+        private static T GetPrivateField<T>(object target, string fieldName) {
+            FieldInfo field = target.GetType().GetField(fieldName, _lifecycleMethodFlags);
+            Assert.That(field, Is.Not.Null, fieldName + " field was not found on " + target.GetType().Name);
+            return (T)field.GetValue(target);
+        }
+
+        // Returns true when a private field is persisted by Unity serialization.
+        private static bool IsPrivateFieldSerialized<T>(string fieldName) {
+            FieldInfo field = typeof(T).GetField(fieldName, _lifecycleMethodFlags);
+            Assert.That(field, Is.Not.Null, fieldName + " field was not found on " + typeof(T).Name);
+            return field.GetCustomAttribute<SerializeField>() != null;
         }
 
         // Verifies that empty light-volume and point-light families do not block each other.
@@ -845,7 +930,7 @@ namespace VRCLightVolumes.Tests {
 
             MethodInfo cacheMethod = typeof(PointLightShadowRuntimeBaker).GetMethod("CacheRuntimeReferences", _lifecycleMethodFlags);
             MethodInfo refreshSettingsMethod = typeof(PointLightShadowRuntimeBaker).GetMethod("RefreshBakeSettings", _lifecycleMethodFlags);
-            MethodInfo applyMethod = typeof(PointLightShadowRuntimeBaker).GetMethod("ApplyTargetShadowSource", _lifecycleMethodFlags);
+            MethodInfo applyMethod = typeof(PointLightShadowRuntimeBaker).GetMethod("ApplyTargetShadowSourceInternal", _lifecycleMethodFlags);
             FieldInfo bakeFarClipField = typeof(PointLightShadowRuntimeBaker).GetField("_bakeFarClip", _lifecycleMethodFlags);
             Assert.That(cacheMethod, Is.Not.Null);
             Assert.That(refreshSettingsMethod, Is.Not.Null);
@@ -858,7 +943,7 @@ namespace VRCLightVolumes.Tests {
             refreshSettingsMethod.Invoke(baker, null);
             float firstFarClip = (float)bakeFarClipField.GetValue(baker);
             Assert.That(firstFarClip, Is.EqualTo(8).Within(Epsilon));
-            Assert.That((bool)applyMethod.Invoke(baker, new object[] { Vector3.zero, firstFarClip, 0.1f }), Is.True);
+            Assert.That((bool)applyMethod.Invoke(baker, new object[] { Vector3.zero, firstFarClip, 0.1f, false }), Is.True);
             Assert.That(point.FarClip, Is.EqualTo(8).Within(Epsilon));
 
             point.SquaredRange = 4;
@@ -866,7 +951,7 @@ namespace VRCLightVolumes.Tests {
             refreshSettingsMethod.Invoke(baker, null);
             float secondFarClip = (float)bakeFarClipField.GetValue(baker);
             Assert.That(secondFarClip, Is.EqualTo(2).Within(Epsilon));
-            Assert.That((bool)applyMethod.Invoke(baker, new object[] { Vector3.zero, secondFarClip, 0.1f }), Is.True);
+            Assert.That((bool)applyMethod.Invoke(baker, new object[] { Vector3.zero, secondFarClip, 0.1f, false }), Is.True);
             Assert.That(point.FarClip, Is.EqualTo(2).Within(Epsilon));
         }
 
@@ -986,7 +1071,7 @@ namespace VRCLightVolumes.Tests {
             AddRuntimeShadowCamera(baker);
 
             MethodInfo prepareBakeMethod = typeof(PointLightShadowRuntimeBaker).GetMethod("PrepareBake", _lifecycleMethodFlags);
-            MethodInfo applyMethod = typeof(PointLightShadowRuntimeBaker).GetMethod("ApplyTargetShadowSource", _lifecycleMethodFlags);
+            MethodInfo applyMethod = typeof(PointLightShadowRuntimeBaker).GetMethod("ApplyTargetShadowSourceInternal", _lifecycleMethodFlags);
             FieldInfo shadowTextureField = typeof(PointLightShadowRuntimeBaker).GetField("_shadowTexture", _lifecycleMethodFlags);
             FieldInfo useCubemapShadowField = typeof(PointLightShadowRuntimeBaker).GetField("_useCubemapShadow", _lifecycleMethodFlags);
             FieldInfo bakeSliceCountField = typeof(PointLightShadowRuntimeBaker).GetField("_bakeSliceCount", _lifecycleMethodFlags);
@@ -1011,7 +1096,7 @@ namespace VRCLightVolumes.Tests {
             Assert.That((float)bakeFieldOfViewField.GetValue(baker), Is.EqualTo(60).Within(Epsilon));
             Assert.That((float)bakeTanHalfFovField.GetValue(baker), Is.EqualTo(Mathf.Tan(30f * Mathf.Deg2Rad)).Within(Epsilon));
 
-            Assert.That((bool)applyMethod.Invoke(baker, new object[] { Vector3.zero, 8f, 0.1f }), Is.True);
+            Assert.That((bool)applyMethod.Invoke(baker, new object[] { Vector3.zero, 8f, 0.1f, false }), Is.True);
             Assert.That(spot.ShadowMapTexture, Is.SameAs(shadowTexture));
             Assert.That(spot.ShadowMapUsesCubemap, Is.False);
             Assert.That(spot.ShadowMapTextureHasDepthSlices, Is.False);
@@ -1031,21 +1116,27 @@ namespace VRCLightVolumes.Tests {
             baker.Realtime = true;
             AddRuntimeShadowCamera(baker);
 
+            MethodInfo cacheMethod = typeof(PointLightShadowRuntimeBaker).GetMethod("CacheRuntimeReferences", _lifecycleMethodFlags);
+            MethodInfo refreshSettingsMethod = typeof(PointLightShadowRuntimeBaker).GetMethod("RefreshBakeSettings", _lifecycleMethodFlags);
             FieldInfo shadowMapTextureField = typeof(PointLightShadowRuntimeBaker).GetField("_shadowTexture", _lifecycleMethodFlags);
-            MethodInfo applyMethod = typeof(PointLightShadowRuntimeBaker).GetMethod("ApplyTargetShadowSource", _lifecycleMethodFlags);
+            MethodInfo applyMethod = typeof(PointLightShadowRuntimeBaker).GetMethod("ApplyTargetShadowSourceInternal", _lifecycleMethodFlags);
+            Assert.That(cacheMethod, Is.Not.Null);
+            Assert.That(refreshSettingsMethod, Is.Not.Null);
             Assert.That(shadowMapTextureField, Is.Not.Null);
             Assert.That(applyMethod, Is.Not.Null);
+            cacheMethod.Invoke(baker, null);
+            refreshSettingsMethod.Invoke(baker, null);
             shadowMapTextureField.SetValue(baker, source);
 
             Vector3 bakePosition = new Vector3(1, 2, 3);
-            Assert.That((bool)applyMethod.Invoke(baker, new object[] { bakePosition, 12f, 0.25f }), Is.True);
+            Assert.That((bool)applyMethod.Invoke(baker, new object[] { bakePosition, 12f, 0.25f, false }), Is.True);
             Assert.That(point.FarClip, Is.EqualTo(12f).Within(Epsilon));
             Assert.That(point.Bias, Is.EqualTo(0.25f).Within(Epsilon));
             Assert.That(point.AutoUpdateShadowMap, Is.False);
             AssertVectorClose(new Vector4(bakePosition.x, bakePosition.y, bakePosition.z, 0), new Vector4(point.ShadowBakePosition.x, point.ShadowBakePosition.y, point.ShadowBakePosition.z, 0));
 
-            Assert.That((bool)applyMethod.Invoke(baker, new object[] { bakePosition, 12f, 0.25f }), Is.False);
-            Assert.That((bool)applyMethod.Invoke(baker, new object[] { bakePosition + Vector3.right, 12f, 0.25f }), Is.True);
+            Assert.That((bool)applyMethod.Invoke(baker, new object[] { bakePosition, 12f, 0.25f, false }), Is.False);
+            Assert.That((bool)applyMethod.Invoke(baker, new object[] { bakePosition + Vector3.right, 12f, 0.25f, false }), Is.True);
         }
 
         // Verifies direct runtime baker output reserves a manager shadow slot without entering the auto shadow update cache.
@@ -1102,15 +1193,21 @@ namespace VRCLightVolumes.Tests {
             baker.TargetPointLightVolume = point;
             AddRuntimeShadowCamera(baker);
 
+            MethodInfo cacheMethod = typeof(PointLightShadowRuntimeBaker).GetMethod("CacheRuntimeReferences", _lifecycleMethodFlags);
+            MethodInfo refreshSettingsMethod = typeof(PointLightShadowRuntimeBaker).GetMethod("RefreshBakeSettings", _lifecycleMethodFlags);
             FieldInfo shadowMapTextureField = typeof(PointLightShadowRuntimeBaker).GetField("_shadowTexture", _lifecycleMethodFlags);
-            MethodInfo applyMethod = typeof(PointLightShadowRuntimeBaker).GetMethod("ApplyTargetShadowSource", _lifecycleMethodFlags);
+            MethodInfo applyMethod = typeof(PointLightShadowRuntimeBaker).GetMethod("ApplyTargetShadowSourceInternal", _lifecycleMethodFlags);
+            Assert.That(cacheMethod, Is.Not.Null);
+            Assert.That(refreshSettingsMethod, Is.Not.Null);
             Assert.That(shadowMapTextureField, Is.Not.Null);
             Assert.That(applyMethod, Is.Not.Null);
+            cacheMethod.Invoke(baker, null);
+            refreshSettingsMethod.Invoke(baker, null);
             shadowMapTextureField.SetValue(baker, source);
 
             Vector3 bakePosition = new Vector3(1, 2, 3);
-            Assert.That((bool)applyMethod.Invoke(baker, new object[] { bakePosition, 12f, 0.25f }), Is.True);
-            Assert.That((bool)applyMethod.Invoke(baker, new object[] { bakePosition + Vector3.right, 12f, 0.25f }), Is.False);
+            Assert.That((bool)applyMethod.Invoke(baker, new object[] { bakePosition, 12f, 0.25f, false }), Is.True);
+            Assert.That((bool)applyMethod.Invoke(baker, new object[] { bakePosition + Vector3.right, 12f, 0.25f, false }), Is.False);
         }
 
         // Verifies realtime baker settings refresh does not notify the manager for local-space transform-only movement.
@@ -1157,16 +1254,22 @@ namespace VRCLightVolumes.Tests {
             baker.TargetPointLightVolume = point;
             AddRuntimeShadowCamera(baker);
 
+            MethodInfo cacheMethod = typeof(PointLightShadowRuntimeBaker).GetMethod("CacheRuntimeReferences", _lifecycleMethodFlags);
+            MethodInfo refreshSettingsMethod = typeof(PointLightShadowRuntimeBaker).GetMethod("RefreshBakeSettings", _lifecycleMethodFlags);
             FieldInfo shadowMapTextureField = typeof(PointLightShadowRuntimeBaker).GetField("_shadowTexture", _lifecycleMethodFlags);
-            MethodInfo applyMethod = typeof(PointLightShadowRuntimeBaker).GetMethod("ApplyTargetShadowSource", _lifecycleMethodFlags);
+            MethodInfo applyMethod = typeof(PointLightShadowRuntimeBaker).GetMethod("ApplyTargetShadowSourceInternal", _lifecycleMethodFlags);
+            Assert.That(cacheMethod, Is.Not.Null);
+            Assert.That(refreshSettingsMethod, Is.Not.Null);
             Assert.That(shadowMapTextureField, Is.Not.Null);
             Assert.That(applyMethod, Is.Not.Null);
+            cacheMethod.Invoke(baker, null);
+            refreshSettingsMethod.Invoke(baker, null);
 
             point.Blur = 1;
             baker.RuntimeShadowBlurMaterial = CreateMaterial("Hidden/VRCLV/PointLightShadowRuntimeBlur");
             shadowMapTextureField.SetValue(baker, shadowSource);
 
-            Assert.That((bool)applyMethod.Invoke(baker, new object[] { Vector3.zero, 8f, 0.1f }), Is.True);
+            Assert.That((bool)applyMethod.Invoke(baker, new object[] { Vector3.zero, 8f, 0.1f, false }), Is.True);
             Assert.That(point.ShadowMapTexture, Is.SameAs(shadowSource));
             Assert.That(point.ShadowMapTextureIsCubemap, Is.False);
             Assert.That(point.ShadowMapTextureHasDepthSlices, Is.True);

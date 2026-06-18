@@ -1599,6 +1599,9 @@ namespace VRCLightVolumes {
 
             if (_isUpdatingVolumes) return;
             _isUpdatingVolumes = true;
+#if !COMPILER_UDONSHARP
+            try {
+#endif
             TryInitialize();
 
             // Defines if Force Scene Lighting Feature is enabled in scene. 0 if disabled.
@@ -1767,6 +1770,11 @@ namespace VRCLightVolumes {
             _updatePointLightBuffers = false;
             _updateNeedsVolumeRebuild = false;
             _isUpdatingVolumes = false;
+#if !COMPILER_UDONSHARP
+            } finally {
+                _isUpdatingVolumes = false;
+            }
+#endif
         }
 
 #endregion

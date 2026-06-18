@@ -255,7 +255,8 @@ namespace VRCLightVolumes {
             ulong vramBytes = 0;
             if (_lightVolumeSetup.LightVolumeManager != null) {
                 LightVolumeManager manager = _lightVolumeSetup.LightVolumeManager;
-                Texture atlas = manager.LightVolumeAtlasBase != null ? manager.LightVolumeAtlasBase : manager.LightVolumeAtlas;
+                Texture atlasBase = GetSerializedTexture(manager, "LightVolumeAtlasBase");
+                Texture atlas = atlasBase != null ? atlasBase : GetSerializedTexture(manager, "LightVolumeAtlas");
                 Texture3D atlas3D = atlas as Texture3D;
                 if (atlas3D != null) {
                     atlasVoxelCount = (ulong)atlas3D.width * (ulong)atlas3D.height * (ulong)atlas3D.depth;
@@ -265,10 +266,10 @@ namespace VRCLightVolumes {
                 RenderTexture atlasRT = atlas as RenderTexture;
                 if (atlasRT != null) vramBytes += (ulong)atlasRT.width * (ulong)atlasRT.height * (ulong)Mathf.Max(atlasRT.volumeDepth, 1) * 8;
 
-                RenderTexture customTexturesRT = manager.CustomTextures;
+                RenderTexture customTexturesRT = GetSerializedTexture(manager, "CustomTextures") as RenderTexture;
                 if (customTexturesRT != null) vramBytes += (ulong)customTexturesRT.width * (ulong)customTexturesRT.height * (ulong)Mathf.Max(customTexturesRT.volumeDepth, 1) * 8;
 
-                RenderTexture shadowTexturesRT = manager.ShadowTextures;
+                RenderTexture shadowTexturesRT = GetSerializedTexture(manager, "ShadowTextures") as RenderTexture;
                 if (shadowTexturesRT != null) {
                     ulong shadowBytesPerPixel = shadowTexturesRT.format == RenderTextureFormat.ARGBHalf ? 8UL : 16UL;
                     vramBytes += (ulong)shadowTexturesRT.width * (ulong)shadowTexturesRT.height * (ulong)Mathf.Max(shadowTexturesRT.volumeDepth, 1) * shadowBytesPerPixel * 4 / 3;
@@ -373,6 +374,19 @@ namespace VRCLightVolumes {
         private string SizeInBundle(ulong atlasVoxelCount) {
             double mb = atlasVoxelCount * 8 * 0.315f / (double)(1024 * 1024);
             return mb.ToString("0.00");
+        }
+
+        // Reads texture references without touching UdonSharp proxy fields that may be stale after 2.x scene load.
+        private static Texture GetSerializedTexture(Object target, string propertyName) {
+            SerializedObject serializedTarget = new SerializedObject(target);
+            SerializedProperty property = serializedTarget.FindProperty(propertyName);
+            if (property == null) return null;
+
+            try {
+                return property.objectReferenceValue as Texture;
+            } catch (MissingReferenceException) {
+                return null;
+            }
         }
 
         // Draws Bakery bitmasks using Bakery's zero-based mask popup labels.

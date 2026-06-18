@@ -144,7 +144,7 @@ namespace VRCLightVolumes {
             for (int i = 0; i < targets.Length; i++) {
                 PointLightVolume pointLightVolume = targets[i] as PointLightVolume;
                 if (pointLightVolume == null) continue;
-                pointLightVolume.SyncUdonScript(false);
+                pointLightVolume.SyncUdonScript(customTexturesChanged || shadowTexturesChanged);
                 if (pointLightVolume.LightVolumeSetup != null) {
                     if (customTexturesChanged) pointLightVolume.LightVolumeSetup.ReinitializeCustomTextures();
                     if (shadowTexturesChanged) pointLightVolume.LightVolumeSetup.ReinitializeShadowTextures();

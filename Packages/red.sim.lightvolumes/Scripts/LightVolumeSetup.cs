@@ -179,7 +179,7 @@ namespace VRCLightVolumes {
             }
         }
 
-        // Rebuilds manager-owned cookie source caches and the runtime RenderTextureArray
+        // Rebuilds manager-owned cookie source caches and the runtime RenderTexture texture array
         public void ReinitializeCustomTextures() {
             ReinitializePointLightTextureArray(true);
         }
@@ -201,7 +201,7 @@ namespace VRCLightVolumes {
             return material;
         }
 
-        // Rebuilds manager-owned shadow source caches and the runtime RenderTextureArray
+        // Rebuilds manager-owned shadow source caches and the runtime RenderTexture texture array
         public void ReinitializeShadowTextures() {
             ReinitializePointLightTextureArray(false);
         }
@@ -692,8 +692,22 @@ namespace VRCLightVolumes {
 
         // Returns already built point light projection texture array without refreshing it
         private Texture GetProbeBakeCustomTextureArray() {
-            RenderTexture customTextures = LightVolumeManager != null ? LightVolumeManager.CustomTextures : null;
+            RenderTexture customTextures = GetSerializedCustomTextures();
             return customTextures != null && customTextures.volumeDepth > 0 && customTextures.IsCreated() ? customTextures : null;
+        }
+
+        // Reads manager render texture references through serialization so stale migrated Udon proxy fields do not break editor bake paths.
+        private RenderTexture GetSerializedCustomTextures() {
+            if (LightVolumeManager == null) return null;
+            SerializedObject serializedManager = new SerializedObject(LightVolumeManager);
+            SerializedProperty property = serializedManager.FindProperty("CustomTextures");
+            if (property == null) return null;
+
+            try {
+                return property.objectReferenceValue as RenderTexture;
+            } catch (MissingReferenceException) {
+                return null;
+            }
         }
 
         // Builds compute shader uniforms for Point Light Volumes marked for probe baking

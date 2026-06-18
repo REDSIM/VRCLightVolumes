@@ -46,6 +46,8 @@ namespace VRCLightVolumes.Tests {
         private static readonly FieldInfo _pointLightCustomIDsField = typeof(LightVolumeManager).GetField("_pointLightCustomIDs", _lifecycleMethodFlags);
         private static readonly FieldInfo _pointLightShadowIDsField = typeof(LightVolumeManager).GetField("_pointLightShadowIDs", _lifecycleMethodFlags);
         private static readonly FieldInfo _pointLightArraysDirtyField = typeof(LightVolumeManager).GetField("_pointLightArraysDirty", _lifecycleMethodFlags);
+        private static readonly FieldInfo _isUpdatingVolumesField = typeof(LightVolumeManager).GetField("_isUpdatingVolumes", _lifecycleMethodFlags);
+        private static readonly BindingFlags _staticMigrationMethodFlags = BindingFlags.Static | BindingFlags.NonPublic;
 
         private readonly List<UnityEngine.Object> _createdObjects = new List<UnityEngine.Object>();
 
@@ -61,13 +63,14 @@ namespace VRCLightVolumes.Tests {
             GameObject gameObject = CreateGameObject("Legacy Point Migration", false);
             PointLightVolumeInstance point = gameObject.AddComponent<PointLightVolumeInstance>();
             point.Angle = 0.5f;
-            SetPrivateField(point, "_legacyPositionData", new Vector4(1, 2, 3, -0.25f));
-            SetPrivateField(point, "_legacyDirectionData", new Vector4(0, 0, 1, 2));
-            SetPrivateField(point, "_legacyCustomID", 0f);
-            SetPrivateField(point, "_legacyAngleData", Mathf.Cos(0.5f));
-            SetPrivateField(point, "_legacyPackedDataMigrated", false);
+            string serializedBlock =
+                "  PositionData: {x: 1, y: 2, z: 3, w: -0.25}\n" +
+                "  DirectionData: {x: 0, y: 0, z: 1, w: 2}\n" +
+                "  CustomID: 0\n" +
+                "  AngleData: " + Mathf.Cos(0.5f).ToString(System.Globalization.CultureInfo.InvariantCulture) + "\n" +
+                "  ShadowmaskIndex: -1\n";
 
-            Assert.That(point.MigrateLegacyPackedData(), Is.True);
+            Assert.That(InvokeLegacyPointLightMigration(point, serializedBlock), Is.True);
             Assert.That(point.LightType, Is.EqualTo(1));
             Assert.That(point.ProjectionMode, Is.EqualTo(0));
             AssertVectorClose(new Vector4(1, 2, 3, 0), point.Position);
@@ -77,13 +80,10 @@ namespace VRCLightVolumes.Tests {
             Assert.That(point.OuterAngleCos, Is.EqualTo(Mathf.Cos(0.5f)).Within(Epsilon));
             Assert.That(point.ShadowMapID, Is.EqualTo(-1).Within(Epsilon));
             Assert.That(point.IsRangeDirty, Is.True);
-            Assert.That(GetPrivateField<Vector4>(point, "_legacyPositionData"), Is.EqualTo(new Vector4(1, 2, 3, -0.25f)));
-            Assert.That(GetPrivateField<float>(point, "_legacyCustomID"), Is.EqualTo(0f));
-            Assert.That(IsPrivateFieldSerialized<PointLightVolumeInstance>("_legacyPackedDataMigrated"), Is.True);
-            Assert.That(point.ConsumeLegacyPackedDataMigrationDirty(), Is.True);
-            Assert.That(point.ConsumeLegacyPackedDataMigrationDirty(), Is.False);
+            Assert.That(typeof(PointLightVolumeInstance).GetField("_legacyPositionData", _lifecycleMethodFlags), Is.Null);
+            Assert.That(typeof(PointLightVolumeInstance).GetField("_legacyPackedDataMigrated", _lifecycleMethodFlags), Is.Null);
             point.Position = new Vector3(9, 9, 9);
-            Assert.That(point.MigrateLegacyPackedData(), Is.False);
+            Assert.That(InvokeLegacyPointLightMigration(point, serializedBlock), Is.False);
             AssertVectorClose(new Vector4(9, 9, 9, 0), point.Position);
         }
 
@@ -93,16 +93,16 @@ namespace VRCLightVolumes.Tests {
             GameObject gameObject = CreateGameObject("Legacy Volume Migration", false);
             LightVolumeInstance volume = gameObject.AddComponent<LightVolumeInstance>();
             Quaternion rotation = Quaternion.Euler(0, 90, 0);
-            SetPrivateField(volume, "_legacyRelativeRotation", new Vector4(rotation.x, rotation.y, rotation.z, rotation.w));
             volume.BoundsUvwMin0 = new Vector4(0.1f, 0.2f, 0.3f, 0);
             volume.BoundsUvwMin1 = new Vector4(0.2f, 0.3f, 0.4f, 0);
             volume.BoundsUvwMin2 = new Vector4(0.3f, 0.4f, 0.5f, 0);
-            SetPrivateField(volume, "_legacyBoundsUvwMax0", new Vector4(0.6f, 0.2f, 0.3f, 0));
-            SetPrivateField(volume, "_legacyBoundsUvwMax1", new Vector4(0.2f, 0.8f, 0.4f, 0));
-            SetPrivateField(volume, "_legacyBoundsUvwMax2", new Vector4(0.3f, 0.4f, 1.2f, 0));
-            SetPrivateField(volume, "_legacyVolumeDataMigrated", false);
+            string serializedBlock =
+                "  RelativeRotation: {x: " + rotation.x.ToString(System.Globalization.CultureInfo.InvariantCulture) + ", y: " + rotation.y.ToString(System.Globalization.CultureInfo.InvariantCulture) + ", z: " + rotation.z.ToString(System.Globalization.CultureInfo.InvariantCulture) + ", w: " + rotation.w.ToString(System.Globalization.CultureInfo.InvariantCulture) + "}\n" +
+                "  BoundsUvwMax0: {x: 0.6, y: 0.2, z: 0.3, w: 0}\n" +
+                "  BoundsUvwMax1: {x: 0.2, y: 0.8, z: 0.4, w: 0}\n" +
+                "  BoundsUvwMax2: {x: 0.3, y: 0.4, z: 1.2, w: 0}\n";
 
-            Assert.That(volume.MigrateLegacyVolumeData(), Is.True);
+            Assert.That(InvokeLegacyLightVolumeMigration(volume, serializedBlock), Is.True);
             Matrix4x4 expectedRotation = Matrix4x4.Rotate(rotation);
             AssertVectorClose(expectedRotation.GetRow(0), volume.RelativeRotationRow0);
             AssertVectorClose(expectedRotation.GetRow(1), volume.RelativeRotationRow1);
@@ -110,12 +110,10 @@ namespace VRCLightVolumes.Tests {
             Assert.That(volume.BoundsUvwMin0.w, Is.EqualTo(0.5f).Within(Epsilon));
             Assert.That(volume.BoundsUvwMin1.w, Is.EqualTo(0.5f).Within(Epsilon));
             Assert.That(volume.BoundsUvwMin2.w, Is.EqualTo(0.7f).Within(Epsilon));
-            Assert.That(GetPrivateField<Vector4>(volume, "_legacyBoundsUvwMax0"), Is.EqualTo(new Vector4(0.6f, 0.2f, 0.3f, 0)));
-            Assert.That(IsPrivateFieldSerialized<LightVolumeInstance>("_legacyVolumeDataMigrated"), Is.True);
-            Assert.That(volume.ConsumeLegacyVolumeDataMigrationDirty(), Is.True);
-            Assert.That(volume.ConsumeLegacyVolumeDataMigrationDirty(), Is.False);
+            Assert.That(typeof(LightVolumeInstance).GetField("_legacyRelativeRotation", _lifecycleMethodFlags), Is.Null);
+            Assert.That(typeof(LightVolumeInstance).GetField("_legacyVolumeDataMigrated", _lifecycleMethodFlags), Is.Null);
             volume.BoundsUvwMin0.w = 0.25f;
-            Assert.That(volume.MigrateLegacyVolumeData(), Is.False);
+            Assert.That(InvokeLegacyLightVolumeMigration(volume, serializedBlock), Is.False);
             Assert.That(volume.BoundsUvwMin0.w, Is.EqualTo(0.25f).Within(Epsilon));
         }
 
@@ -139,25 +137,18 @@ namespace VRCLightVolumes.Tests {
             field.SetValue(manager, value);
         }
 
-        // Assigns a private serialized migration field used by focused regression tests.
-        private static void SetPrivateField<T>(object target, string fieldName, T value) {
-            FieldInfo field = target.GetType().GetField(fieldName, _lifecycleMethodFlags);
-            Assert.That(field, Is.Not.Null, fieldName + " field was not found on " + target.GetType().Name);
-            field.SetValue(target, value);
+        // Invokes editor-only point light migration from a serialized YAML component block.
+        private static bool InvokeLegacyPointLightMigration(PointLightVolumeInstance point, string serializedBlock) {
+            MethodInfo method = typeof(LightVolumeUdonComponentSanitizer).GetMethod("MigrateLegacyPointLightData", _staticMigrationMethodFlags, null, new[] { typeof(PointLightVolumeInstance), typeof(string) }, null);
+            Assert.That(method, Is.Not.Null);
+            return (bool)method.Invoke(null, new object[] { point, serializedBlock });
         }
 
-        // Reads a private serialized migration field used by focused regression tests.
-        private static T GetPrivateField<T>(object target, string fieldName) {
-            FieldInfo field = target.GetType().GetField(fieldName, _lifecycleMethodFlags);
-            Assert.That(field, Is.Not.Null, fieldName + " field was not found on " + target.GetType().Name);
-            return (T)field.GetValue(target);
-        }
-
-        // Returns true when a private field is persisted by Unity serialization.
-        private static bool IsPrivateFieldSerialized<T>(string fieldName) {
-            FieldInfo field = typeof(T).GetField(fieldName, _lifecycleMethodFlags);
-            Assert.That(field, Is.Not.Null, fieldName + " field was not found on " + typeof(T).Name);
-            return field.GetCustomAttribute<SerializeField>() != null;
+        // Invokes editor-only light volume migration from a serialized YAML component block.
+        private static bool InvokeLegacyLightVolumeMigration(LightVolumeInstance volume, string serializedBlock) {
+            MethodInfo method = typeof(LightVolumeUdonComponentSanitizer).GetMethod("MigrateLegacyLightVolumeData", _staticMigrationMethodFlags, null, new[] { typeof(LightVolumeInstance), typeof(string) }, null);
+            Assert.That(method, Is.Not.Null);
+            return (bool)method.Invoke(null, new object[] { volume, serializedBlock });
         }
 
         // Verifies that empty light-volume and point-light families do not block each other.
@@ -199,6 +190,20 @@ namespace VRCLightVolumes.Tests {
             AssertGlobalFloat(_lightVolumeCountID, 1);
             AssertGlobalFloat(_pointLightCountID, 0);
             AssertVectorClose(ExpectedLightVolumeColor(volume), Shader.GetGlobalVectorArray(_lightVolumeColorID)[0]);
+        }
+
+        // Verifies editor update errors do not leave the manager permanently locked until domain reload.
+        [Test]
+        public void UpdateVolumesClearsEditorGuardAfterException() {
+            LightVolumeManager manager = CreateManager("Update Guard Manager", true);
+            manager.LightVolumeInstances = null;
+
+            Assert.Catch<System.Exception>(() => manager.UpdateVolumes());
+            Assert.That(GetManagerField<bool>(manager, _isUpdatingVolumesField), Is.False);
+
+            manager.LightVolumeInstances = new LightVolumeInstance[0];
+            manager.PointLightVolumeInstances = new PointLightVolumeInstance[0];
+            Assert.DoesNotThrow(() => manager.UpdateVolumes());
         }
 
         // Exercises real GameObject enable and disable callbacks for unregister and re-register behavior.

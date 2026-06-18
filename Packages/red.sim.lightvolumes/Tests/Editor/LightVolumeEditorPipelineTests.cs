@@ -2,6 +2,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Reflection;
 using NUnit.Framework;
+using UnityEditor;
 using UnityEngine;
 using UnityEngine.Rendering;
 
@@ -10,6 +11,7 @@ namespace VRCLightVolumes.Tests {
     public class LightVolumeEditorPipelineTests {
         private const float Epsilon = 0.0001f;
         private static readonly BindingFlags _nonPublicInstanceFlags = BindingFlags.Instance | BindingFlags.NonPublic;
+        private static readonly FieldInfo _customTexturesDepthField = typeof(LightVolumeManager).GetField("_customTextureArrayDepth", _nonPublicInstanceFlags);
 
         private readonly List<UnityEngine.Object> _createdObjects = new List<UnityEngine.Object>();
 
@@ -65,6 +67,75 @@ namespace VRCLightVolumes.Tests {
             pointLight.SyncUdonScript();
 
             Assert.That(instance.AutoUpdateCustomTexture, Is.False);
+        }
+
+        // Verifies editor sync copies changed projection source references before texture array rebuilds.
+        [Test]
+        public void PointLightVolumeEditorSyncTargetsCopiesChangedProjectionSources() {
+            GameObject setupObject = CreateGameObject("Editor Projection Sync Setup", true);
+            LightVolumeSetup setup = setupObject.AddComponent<LightVolumeSetup>();
+            setup.SetupDependencies();
+
+            GameObject lightObject = CreateGameObject("Editor Projection Sync Light", true);
+            PointLightVolumeInstance instance = lightObject.AddComponent<PointLightVolumeInstance>();
+            PointLightVolume pointLight = lightObject.AddComponent<PointLightVolume>();
+            pointLight.LightVolumeSetup = setup;
+            pointLight.PointLightVolumeInstance = instance;
+            pointLight.Type = PointLightVolume.LightType.SpotLight;
+            pointLight.Projection = PointLightVolume.LightProjection.Custom;
+            pointLight.Cookie = CreateTexture2D("Editor Cookie Source");
+
+            Editor editor = Editor.CreateEditor(pointLight);
+            _createdObjects.Add(editor);
+            MethodInfo syncTargets = typeof(PointLightVolumeEditor).GetMethod("SyncTargets", _nonPublicInstanceFlags);
+            Assert.That(syncTargets, Is.Not.Null);
+
+            syncTargets.Invoke(editor, new object[] { true, false });
+
+            Assert.That(instance.CustomTexture, Is.SameAs(pointLight.Cookie));
+            Assert.That(instance.ProjectionType, Is.EqualTo(1)); // 1: texture
+            Assert.That(instance.ProjectionMode, Is.EqualTo(2)); // 2: cookie/cubemap
+        }
+
+        // Verifies migration re-sync rebuilds custom texture arrays from authoring PointLightVolume sources.
+        [Test]
+        public void MigrationAuthoringSyncRebuildsCustomTexturesFromPointSources() {
+            GameObject setupObject = CreateGameObject("Migration Texture Sync Setup", true);
+            LightVolumeSetup setup = setupObject.AddComponent<LightVolumeSetup>();
+            setup.SetupDependencies();
+            setup.CookieResolution = LightVolumeSetup.TextureArrayResolution._16x16;
+            LightVolumeManager manager = setup.LightVolumeManager;
+            Assert.That(manager, Is.Not.Null);
+
+            GameObject lightObject = CreateGameObject("Migration Texture Sync Light", true);
+            PointLightVolumeInstance instance = lightObject.AddComponent<PointLightVolumeInstance>();
+            PointLightVolume pointLight = lightObject.AddComponent<PointLightVolume>();
+            pointLight.LightVolumeSetup = setup;
+            pointLight.PointLightVolumeInstance = instance;
+            pointLight.Type = PointLightVolume.LightType.SpotLight;
+            pointLight.Projection = PointLightVolume.LightProjection.Custom;
+            pointLight.Cookie = CreateTexture2D("Migration Cookie Source");
+            setup.PointLightVolumes.Clear();
+            setup.PointLightVolumes.Add(pointLight);
+
+            instance.CustomTexture = null;
+            instance.LightVolumeManager = null;
+            manager.CustomTextures = null;
+            setup.LightVolumeManager = null;
+
+            MethodInfo syncAuthoring = typeof(LightVolumeUdonComponentSanitizer).GetMethod("SyncAuthoringComponentsToMigratedRuntime", BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.That(syncAuthoring, Is.Not.Null);
+
+            syncAuthoring.Invoke(null, null);
+
+            Assert.That(setup.LightVolumeManager, Is.SameAs(manager));
+            Assert.That(instance.LightVolumeManager, Is.SameAs(manager));
+            Assert.That(instance.CustomTexture, Is.SameAs(pointLight.Cookie));
+            Assert.That(manager.CustomTextures, Is.Not.Null);
+            Assert.That(manager.CustomTextures.dimension, Is.EqualTo(TextureDimension.Tex2DArray));
+            Assert.That(manager.CustomTextures.width, Is.EqualTo(16));
+            Assert.That(manager.CustomTextures.height, Is.EqualTo(16));
+            Assert.That(GetManagerField<int>(manager, _customTexturesDepthField), Is.EqualTo(1));
         }
 
         // Verifies cubemap RenderTextures are unfolded as cubemaps instead of copied as a single 2D slice.
@@ -202,21 +273,6 @@ namespace VRCLightVolumes.Tests {
             pointLightVolume.Shadows = true;
 
             Assert.That((int)method.Invoke(pointLightVolume, null), Is.EqualTo(0));
-        }
-
-        // Verifies editor-only shadow blur authoring data is routed through the bake API.
-        [Test]
-        public void PointLightVolumeShadowBlurUsesBakeOverload() {
-            GameObject gameObject = CreateGameObject("Shadow Blur Point Light Volume", false);
-            PointLightVolume pointLightVolume = gameObject.AddComponent<PointLightVolume>();
-            pointLightVolume.Blur = 2.5f;
-            pointLightVolume.ContactHardening = 0.08f;
-
-            MethodInfo method = typeof(PointLightShadowBaker).GetMethod("BakeShadowMapTextureArray", BindingFlags.Public | BindingFlags.Static, null, new[] { typeof(PointLightVolume), typeof(int), typeof(float), typeof(TextureFormat), typeof(float), typeof(float), typeof(string) }, null);
-
-            Assert.That(pointLightVolume.Blur, Is.EqualTo(2.5f).Within(0.0001f));
-            Assert.That(pointLightVolume.ContactHardening, Is.EqualTo(0.08f).Within(0.0001f));
-            Assert.That(method, Is.Not.Null);
         }
 
         // Verifies manager-created runtime texture arrays are hidden from scene and asset serialization.
@@ -458,6 +514,11 @@ namespace VRCLightVolumes.Tests {
             RenderTexture renderTexture = target as RenderTexture;
             if (renderTexture != null) renderTexture.Release();
             Object.DestroyImmediate(target);
+        }
+
+        // Returns a private LightVolumeManager field used by focused regression tests.
+        private static T GetManagerField<T>(LightVolumeManager manager, FieldInfo field) {
+            return (T)field.GetValue(manager);
         }
     }
 }

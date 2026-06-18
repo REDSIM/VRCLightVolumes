@@ -1,5 +1,4 @@
 using UnityEngine;
-using UnityEngine.Serialization;
 #if UDONSHARP
 using UdonSharp;
 #endif
@@ -116,16 +115,6 @@ namespace VRCLightVolumes {
         // Internal dirty flag consumed by LightVolumeManager to recalculate this light's range
         [HideInInspector] public bool IsRangeDirty = false;
 
-#if UNITY_EDITOR && !COMPILER_UDONSHARP
-        [SerializeField, HideInInspector, FormerlySerializedAs("PositionData")] private Vector4 _legacyPositionData = Vector4.zero;
-        [SerializeField, HideInInspector, FormerlySerializedAs("DirectionData")] private Vector4 _legacyDirectionData = Vector4.zero;
-        [SerializeField, HideInInspector, FormerlySerializedAs("CustomID")] private float _legacyCustomID = 0f;
-        [SerializeField, HideInInspector, FormerlySerializedAs("AngleData")] private float _legacyAngleData = 0f;
-        [SerializeField, HideInInspector, FormerlySerializedAs("ShadowmaskIndex")] private int _legacyShadowmaskIndex = -1;
-        [SerializeField, HideInInspector] private bool _legacyPackedDataMigrated = false;
-        private bool _legacyPackedDataMigrationNeedsDirty = false;
-#endif
-
         private Vector3 _prevPosition = Vector3.zero;
         private Quaternion _prevRotation = Quaternion.identity;
         private Vector3 _prevScale = Vector3.one;
@@ -174,93 +163,6 @@ namespace VRCLightVolumes {
                 _old_ShadingStrength = ShadingStrength;
                 NotifyManager((Mathf.Clamp01(oldStrength) <= 0) != (Mathf.Clamp01(ShadingStrength) <= 0), false, false);
             }
-        }
-#endif
-
-#if UNITY_EDITOR && !COMPILER_UDONSHARP
-        // Runs legacy serialized data migration when Unity reloads or validates this component in editor.
-        private void OnValidate() {
-            MigrateLegacyPackedData();
-        }
-
-        // Converts serialized 2.x packed point light fields into the explicit 3.x field layout.
-        public bool MigrateLegacyPackedData() {
-            if (_legacyPackedDataMigrated) return false;
-            if (!HasLegacyPackedData()) {
-                _legacyPackedDataMigrated = true;
-                return false;
-            }
-
-            Position = new Vector3(_legacyPositionData.x, _legacyPositionData.y, _legacyPositionData.z);
-            LightType = GetLegacyLightType();
-            ProjectionMode = GetLegacyProjectionMode();
-            ProjectionType = ProjectionMode == 0 ? 0 : 1;
-            Angle = _legacyAngleData > 1.5f ? Angle : Mathf.Max(Angle, 0f);
-
-            if (LightType == 2) {
-                Width = Mathf.Max(Mathf.Abs(_legacyPositionData.w), 0.001f);
-                Height = Mathf.Max(_legacyAngleData - 2f, 0.001f);
-                Rotation = LegacyVectorToQuaternion(_legacyDirectionData);
-            } else {
-                if (ProjectionMode == 1) {
-                    InverseSquaredRange = Mathf.Max(Mathf.Abs(_legacyPositionData.w), 0.000001f);
-                    LightSourceSize = 1f / Mathf.Sqrt(InverseSquaredRange);
-                } else {
-                    LightSourceSize = Mathf.Sqrt(Mathf.Max(Mathf.Abs(_legacyPositionData.w), 0.0001f));
-                    InverseSquaredRange = 1f / Mathf.Max(LightSourceSize * LightSourceSize, 0.000001f);
-                }
-
-                if (LightType == 1 && ProjectionMode != 2) {
-                    Direction = new Vector3(_legacyDirectionData.x, _legacyDirectionData.y, _legacyDirectionData.z);
-                    ConeFalloff = _legacyDirectionData.w;
-                } else {
-                    Rotation = LegacyVectorToQuaternion(_legacyDirectionData);
-                }
-
-                if (LightType == 1 && ProjectionMode == 2) OuterAngleTan = _legacyAngleData;
-                else OuterAngleCos = _legacyAngleData;
-            }
-
-            CustomTexture = null;
-            CustomTextureMaterial = null;
-            AutoUpdateCustomTexture = false;
-            ShadowMapID = -1f;
-            IsRangeDirty = true;
-            _legacyPackedDataMigrationNeedsDirty = true;
-            _legacyPackedDataMigrated = true;
-            return true;
-        }
-
-        // Returns and clears the delayed dirty request produced by OnValidate migration.
-        public bool ConsumeLegacyPackedDataMigrationDirty() {
-            bool needsDirty = _legacyPackedDataMigrationNeedsDirty;
-            _legacyPackedDataMigrationNeedsDirty = false;
-            return needsDirty;
-        }
-
-        // Returns true when Unity deserialized any old packed runtime value from a 2.x scene or prefab.
-        private bool HasLegacyPackedData() {
-            return _legacyPositionData != Vector4.zero || _legacyDirectionData != Vector4.zero || _legacyCustomID != 0f || _legacyAngleData != 0f || _legacyShadowmaskIndex >= 0;
-        }
-
-        // Resolves the old packed type from PositionData.w and AngleData.
-        private int GetLegacyLightType() {
-            if (_legacyPositionData.w < 0f) return 1; // 1: spot
-            if (_legacyAngleData > 1.5f) return 2; // 2: area
-            return 0; // 0: point
-        }
-
-        // Resolves the old packed projection mode from CustomID sign.
-        private int GetLegacyProjectionMode() {
-            if (_legacyCustomID > 0f) return 1; // 1: LUT
-            if (_legacyCustomID < 0f) return 2; // 2: custom cookie or cubemap
-            return 0; // 0: parametric
-        }
-
-        // Converts a serialized Vector4 quaternion and falls back to identity when old data did not store rotation.
-        private static Quaternion LegacyVectorToQuaternion(Vector4 value) {
-            if (value == Vector4.zero) return Quaternion.identity;
-            return new Quaternion(value.x, value.y, value.z, value.w);
         }
 #endif
 

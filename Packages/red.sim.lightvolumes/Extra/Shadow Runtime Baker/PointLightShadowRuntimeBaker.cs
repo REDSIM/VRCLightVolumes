@@ -32,6 +32,7 @@ namespace VRCLightVolumes {
         private const string ShadowQualityKeywordHigh = "VRCLV_RUNTIME_SHADOW_QUALITY_HIGH";
         private const string ShadowBlurKeywordUniform = "VRCLV_RUNTIME_SHADOW_BLUR_UNIFORM";
         private const string ShadowBlurKeywordDirect = "VRCLV_RUNTIME_SHADOW_BLUR_DIRECT";
+        private const string ShadowBlurKeywordSpherical = "VRCLV_RUNTIME_SHADOW_BLUR_SPHERICAL";
         private const float ShadowBlurBaseResolution = 128f;
 
         [Tooltip("Point Light Volume instance that receives the runtime-baked shadow texture.")]
@@ -44,8 +45,10 @@ namespace VRCLightVolumes {
         [Min(16)] public int Resolution = 128;
         [Tooltip("How many cubemap faces are rendered per bake loop tick.")]
         [Range(1, 6)] public int RealtimeFacesPerFrame = 1;
-        [Tooltip("Shadow blur and depth contrast sample preset. 0 = Low (30 blur taps), 1 = Medium (62 blur taps), 2 = High (126 blur taps).")]
+        [Tooltip("Shadow blur and contact hardening sample preset. Planar Blur uses 30/62/126 two-pass blur taps. Spherical Blur uses 33/65/129 one-pass blur taps.")]
         [Range(0, 2)] public int ShadowBlurSamplePreset = 1;
+        [Tooltip("Samples runtime blur and contact hardening in spherical shadow space to reduce visible cubemap and single-slice spot projection seams. More correct, but more expensive than Planar Blur.")]
+        public bool SphericalBlur = false;
         [HideInInspector] public Camera ShadowCamera;
         [HideInInspector] public Material RuntimeShadowDepthEncodeMaterial;
         [HideInInspector] public Material RuntimeShadowBlurMaterial;
@@ -72,6 +75,7 @@ namespace VRCLightVolumes {
         private int _lastShadowQualityPreset = -1;
         private int _lastUniformBlurKeyword = -1;
         private int _lastDirectBlurKeyword = -1;
+        private int _lastSphericalBlurKeyword = -1;
         private int _currentOutputBaseSlice = 0;
         private int _completedOutputBaseSlice = -1;
         private int _bakeResolution = 128;
@@ -101,6 +105,7 @@ namespace VRCLightVolumes {
         private bool _cycleUseDirectOutput = false;
         private bool _useCubemapShadow = true;
         private bool _useBlur = false;
+        private bool _useSphericalBlur = false;
         private bool _hasPublishedFarClip = false;
         private Vector3 _cycleBakePosition = Vector3.zero;
         private Quaternion _cycleBakeRotation = Quaternion.identity;
@@ -393,8 +398,10 @@ namespace VRCLightVolumes {
             _bakeFarClip = useTargetFarClip ? Mathf.Max(targetFarClip, 0.0001f) : Mathf.Sqrt(Mathf.Max(_target.SquaredRange, 0.000001f));
             bool useCubemapShadow = _target.LightType != 1 || _target.ShadowMapUsesCubemap; // 1: spot
             int bakeSliceCount = useCubemapShadow ? 6 : 1;
-            if (_useCubemapShadow != useCubemapShadow || _bakeSliceCount != bakeSliceCount) {
+            bool useSphericalBlur = SphericalBlur;
+            if (_useCubemapShadow != useCubemapShadow || _bakeSliceCount != bakeSliceCount || _useSphericalBlur != useSphericalBlur) {
                 _useCubemapShadow = useCubemapShadow;
+                _useSphericalBlur = useSphericalBlur;
                 _bakeSliceCount = bakeSliceCount;
                 _realtimeFaceIndex = 0;
                 if (_bakeLoopRemainingFaces > _bakeSliceCount) _bakeLoopRemainingFaces = _bakeSliceCount;
@@ -847,51 +854,75 @@ namespace VRCLightVolumes {
             _cycleBakeSettingsValid = false;
         }
 
-        // Applies horizontal blur to all requested slices first, then vertical blur, so seam-aware sampling sees a coherent cubemap
+        // Applies the selected runtime blur path to the requested shadow slices.
         private void BlurFaces(int firstFace, int faceCount, bool useDirectOutput, bool copyToManager) {
             if (_currentOutputTexture == null || _blurTempTexture == null || _shadowBlurMaterial == null) return;
+            if (_useSphericalBlur) {
+                // Spherical pass: read the coherent source array once and copy finished slices back to the active output target.
+                _shadowBlurMaterial.SetTexture(_sourceArrayID, _currentOutputTexture);
+                _shadowBlurMaterial.SetFloat(_sourceBaseSliceID, _currentOutputBaseSlice);
+                if (!_blurUsesUniformRadius) {
+                    _shadowBlurMaterial.SetTexture(_depthArrayID, _currentOutputTexture);
+                    _shadowBlurMaterial.SetFloat(_depthBaseSliceID, _currentOutputBaseSlice);
+                }
 
-            // Horizontal pass: read from current output and write coherent faces into the local blur scratch
-            _shadowBlurMaterial.SetTexture(_sourceArrayID, _currentOutputTexture);
-            _shadowBlurMaterial.SetFloat(_sourceBaseSliceID, _currentOutputBaseSlice);
-            _shadowBlurMaterial.SetVector(_blurDirectionID, Vector2.right);
-            // Dynamic blur radius samples the same source as depth data; uniform blur skips these uniforms in shader
-            if (!_blurUsesUniformRadius) {
-                _shadowBlurMaterial.SetTexture(_depthArrayID, _currentOutputTexture);
-                _shadowBlurMaterial.SetFloat(_depthBaseSliceID, _currentOutputBaseSlice);
-            }
+                int face = firstFace;
+                for (int i = 0; i < faceCount; i++) {
+                    _shadowBlurMaterial.SetInt(_faceIndexID, face);
+                    BlitMaterialToSlice(_currentOutputTexture, _shadowBlurMaterial, 0, _blurTempTexture, face);
+                    face++;
+                    if (face >= _bakeSliceCount) face = 0;
+                }
 
-            int face = firstFace;
-            // Per-face blur blits stay inline to avoid Udon helper calls in the blur loop
-            for (int i = 0; i < faceCount; i++) {
-                _shadowBlurMaterial.SetInt(_faceIndexID, face);
-                BlitMaterialToSlice(_currentOutputTexture, _shadowBlurMaterial, 0, _blurTempTexture, face);
-                face++;
-                if (face >= _bakeSliceCount) face = 0;
-            }
+                int targetBaseSlice = useDirectOutput ? _currentOutputBaseSlice : 0;
+                face = firstFace;
+                for (int i = 0; i < faceCount; i++) {
+                    VRCGraphics.Blit(_blurTempTexture, _currentOutputTexture, face, targetBaseSlice + face);
+                    face++;
+                    if (face >= _bakeSliceCount) face = 0;
+                }
+            } else {
+                // Horizontal pass: read from current output and write coherent faces into the local blur scratch
+                _shadowBlurMaterial.SetTexture(_sourceArrayID, _currentOutputTexture);
+                _shadowBlurMaterial.SetFloat(_sourceBaseSliceID, _currentOutputBaseSlice);
+                _shadowBlurMaterial.SetVector(_blurDirectionID, Vector2.right);
+                // Dynamic blur radius samples the same source as depth data; uniform blur skips these uniforms in shader
+                if (!_blurUsesUniformRadius) {
+                    _shadowBlurMaterial.SetTexture(_depthArrayID, _currentOutputTexture);
+                    _shadowBlurMaterial.SetFloat(_depthBaseSliceID, _currentOutputBaseSlice);
+                }
 
-            // Vertical pass: read from blur scratch and write back to the active output target
-            _shadowBlurMaterial.SetTexture(_sourceArrayID, _blurTempTexture);
-            _shadowBlurMaterial.SetFloat(_sourceBaseSliceID, 0);
-            _shadowBlurMaterial.SetVector(_blurDirectionID, Vector2.up);
-            if (!_blurUsesUniformRadius) {
-                _shadowBlurMaterial.SetTexture(_depthArrayID, _blurTempTexture);
-                _shadowBlurMaterial.SetFloat(_depthBaseSliceID, 0);
-            }
+                int face = firstFace;
+                // Per-face blur blits stay inline to avoid Udon helper calls in the blur loop
+                for (int i = 0; i < faceCount; i++) {
+                    _shadowBlurMaterial.SetInt(_faceIndexID, face);
+                    BlitMaterialToSlice(_currentOutputTexture, _shadowBlurMaterial, 0, _blurTempTexture, face);
+                    face++;
+                    if (face >= _bakeSliceCount) face = 0;
+                }
 
-            int targetBaseSlice = useDirectOutput ? _currentOutputBaseSlice : 0;
-            face = firstFace;
-            // Direct output writes final blur into the manager array; local output writes into the baker array
-            for (int i = 0; i < faceCount; i++) {
-                _shadowBlurMaterial.SetInt(_faceIndexID, face);
-                BlitMaterialToSlice(_blurTempTexture, _shadowBlurMaterial, 0, _currentOutputTexture, targetBaseSlice + face);
-                face++;
-                if (face >= _bakeSliceCount) face = 0;
+                // Vertical pass: read from blur scratch and write back to the active output target
+                _shadowBlurMaterial.SetTexture(_sourceArrayID, _blurTempTexture);
+                _shadowBlurMaterial.SetFloat(_sourceBaseSliceID, 0);
+                _shadowBlurMaterial.SetVector(_blurDirectionID, Vector2.up);
+                if (!_blurUsesUniformRadius) {
+                    _shadowBlurMaterial.SetTexture(_depthArrayID, _blurTempTexture);
+                    _shadowBlurMaterial.SetFloat(_depthBaseSliceID, 0);
+                }
+
+                int targetBaseSlice = useDirectOutput ? _currentOutputBaseSlice : 0;
+                face = firstFace;
+                // Direct output writes final blur into the manager array; local output writes into the baker array
+                for (int i = 0; i < faceCount; i++) {
+                    _shadowBlurMaterial.SetInt(_faceIndexID, face);
+                    BlitMaterialToSlice(_blurTempTexture, _shadowBlurMaterial, 0, _currentOutputTexture, targetBaseSlice + face);
+                    face++;
+                    if (face >= _bakeSliceCount) face = 0;
+                }
             }
 
             if (copyToManager && _manager != null && _target != null) {
-                // Local blurred output still needs an explicit copy into the shared manager shadow array
-                face = firstFace;
+                int face = firstFace;
                 for (int i = 0; i < faceCount; i++) {
                     _manager.UpdatePointLightShadowTextureSlice(_target, face);
                     face++;
@@ -911,7 +942,8 @@ namespace VRCLightVolumes {
             else qualityPreset = 1;
             int uniformKeyword = _blurUsesUniformRadius ? 1 : 0;
             int directKeyword = !_useCubemapShadow ? 1 : 0;
-            if (_lastShadowQualityPreset != qualityPreset || _lastUniformBlurKeyword != uniformKeyword || _lastDirectBlurKeyword != directKeyword) {
+            int sphericalKeyword = _useSphericalBlur ? 1 : 0;
+            if (_lastShadowQualityPreset != qualityPreset || _lastUniformBlurKeyword != uniformKeyword || _lastDirectBlurKeyword != directKeyword || _lastSphericalBlurKeyword != sphericalKeyword) {
                 _shadowBlurMaterial.DisableKeyword(ShadowQualityKeywordLow);
                 _shadowBlurMaterial.DisableKeyword(ShadowQualityKeywordMedium);
                 _shadowBlurMaterial.DisableKeyword(ShadowQualityKeywordHigh);
@@ -925,9 +957,13 @@ namespace VRCLightVolumes {
                 if (!_useCubemapShadow) _shadowBlurMaterial.EnableKeyword(ShadowBlurKeywordDirect);
                 else _shadowBlurMaterial.DisableKeyword(ShadowBlurKeywordDirect);
 
+                if (_useSphericalBlur) _shadowBlurMaterial.EnableKeyword(ShadowBlurKeywordSpherical);
+                else _shadowBlurMaterial.DisableKeyword(ShadowBlurKeywordSpherical);
+
                 _lastShadowQualityPreset = qualityPreset;
                 _lastUniformBlurKeyword = uniformKeyword;
                 _lastDirectBlurKeyword = directKeyword;
+                _lastSphericalBlurKeyword = sphericalKeyword;
             }
             _shadowBlurMaterial.SetFloat(_blurRadiusID, _bakeBlur * (Mathf.Max(_bakeResolution, 1) / ShadowBlurBaseResolution));
             // Depth <= 0 selects the cheaper uniform blur shader path; otherwise map inspector value logarithmically
@@ -937,6 +973,7 @@ namespace VRCLightVolumes {
                 _shadowBlurMaterial.SetFloat(_blurDepthID, (Mathf.Pow(10f, normalizedBlurDepth) - 1f) * 0.1111111111f);
             }
             _shadowBlurMaterial.SetFloat(_invResolutionID, 1f / _bakeResolution);
+            if (!_useCubemapShadow) _shadowBlurMaterial.SetFloat(_tanHalfFovID, _bakeTanHalfFov);
             return true;
         }
 
@@ -985,6 +1022,7 @@ namespace VRCLightVolumes {
             _lastShadowQualityPreset = -1;
             _lastUniformBlurKeyword = -1;
             _lastDirectBlurKeyword = -1;
+            _lastSphericalBlurKeyword = -1;
 
             _runtimeMaterialsInitialized = true;
         }

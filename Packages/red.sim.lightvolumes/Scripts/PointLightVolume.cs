@@ -55,9 +55,9 @@ namespace VRCLightVolumes {
         [Min(0)] public float Bias = 0.1f;
         [Tooltip("Near clip plane used by the shadow bake camera. Higher values can clip nearby occluders.")]
         [Min(0.0001f)] public float NearPlane = 0.01f;
-        [Tooltip("Gaussian blur radius applied after baking, normalized to 128x128 shadow resolution. 0 keeps the baked shadow map unblurred. Useful to get a visible shadow penumbra. Requires rebaking.")]
+        [Tooltip("Shadow blur radius applied after baking, normalized to 128x128 shadow resolution. Editor baking uses spherical shadow-space blur to reduce visible cubemap and Spot Light projection seams. Runtime baking uses Planar Blur unless Spherical Blur is enabled on the runtime baker. 0 keeps the baked shadow map unblurred. Requires rebaking.")]
         [Min(0)] public float Blur = 1f;
-        [Tooltip("Hardens shadows near the contact areas. Can produce artefacts, so use with caution! Requires rebaking. More Performant when it's set to 0 in real-time mode.")]
+        [Tooltip("Hardens shadows near the contact areas. Can produce artefacts, so use with caution. Requires rebaking. More performant when set to 0 in realtime mode. Runtime baker Spherical Blur also applies to contact hardening samples.")]
         [Range(0, 1)] public float ContactHardening = 0f;
         [Tooltip("Use it if you don't want to move baked shadows together with their light. Attaches shadows to the world space basically. Less optimized when turned on.")]
         public bool UseWorldSpace = false;

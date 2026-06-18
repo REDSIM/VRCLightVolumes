@@ -133,8 +133,8 @@ For shadow setup, baked shadows, the Realtime Shadow Baker and runtime script co
 |`Object Mask` | Optional object list. If empty, all objects on the selected layers can cast shadows. If not empty, only children of the listed objects are rendered during the bake.|
 |`Near Plane` | Near clip plane used by the shadow bake camera. Higher values can clip nearby occluders.|
 |`Bias` | World-space bias in meters used while baking shadows. Larger values reduce self-shadow artifacts but can detach contact edges.|
-|`Blur` | Gaussian blur radius applied after baking, normalized to 128x128 shadow resolution. `0` keeps shadows unblurred.|
-|`Contact Hardening` | Hardens shadows near contact areas. Can produce artifacts, so use it carefully. More performant when set to `0` in runtime shadow mode.|
+|`Blur` | Shadow blur radius applied after baking, normalized to 128x128 shadow resolution. Editor baking uses spherical shadow-space blur to reduce visible cubemap and Spot Light projection seams. Runtime baking uses `Planar Blur` unless `Spherical Blur` is enabled on the runtime baker. `0` keeps shadows unblurred.|
+|`Contact Hardening` | Hardens shadows near contact areas. Can produce artifacts, so use it carefully. More performant when set to `0` in runtime shadow mode. Runtime baker `Spherical Blur` also applies to contact hardening samples.|
 |`Use World Space` | Keeps baked shadows attached to the baked world-space pose instead of moving them with the light. Less optimized when enabled.|
 |`Force Cubemap Shadows` | Forces spotlight shadows to bake and store as a cubemap even when the spot angle could use a single projected shadow texture.|
 |`Rebake Shadows` | Includes this light when pressing `Bake Shadows` in **Light Volume Setup**.|

@@ -30,7 +30,6 @@ namespace VRCLightVolumes {
         private static readonly int _faceIndexID = Shader.PropertyToID("_FaceIndex");
         private static readonly int _sourceBaseSliceID = Shader.PropertyToID("_SourceBaseSlice");
         private static readonly int _depthBaseSliceID = Shader.PropertyToID("_DepthBaseSlice");
-        private static readonly int _blurDirectionID = Shader.PropertyToID("_BlurDirection");
         private static readonly int _blurRadiusID = Shader.PropertyToID("_BlurRadius");
         private static readonly int _blurDepthID = Shader.PropertyToID("_BlurDepth");
         private static readonly int _invResolutionID = Shader.PropertyToID("_InvResolution");
@@ -164,7 +163,6 @@ namespace VRCLightVolumes {
             RenderTexture oldActive = RenderTexture.active;
             RenderTexture depthTexture = null;
             RenderTexture rawTexture = null;
-            RenderTexture blurTempTexture = null;
             RenderTexture blurTexture = null;
             RenderTexture resultTexture = null;
             GameObject bakerObject = null;
@@ -189,11 +187,10 @@ namespace VRCLightVolumes {
                 else BakeRawSingleShadow(pointLightVolume, shadowCamera, depthTexture, rawTexture, shadowDepthEncodeMaterial, safeBias);
 
                 if (useBlur) {
-                    blurTempTexture = CreateShadowArrayTexture(safeResolution, renderTextureFormat, shadowSliceCount);
                     blurTexture = CreateShadowArrayTexture(safeResolution, renderTextureFormat, shadowSliceCount);
                     editorShadowBlurMaterial = new Material(shadowBlurShader) { hideFlags = HideFlags.HideAndDontSave };
-                    ConfigureEditorBlurMaterial(editorShadowBlurMaterial, Mathf.Max(blurRadius, 0), Mathf.Clamp01(blurDepth), safeResolution, !cubemapShadows);
-                    BlurShadowFaces(rawTexture, blurTempTexture, blurTexture, editorShadowBlurMaterial, shadowSliceCount);
+                    ConfigureEditorBlurMaterial(editorShadowBlurMaterial, Mathf.Max(blurRadius, 0), Mathf.Clamp01(blurDepth), safeResolution, !cubemapShadows, cubemapShadows ? 1f : Mathf.Tan(shadowCamera.fieldOfView * 0.5f * Mathf.Deg2Rad));
+                    BlurShadowFaces(rawTexture, blurTexture, editorShadowBlurMaterial, shadowSliceCount);
                     resultTexture = blurTexture;
                 } else {
                     resultTexture = rawTexture;
@@ -205,7 +202,6 @@ namespace VRCLightVolumes {
                 RestoreObjectMaskFilter(objectMaskRendererStates);
                 ReleaseBakeTexture(depthTexture, keepResultTexture ? resultTexture : null);
                 ReleaseBakeTexture(rawTexture, keepResultTexture ? resultTexture : null);
-                ReleaseBakeTexture(blurTempTexture, keepResultTexture ? resultTexture : null);
                 ReleaseBakeTexture(blurTexture, keepResultTexture ? resultTexture : null);
                 if (shadowDepthEncodeMaterial != null) Object.DestroyImmediate(shadowDepthEncodeMaterial);
                 if (editorShadowBlurMaterial != null) Object.DestroyImmediate(editorShadowBlurMaterial);
@@ -317,7 +313,7 @@ namespace VRCLightVolumes {
         }
 
         // Configures the high-quality editor blur material.
-        private static void ConfigureEditorBlurMaterial(Material blurMaterial, float blurRadius, float blurDepth, int resolution, bool directBlur) {
+        private static void ConfigureEditorBlurMaterial(Material blurMaterial, float blurRadius, float blurDepth, int resolution, bool directBlur, float tanHalfFov) {
             blurMaterial.EnableKeyword(ShaderConstants.EditorShadowBlurQualityKeyword);
             blurMaterial.EnableKeyword(ShaderConstants.RuntimeShadowQualityHighKeyword);
             if (blurDepth <= 0f) blurMaterial.EnableKeyword(ShaderConstants.RuntimeShadowBlurUniformKeyword);
@@ -332,23 +328,22 @@ namespace VRCLightVolumes {
                 blurMaterial.SetFloat(_blurDepthID, (Mathf.Pow(10f, normalizedBlurDepth) - 1f) * 0.1111111111f);
             }
             blurMaterial.SetFloat(_invResolutionID, 1f / Mathf.Max(resolution, 1));
+            blurMaterial.SetFloat(_shadowTanHalfFovID, Mathf.Max(tanHalfFov, 0.000001f));
         }
 
-        // Applies two-pass seam-aware blur to a complete six-face EVSM texture array.
-        private static void BlurShadowFaces(RenderTexture rawTexture, RenderTexture tempTexture, RenderTexture outputTexture, Material blurMaterial, int faceCount) {
-            for (int i = 0; i < faceCount; i++) BlitShadowBlurFace(rawTexture, tempTexture, blurMaterial, i, Vector2.right, 0, 0, rawTexture, 0);
-            for (int i = 0; i < faceCount; i++) BlitShadowBlurFace(tempTexture, outputTexture, blurMaterial, i, Vector2.up, 0, 0, rawTexture, 0);
+        // Applies the high-quality spherical editor blur in one pass.
+        private static void BlurShadowFaces(RenderTexture rawTexture, RenderTexture outputTexture, Material blurMaterial, int faceCount) {
+            for (int i = 0; i < faceCount; i++) BlitShadowBlurFace(rawTexture, outputTexture, blurMaterial, i);
         }
 
-        // Applies one directional blur pass to one texture-array face.
-        private static void BlitShadowBlurFace(Texture sourceTexture, RenderTexture destination, Material blurMaterial, int face, Vector2 direction, int sourceBaseSlice, int targetBaseSlice, Texture depthTexture, int depthBaseSlice) {
+        // Applies spherical blur to one editor texture-array face.
+        private static void BlitShadowBlurFace(Texture sourceTexture, RenderTexture destination, Material blurMaterial, int face) {
             blurMaterial.SetTexture(_sourceArrayTexID, sourceTexture);
-            blurMaterial.SetTexture(_depthArrayTexID, depthTexture);
-            blurMaterial.SetFloat(_sourceBaseSliceID, sourceBaseSlice);
-            blurMaterial.SetFloat(_depthBaseSliceID, depthBaseSlice);
-            blurMaterial.SetVector(_blurDirectionID, direction);
+            blurMaterial.SetTexture(_depthArrayTexID, sourceTexture);
+            blurMaterial.SetFloat(_sourceBaseSliceID, 0);
+            blurMaterial.SetFloat(_depthBaseSliceID, 0);
             blurMaterial.SetInt(_faceIndexID, face);
-            BlitMaterialToSlice(sourceTexture, blurMaterial, 0, destination, targetBaseSlice + face);
+            BlitMaterialToSlice(sourceTexture, blurMaterial, 0, destination, face);
         }
 
         // Renders one material pass into one texture-array slice.

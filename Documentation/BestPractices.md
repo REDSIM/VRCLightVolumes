@@ -33,6 +33,8 @@ Point Light Volume Shadows are shadows similar to Unity's realtime point light s
 
 Point Light Volume Shadows uses **Exponential Variance Shadow Maps (EVSM)**, which gives much more smooth and good looking result than Unity's default shadows, whithout any serious performance tradeoff.
 
+Editor-baked shadow blur uses the spherical shadow-space blur path, so larger `Blur` values stay more consistent across cubemap faces and single-slice Spot Light projections.
+
 Use shadows only where they visibly matter. Shadowed Point Light Volumes need extra texture memory and extra shader work, so they are heavier, especially for Quest and Mobile!
 
 **Spot lights** with shadows (when `Force Cubemap Shadows` disabled) uses one single shadow texture, which is 6 times more memory efficient than **Point** or **Area** lights.
@@ -50,6 +52,8 @@ Realtime shadow baking is available through the extra **Point Light Shadow Runti
 
 Point Light Volume Realtime Shadows are **NOT cheaper than Unity's realtime shadows**, they are heavier! Under the hood **Point Light Shadow Runtime Baker** renders cameras and blur passes in runtime, which means x2 draw calls for a single realtime **Spot light** and x7 draw calls for a single **Point light** or **Area Light**.
 So use it for a small number of important "heroic" lights and choose culling layers carefully! 
+
+Keep `Spherical Blur` disabled for realtime shadows unless the cheaper `Planar Blur` produces visible cubemap seams or Spot Light projection-edge artifacts. Spherical blur reduces those artifacts but adds more expensive shadow-space samples.
 
 It is not recommended using **Point Light Shadow Runtime Baker** in realtime mode for Quest and Mobile, it is much heavier than Unity's default realtime shadows, especially on CPU side.
 

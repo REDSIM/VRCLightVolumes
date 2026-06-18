@@ -7,7 +7,7 @@
 |[VRC Light Volumes System](../Documentation/HowToUse.md)|
 |[Regular Light Volumes](../Documentation/HowToUse_RegularLightVolumes.md)|
 |[Point Light Volumes](../Documentation/HowToUse_PointLightVolumes.md)|
-|**Point Light Volume Shadows**<br />• [Shadow Types](#Shadow-Types)<br />• [Baked Shadows Setup](#Baked-Shadows-Setup)<br />• [Realtime Shadow Baker](#Realtime-Shadow-Baker)<br />• [Runtime Script Control](#Runtime-Script-Control)<br />• [Performance Notes](#Performance-Notes)<br />• [Shadow Parameters](#Shadow-Parameters)|
+|**Point Light Volume Shadows**<br />• [Shadow Types](#Shadow-Types)<br />• [Baked Shadows Setup](#Baked-Shadows-Setup)<br />• [Realtime Shadow Baker](#Realtime-Shadow-Baker)<br />• [Runtime Blur Modes](#Runtime-Blur-Modes)<br />• [Runtime Script Control](#Runtime-Script-Control)<br />• [Performance Notes](#Performance-Notes)<br />• [Shadow Parameters](#Shadow-Parameters)|
 |[Audio Link Integration](../Documentation/HowToUse_AudioLinkIntegration.md)|
 |[TV Screens Integration](../Documentation/HowToUse_TVScreensIntegration.md)|
 |[How Light Volumes Work?](../Documentation/HowToUse_HowItWorks.md)|
@@ -28,6 +28,8 @@ Baked shadow maps are generated in the Unity Editor and saved as assets. Use the
 But they are still more expensive than the same Point Light Volume without shadows because the shader needs extra shadow data and extra VRAM.
 
 Even baked Point Light Volume shadows are sampled at runtime by compatible shaders, so they can still shade moving objects, avatars and props that use VRC Light Volumes shader integration.
+
+Editor-baked shadow blur always uses the spherical shadow-space blur path. This keeps cubemap face edges and single-slice Spot Light shadow edges more consistent, especially with larger `Blur` values.
 
 ### Realtime Shadow Baker
 
@@ -72,6 +74,7 @@ Use the extra `Point Light Shadow Runtime Baker` component when a light needs to
 > [!NOTE]
 > You usually want to have it as `1` if it's a static light that bakes once at the start. And you usually want to have it as `6` if it's a dynamic light with fully realtime shadows. 
 8. Keep `Shadow Blur Sample Preset` as low as possible for the result you need. Lowering the blur quality improves GPU performance. However, with realtime shadows, sometimes the bottleneck is on CPU side, so it might cause no actual effect. But still can be very noticable on **Quest** and **Mobile**!
+9. Enable `Spherical Blur` only when `Planar Blur` shows visible cubemap seams or Spot Light projection-edge artifacts. It reduces those artifacts, but costs more GPU work.
 
 > [!IMPORTANT]
 > Realtime shadows will only be visible in **Play Mode** and in **VRChat**. Scene view realtime shadows are not supported yet!
@@ -79,9 +82,23 @@ Use the extra `Point Light Shadow Runtime Baker` component when a light needs to
 The baker uses the target Point Light Volume shadow settings, including `Layer Mask`, `Near Plane`, `Bias`, `Blur`, `Contact Hardening` and the light culling range. Configure those on the target light before relying on runtime baking.
 **Blur** value `0` completely turns off the blur improving the performance on GPU side, but makes the quality worse, so it's not recommended. 
 **Contact Hardening** value `0` completely turns off the contact hardening effect improving the performance on GPU side. It's recommended to keep it `0` in most scenarios, because it can cause artefacts.
+When `Spherical Blur` is enabled, runtime `Blur` and `Contact Hardening` both sample in spherical shadow space instead of planar texture space.
 
 > [!TIP]
 > You can leave point light with no shadows baked at all, but keep the `Point Light Shadow Runtime Baker` with `Bake On Enable` option only. It will bake shadows on start in runtime, and you'll save the asset bundle memory. Especially useful for **Quest** and **Mobile** where VRChat limits the world asset bundle to 100mb. 
+
+### Runtime Blur Modes
+
+Runtime shadows have two blur modes:
+
+- `Planar Blur` is the cheaper default runtime path. It uses two texture-space blur passes and `Shadow Blur Sample Preset` maps to 30/62/126 total blur taps for Low/Medium/High.
+- `Spherical Blur` is the more geometrically correct runtime path. It samples a one-pass radial kernel in spherical shadow space, so cubemap face seams and single-slice Spot Light edge divergence are much less visible. Its blur presets use 33/65/129 taps for Low/Medium/High.
+
+Under the hood, `Planar Blur` treats each shadow slice or cubemap face as a flat texture. It blurs in texture space, first in one axis and then in the other axis. This is fast, but the blur kernel does not follow the real cubemap or Spot Light projection shape. Near cubemap face edges and wide Spot Light projection edges, the apparent blur radius can diverge and make seams more visible.
+
+`Spherical Blur` offsets samples in shadow direction space instead. For cubemap shadows it can cross face edges consistently, and for single-slice Spot Light shadows it keeps the blur closer to a stable angular radius. This reduces visible seams and projection-edge artifacts, but each tap needs extra shadow-space reprojection, so it is more expensive than `Planar Blur`.
+
+Editor `Bake Shadows` always uses spherical shadow-space blur. The runtime option exists only so you can choose the cost/artifact tradeoff for realtime baking.
 
 ### Single-Slice Realtime Spot Shadows
 
@@ -120,6 +137,7 @@ For realtime shadows:
 - Prefer single-slice Spot Light shadows when possible.
 - Use the lowest `Resolution` that still looks acceptable.
 - Keep `Shadow Blur Sample Preset` low. It only matters when `Blur` is above `0`.
+- Keep `Spherical Blur` disabled unless `Planar Blur` produces visible cubemap seams or Spot Light projection-edge artifacts.
 - Keep `Contact Hardening` at `0` unless you really need it.
 - Use `Layer Mask` and `Object Mask` to render only actual shadow casters.
 - Keep `Realtime Faces Per Frame` low for cubemap shadows unless you need all faces updated immediately.
@@ -134,8 +152,8 @@ For realtime shadows:
 |`Object Mask` | Optional object list. If empty, all objects on the selected layers can cast shadows. If not empty, only children of the listed objects are rendered during the bake.|
 |`Near Plane` | Near clip plane used by the shadow bake camera. Higher values can clip nearby occluders.|
 |`Bias` | World-space bias in meters used while baking shadows. Larger values reduce self-shadow artifacts but can detach contact edges.|
-|`Blur` | Gaussian blur radius applied after baking, normalized to 128x128 shadow resolution. `0` keeps shadows unblurred.|
-|`Contact Hardening` | Hardens shadows near contact areas. It can produce artifacts and is more expensive in runtime shadow mode.|
+|`Blur` | Shadow blur radius applied after baking, normalized to 128x128 shadow resolution. Editor baking uses spherical shadow-space blur to reduce visible cubemap and Spot Light projection seams. Runtime baking uses `Planar Blur` unless `Spherical Blur` is enabled. `0` keeps shadows unblurred.|
+|`Contact Hardening` | Hardens shadows near contact areas. It can produce artifacts and is more expensive in runtime shadow mode. When `Spherical Blur` is enabled on the runtime baker, contact hardening samples use the same spherical shadow-space kernel.|
 |`Use World Space` | Keeps baked shadows attached to the baked world-space pose instead of moving them with the light. Less optimized when enabled.|
 |`Force Cubemap Shadows` | Forces Spot Light shadows to bake and store as a cubemap even when the spot angle could use a single projected shadow texture.|
 |`Rebake Shadows` | Includes this light when pressing `Bake Shadows` in **Light Volume Setup**.|
@@ -144,4 +162,5 @@ For realtime shadows:
 |`Bake On Enable` | Realtime Shadow Baker option. Runs one distributed bake cycle when the baker becomes active.|
 |`Realtime` | Realtime Shadow Baker option. Continuously updates shadow slices through a delayed Udon event loop.|
 |`Realtime Faces Per Frame` | Realtime Shadow Baker option. Number of cubemap faces updated per bake tick. Single-slice Spot Light shadows ignore this and update one slice.|
-|`Shadow Blur Sample Preset` | Realtime Shadow Baker option. Controls runtime blur sample count. Lower presets are cheaper.|
+|`Shadow Blur Sample Preset` | Realtime Shadow Baker option. Controls runtime blur and contact hardening sample count. Lower presets are cheaper. `Planar Blur` uses 30/62/126 two-pass blur taps; `Spherical Blur` uses 33/65/129 one-pass blur taps.|
+|`Spherical Blur` | Realtime Shadow Baker option. Samples runtime blur and contact hardening in spherical shadow space to reduce visible cubemap and single-slice Spot Light projection seams. More correct, but more expensive than `Planar Blur`.|

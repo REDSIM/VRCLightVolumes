@@ -136,8 +136,8 @@ Stores all runtime Point Light Volume configuration including light type, projec
 |`float NearClip` | Near clip plane used by the shadow bake camera. |
 |`float Bias` | World-space bias in meters applied while baking this light's shadow map. Larger values reduce self-shadow artifacts but can detach contact edges. |
 |`float FarClip` | Far clip distance used when the EVSM shadow map was baked. `0` falls back to this light's current culling range. |
-|`float Blur` | Gaussian blur radius applied after baking, normalized to 128x128 shadow resolution. `0` keeps the baked shadow map unblurred. |
-|`float ContactHardening` | Hardens shadows near contact areas. Can produce artifacts, so use it carefully. More performant when set to `0` in runtime shadow mode. |
+|`float Blur` | Shadow blur radius applied after baking, normalized to 128x128 shadow resolution. Editor baking uses spherical shadow-space blur to reduce visible cubemap and Spot Light projection seams. Runtime baking uses `Planar Blur` unless `PointLightShadowRuntimeBaker.SphericalBlur` is enabled. `0` keeps the baked shadow map unblurred. |
+|`float ContactHardening` | Hardens shadows near contact areas. Can produce artifacts, so use it carefully. More performant when set to `0` in runtime shadow mode. Runtime baker spherical mode also applies to contact hardening samples. |
 |`bool ShadowMapTextureIsCubemap` | Internal metadata. True when `ShadowMapTexture` is a real cubemap source. |
 |`bool ShadowMapTextureHasDepthSlices` | Internal metadata. True when `ShadowMapTexture` is a Texture2DArray or array RenderTexture with independent slices. |
 |`bool ShadowMapUsesCubemap` | Internal metadata. True when the shadow source occupies 6 cubemap slices in the runtime shadow texture array. |
@@ -180,7 +180,8 @@ The hidden camera and runtime materials are prepared automatically by the editor
 |`bool Realtime` | Continuously updates shadow slices through a delayed Udon event loop. Use carefully because realtime shadow baking is expensive. |
 |`int Resolution` | Resolution used by the runtime depth target and shadow texture. Matching **Light Volume Setup** `Shadow Resolution` avoids an extra copy path. |
 |`int RealtimeFacesPerFrame` | Number of cubemap faces rendered per realtime bake tick. Single-slice Spot Light shadows ignore this and update one slice. |
-|`int ShadowBlurSamplePreset` | Runtime blur sample preset. `0` = Low, `1` = Medium, `2` = High. Lower presets are cheaper. |
+|`int ShadowBlurSamplePreset` | Runtime blur and contact hardening sample preset. `0` = Low, `1` = Medium, `2` = High. `Planar Blur` uses 30/62/126 two-pass blur taps; `SphericalBlur` uses 33/65/129 one-pass blur taps. Lower presets are cheaper. |
+|`bool SphericalBlur` | Samples runtime blur and contact hardening in spherical shadow space to reduce visible cubemap and single-slice Spot Light projection seams. More correct, but more expensive than `Planar Blur`. |
 
 ### Public Methods
 | Public Method | Description |

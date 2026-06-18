@@ -26,7 +26,7 @@ There is a bunch of other cool assets you will get there!
 - Can change color in runtime
 - Up to 32 light volumes visible at the same time
 - Up to 128 optimized Point, Spot or Area light sources visible at the same time
-- Baked and runtime-updatable shadow maps for Point, Spot or Area lights
+- Baked and runtime-updatable shadow maps for Point, Spot or Area lights, with seam-reducing spherical blur for baked shadows and optional runtime spherical blur
 - Texture, Render Texture and Material projection sources for Point Light Volumes
 - Works with dynamic batching, which potentially increases performance
 - Works with Bakery or Unity Progressive lightmapper

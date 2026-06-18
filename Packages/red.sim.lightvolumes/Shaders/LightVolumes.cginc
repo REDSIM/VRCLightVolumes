@@ -112,10 +112,11 @@ uniform Texture2DArray _UdonPointLightVolumeTexture;
 uniform SamplerState sampler_UdonPointLightVolumeTexture;
 // First elements are baked shadow cubemap faces, 6 face textures per cubemap.
 uniform Texture2DArray _UdonPointLightVolumeShadowTexture;
-// Samples textures using mip 0. Point light texture arrays share the same clamp sampler.
+uniform SamplerState sampler_UdonPointLightVolumeShadowTexture;
+// Samples textures using mip 0. Shadow maps keep their own sampler state so they always use the shadow texture wrap mode.
 #define LV_SAMPLE(tex, uvw) tex.SampleLevel(sampler_UdonLightVolume, uvw, 0)
 #define LV_SAMPLE_POINT(uvw) _UdonPointLightVolumeTexture.SampleLevel(sampler_UdonPointLightVolumeTexture, uvw, 0)
-#define LV_SAMPLE_SHADOW(uvw) _UdonPointLightVolumeShadowTexture.SampleLevel(sampler_UdonPointLightVolumeTexture, uvw, 0)
+#define LV_SAMPLE_SHADOW(uvw) _UdonPointLightVolumeShadowTexture.SampleLevel(sampler_UdonPointLightVolumeShadowTexture, uvw, 0)
 
 #else
 

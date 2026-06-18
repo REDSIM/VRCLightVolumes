@@ -1002,6 +1002,7 @@ namespace VRCLightVolumes.Tests {
             GameObject bakerObject = CreateGameObject("Runtime Shadow Settings Baker", true);
             PointLightShadowRuntimeBaker baker = bakerObject.AddComponent<PointLightShadowRuntimeBaker>();
             baker.TargetPointLightVolume = point;
+            baker.SphericalBlur = true;
             AddRuntimeShadowCamera(baker);
 
             MethodInfo cacheMethod = typeof(PointLightShadowRuntimeBaker).GetMethod("CacheRuntimeReferences", _lifecycleMethodFlags);
@@ -1010,12 +1011,14 @@ namespace VRCLightVolumes.Tests {
             FieldInfo bakeCullingMaskField = typeof(PointLightShadowRuntimeBaker).GetField("_bakeCullingMask", _lifecycleMethodFlags);
             FieldInfo bakeBlurField = typeof(PointLightShadowRuntimeBaker).GetField("_bakeBlur", _lifecycleMethodFlags);
             FieldInfo bakeBlurDepthField = typeof(PointLightShadowRuntimeBaker).GetField("_bakeBlurDepth", _lifecycleMethodFlags);
+            FieldInfo useSphericalBlurField = typeof(PointLightShadowRuntimeBaker).GetField("_useSphericalBlur", _lifecycleMethodFlags);
             Assert.That(cacheMethod, Is.Not.Null);
             Assert.That(refreshSettingsMethod, Is.Not.Null);
             Assert.That(bakeNearClipField, Is.Not.Null);
             Assert.That(bakeCullingMaskField, Is.Not.Null);
             Assert.That(bakeBlurField, Is.Not.Null);
             Assert.That(bakeBlurDepthField, Is.Not.Null);
+            Assert.That(useSphericalBlurField, Is.Not.Null);
 
             cacheMethod.Invoke(baker, null);
             refreshSettingsMethod.Invoke(baker, null);
@@ -1024,6 +1027,7 @@ namespace VRCLightVolumes.Tests {
             Assert.That((int)bakeCullingMaskField.GetValue(baker), Is.EqualTo(1 << 7));
             Assert.That((float)bakeBlurField.GetValue(baker), Is.EqualTo(6.5f).Within(Epsilon));
             Assert.That((float)bakeBlurDepthField.GetValue(baker), Is.EqualTo(0.35f).Within(Epsilon));
+            Assert.That((bool)useSphericalBlurField.GetValue(baker), Is.True);
         }
 
         // Verifies realtime baking keeps the baker resolution separate from the manager-owned final array size.
@@ -1072,6 +1076,7 @@ namespace VRCLightVolumes.Tests {
             PointLightShadowRuntimeBaker baker = bakerObject.AddComponent<PointLightShadowRuntimeBaker>();
             baker.TargetPointLightVolume = spot;
             baker.Resolution = 16;
+            baker.SphericalBlur = true;
             baker.RuntimeShadowDepthEncodeMaterial = CreateMaterial("Hidden/VRCLV/PointLightShadowDepthEncode");
             AddRuntimeShadowCamera(baker);
 
@@ -1082,6 +1087,7 @@ namespace VRCLightVolumes.Tests {
             FieldInfo bakeSliceCountField = typeof(PointLightShadowRuntimeBaker).GetField("_bakeSliceCount", _lifecycleMethodFlags);
             FieldInfo bakeFieldOfViewField = typeof(PointLightShadowRuntimeBaker).GetField("_bakeFieldOfView", _lifecycleMethodFlags);
             FieldInfo bakeTanHalfFovField = typeof(PointLightShadowRuntimeBaker).GetField("_bakeTanHalfFov", _lifecycleMethodFlags);
+            FieldInfo useSphericalBlurField = typeof(PointLightShadowRuntimeBaker).GetField("_useSphericalBlur", _lifecycleMethodFlags);
             Assert.That(prepareBakeMethod, Is.Not.Null);
             Assert.That(applyMethod, Is.Not.Null);
             Assert.That(shadowTextureField, Is.Not.Null);
@@ -1089,6 +1095,7 @@ namespace VRCLightVolumes.Tests {
             Assert.That(bakeSliceCountField, Is.Not.Null);
             Assert.That(bakeFieldOfViewField, Is.Not.Null);
             Assert.That(bakeTanHalfFovField, Is.Not.Null);
+            Assert.That(useSphericalBlurField, Is.Not.Null);
 
             Assert.That((bool)prepareBakeMethod.Invoke(baker, null), Is.True);
 
@@ -1098,6 +1105,7 @@ namespace VRCLightVolumes.Tests {
             Assert.That(shadowTexture.volumeDepth, Is.EqualTo(1));
             Assert.That((bool)useCubemapShadowField.GetValue(baker), Is.False);
             Assert.That((int)bakeSliceCountField.GetValue(baker), Is.EqualTo(1));
+            Assert.That((bool)useSphericalBlurField.GetValue(baker), Is.True);
             Assert.That((float)bakeFieldOfViewField.GetValue(baker), Is.EqualTo(60).Within(Epsilon));
             Assert.That((float)bakeTanHalfFovField.GetValue(baker), Is.EqualTo(Mathf.Tan(30f * Mathf.Deg2Rad)).Within(Epsilon));
 

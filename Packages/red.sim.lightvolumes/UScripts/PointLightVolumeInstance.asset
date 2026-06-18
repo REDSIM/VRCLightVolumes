@@ -2391,9 +2391,11 @@ MonoBehaviour:
       Data: 139|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Gaussian blur radius applied after baking, normalized to 128x128 shadow
-        resolution. 0 keeps the baked shadow map unblurred. Useful to get a visible
-        shadow penumbra. Requires rebaking.
+      Data: Shadow blur radius applied after baking, normalized to 128x128 shadow
+        resolution. Editor baking uses spherical shadow-space blur to reduce visible
+        cubemap and Spot Light projection seams. Runtime baking uses Planar Blur
+        unless Spherical Blur is enabled on the runtime baker. 0 keeps the baked
+        shadow map unblurred. Requires rebaking.
     - Name: 
       Entry: 8
       Data: 
@@ -2461,8 +2463,8 @@ MonoBehaviour:
     - Name: tooltip
       Entry: 1
       Data: Hardens shadows near the contact areas. Can produce artefacts, so use
-        with caution! Requires rebaking. More Performant when it's set to 0 in real-time
-        mode.
+        with caution. Requires rebaking. More performant when set to 0 in realtime
+        mode. Runtime baker Spherical Blur also applies to contact hardening samples.
     - Name: 
       Entry: 8
       Data: 

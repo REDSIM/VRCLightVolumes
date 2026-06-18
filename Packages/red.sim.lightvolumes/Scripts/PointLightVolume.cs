@@ -32,7 +32,7 @@ namespace VRCLightVolumes {
         [Range(0.001f, 1)] public float Falloff = 1f;
         [Tooltip("X - cone falloff, Y - attenuation. No compression and RGBA Float or RGBA Half format is recommended.")]
         public UnityEngine.Object FalloffLUT = null;
-        [Tooltip("Projects a square texture for spot lights.")]
+        [Tooltip("Projects a square texture for spot lights, or a textured emitter surface for area lights.")]
         public UnityEngine.Object Cookie = null;
         [Tooltip("Projects a cubemap for point lights.")]
         public UnityEngine.Object Cubemap = null;
@@ -110,7 +110,8 @@ namespace VRCLightVolumes {
 
         // Returns currently used projection object depending on the light parameters
         public UnityEngine.Object GetProjectionSource() {
-            if (Projection == LightProjection.Parametric || Type == LightType.AreaLight) return null;
+            if (Type == LightType.AreaLight) return Cookie;
+            if (Projection == LightProjection.Parametric) return null;
             if (Projection == LightProjection.LUT) return FalloffLUT;
             if (Type == LightType.PointLight) return Cubemap;
             if (Type == LightType.SpotLight) return Cookie;
@@ -142,6 +143,7 @@ namespace VRCLightVolumes {
             UnityEngine.Object source = GetProjectionSource();
             if (source == null) return false;
             if (source is Material) return true;
+            if (Type == LightType.AreaLight) return source is Texture;
             if (Projection == LightProjection.LUT) return source is Texture;
             if (Projection == LightProjection.Custom && Type == LightType.PointLight) return source is Texture;
             if (Projection == LightProjection.Custom && Type == LightType.SpotLight) return source is Texture;
@@ -166,6 +168,7 @@ namespace VRCLightVolumes {
         // Returns internal runtime projection mode. 0 = parametric, 1 = LUT, 2 = cookie or cubemap
         private int GetProjectionMode() {
             if (!HasProjectionSource()) return 0; // 0: parametric
+            if (Type == LightType.AreaLight) return 2; // 2: custom cookie or cubemap
             if (Projection == LightProjection.LUT) return 1; // 1: LUT
             if (Projection == LightProjection.Custom) return 2; // 2: custom cookie or cubemap
             return 0; // 0: parametric

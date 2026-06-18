@@ -75,7 +75,6 @@ namespace VRCLightVolumes {
                 hiddenFields.Add("Range");
                 hiddenFields.Add("FalloffLUT");
                 hiddenFields.Add("Cubemap");
-                hiddenFields.Add("Cookie");
                 hiddenFields.Add("LightSourceSize");
             }
 
@@ -154,7 +153,11 @@ namespace VRCLightVolumes {
 
         // Draws the projection source that matches the selected projection and light type.
         private void DrawActiveProjectionSourceField() {
-            if (PointLightVolume.Type == PointLightVolume.LightType.AreaLight || PointLightVolume.Projection == PointLightVolume.LightProjection.Parametric) return;
+            if (PointLightVolume.Type == PointLightVolume.LightType.AreaLight) {
+                DrawTextureMaterialField("Cookie", _textureMaterialHint, false);
+                return;
+            }
+            if (PointLightVolume.Projection == PointLightVolume.LightProjection.Parametric) return;
             if (PointLightVolume.Projection == PointLightVolume.LightProjection.LUT) {
                 DrawTextureMaterialField("FalloffLUT", _textureMaterialHint, false);
             } else if (PointLightVolume.Type == PointLightVolume.LightType.PointLight) {
@@ -242,6 +245,7 @@ namespace VRCLightVolumes {
             if (value == null) return true;
             if (isShadowSource) return value is Texture2DArray || value is Cubemap || value is RenderTexture || value is Material;
             if (value is RenderTexture || value is Material) return true;
+            if (PointLightVolume.Type == PointLightVolume.LightType.AreaLight) return value is Texture;
             if (PointLightVolume.Projection == PointLightVolume.LightProjection.LUT) return value is Texture;
             if (PointLightVolume.Projection == PointLightVolume.LightProjection.Custom && PointLightVolume.Type == PointLightVolume.LightType.PointLight) return value is Texture;
             if (PointLightVolume.Projection == PointLightVolume.LightProjection.Custom && PointLightVolume.Type == PointLightVolume.LightType.SpotLight) return value is Texture;

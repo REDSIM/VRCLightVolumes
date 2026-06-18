@@ -740,7 +740,8 @@ namespace VRCLightVolumes {
         // Resolves the shader custom ID for a Point Light Volume projection using existing manager texture array data
         private bool TryGetProbeBakeCustomId(PointLightVolume pointLightVolume, bool hasCustomTextureArray, out float customId) {
             customId = 0;
-            if (pointLightVolume.Type == PointLightVolume.LightType.AreaLight || pointLightVolume.Projection == PointLightVolume.LightProjection.Parametric || !pointLightVolume.HasProjectionSource()) return true;
+            bool hasProjectionSource = pointLightVolume.HasProjectionSource();
+            if (!hasProjectionSource || (pointLightVolume.Type != PointLightVolume.LightType.AreaLight && pointLightVolume.Projection == PointLightVolume.LightProjection.Parametric)) return true;
             if (!hasCustomTextureArray || LightVolumeManager == null) return false;
 
             int resolvedCustomId = LightVolumeManager.GetPointLightCustomID(pointLightVolume.PointLightVolumeInstance);

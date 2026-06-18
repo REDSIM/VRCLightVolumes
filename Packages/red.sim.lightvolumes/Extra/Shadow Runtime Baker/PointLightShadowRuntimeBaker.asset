@@ -417,8 +417,7 @@ MonoBehaviour:
     - Name: tooltip
       Entry: 1
       Data: Shadow blur and contact hardening sample preset. Planar Blur uses 30/62/126
-        two-pass blur taps. Spherical Blur uses 33/65/129 one-pass blur
-        taps.
+        two-pass blur taps. Spherical Blur uses 33/65/129 one-pass blur taps.
     - Name: 
       Entry: 8
       Data: 

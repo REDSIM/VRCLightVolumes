@@ -106,6 +106,7 @@ namespace VRCLightVolumes {
         private int _customCubemapMaterialCount = 0;
         private int _customSingleTextureCount = 0;
         private int _customSingleMaterialCount = 0;
+        private bool _customTexturesUseMipMap = false;
 
         // Unique custom projection sources split by source shape and source type
         private Texture[] _customCubemapTextures = new Texture[0];
@@ -253,6 +254,7 @@ namespace VRCLightVolumes {
         private int _pointLightCountID;
         private int _pointLightCubeCountID;
         private int _pointLightTextureID;
+        private int _pointLightTextureTexelCountID;
         private int _pointLightShadowReprojectionDataID;
         private int _pointLightShadowRotationDataID;
         private int _pointLightShadowCountID;
@@ -462,6 +464,7 @@ namespace VRCLightVolumes {
             _pointLightCustomIdID = VRCShader.PropertyToID("_UdonPointLightVolumeCustomID");
             _pointLightCubeCountID = VRCShader.PropertyToID("_UdonPointLightVolumeCubeCount");
             _pointLightTextureID = VRCShader.PropertyToID("_UdonPointLightVolumeTexture");
+            _pointLightTextureTexelCountID = VRCShader.PropertyToID("_UdonPointLightVolumeTextureTexelCount");
             _pointLightShadowReprojectionDataID = VRCShader.PropertyToID("_UdonPointLightVolumeShadowReprojectionData");
             _pointLightShadowRotationDataID = VRCShader.PropertyToID("_UdonPointLightVolumeShadowRotationData");
             _pointLightShadowCountID = VRCShader.PropertyToID("_UdonPointLightVolumeShadowCount");
@@ -715,6 +718,7 @@ namespace VRCLightVolumes {
                 for (int i = 0; i < _customSingleMaterialCount; i++) _customSingleMaterials[i] = null;
             }
             HasAutoCustomTextureUpdates = false;
+            _customTexturesUseMipMap = false;
 
             // Projection source counters
             int cubemapTextureCount = 0;
@@ -733,18 +737,19 @@ namespace VRCLightVolumes {
                 if (projectionType == 0) continue; // 0: parametric projection has no custom source
 
                 int lightType = instance.LightType;
-                if (lightType == 2) continue; // 2: area light has no custom projection texture
 
                 int projectionMode = instance.ProjectionMode;
                 if (projectionMode == 0) continue; // 0: parametric projection has no custom source
 
                 bool usesCubemapProjection = lightType == 0 && projectionMode == 2; // 0: point, 2: custom cookie or cubemap
+                bool usesAreaCookieProjection = lightType == 2; // 2: area, any non-parametric source is a custom cookie
 
                 if (projectionType == 1) { // TEXTURE PROJECTION
 
                     Texture textureSource = instance.CustomTexture;
                     if (textureSource == null) continue;
                     bool autoUpdate = instance.AutoUpdateCustomTexture;
+                    if (usesAreaCookieProjection) _customTexturesUseMipMap = true;
 
                     if (usesCubemapProjection) { // TEXTURE CUBEMAP PROJECTION
 
@@ -783,6 +788,7 @@ namespace VRCLightVolumes {
                     Material materialSource = instance.CustomTextureMaterial;
                     if (materialSource == null) continue;
                     bool autoUpdate = instance.AutoUpdateCustomTexture;
+                    if (usesAreaCookieProjection) _customTexturesUseMipMap = true;
 
                     if (usesCubemapProjection) { // MATERIAL CUBEMAP PROJECTION
 
@@ -1114,10 +1120,11 @@ namespace VRCLightVolumes {
         // Creates or recreates the runtime texture array so it matches an explicit texture layout
         private bool EnsureRuntimeCustomTextures(int width, int height, int depth) {
             if (width <= 0 || height <= 0 || depth <= 0) return false;
-            bool recreate = ShouldRecreateRuntimeTextureArray(CustomTextures, width, height, depth, FixedCustomTexturesFormat, false, FilterMode.Trilinear);
+            bool useMipMap = _customTexturesUseMipMap;
+            bool recreate = ShouldRecreateRuntimeTextureArray(CustomTextures, width, height, depth, FixedCustomTexturesFormat, useMipMap, FilterMode.Trilinear);
             if (!recreate) return CustomTextures != null;
             ReleaseRuntimeRenderTexture(CustomTextures);
-            CustomTextures = CreateRuntimeTextureArray(width, height, depth, FixedCustomTexturesFormat, FilterMode.Trilinear, false);
+            CustomTextures = CreateRuntimeTextureArray(width, height, depth, FixedCustomTexturesFormat, FilterMode.Trilinear, useMipMap);
 #if !COMPILER_UDONSHARP
             CustomTextures.name = "CustomTextures";
 #endif
@@ -1142,7 +1149,7 @@ namespace VRCLightVolumes {
 
         // Checks if a runtime texture array must be recreated for the requested layout
         private bool ShouldRecreateRuntimeTextureArray(RenderTexture texture, int width, int height, int depth, RenderTextureFormat format, bool useMipMap, FilterMode filterMode) {
-            return texture == null || texture.width != width || texture.height != height || texture.volumeDepth != depth || texture.useMipMap != useMipMap || texture.filterMode != filterMode || texture.format != format;
+            return texture == null || texture.width != width || texture.height != height || texture.volumeDepth != depth || texture.useMipMap != useMipMap || texture.autoGenerateMips != useMipMap || texture.filterMode != filterMode || texture.format != format;
         }
 
         // Releases a runtime render texture before replacing it
@@ -1164,7 +1171,7 @@ namespace VRCLightVolumes {
             texture.dimension = TextureDimension.Tex2DArray;
             texture.volumeDepth = depth;
             texture.useMipMap = useMipMap;
-            texture.autoGenerateMips = false;
+            texture.autoGenerateMips = useMipMap;
             texture.enableRandomWrite = false;
             texture.wrapMode = TextureWrapMode.Clamp;
             texture.filterMode = filterMode;
@@ -1269,6 +1276,7 @@ namespace VRCLightVolumes {
             TryInitialize();
             if (!_isInitialized) return;
             VRCShader.SetGlobalTexture(_pointLightTextureID, texture);
+            VRCShader.SetGlobalFloat(_pointLightTextureTexelCountID, texture.width * texture.height);
         }
 
         // Returns the resolved custom projection texture ID for a point light instance
@@ -1759,7 +1767,10 @@ namespace VRCLightVolumes {
                     }
                     VRCShader.SetGlobalFloat(_lightBrightnessCutoffID, LightsBrightnessCutoff);
                 }
-                if (CustomTextures != null) VRCShader.SetGlobalTexture(_pointLightTextureID, CustomTextures);
+                if (CustomTextures != null) {
+                    VRCShader.SetGlobalTexture(_pointLightTextureID, CustomTextures);
+                    VRCShader.SetGlobalFloat(_pointLightTextureTexelCountID, CustomTextures.width * CustomTextures.height);
+                }
                 if (_activeShadowCount > 0 && ShadowTextures != null) VRCShader.SetGlobalTexture(_pointLightShadowTextureID, ShadowTextures);
 
                 VRCShader.SetGlobalFloat(_lightVolumeEnabledID, 1);

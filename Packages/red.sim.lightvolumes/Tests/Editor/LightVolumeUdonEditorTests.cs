@@ -30,6 +30,7 @@ namespace VRCLightVolumes.Tests {
         private static readonly int _pointLightCountID = Shader.PropertyToID("_UdonPointLightVolumeCount");
         private static readonly int _pointLightCubeCountID = Shader.PropertyToID("_UdonPointLightVolumeCubeCount");
         private static readonly int _pointLightTextureID = Shader.PropertyToID("_UdonPointLightVolumeTexture");
+        private static readonly int _pointLightTextureTexelCountID = Shader.PropertyToID("_UdonPointLightVolumeTextureTexelCount");
         private static readonly int _pointLightShadowReprojectionDataID = Shader.PropertyToID("_UdonPointLightVolumeShadowReprojectionData");
         private static readonly int _pointLightShadowRotationDataID = Shader.PropertyToID("_UdonPointLightVolumeShadowRotationData");
         private static readonly int _pointLightShadowCubeCountID = Shader.PropertyToID("_UdonPointLightVolumeShadowCubeCount");
@@ -556,6 +557,7 @@ namespace VRCLightVolumes.Tests {
             AssertVectorClose(ExpectedPointLightPosition(point), Shader.GetGlobalVectorArray(_pointLightPositionID)[0]);
             AssertVectorClose(ExpectedPointLightColor(point), Shader.GetGlobalVectorArray(_pointLightColorID)[0]);
             AssertVectorClose(new Vector4(expectedAreaRotation.x, expectedAreaRotation.y, expectedAreaRotation.z, expectedAreaRotation.w), Shader.GetGlobalVectorArray(_pointLightDirectionID)[0]);
+            AssertPointCustomData(point, 0, -1);
 
             manager.LightsBrightnessCutoff = 0.5f;
 
@@ -626,6 +628,61 @@ namespace VRCLightVolumes.Tests {
             Assert.That(manager.CustomTextures.height, Is.EqualTo(4));
             Assert.That(manager.CustomTextures.volumeDepth, Is.EqualTo(1));
             Assert.That(manager.CustomTextures.format, Is.EqualTo(RenderTextureFormat.ARGBHalf));
+            Assert.That(manager.CustomTextures.useMipMap, Is.False);
+            Assert.That(manager.CustomTextures.autoGenerateMips, Is.False);
+            AssertPointCustomData(point, -1, 0);
+        }
+
+        // Verifies area lights without a cookie keep the default fast area light shader path.
+        [Test]
+        public void AreaLightWithoutCookieKeepsDefaultProjectionId() {
+            LightVolumeManager manager = CreateManager("Area No Cookie Runtime Manager", false);
+
+            PointLightVolumeInstance point = CreatePointLight(manager, "Area No Cookie Light", true);
+            point.transform.localScale = new Vector3(2, 3, 1);
+            point.SetAreaLight();
+            manager.PointLightVolumeInstances = new[] { point };
+
+            manager.ReinitializeCustomTextures();
+            manager.UpdateVolumes();
+
+            Assert.That(point.LightType, Is.EqualTo(2)); // 2: area
+            Assert.That(point.ProjectionMode, Is.EqualTo(0)); // 0: parametric, no cookie
+            Assert.That(manager.CustomTextures, Is.Null);
+            AssertPointCustomData(point, 0, 0);
+        }
+
+        // Verifies area light cookies use the single-slice texture cache and write a negative shader ID.
+        [Test]
+        public void AreaCookieCreatesRuntimeArrayAndShaderId() {
+            LightVolumeManager manager = CreateManager("Area Cookie Runtime Manager", false);
+            Texture2D source = CreateTexture2D("Area Cookie Source");
+            manager.CustomTexturesWidth = 4;
+            manager.CustomTexturesHeight = 4;
+
+            PointLightVolumeInstance point = CreatePointLight(manager, "Area Cookie Light", true);
+            point.transform.localScale = new Vector3(2, 3, 1);
+            point.SetCustomTexture();
+            point.SetAreaLight();
+            point.CustomTexture = source;
+            point.ProjectionType = 1; // 1: texture
+            manager.PointLightVolumeInstances = new[] { point };
+
+            manager.ReinitializeCustomTextures();
+            manager.UpdateVolumes();
+
+            Assert.That(point.LightType, Is.EqualTo(2)); // 2: area
+            Assert.That(point.ProjectionMode, Is.EqualTo(2)); // 2: custom cookie or cubemap
+            Assert.That(manager.CubemapsCount, Is.EqualTo(0));
+            Assert.That(GetManagerField<int>(manager, _customSingleTextureCountField), Is.EqualTo(1));
+            Assert.That(manager.CustomTextures, Is.Not.Null);
+            Assert.That(manager.CustomTextures.dimension, Is.EqualTo(TextureDimension.Tex2DArray));
+            Assert.That(manager.CustomTextures.volumeDepth, Is.EqualTo(1));
+            Assert.That(manager.CustomTextures.useMipMap, Is.True);
+            Assert.That(manager.CustomTextures.autoGenerateMips, Is.True);
+            Assert.That(Shader.GetGlobalFloat(_pointLightTextureTexelCountID), Is.EqualTo(16));
+            AssertVectorClose(ExpectedPointLightPosition(point), Shader.GetGlobalVectorArray(_pointLightPositionID)[0]);
+            AssertVectorClose(ExpectedPointLightColor(point), Shader.GetGlobalVectorArray(_pointLightColorID)[0]);
             AssertPointCustomData(point, -1, 0);
         }
 

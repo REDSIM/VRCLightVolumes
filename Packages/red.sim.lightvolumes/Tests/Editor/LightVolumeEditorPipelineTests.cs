@@ -97,6 +97,35 @@ namespace VRCLightVolumes.Tests {
             Assert.That(instance.ProjectionMode, Is.EqualTo(2)); // 2: cookie/cubemap
         }
 
+        // Verifies area light cookies are copied even though area lights hide the projection mode enum.
+        [Test]
+        public void AreaLightVolumeEditorSyncTargetsCopiesCookieProjectionSource() {
+            GameObject setupObject = CreateGameObject("Editor Area Cookie Sync Setup", true);
+            LightVolumeSetup setup = setupObject.AddComponent<LightVolumeSetup>();
+            setup.SetupDependencies();
+
+            GameObject lightObject = CreateGameObject("Editor Area Cookie Sync Light", true);
+            PointLightVolumeInstance instance = lightObject.AddComponent<PointLightVolumeInstance>();
+            PointLightVolume pointLight = lightObject.AddComponent<PointLightVolume>();
+            pointLight.LightVolumeSetup = setup;
+            pointLight.PointLightVolumeInstance = instance;
+            pointLight.Type = PointLightVolume.LightType.AreaLight;
+            pointLight.Cookie = CreateTexture2D("Editor Area Cookie Source");
+
+            Editor editor = Editor.CreateEditor(pointLight);
+            _createdObjects.Add(editor);
+            MethodInfo syncTargets = typeof(PointLightVolumeEditor).GetMethod("SyncTargets", _nonPublicInstanceFlags);
+            Assert.That(syncTargets, Is.Not.Null);
+
+            syncTargets.Invoke(editor, new object[] { true, false });
+
+            Assert.That(pointLight.GetProjectionSource(), Is.SameAs(pointLight.Cookie));
+            Assert.That(instance.CustomTexture, Is.SameAs(pointLight.Cookie));
+            Assert.That(instance.ProjectionType, Is.EqualTo(1)); // 1: texture
+            Assert.That(instance.ProjectionMode, Is.EqualTo(2)); // 2: cookie/cubemap
+            Assert.That(instance.LightType, Is.EqualTo(2)); // 2: area
+        }
+
         // Verifies migration re-sync rebuilds custom texture arrays from authoring PointLightVolume sources.
         [Test]
         public void MigrationAuthoringSyncRebuildsCustomTexturesFromPointSources() {

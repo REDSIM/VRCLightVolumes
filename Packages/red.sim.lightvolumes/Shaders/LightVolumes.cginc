@@ -403,15 +403,19 @@ float4 LV_AreaLightCookie(float3 localPos, float2 size, uint textureId) {
     uv.x = 1.0 - uv.x;
 
     float mipRange = max(maxMip - mip, 0.0);
-    float middleMip = mip + mipRange * 0.5;
+    float tap2Mip = mip + mipRange * 0.3;
+    float tap3Mip = mip + mipRange * 0.5;
 
-    float4 localCookie = LV_SAMPLE_POINT_LOD(float3(uv, textureId), mip);
-    float4 middleCookie = LV_SAMPLE_POINT_LOD(float3(uv, textureId), middleMip);
-    float4 averageCookie = LV_SAMPLE_POINT_LOD(float3(uv, textureId), maxMip);
-    float3 localEmission = localCookie.rgb * localCookie.a;
-    float3 middleEmission = middleCookie.rgb * middleCookie.a;
-    float3 averageEmission = averageCookie.rgb * averageCookie.a;
-    return float4((localEmission + middleEmission + averageEmission) * 0.3333333, 1.0);
+    float4 tap1Cookie = LV_SAMPLE_POINT_LOD(float3(uv, textureId), mip);
+    float4 tap2Cookie = LV_SAMPLE_POINT_LOD(float3(uv, textureId), tap2Mip);
+    float4 tap3Cookie = LV_SAMPLE_POINT_LOD(float3(uv, textureId), tap3Mip);
+    float4 tap4Cookie = LV_SAMPLE_POINT_LOD(float3(uv, textureId), maxMip);
+    float3 tap1Emission = tap1Cookie.rgb * tap1Cookie.a;
+    float3 tap2Emission = tap2Cookie.rgb * tap2Cookie.a;
+    float3 tap3Emission = tap3Cookie.rgb * tap3Cookie.a;
+    float3 tap4Emission = tap4Cookie.rgb * tap4Cookie.a;
+    float3 emission = tap1Emission + tap2Emission * 0.75 + tap3Emission * 0.55 + tap4Emission * 0.45;
+    return float4(emission * 0.36363636, 1.0);
 }
 
 // Samples a spot light, point light, area light

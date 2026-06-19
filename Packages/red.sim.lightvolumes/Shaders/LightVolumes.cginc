@@ -312,8 +312,9 @@ float LV_PointLightShadow(uint id, float3 worldPos, float3 dirN, float sqDistanc
 }
 
 // Projects a quad light into L1 SH using a cheap solid-angle approximation
-float4 LV_ProjectFastQuadLightIrradianceSH(float3 lightToWorldPos, float3 localPos, float3 xAxis, float3 yAxis, float2 size) {
+float4 LV_ProjectFastQuadLightIrradianceSH(float3 lightToWorldPos, float3 localPos, float3 xAxis, float3 yAxis, float2 size, out float3 normalMaskDir) {
     [branch] if (localPos.z <= 0) {
+        normalMaskDir = 0;
         return 0;
     } else {
         float2 halfSize = size * 0.5;
@@ -338,6 +339,7 @@ float4 LV_ProjectFastQuadLightIrradianceSH(float3 lightToWorldPos, float3 localP
         float2 representativeXY = lerp(closestXY, 0, distanceBlend);
         float3 dir = xAxis * representativeXY.x + yAxis * representativeXY.y - lightToWorldPos;
         dir *= rsqrt(max(dot(dir, dir), 1e-6));
+        normalMaskDir = dir;
         return float4(dir * (l0 * saturate(1 - solidAngle / LV_PI)), l0);
     }
 }
@@ -359,8 +361,8 @@ float LV_PointLightNormalMask(float3 worldNormal, float3 lightDirNormal) {
 }
 
 // Calculates normal mask for an area light
-float LV_AreaLightNormalMask(float3 worldNormal, float3 lightDirNormal, float3 areaNormal) {
-    return LV_Smoothstep01(saturate(max(dot(worldNormal, lightDirNormal), -dot(worldNormal, areaNormal)) * 2 + 0.5));
+float LV_AreaLightNormalMask(float3 worldNormal, float3 representativeLightDirNormal) {
+    return LV_Smoothstep01(saturate(dot(worldNormal, representativeLightDirNormal) * 2 + 0.5));
 }
 
 // Resolves spot cookie UV and culls fragments outside the projected cookie before expensive shadow work.
@@ -523,7 +525,8 @@ void LV_PointLight(uint id, float3 worldPos, inout float3 L0, inout float3 L1r, 
             float3 areaYAxis;
             LV_QuaternionAxes(areaRotation, areaXAxis, areaYAxis, areaNormal);
             float3 areaLocalPos = float3(dot(lightToWorldPos, areaXAxis), dot(lightToWorldPos, areaYAxis), dot(lightToWorldPos, areaNormal));
-            areaLightSH = LV_ProjectFastQuadLightIrradianceSH(lightToWorldPos, areaLocalPos, areaXAxis, areaYAxis, areaSize);
+            float3 areaNormalMaskDir;
+            areaLightSH = LV_ProjectFastQuadLightIrradianceSH(lightToWorldPos, areaLocalPos, areaXAxis, areaYAxis, areaSize, areaNormalMaskDir);
             areaAttenuation = saturate((sqrRange - sqlen) * rcp(sqrRange));
             lightVisible = areaLightSH.w > 0 && areaAttenuation > 0;
 
@@ -537,7 +540,7 @@ void LV_PointLight(uint id, float3 worldPos, inout float3 L0, inout float3 L1r, 
 
             // Normal Mask
             [branch] if (lightVisible && useNormalMask) {
-                normalAttenuation = LV_AreaLightNormalMask(worldNormal, dirN, areaNormal);
+                normalAttenuation = LV_AreaLightNormalMask(worldNormal, areaNormalMaskDir);
                 lightVisible = normalAttenuation > 0 || shadingStrength < 1;
             }
             [branch] if (lightVisible) {

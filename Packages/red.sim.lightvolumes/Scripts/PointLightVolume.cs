@@ -32,8 +32,10 @@ namespace VRCLightVolumes {
         [Range(0.001f, 1)] public float Falloff = 1f;
         [Tooltip("X - cone falloff, Y - attenuation. No compression and RGBA Float or RGBA Half format is recommended.")]
         public UnityEngine.Object FalloffLUT = null;
-        [Tooltip("Projects a square texture for spot lights, or a textured emitter surface for area lights.")]
+        [Tooltip("Projects a texture for spot lights, or a textured emitter surface for area lights.")]
         public UnityEngine.Object Cookie = null;
+        [Tooltip("Width / height aspect used by custom spotlight cookie projection. 1 keeps a square projector; values above 1 compress projected height.")]
+        [Min(0.001f)] public float SpotCookieAspect = 1f;
         [Tooltip("Projects a cubemap for point lights.")]
         public UnityEngine.Object Cubemap = null;
 #if UNITY_EDITOR
@@ -287,6 +289,7 @@ namespace VRCLightVolumes {
                 _pointLightVolumeBehaviour.SetProgramVariable("Color", Color);
                 _pointLightVolumeBehaviour.SetProgramVariable("Intensity", Intensity);
                 _pointLightVolumeBehaviour.SetProgramVariable("ShadingStrength", Mathf.Clamp01(ShadingStrength));
+                _pointLightVolumeBehaviour.SetProgramVariable("SpotCookieAspect", Mathf.Max(Mathf.Abs(SpotCookieAspect), 0.001f));
                 _pointLightVolumeBehaviour.SetProgramVariable("IsRangeDirty", true);
                 _pointLightVolumeBehaviour.SetProgramVariable("ShadowMapID", (float)GetShadowRuntimeID());
                 _pointLightVolumeBehaviour.SetProgramVariable("WorldSpaceShadows", UseWorldSpace);
@@ -328,6 +331,7 @@ namespace VRCLightVolumes {
                 PointLightVolumeInstance.Color = Color;
                 PointLightVolumeInstance.Intensity = Intensity;
                 PointLightVolumeInstance.ShadingStrength = Mathf.Clamp01(ShadingStrength);
+                PointLightVolumeInstance.SpotCookieAspect = Mathf.Max(Mathf.Abs(SpotCookieAspect), 0.001f);
                 PointLightVolumeInstance.IsRangeDirty = true;
                 PointLightVolumeInstance.ShadowMapID = GetShadowRuntimeID();
                 PointLightVolumeInstance.WorldSpaceShadows = UseWorldSpace;

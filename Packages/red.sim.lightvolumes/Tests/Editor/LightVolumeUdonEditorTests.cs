@@ -42,6 +42,7 @@ namespace VRCLightVolumes.Tests {
         private static readonly FieldInfo _shadowTexturesDepthField = typeof(LightVolumeManager).GetField("_shadowTextureArrayDepth", _lifecycleMethodFlags);
         private static readonly FieldInfo _customCubemapTextureCountField = typeof(LightVolumeManager).GetField("_customCubemapTextureCount", _lifecycleMethodFlags);
         private static readonly FieldInfo _customSingleTextureCountField = typeof(LightVolumeManager).GetField("_customSingleTextureCount", _lifecycleMethodFlags);
+        private static readonly FieldInfo _customSingleMaterialCountField = typeof(LightVolumeManager).GetField("_customSingleMaterialCount", _lifecycleMethodFlags);
         private static readonly FieldInfo _shadowCubemapTextureCountField = typeof(LightVolumeManager).GetField("_shadowCubemapTextureCount", _lifecycleMethodFlags);
         private static readonly FieldInfo _shadowSingleTextureCountField = typeof(LightVolumeManager).GetField("_shadowSingleTextureCount", _lifecycleMethodFlags);
         private static readonly FieldInfo _pointLightCustomIDsField = typeof(LightVolumeManager).GetField("_pointLightCustomIDs", _lifecycleMethodFlags);
@@ -684,6 +685,43 @@ namespace VRCLightVolumes.Tests {
             AssertVectorClose(ExpectedPointLightPosition(point), Shader.GetGlobalVectorArray(_pointLightPositionID)[0]);
             AssertVectorClose(ExpectedPointLightColor(point), Shader.GetGlobalVectorArray(_pointLightColorID)[0]);
             AssertPointCustomData(point, -1, 0);
+        }
+
+        // Verifies area light material cookies use per-light single-slice sources with mipmapped projection data.
+        [Test]
+        public void AreaMaterialCookieCreatesRuntimeArrayAndShaderIds() {
+            LightVolumeManager manager = CreateManager("Area Material Cookie Runtime Manager", false);
+            Material material = CreateMaterial("Hidden/CubeFace");
+            manager.CustomTexturesWidth = 4;
+            manager.CustomTexturesHeight = 4;
+
+            PointLightVolumeInstance firstPoint = CreatePointLight(manager, "Area Material Cookie A", true);
+            firstPoint.transform.localScale = new Vector3(2, 3, 1);
+            firstPoint.SetCustomMaterial(material, true);
+            firstPoint.SetAreaLight();
+
+            PointLightVolumeInstance secondPoint = CreatePointLight(manager, "Area Material Cookie B", true);
+            secondPoint.transform.localScale = new Vector3(2, 3, 1);
+            secondPoint.Color = Color.red;
+            secondPoint.SetCustomMaterial(material, true);
+            secondPoint.SetAreaLight();
+
+            manager.PointLightVolumeInstances = new[] { firstPoint, secondPoint };
+
+            manager.ReinitializeCustomTextures();
+            manager.UpdateVolumes();
+
+            Assert.That(manager.CubemapsCount, Is.EqualTo(0));
+            Assert.That(GetManagerField<int>(manager, _customSingleTextureCountField), Is.EqualTo(0));
+            Assert.That(GetManagerField<int>(manager, _customSingleMaterialCountField), Is.EqualTo(2));
+            Assert.That(manager.CustomTextures, Is.Not.Null);
+            Assert.That(manager.CustomTextures.dimension, Is.EqualTo(TextureDimension.Tex2DArray));
+            Assert.That(manager.CustomTextures.volumeDepth, Is.EqualTo(2));
+            Assert.That(manager.CustomTextures.useMipMap, Is.True);
+            Assert.That(manager.CustomTextures.autoGenerateMips, Is.True);
+            Assert.That(GetManagerField<int[]>(manager, _pointLightCustomIDsField), Is.EqualTo(new[] { 0, 1 }));
+            AssertPointCustomData(0, firstPoint, -1, 0);
+            AssertPointCustomData(1, secondPoint, -2, 0);
         }
 
         // Verifies the runtime API assigns a texture source and refreshes manager-owned projection arrays

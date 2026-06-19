@@ -5,6 +5,8 @@ using System;
 #if UDONSHARP
 using VRC.SDKBase;
 using UdonSharp;
+using VRC.SDK3.Rendering;
+using VRC.Udon.Common.Interfaces;
 using VRCGraphics = VRC.SDKBase.VRCGraphics;
 #if COMPILER_UDONSHARP
 using VRCShader = VRC.SDKBase.VRCShader;
@@ -93,7 +95,6 @@ namespace VRCLightVolumes {
 
         // Material used to copy cubemap source faces into the animated projection texture array
         [HideInInspector] public Material CubemapFaceMaterial;
-
 #endregion
 
 #region Runtime Texture Cache
@@ -118,10 +119,20 @@ namespace VRCLightVolumes {
         private bool[] _customCubemapMaterialAutoUpdates = new bool[0];
         private bool[] _customSingleTextureAutoUpdates = new bool[0];
         private bool[] _customSingleMaterialAutoUpdates = new bool[0];
+        private bool[] _customSingleTextureAreaCookies = new bool[0];
+        private bool[] _customSingleMaterialAreaCookies = new bool[0];
 
         private int[] _customCubemapTextureModes = new int[0]; // Texture layouts: 0 = single 2D texture copied to all faces, 1 = Texture2DArray slices 0..5, 2 = native Cubemap faces
         private int[] _pointLightCustomIDs = new int[0];
         private int[] _customSourceTypes = new int[0]; // Source types per point light: 0 = none, 1 = cubemap texture, 2 = cubemap material, 3 = single texture, 4 = single material
+        private Color[] _pointLightAreaCookieAverageColors = new Color[0];
+        private int _areaCookieAverageNextSourceIndex = -1;
+        private int _areaCookieAverageRequestCustomId = -1;
+        private bool _areaCookieAverageReadbackDirty = false;
+        private bool _areaCookieAverageReadbackPending = false;
+#if UDONSHARP
+        private Color32[] _areaCookieAveragePixels = new Color32[0];
+#endif
         [HideInInspector] public bool HasAutoCustomTextureUpdates = false;
 
         // SHADOW TEXTURES
@@ -179,6 +190,7 @@ namespace VRCLightVolumes {
         private int[] _enabledPointIDs = new int[MaxPointLightCount];
         private Vector4[] _pointLightPosition = new Vector4[MaxPointLightCount];
         private Vector4[] _pointLightColor = new Vector4[MaxPointLightCount];
+        private Vector4[] _pointLightCookieData = new Vector4[MaxPointLightCount];
         private Vector4[] _pointLightDirection = new Vector4[MaxPointLightCount];
         private Vector4[] _pointLightCustomId = new Vector4[MaxPointLightCount];
         private Vector4[] _pointLightShadowReprojectionData = new Vector4[MaxPointLightCount];
@@ -249,6 +261,7 @@ namespace VRCLightVolumes {
         // Point Lights
         private int _pointLightPositionID;
         private int _pointLightColorID;
+        private int _pointLightCookieDataID;
         private int _pointLightDirectionID;
         private int _pointLightCustomIdID;
         private int _pointLightCountID;
@@ -425,6 +438,12 @@ namespace VRCLightVolumes {
                 return;
             }
             if (!isActive) return;
+            if (customTexturesChanged || shadowTexturesChanged) {
+                if (customTexturesChanged) _customTexturesInitialized = false;
+                if (shadowTexturesChanged) _shadowTexturesInitialized = false;
+                RequestUpdateVolumes();
+                return;
+            }
 
             // Update shader data
             WritePointLightShaderData(shaderIndex, registryIndex, pointLightVolume, false);
@@ -460,6 +479,7 @@ namespace VRCLightVolumes {
             // Point Lights
             _pointLightPositionID = VRCShader.PropertyToID("_UdonPointLightVolumePosition");
             _pointLightColorID = VRCShader.PropertyToID("_UdonPointLightVolumeColor");
+            _pointLightCookieDataID = VRCShader.PropertyToID("_UdonPointLightVolumeCookieData");
             _pointLightDirectionID = VRCShader.PropertyToID("_UdonPointLightVolumeDirection");
             _pointLightCountID = VRCShader.PropertyToID("_UdonPointLightVolumeCount");
             _pointLightCustomIdID = VRCShader.PropertyToID("_UdonPointLightVolumeCustomID");
@@ -493,6 +513,7 @@ namespace VRCLightVolumes {
             // Point Lights
             VRCShader.SetGlobalVectorArray(_pointLightPositionID, _pointLightPosition);
             VRCShader.SetGlobalVectorArray(_pointLightColorID, _pointLightColor);
+            VRCShader.SetGlobalVectorArray(_pointLightCookieDataID, _pointLightCookieData);
             VRCShader.SetGlobalVectorArray(_pointLightDirectionID, _pointLightDirection);
             VRCShader.SetGlobalVectorArray(_pointLightCustomIdID, _pointLightCustomId);
             VRCShader.SetGlobalVectorArray(_pointLightShadowReprojectionDataID, _pointLightShadowReprojectionData);
@@ -569,6 +590,10 @@ namespace VRCLightVolumes {
             if (ShadowTextures != null && ShadowTextures.hideFlags == HideFlags.HideAndDontSave) {
                 ReleaseRuntimeRenderTexture(ShadowTextures);
                 ShadowTextures = null;
+            }
+            if (_dummyRT != null) {
+                ReleaseRuntimeRenderTexture(_dummyRT);
+                _dummyRT = null;
             }
             DestroyCubemapFaceRuntimeMaterial();
         }
@@ -676,8 +701,18 @@ namespace VRCLightVolumes {
                     ReleaseRuntimeRenderTexture(CustomTextures);
                     CustomTextures = null;
                 }
+                _areaCookieAverageReadbackPending = false;
+                _areaCookieAverageReadbackDirty = false;
+                _areaCookieAverageNextSourceIndex = -1;
+                _areaCookieAverageRequestCustomId = -1;
                 _customTexturesInitialized = true;
                 return;
+            }
+            if (!_customTexturesUseMipMap) {
+                _areaCookieAverageReadbackPending = false;
+                _areaCookieAverageReadbackDirty = false;
+                _areaCookieAverageNextSourceIndex = -1;
+                _areaCookieAverageRequestCustomId = -1;
             }
             if (!EnsureRuntimeCustomTextures(CustomTexturesWidth, CustomTexturesHeight, _customTextureArrayDepth)) return;
             ApplyCustomTextures(CustomTextures);
@@ -701,7 +736,7 @@ namespace VRCLightVolumes {
             int count = PointLightVolumeInstances.Length;
 
             // Prepare reusable custom texture source cache arrays for a full rebuild
-            if (_pointLightCustomIDs.Length < count || _customSourceTypes.Length < count) {
+            if (_pointLightCustomIDs.Length < count || _customSourceTypes.Length < count || _customSingleMaterialAreaCookies.Length < count) {
                 _customCubemapTextures = new Texture[count];
                 _customCubemapMaterials = new Material[count];
                 _customSingleTextures = new Texture[count];
@@ -711,13 +746,22 @@ namespace VRCLightVolumes {
                 _customCubemapMaterialAutoUpdates = new bool[count];
                 _customSingleTextureAutoUpdates = new bool[count];
                 _customSingleMaterialAutoUpdates = new bool[count];
+                _customSingleTextureAreaCookies = new bool[count];
+                _customSingleMaterialAreaCookies = new bool[count];
                 _pointLightCustomIDs = new int[count];
                 _customSourceTypes = new int[count];
+                _pointLightAreaCookieAverageColors = new Color[count];
             } else {
                 for (int i = 0; i < _customCubemapTextureCount; i++) _customCubemapTextures[i] = null;
                 for (int i = 0; i < _customCubemapMaterialCount; i++) _customCubemapMaterials[i] = null;
-                for (int i = 0; i < _customSingleTextureCount; i++) _customSingleTextures[i] = null;
-                for (int i = 0; i < _customSingleMaterialCount; i++) _customSingleMaterials[i] = null;
+                for (int i = 0; i < _customSingleTextureCount; i++) {
+                    _customSingleTextures[i] = null;
+                    _customSingleTextureAreaCookies[i] = false;
+                }
+                for (int i = 0; i < _customSingleMaterialCount; i++) {
+                    _customSingleMaterials[i] = null;
+                    _customSingleMaterialAreaCookies[i] = false;
+                }
             }
             HasAutoCustomTextureUpdates = false;
             _customTexturesUseMipMap = false;
@@ -744,7 +788,7 @@ namespace VRCLightVolumes {
                 if (projectionMode == 0) continue; // 0: parametric projection has no custom source
 
                 bool usesCubemapProjection = lightType == 0 && projectionMode == 2; // 0: point, 2: custom cookie or cubemap
-                bool usesAreaCookieProjection = lightType == 2; // 2: area, any non-parametric source is a custom cookie
+                bool usesAreaCookieProjection = lightType == 2 && projectionMode == 2; // 2: area, 2: custom cookie
 
                 if (projectionType == 1) { // TEXTURE PROJECTION
 
@@ -778,6 +822,10 @@ namespace VRCLightVolumes {
                             singleTextureCount++;
                         } else if (autoUpdate) {
                             _customSingleTextureAutoUpdates[index] = true;
+                        }
+                        if (usesAreaCookieProjection) {
+                            _customSingleTextureAreaCookies[index] = true;
+                            _pointLightAreaCookieAverageColors[i] = Color.white;
                         }
                         _pointLightCustomIDs[i] = index;
                         _customSourceTypes[i] = 3; // 3: single texture source, offset after all cubemap sources during final ID assignment
@@ -817,6 +865,10 @@ namespace VRCLightVolumes {
                         } else if (autoUpdate) {
                             _customSingleMaterialAutoUpdates[index] = true;
                         }
+                        if (usesAreaCookieProjection) {
+                            _customSingleMaterialAreaCookies[index] = true;
+                            _pointLightAreaCookieAverageColors[i] = Color.white;
+                        }
                         _pointLightCustomIDs[i] = index;
                         _customSourceTypes[i] = 4; // 4: single material source, offset after cubemap and single texture sources during final ID assignment
 
@@ -850,6 +902,7 @@ namespace VRCLightVolumes {
 
         // Copies custom projection sources into the runtime array. autoUpdatePass copies only sources cached for Auto Update Textures
         private void BlitCustomTextures(bool autoUpdatePass) {
+            bool averageReadbackNeeded = false;
 
             // Blit each cubemap texture source into 6 array slices
             int cubemapTextureCount = _customCubemapTextureCount;
@@ -872,7 +925,9 @@ namespace VRCLightVolumes {
                 if (autoUpdatePass && !_customSingleTextureAutoUpdates[i]) continue;
                 Texture sourceTexture = _customSingleTextures[i];
                 if (sourceTexture == null) continue;
-                VRCGraphics.Blit(sourceTexture, CustomTextures, 0, singleBaseSlice + i);
+                int targetSlice = singleBaseSlice + i;
+                VRCGraphics.Blit(sourceTexture, CustomTextures, 0, targetSlice);
+                if (_customSingleTextureAreaCookies[i]) averageReadbackNeeded = true;
             }
 
             // Blit each 1-slice material source into 1 array slice after texture sources
@@ -881,9 +936,116 @@ namespace VRCLightVolumes {
                 if (autoUpdatePass && !_customSingleMaterialAutoUpdates[i]) continue;
                 Material sourceMaterial = _customSingleMaterials[i];
                 if (sourceMaterial == null) continue;
-                BlitMaterialSlice(sourceMaterial, 0, singleBaseSlice + singleTextureCount + i, false, CustomTextures);
+                int targetSlice = singleBaseSlice + singleTextureCount + i;
+                BlitMaterialSlice(sourceMaterial, 0, targetSlice, false, CustomTextures);
+                if (_customSingleMaterialAreaCookies[i]) averageReadbackNeeded = true;
             }
 
+            if (!averageReadbackNeeded) return;
+            if (_areaCookieAverageReadbackPending) {
+                _areaCookieAverageReadbackDirty = true;
+                return;
+            }
+            if (_areaCookieAverageNextSourceIndex < 0) _areaCookieAverageNextSourceIndex = 0;
+            RequestAreaCookieAverageReadback();
+
+        }
+
+        // Requests one average color from the final texture array mip chain used for old-shader fallback
+        private void RequestAreaCookieAverageReadback() {
+            int singleTextureCount = _customSingleTextureCount;
+            int singleSourceCount = singleTextureCount + _customSingleMaterialCount;
+            if (_areaCookieAverageNextSourceIndex < 0 || _areaCookieAverageReadbackPending || singleSourceCount <= 0 || CustomTextures == null) return;
+#if !UDONSHARP
+            if (!Application.isPlaying) {
+                _areaCookieAverageReadbackDirty = false;
+                _areaCookieAverageNextSourceIndex = -1;
+                return;
+            }
+#endif
+
+            int singleBaseSlice = CubemapsCount * 6;
+            for (int sourceIndex = _areaCookieAverageNextSourceIndex; sourceIndex < singleSourceCount; sourceIndex++) {
+                if (sourceIndex < singleTextureCount) {
+                    if (!_customSingleTextureAreaCookies[sourceIndex] || _customSingleTextures[sourceIndex] == null) continue;
+                } else {
+                    int materialIndex = sourceIndex - singleTextureCount;
+                    if (!_customSingleMaterialAreaCookies[materialIndex] || _customSingleMaterials[materialIndex] == null) continue;
+                }
+
+                _areaCookieAverageNextSourceIndex = sourceIndex + 1;
+                _areaCookieAverageRequestCustomId = CubemapsCount + sourceIndex;
+                _areaCookieAverageReadbackPending = true;
+                int targetSlice = singleBaseSlice + sourceIndex;
+                int mipIndex = CustomTextures.mipmapCount - 1;
+#if UDONSHARP
+                if (_areaCookieAveragePixels.Length != 1) _areaCookieAveragePixels = new Color32[1];
+                VRCAsyncGPUReadback.Request(CustomTextures, mipIndex, 0, 1, 0, 1, targetSlice, 1, TextureFormat.RGBA32, (IUdonEventReceiver)this);
+#else
+                AsyncGPUReadback.Request(CustomTextures, mipIndex, 0, 1, 0, 1, targetSlice, 1, TextureFormat.RGBA32, OnAreaCookieAverageReadbackComplete);
+#endif
+                return;
+            }
+
+            _areaCookieAverageNextSourceIndex = -1;
+            _areaCookieAverageRequestCustomId = -1;
+            if (!_areaCookieAverageReadbackDirty) return;
+            _areaCookieAverageReadbackDirty = false;
+            _areaCookieAverageNextSourceIndex = 0;
+            RequestAreaCookieAverageReadback();
+        }
+
+#if UDONSHARP
+        // Receives average cookie colors from VRCAsyncGPUReadback
+        public override void OnAsyncGpuReadbackComplete(VRCAsyncGPUReadbackRequest request) {
+            _areaCookieAverageReadbackPending = false;
+            if (!request.hasError && request.TryGetData(_areaCookieAveragePixels)) UploadAreaCookieAverageColor(_areaCookieAveragePixels[0]);
+            RequestAreaCookieAverageReadback();
+        }
+#else
+        // Receives average cookie colors from Unity AsyncGPUReadback
+        private void OnAreaCookieAverageReadbackComplete(AsyncGPUReadbackRequest request) {
+            _areaCookieAverageReadbackPending = false;
+            if (!request.hasError) {
+                Unity.Collections.NativeArray<Color32> pixels = request.GetData<Color32>();
+                if (pixels.Length > 0) UploadAreaCookieAverageColor(pixels[0]);
+            }
+            RequestAreaCookieAverageReadback();
+        }
+#endif
+
+        // Caches the readback color and patches the live shader buffer; no volume update is guaranteed after async readback
+        private void UploadAreaCookieAverageColor(Color color) {
+            int customId = _areaCookieAverageRequestCustomId;
+            if (customId < 0) return;
+
+            float alpha = color.a;
+            color.r *= alpha;
+            color.g *= alpha;
+            color.b *= alpha;
+            color.a = 1f;
+
+            int pointLightCount = _pointLightCount;
+            bool updatedColor = false;
+            for (int shaderIndex = 0; shaderIndex < pointLightCount; shaderIndex++) {
+                int sourceIndex = _enabledPointIDs[shaderIndex];
+                if (sourceIndex < 0 || sourceIndex >= _pointLightCustomIDs.Length || _pointLightCustomIDs[sourceIndex] != customId) continue;
+                if (sourceIndex >= _customSourceTypes.Length || _customSourceTypes[sourceIndex] < 3) continue; // 3/4: single texture/material cookie sources
+                Vector4 shaderColor = _pointLightColor[shaderIndex];
+                if (shaderColor.w <= 1.5f) continue; // Area light height is encoded as 2 + Height
+                if (sourceIndex < _pointLightAreaCookieAverageColors.Length) _pointLightAreaCookieAverageColors[sourceIndex] = color;
+                Vector4 cookieData = _pointLightCookieData[shaderIndex];
+                float fallbackR = cookieData.x * color.r;
+                float fallbackG = cookieData.y * color.g;
+                float fallbackB = cookieData.z * color.b;
+                if (shaderColor.x == fallbackR && shaderColor.y == fallbackG && shaderColor.z == fallbackB) continue;
+                shaderColor.x = fallbackR;
+                shaderColor.y = fallbackG;
+                shaderColor.z = fallbackB;
+                _pointLightColor[shaderIndex] = shaderColor;
+                updatedColor = true;
+            }
+            if (updatedColor) VRCShader.SetGlobalVectorArray(_pointLightColorID, _pointLightColor);
         }
 
         // Rebuilds the runtime shadow texture array and assigns stable shader-side IDs to all shadowed point light instances
@@ -1221,18 +1383,6 @@ namespace VRCLightVolumes {
         // Runs a material-only update into one texture array slice
         private void BlitMaterialSlice(Material sourceMaterial, int faceIndex, int targetSlice, bool isCubemapUpdate, RenderTexture destination) {
             if (sourceMaterial == null || destination == null) return;
-            SetMaterialBlitProperties(sourceMaterial, faceIndex, targetSlice, isCubemapUpdate, destination);
-#if UDONSHARP
-            Texture blitSource = GetMaterialBlitInputTexture();
-            sourceMaterial.SetTexture(_cubemapMainTexID, blitSource);
-#else
-            Texture blitSource = null;
-#endif
-            BlitMaterialToSlice(blitSource, sourceMaterial, destination, targetSlice);
-        }
-
-        // Applies Light Volumes material-blit target info before a material-only blit
-        private void SetMaterialBlitProperties(Material sourceMaterial, int faceIndex, int targetSlice, bool isCubemapUpdate, RenderTexture destination) {
             float infoSlice = targetSlice;
             float infoDepth = destination.volumeDepth;
             if (isCubemapUpdate) {
@@ -1241,6 +1391,13 @@ namespace VRCLightVolumes {
             }
             _customRenderTextureInfo = new Vector4(destination.width, destination.height, infoDepth, infoSlice);
             sourceMaterial.SetVector("_CustomRenderTextureInfo", _customRenderTextureInfo);
+#if UDONSHARP
+            Texture blitSource = GetMaterialBlitInputTexture();
+            sourceMaterial.SetTexture(_cubemapMainTexID, blitSource);
+#else
+            Texture blitSource = null;
+#endif
+            BlitMaterialToSlice(blitSource, sourceMaterial, destination, targetSlice);
         }
 
 #if UDONSHARP
@@ -1322,6 +1479,7 @@ namespace VRCLightVolumes {
             else DestroyImmediate(CubemapFaceMaterial);
             CubemapFaceMaterial = null;
         }
+
 #endif
 
 #endregion
@@ -1402,6 +1560,7 @@ namespace VRCLightVolumes {
             }
             if (_updatePointLightBuffers && _pointLightCount != 0) {
                 VRCShader.SetGlobalVectorArray(_pointLightColorID, _pointLightColor);
+                VRCShader.SetGlobalVectorArray(_pointLightCookieDataID, _pointLightCookieData);
                 VRCShader.SetGlobalVectorArray(_pointLightPositionID, _pointLightPosition);
                 VRCShader.SetGlobalVectorArray(_pointLightDirectionID, _pointLightDirection);
                 VRCShader.SetGlobalVectorArray(_pointLightCustomIdID, _pointLightCustomId);
@@ -1538,6 +1697,7 @@ namespace VRCLightVolumes {
             bool isArea = lightType == 2; // 2: area light
             bool isLut = projectionMode == 1; // 1: LUT projection
             bool isCustomCookie = projectionMode == 2; // 2: custom cookie or cubemap projection
+            int resolvedCustomId = sourceIndex < _pointLightCustomIDs.Length ? _pointLightCustomIDs[sourceIndex] : -1;
 
             float angleData;
             if (isArea) {
@@ -1556,7 +1716,18 @@ namespace VRCLightVolumes {
             }
             _pointLightPosition[shaderIndex] = pos;
 
-            Vector4 color = instance.Color.linear * instance.Intensity;
+            Vector4 lightColor = instance.Color.linear * instance.Intensity;
+            Vector4 cookieData = lightColor;
+            cookieData.w = isSpot && isCustomCookie ? Mathf.Max(Mathf.Abs(instance.SpotCookieAspect), 0.001f) : 1f;
+            _pointLightCookieData[shaderIndex] = cookieData;
+            Vector4 color = lightColor;
+            int customSourceType = sourceIndex < _customSourceTypes.Length ? _customSourceTypes[sourceIndex] : 0;
+            if (isArea && isCustomCookie && resolvedCustomId >= 0 && customSourceType >= 3) {
+                Color averageColor = sourceIndex < _pointLightAreaCookieAverageColors.Length ? _pointLightAreaCookieAverageColors[sourceIndex] : Color.white;
+                color.x = cookieData.x * averageColor.r;
+                color.y = cookieData.y * averageColor.g;
+                color.z = cookieData.z * averageColor.b;
+            }
             color.w = angleData;
             _pointLightColor[shaderIndex] = color;
 
@@ -1569,7 +1740,6 @@ namespace VRCLightVolumes {
                 _pointLightDirection[shaderIndex] = new Vector4(r.x, r.y, r.z, r.w);
             }
 
-            int resolvedCustomId = sourceIndex < _pointLightCustomIDs.Length ? _pointLightCustomIDs[sourceIndex] : -1;
             float shaderCustomId = 0;
             if (resolvedCustomId >= 0) {
                 if (isLut) shaderCustomId = resolvedCustomId + 1;
@@ -1761,6 +1931,7 @@ namespace VRCLightVolumes {
                 VRCShader.SetGlobalFloat(_pointLightShadowCountID, shadowCount);
                 if (_pointLightCount != 0) {
                     VRCShader.SetGlobalVectorArray(_pointLightColorID, _pointLightColor);
+                    VRCShader.SetGlobalVectorArray(_pointLightCookieDataID, _pointLightCookieData);
                     VRCShader.SetGlobalVectorArray(_pointLightPositionID, _pointLightPosition);
                     VRCShader.SetGlobalVectorArray(_pointLightDirectionID, _pointLightDirection);
                     VRCShader.SetGlobalVectorArray(_pointLightCustomIdID, _pointLightCustomId);

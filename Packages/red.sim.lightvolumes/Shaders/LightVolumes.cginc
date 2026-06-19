@@ -70,6 +70,8 @@ uniform float4 _UdonPointLightVolumePosition[VRCLV_MAX_LIGHTS_COUNT];
 // For spot light: XYZ = Color, W = Cos of outer angle if no custom texture, tan of outer angle otherwise
 // For area light: XYZ = Color, W = 2 + Height
 uniform float4 _UdonPointLightVolumeColor[VRCLV_MAX_LIGHTS_COUNT];
+// Shared cookie data. RGB = area cookie Color * Intensity, W = custom spotlight cookie width / height aspect.
+uniform float4 _UdonPointLightVolumeCookieData[VRCLV_MAX_LIGHTS_COUNT];
 
 // For point light: XYZW = Rotation quaternion
 // For spot light: XYZ = Direction, W = Cone falloff
@@ -456,6 +458,7 @@ void LV_PointLight(uint id, float3 worldPos, inout float3 L0, inout float3 L1r, 
             } else {
                 float4 directionData = _UdonPointLightVolumeDirection[id]; // Rotation
                 cookieUv = LV_SphereSpotLightCookieUv(dirN, directionData, angle);
+                cookieUv.y *= max(_UdonPointLightVolumeCookieData[id].w, 0.001);
                 lightVisible = all(abs(cookieUv) <= 1);
             }
 
@@ -524,10 +527,11 @@ void LV_PointLight(uint id, float3 worldPos, inout float3 L0, inout float3 L1r, 
             areaAttenuation = saturate((sqrRange - sqlen) * rcp(sqrRange));
             lightVisible = areaLightSH.w > 0 && areaAttenuation > 0;
 
-            // No cookie keeps the original fast quad attenuation path and skips filtered projection.
+            // Area cookies use filtered projection; no-cookie area lights keep the original fast quad path.
             [branch] if (customId < 0 && lightVisible) {
                 uint textureId = (uint) _UdonPointLightVolumeCubeCount * 5 - customId - 1;
                 cookie = LV_AreaLightCookie(areaLocalPos, areaSize, textureId);
+                color.rgb = _UdonPointLightVolumeCookieData[id].rgb;
                 lightVisible = min(cookie.a, max(max(cookie.r, cookie.g), cookie.b)) > 0;
             }
 

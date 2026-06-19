@@ -62,6 +62,10 @@ namespace VRCLightVolumes {
             hiddenFields.Add("ShadingStrength");
             hiddenFields.Add("BakeIntoProbes");
             hiddenFields.Add("DebugRange");
+
+            if (PointLightVolume.Type != PointLightVolume.LightType.SpotLight || PointLightVolume.Projection != PointLightVolume.LightProjection.Custom) {
+                hiddenFields.Add("SpotCookieAspect");
+            }
             
             if(PointLightVolume.Type == PointLightVolume.LightType.PointLight) {
                 hiddenFields.Add("Angle");

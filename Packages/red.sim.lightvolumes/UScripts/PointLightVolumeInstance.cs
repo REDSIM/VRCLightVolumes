@@ -49,6 +49,8 @@ namespace VRCLightVolumes {
         public float OuterAngleCos = 1f;
         [Tooltip("Tangent of the spotlight outer angle used by cookie projection.")]
         public float OuterAngleTan = 0f;
+        [Tooltip("Width / height aspect used by custom spotlight cookie projection. 1 keeps a square projector; values above 1 compress projected height.")]
+        [Min(0.001f)] public float SpotCookieAspect = 1f;
         [Tooltip("Area light height in meters.")]
         [Min(0.001f)] public float Height = 1f;
 
@@ -347,6 +349,14 @@ namespace VRCLightVolumes {
             float oldStrength = ShadingStrength;
             ShadingStrength = strength;
             NotifyManager((Mathf.Clamp01(oldStrength) <= 0) != (strength <= 0), false, false);
+        }
+
+        // Sets custom spotlight cookie projection aspect
+        public void SetSpotCookieAspect(float aspect) {
+            float safeAspect = Mathf.Max(Mathf.Abs(aspect), 0.001f);
+            if (SpotCookieAspect == safeAspect) return;
+            SpotCookieAspect = safeAspect;
+            NotifyManager(false, false, false);
         }
 
         // Marks this light range dirty and tells the manager which runtime data needs rebuilding.

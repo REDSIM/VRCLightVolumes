@@ -41,6 +41,12 @@ Shader "Hidden/VRCLV/PointLightShadowRuntimeBlur" {
         #endif
 
         #if defined(VRCLV_EDITOR_SHADOW_BLUR_QUALITY)
+            #define VRCLV_BLUR_LOOP [loop]
+        #else
+            #define VRCLV_BLUR_LOOP [unroll]
+        #endif
+
+        #if defined(VRCLV_EDITOR_SHADOW_BLUR_QUALITY)
             #define VRCLV_BLUR_SAMPLE_RADIUS 63
             #define VRCLV_BLUR_INV_SAMPLE_RADIUS 0.0158730159f
         #elif defined(VRCLV_RUNTIME_SHADOW_QUALITY_HIGH)
@@ -56,9 +62,9 @@ Shader "Hidden/VRCLV/PointLightShadowRuntimeBlur" {
 
         #if defined(VRCLV_SHADOW_BLUR_SPHERICAL) || !defined(VRCLV_RUNTIME_SHADOW_BLUR_UNIFORM)
             #if defined(VRCLV_EDITOR_SHADOW_BLUR_QUALITY)
-                #define VRCLV_CONTRAST_RING_COUNT 4
+                #define VRCLV_CONTRAST_RING_COUNT 32
                 #define VRCLV_CONTRAST_DIRECTION_COUNT 16
-                #define VRCLV_CONTRAST_INV_SAMPLE_COUNT 0.015625f
+                #define VRCLV_CONTRAST_INV_SAMPLE_COUNT 0.001953125f
             #elif defined(VRCLV_RUNTIME_SHADOW_BLUR_SPHERICAL)
                 #if defined(VRCLV_RUNTIME_SHADOW_QUALITY_HIGH)
                     #define VRCLV_CONTRAST_RING_COUNT 3
@@ -98,7 +104,7 @@ Shader "Hidden/VRCLV/PointLightShadowRuntimeBlur" {
         #if defined(VRCLV_SHADOW_BLUR_SPHERICAL)
             #define VRCLV_SPHERICAL_BLUR_DIRECTION_COUNT 16
             #if defined(VRCLV_EDITOR_SHADOW_BLUR_QUALITY)
-                #define VRCLV_SPHERICAL_BLUR_RING_COUNT 16
+                #define VRCLV_SPHERICAL_BLUR_RING_COUNT 128
                 #define VRCLV_SPHERICAL_BLUR_RADIUS_SCALE 1.0547f
             #elif defined(VRCLV_RUNTIME_SHADOW_QUALITY_HIGH)
                 #define VRCLV_SPHERICAL_BLUR_RING_COUNT 8
@@ -141,26 +147,33 @@ Shader "Hidden/VRCLV/PointLightShadowRuntimeBlur" {
                 float2( 0.8315f,  0.5556f), float2( 0.5556f,  0.8315f), float2( 0.1951f,  0.9808f), float2(-0.1951f,  0.9808f), float2(-0.5556f,  0.8315f), float2(-0.8315f,  0.5556f), float2(-0.9808f,  0.1951f), float2(-0.9808f, -0.1951f), float2(-0.8315f, -0.5556f), float2(-0.5556f, -0.8315f), float2(-0.1951f, -0.9808f), float2( 0.1951f, -0.9808f), float2( 0.5556f, -0.8315f), float2( 0.8315f, -0.5556f), float2( 0.9808f, -0.1951f), float2( 0.9808f,  0.1951f)
             };
 
+            float ContrastRingRadius(int ringIndex) {
+                #if defined(VRCLV_EDITOR_SHADOW_BLUR_QUALITY)
+                    return (ringIndex + 1.0f) * (1.0f / VRCLV_CONTRAST_RING_COUNT);
+                #else
+                    return contrastRingRadii[ringIndex];
+                #endif
+            }
+
             float2 ContrastRingDirection(int ringIndex, int sampleIndex) {
-                return contrastRingDirections[ringIndex * 16 + sampleIndex];
+                #if defined(VRCLV_EDITOR_SHADOW_BLUR_QUALITY)
+                    return contrastRingDirections[(ringIndex % 4) * 16 + sampleIndex];
+                #else
+                    return contrastRingDirections[ringIndex * 16 + sampleIndex];
+                #endif
             }
         #endif
 
         #if defined(VRCLV_SHADOW_BLUR_SPHERICAL)
             #if defined(VRCLV_EDITOR_SHADOW_BLUR_QUALITY)
-                static const float sphericalBlurRingRadii[16] = {
-                    0.0625000000f, 0.1250000000f, 0.1875000000f, 0.2500000000f,
-                    0.3125000000f, 0.3750000000f, 0.4375000000f, 0.5000000000f,
-                    0.5625000000f, 0.6250000000f, 0.6875000000f, 0.7500000000f,
-                    0.8125000000f, 0.8750000000f, 0.9375000000f, 1.0000000000f
-                };
+                float SphericalBlurRingRadius(int ringIndex) {
+                    return (ringIndex + 1.0f) * (1.0f / VRCLV_SPHERICAL_BLUR_RING_COUNT);
+                }
 
-                static const float sphericalBlurRingWeights[16] = {
-                    0.0620136211f, 0.1211541543f, 0.1747692173f, 0.2206242256f,
-                    0.2570554882f, 0.2830648507f, 0.2983490786f, 0.3032653299f,
-                    0.2987414950f, 0.2861458511f, 0.2671337127f, 0.2434893505f,
-                    0.2169796161f, 0.1892320210f, 0.1616452724f, 0.1353352832f
-                };
+                float SphericalBlurRingWeight(int ringIndex) {
+                    float ringRadius = SphericalBlurRingRadius(ringIndex);
+                    return ringRadius * exp(-2.0f * ringRadius * ringRadius);
+                }
             #elif defined(VRCLV_RUNTIME_SHADOW_QUALITY_HIGH)
                 static const float sphericalBlurRingRadii[8] = {
                     0.1250000000f, 0.2500000000f, 0.3750000000f, 0.5000000000f,
@@ -189,6 +202,16 @@ Shader "Hidden/VRCLV/PointLightShadowRuntimeBlur" {
                 };
             #endif
 
+            #if !defined(VRCLV_EDITOR_SHADOW_BLUR_QUALITY)
+                float SphericalBlurRingRadius(int ringIndex) {
+                    return sphericalBlurRingRadii[ringIndex];
+                }
+
+                float SphericalBlurRingWeight(int ringIndex) {
+                    return sphericalBlurRingWeights[ringIndex];
+                }
+            #endif
+
             static const float2 sphericalBlurDirections[256] = {
                 float2( 1.0000f,  0.0000f), float2( 0.9239f,  0.3827f), float2( 0.7071f,  0.7071f), float2( 0.3827f,  0.9239f), float2( 0.0000f,  1.0000f), float2(-0.3827f,  0.9239f), float2(-0.7071f,  0.7071f), float2(-0.9239f,  0.3827f), float2(-1.0000f,  0.0000f), float2(-0.9239f, -0.3827f), float2(-0.7071f, -0.7071f), float2(-0.3827f, -0.9239f), float2( 0.0000f, -1.0000f), float2( 0.3827f, -0.9239f), float2( 0.7071f, -0.7071f), float2( 0.9239f, -0.3827f),
                 float2( 0.9808f,  0.1951f), float2( 0.8315f,  0.5556f), float2( 0.5556f,  0.8315f), float2( 0.1951f,  0.9808f), float2(-0.1951f,  0.9808f), float2(-0.5556f,  0.8315f), float2(-0.8315f,  0.5556f), float2(-0.9808f,  0.1951f), float2(-0.9808f, -0.1951f), float2(-0.8315f, -0.5556f), float2(-0.5556f, -0.8315f), float2(-0.1951f, -0.9808f), float2( 0.1951f, -0.9808f), float2( 0.5556f, -0.8315f), float2( 0.8315f, -0.5556f), float2( 0.9808f, -0.1951f),
@@ -209,7 +232,11 @@ Shader "Hidden/VRCLV/PointLightShadowRuntimeBlur" {
             };
 
             float2 SphericalBlurRingDirection(int ringIndex, int sampleIndex) {
-                return sphericalBlurDirections[ringIndex * 16 + sampleIndex];
+                #if defined(VRCLV_EDITOR_SHADOW_BLUR_QUALITY)
+                    return sphericalBlurDirections[(ringIndex % 16) * 16 + sampleIndex];
+                #else
+                    return sphericalBlurDirections[ringIndex * 16 + sampleIndex];
+                #endif
             }
         #endif
 
@@ -359,8 +386,8 @@ Shader "Hidden/VRCLV/PointLightShadowRuntimeBlur" {
 
             float DepthDifferenceRing(float2 uv, float centerDepth, float2 sampleScale, int ringIndex) {
                 float depthDifference = 0.0f;
-                float ringRadius = contrastRingRadii[ringIndex];
-                [unroll] for (int sampleIndex = 0; sampleIndex < VRCLV_CONTRAST_DIRECTION_COUNT; sampleIndex++) {
+                float ringRadius = ContrastRingRadius(ringIndex);
+                VRCLV_BLUR_LOOP for (int sampleIndex = 0; sampleIndex < VRCLV_CONTRAST_DIRECTION_COUNT; sampleIndex++) {
                     float2 rotatedDir = ContrastRingDirection(ringIndex, sampleIndex);
                     depthDifference += abs(DecodeDepth01(SampleDepth(uv + rotatedDir * (sampleScale * ringRadius))) - centerDepth);
                 }
@@ -370,8 +397,8 @@ Shader "Hidden/VRCLV/PointLightShadowRuntimeBlur" {
             #if defined(VRCLV_SHADOW_BLUR_SPHERICAL)
                 float DepthDifferenceRingSpherical(float2 uv, float centerDepth, float2 sampleScale, int ringIndex) {
                     float depthDifference = 0.0f;
-                    float ringRadius = contrastRingRadii[ringIndex];
-                    [unroll] for (int sampleIndex = 0; sampleIndex < VRCLV_CONTRAST_DIRECTION_COUNT; sampleIndex++) {
+                    float ringRadius = ContrastRingRadius(ringIndex);
+                    VRCLV_BLUR_LOOP for (int sampleIndex = 0; sampleIndex < VRCLV_CONTRAST_DIRECTION_COUNT; sampleIndex++) {
                         float2 rotatedDir = ContrastRingDirection(ringIndex, sampleIndex);
                         depthDifference += abs(DecodeDepth01(SampleDepthSpherical(uv, rotatedDir * (sampleScale * ringRadius * 2.0f))) - centerDepth);
                     }
@@ -381,8 +408,8 @@ Shader "Hidden/VRCLV/PointLightShadowRuntimeBlur" {
 
             float DepthDifferenceRingDirect(float2 uv, float centerDepth, float2 sampleScale, int ringIndex) {
                 float depthDifference = 0.0f;
-                float ringRadius = contrastRingRadii[ringIndex];
-                [unroll] for (int sampleIndex = 0; sampleIndex < VRCLV_CONTRAST_DIRECTION_COUNT; sampleIndex++) {
+                float ringRadius = ContrastRingRadius(ringIndex);
+                VRCLV_BLUR_LOOP for (int sampleIndex = 0; sampleIndex < VRCLV_CONTRAST_DIRECTION_COUNT; sampleIndex++) {
                     float2 rotatedDir = ContrastRingDirection(ringIndex, sampleIndex);
                     depthDifference += abs(DecodeDepth01(SampleDepthDirect(uv + rotatedDir * (sampleScale * ringRadius))) - centerDepth);
                 }
@@ -391,7 +418,7 @@ Shader "Hidden/VRCLV/PointLightShadowRuntimeBlur" {
 
             float AverageDepthDifference(float2 uv, float centerDepth, float2 sampleScale) {
                 float depthDifference = 0.0f;
-                [unroll] for (int ringIndex = 0; ringIndex < VRCLV_CONTRAST_RING_COUNT; ringIndex++) {
+                VRCLV_BLUR_LOOP for (int ringIndex = 0; ringIndex < VRCLV_CONTRAST_RING_COUNT; ringIndex++) {
                     depthDifference += DepthDifferenceRing(uv, centerDepth, sampleScale, ringIndex);
                 }
                 return depthDifference * VRCLV_CONTRAST_INV_SAMPLE_COUNT;
@@ -400,7 +427,7 @@ Shader "Hidden/VRCLV/PointLightShadowRuntimeBlur" {
             #if defined(VRCLV_SHADOW_BLUR_SPHERICAL)
                 float AverageDepthDifferenceSpherical(float2 uv, float centerDepth, float2 sampleScale) {
                     float depthDifference = 0.0f;
-                    [unroll] for (int ringIndex = 0; ringIndex < VRCLV_CONTRAST_RING_COUNT; ringIndex++) {
+                    VRCLV_BLUR_LOOP for (int ringIndex = 0; ringIndex < VRCLV_CONTRAST_RING_COUNT; ringIndex++) {
                         depthDifference += DepthDifferenceRingSpherical(uv, centerDepth, sampleScale, ringIndex);
                     }
                     return depthDifference * VRCLV_CONTRAST_INV_SAMPLE_COUNT;
@@ -409,7 +436,7 @@ Shader "Hidden/VRCLV/PointLightShadowRuntimeBlur" {
 
             float AverageDepthDifferenceDirect(float2 uv, float centerDepth, float2 sampleScale) {
                 float depthDifference = 0.0f;
-                [unroll] for (int ringIndex = 0; ringIndex < VRCLV_CONTRAST_RING_COUNT; ringIndex++) {
+                VRCLV_BLUR_LOOP for (int ringIndex = 0; ringIndex < VRCLV_CONTRAST_RING_COUNT; ringIndex++) {
                     depthDifference += DepthDifferenceRingDirect(uv, centerDepth, sampleScale, ringIndex);
                 }
                 return depthDifference * VRCLV_CONTRAST_INV_SAMPLE_COUNT;
@@ -448,7 +475,7 @@ Shader "Hidden/VRCLV/PointLightShadowRuntimeBlur" {
         float4 BlurArrayDirect(float2 uv, float2 sampleStep) {
             float4 color = 0.0f;
             float weightSum = 0.0f;
-            [unroll] for (int sampleIndex = -VRCLV_BLUR_SAMPLE_RADIUS; sampleIndex <= VRCLV_BLUR_SAMPLE_RADIUS; sampleIndex++) {
+            VRCLV_BLUR_LOOP for (int sampleIndex = -VRCLV_BLUR_SAMPLE_RADIUS; sampleIndex <= VRCLV_BLUR_SAMPLE_RADIUS; sampleIndex++) {
                 float sampleDistance = sampleIndex * VRCLV_BLUR_INV_SAMPLE_RADIUS;
                 float weight = GaussianWeight(sampleDistance);
                 color += SampleSourceDirect(uv + sampleStep * sampleIndex) * weight;
@@ -460,7 +487,7 @@ Shader "Hidden/VRCLV/PointLightShadowRuntimeBlur" {
         float4 BlurArraySeamAware(float2 uv, float2 sampleStep) {
             float4 color = 0.0f;
             float weightSum = 0.0f;
-            [unroll] for (int sampleIndex = -VRCLV_BLUR_SAMPLE_RADIUS; sampleIndex <= VRCLV_BLUR_SAMPLE_RADIUS; sampleIndex++) {
+            VRCLV_BLUR_LOOP for (int sampleIndex = -VRCLV_BLUR_SAMPLE_RADIUS; sampleIndex <= VRCLV_BLUR_SAMPLE_RADIUS; sampleIndex++) {
                 float sampleDistance = sampleIndex * VRCLV_BLUR_INV_SAMPLE_RADIUS;
                 float weight = GaussianWeight(sampleDistance);
                 color += SampleSource(uv + sampleStep * sampleIndex) * weight;
@@ -474,10 +501,10 @@ Shader "Hidden/VRCLV/PointLightShadowRuntimeBlur" {
                 float4 color = SampleSourceSpherical(uv, float2(0.0f, 0.0f));
                 float weightSum = 1.0f;
                 float blurRadius = _InvResolution * RuntimeBlurRadius(uv) * (4.0f * VRCLV_SPHERICAL_BLUR_RADIUS_SCALE);
-                [unroll] for (int ringIndex = 0; ringIndex < VRCLV_SPHERICAL_BLUR_RING_COUNT; ringIndex++) {
-                    float ringRadius = sphericalBlurRingRadii[ringIndex];
-                    float weight = sphericalBlurRingWeights[ringIndex];
-                    [unroll] for (int sampleIndex = 0; sampleIndex < VRCLV_SPHERICAL_BLUR_DIRECTION_COUNT; sampleIndex++) {
+                VRCLV_BLUR_LOOP for (int ringIndex = 0; ringIndex < VRCLV_SPHERICAL_BLUR_RING_COUNT; ringIndex++) {
+                    float ringRadius = SphericalBlurRingRadius(ringIndex);
+                    float weight = SphericalBlurRingWeight(ringIndex);
+                    VRCLV_BLUR_LOOP for (int sampleIndex = 0; sampleIndex < VRCLV_SPHERICAL_BLUR_DIRECTION_COUNT; sampleIndex++) {
                         float2 dir = SphericalBlurRingDirection(ringIndex, sampleIndex);
                         color += SampleSourceSpherical(uv, dir * (blurRadius * ringRadius)) * weight;
                         weightSum += weight;

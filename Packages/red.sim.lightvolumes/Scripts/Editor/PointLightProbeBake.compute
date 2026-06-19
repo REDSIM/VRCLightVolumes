@@ -26,7 +26,7 @@ void BakePointLightVolumesIntoProbes(uint3 id : SV_DispatchThreadID) {
 
     uint lightCount = min((uint)_UdonPointLightVolumeCount, (uint)VRCLV_MAX_LIGHTS_COUNT);
     [loop] for (uint i = 0; i < lightCount; i++) {
-        LV_PointLight(i, _ProbePositions[probeIndex], L0, L1r, L1g, L1b, count);
+        if (LV_PointLightContribution(i, _ProbePositions[probeIndex], L0, L1r, L1g, L1b)) count++;
     }
 
     uint shIndex = probeIndex * 3;

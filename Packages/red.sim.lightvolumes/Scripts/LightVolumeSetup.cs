@@ -212,6 +212,10 @@ namespace VRCLightVolumes {
 
             if (LightVolumeManager == null || DontSync) return;
 
+#if UNITY_EDITOR
+            if (customTextures) PrepareCustomProjectionTextureImports();
+#endif
+
             if (customTextures) {
                 LightVolumeManager.CustomTexturesWidth = (int)CookieResolution;
                 LightVolumeManager.CustomTexturesHeight = (int)CookieResolution;
@@ -245,6 +249,19 @@ namespace VRCLightVolumes {
             if (customTextures) LightVolumeManager.ReinitializeCustomTextures();
             else LightVolumeManager.ReinitializeShadowTextures();
         }
+
+#if UNITY_EDITOR
+        // Fixes EXR projection import settings before Android target data is copied into runtime texture arrays.
+        public void PrepareCustomProjectionTextureImports() {
+            if (Application.isPlaying) return;
+            if (PointLightVolumes == null) return;
+            for (int i = 0; i < PointLightVolumes.Count; i++) {
+                PointLightVolume pointLightVolume = PointLightVolumes[i];
+                if (pointLightVolume == null) continue;
+                LVUtils.TextureSetLinearHDRAndroidImport(pointLightVolume.GetCustomTexture());
+            }
+        }
+#endif
 
         // Subscribing to OnBaked events
         private void OnEnable() {

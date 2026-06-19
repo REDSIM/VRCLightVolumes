@@ -258,6 +258,49 @@ namespace VRCLightVolumes {
 #endif
         }
 
+        // Ensures EXR projection sources keep linear HDR data when Unity imports them for Android.
+        public static bool TextureSetLinearHDRAndroidImport(Texture texture) {
+#if UNITY_EDITOR
+            if (texture == null || texture is RenderTexture) return false;
+
+            string path = AssetDatabase.GetAssetPath(texture);
+            if (string.IsNullOrEmpty(path) || !path.EndsWith(".exr", System.StringComparison.OrdinalIgnoreCase)) return false;
+
+            TextureImporter importer = AssetImporter.GetAtPath(path) as TextureImporter;
+            if (importer == null) return false;
+
+            bool changed = false;
+            if (importer.sRGBTexture) {
+                importer.sRGBTexture = false;
+                changed = true;
+            }
+
+            TextureImporterPlatformSettings androidSettings = importer.GetPlatformTextureSettings("Android");
+            bool androidChanged = false;
+            if (!androidSettings.overridden) {
+                androidSettings.overridden = true;
+                androidChanged = true;
+            }
+            if (androidSettings.format != TextureImporterFormat.RGBAHalf && androidSettings.format != TextureImporterFormat.RGBAFloat) {
+                androidSettings.format = TextureImporterFormat.RGBAHalf;
+                androidChanged = true;
+            }
+            if (androidSettings.textureCompression != TextureImporterCompression.Uncompressed) {
+                androidSettings.textureCompression = TextureImporterCompression.Uncompressed;
+                androidChanged = true;
+            }
+            if (androidChanged) {
+                importer.SetPlatformTextureSettings(androidSettings);
+                changed = true;
+            }
+
+            if (changed) importer.SaveAndReimport();
+            return changed;
+#else
+            return false;
+#endif
+        }
+
         public static Texture3D DownscaleTexture3D(Texture3D source) {
 
             if (source == null) {

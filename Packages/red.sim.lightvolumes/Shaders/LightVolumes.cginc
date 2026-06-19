@@ -432,8 +432,8 @@ float4 LV_AreaLightCookie(float3 localPos, float2 size, uint textureId) {
     return float4(emission * 0.36363636, 1.0);
 }
 
-// Samples a spot light, point light, area light
-void LV_PointLight(uint id, float3 worldPos, inout float3 L0, inout float3 L1r, inout float3 L1g, inout float3 L1b, inout uint count, float3 worldNormal = 0) {
+// Samples a spot light, point light, area light and returns true when this light consumes one overdraw slot.
+bool LV_PointLightContribution(uint id, float3 worldPos, inout float3 L0, inout float3 L1r, inout float3 L1g, inout float3 L1b, float3 worldNormal = 0) {
 
     // IDs and range data
     float4 customID_data = _UdonPointLightVolumeCustomID[id];
@@ -463,6 +463,7 @@ void LV_PointLight(uint id, float3 worldPos, inout float3 L0, inout float3 L1r, 
         bool isSpotLight = pos.w < 0;
         bool isPointLight = color.w <= 1.5;
         bool lightVisible = false;
+        bool counted = false;
 
         float invLen = rsqrt(sqlen);
         float3 dirN = dir * invLen;
@@ -488,7 +489,7 @@ void LV_PointLight(uint id, float3 worldPos, inout float3 L0, inout float3 L1r, 
                 lightVisible = normalAttenuation > 0 || shadingStrength < 1;
             }
             [branch] if (lightVisible) {
-                count++;
+                counted = true;
                 [branch] if (customId > 0) { // If it uses Attenuation LUT
 
                     float dirRadius = sqlen * abs(pos.w);
@@ -519,7 +520,7 @@ void LV_PointLight(uint id, float3 worldPos, inout float3 L0, inout float3 L1r, 
             }
 
             [branch] if (lightVisible) {
-                count++;
+                counted = true;
                 [branch] if (customId > 0) { // Using LUT
 
                     float dirRadius = sqlen * abs(pos.w);
@@ -562,7 +563,7 @@ void LV_PointLight(uint id, float3 worldPos, inout float3 L0, inout float3 L1r, 
                 lightVisible = normalAttenuation > 0 || shadingStrength < 1;
             }
             if (lightVisible) {
-                count++;
+                counted = true;
             }
         }
 
@@ -647,7 +648,10 @@ void LV_PointLight(uint id, float3 worldPos, inout float3 L0, inout float3 L1r, 
                 }
             }
         }
+        return counted;
     }
+
+    return false;
 
 }
 
@@ -747,11 +751,12 @@ void LV_PointLightVolumeSH(float3 worldPos, inout float3 L0, inout float3 L1r, i
     [branch] if (_UdonLightVolumeVersion < VRCLV_MIN_SUPPORTED_VERSION || pointCount == 0) {
         return;
     } else {
-        uint maxOverdraw = min((uint) _UdonLightVolumeAdditiveMaxOverdraw, VRCLV_MAX_LIGHTS_COUNT);
-        uint pcount = 0; // Point lights counter
+        float maxOverdraw = min(_UdonLightVolumeAdditiveMaxOverdraw, (float) VRCLV_MAX_LIGHTS_COUNT);
+        float pcount = 0; // Point lights counter
 
-        [loop] for (uint pid = 0; pid < pointCount && pcount < maxOverdraw; pid++) {
-            LV_PointLight(pid, worldPos, L0, L1r, L1g, L1b, pcount, worldNormal);
+        [loop] for (uint pid = 0; pid < pointCount; pid++) {
+            [branch] if (pcount >= maxOverdraw) break;
+            if (LV_PointLightContribution(pid, worldPos, L0, L1r, L1g, L1b, worldNormal)) pcount += 1;
         }
     }
 

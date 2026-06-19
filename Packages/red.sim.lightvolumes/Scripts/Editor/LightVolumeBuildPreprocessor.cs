@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.Reflection;
 using UnityEditor;
+using UnityEditor.Build;
+using UnityEditor.Build.Reporting;
 using UnityEditor.Callbacks;
 using UnityEngine;
 using UnityEngine.SceneManagement;
@@ -17,6 +19,7 @@ namespace VRCLightVolumes {
         private const string SetProgramVariableMethodName = "SetProgramVariable";
 
         private static readonly List<LightVolumeManager> _managerBuffer = new List<LightVolumeManager>();
+        private static readonly List<LightVolumeSetup> _setupBuffer = new List<LightVolumeSetup>();
         private static readonly List<PointLightShadowRuntimeBaker> _shadowBakerBuffer = new List<PointLightShadowRuntimeBaker>();
         private static readonly List<Camera> _cameraBuffer = new List<Camera>();
         private static readonly object[] _setProgramVariableArgs = new object[2];
@@ -59,6 +62,14 @@ namespace VRCLightVolumes {
             }
         }
 
+        // Applies Android-safe import settings to assigned EXR projection sources in every loaded scene
+        internal static void PrepareProjectionTextureImportsForOpenScenes() {
+            for (int i = 0; i < SceneManager.sceneCount; i++) {
+                Scene scene = SceneManager.GetSceneAt(i);
+                if (scene.isLoaded) PrepareProjectionTextureImports(scene.GetRootGameObjects());
+            }
+        }
+
         // Pushes prepared runtime dependencies directly into playing UdonBehaviour proxies in every loaded scene
         static void ApplyRuntimeDependenciesForOpenScenes() {
             for (int i = 0; i < SceneManager.sceneCount; i++) {
@@ -77,6 +88,8 @@ namespace VRCLightVolumes {
 
         // Creates or reuses all runtime dependencies needed by Light Volumes Udon components under the given roots
         static void PrepareRuntimeDependencies(GameObject[] roots, bool editorTemporary) {
+            if (editorTemporary) PrepareProjectionTextureImports(roots);
+
             Shader cubemapFaceShader = Shader.Find(CubemapFaceShaderName);
             Shader shadowDepthEncodeShader = Shader.Find(ShadowDepthEncodeShaderName);
             Shader shadowBlurShader = Shader.Find(ShadowBlurShaderName);
@@ -95,7 +108,25 @@ namespace VRCLightVolumes {
             }
 
             _managerBuffer.Clear();
+            _setupBuffer.Clear();
             _shadowBakerBuffer.Clear();
+        }
+
+        // Applies Android-safe import settings to assigned EXR projection sources before play-mode texture caches sample them
+        static void PrepareProjectionTextureImports(GameObject[] roots) {
+            for (int i = 0; i < roots.Length; i++) {
+                GameObject root = roots[i];
+                if (root == null) continue;
+
+                _setupBuffer.Clear();
+                root.GetComponentsInChildren(true, _setupBuffer);
+                for (int j = 0; j < _setupBuffer.Count; j++) {
+                    LightVolumeSetup setup = _setupBuffer[j];
+                    if (setup != null) setup.PrepareCustomProjectionTextureImports();
+                }
+            }
+
+            _setupBuffer.Clear();
         }
 
         // Pushes already prepared runtime dependencies into UdonBehaviours under the given roots
@@ -331,6 +362,15 @@ namespace VRCLightVolumes {
         // Returns true when a component is a VRChat UdonBehaviour
         static bool IsUdonBehaviour(Component component) {
             return component != null && component.GetType().FullName == UdonBehaviourTypeName;
+        }
+    }
+
+    internal class LightVolumeTextureImportBuildPreprocessor : IPreprocessBuildWithReport {
+        public int callbackOrder => -1000;
+
+        // Applies EXR projection import settings before Unity packs Android build textures
+        public void OnPreprocessBuild(BuildReport report) {
+            LightVolumePreprocessor.PrepareProjectionTextureImportsForOpenScenes();
         }
     }
 }

@@ -104,6 +104,10 @@ uniform float _UdonLightBrightnessCutoff;
 }
 #endif
 
+// Texel count and max mip for Area Light with cookie
+uniform float _UdonPointLightVolumeTextureTexelCount;
+uniform float _UdonPointLightVolumeTextureMaxMip;
+
 #ifndef SHADER_TARGET_SURFACE_ANALYSIS
 
 // Main 3D Texture atlas
@@ -112,8 +116,6 @@ uniform SamplerState sampler_UdonLightVolume;
 // First elements must be cubemap faces (6 face textures per cubemap). Then goes other textures
 uniform Texture2DArray _UdonPointLightVolumeTexture;
 uniform SamplerState sampler_UdonPointLightVolumeTexture;
-uniform float _UdonPointLightVolumeTextureTexelCount;
-uniform float _UdonPointLightVolumeTextureMaxMip;
 // First elements are baked shadow cubemap faces, 6 face textures per cubemap.
 uniform Texture2DArray _UdonPointLightVolumeShadowTexture;
 uniform SamplerState sampler_UdonPointLightVolumeShadowTexture;
@@ -649,9 +651,9 @@ bool LV_PointLightContribution(uint id, float3 worldPos, inout float3 L0, inout 
             }
         }
         return counted;
+    } else {
+        return false;
     }
-
-    return false;
 
 }
 

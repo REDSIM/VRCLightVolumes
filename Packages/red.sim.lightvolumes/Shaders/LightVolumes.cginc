@@ -153,6 +153,14 @@ float LV_FastLog2Positive(float x) {
     return exponent - 1.0 + y * (1.3465554 - 0.3465554 * y);
 }
 
+// Approximate exp for EVSM and shadow filtering ranges. Uses a short polynomial on x / 4 and squares twice.
+float LV_FastExp(float x) {
+    x *= 0.25f;
+    float y = 1.0f + x * (1.0f + x * (0.5f + x * (0.16666667f + x * (0.04166667f + x * (0.00833333f + x * 0.00138889f)))));
+    y *= y;
+    return y * y;
+}
+
 // Rotates vector by Quaternion
 float3 LV_MultiplyVectorByQuaternion(float3 v, float4 q) {
     float3 t = 2 * cross(q.xyz, v);
@@ -246,7 +254,7 @@ float4 LV_SampleShadowMapArrayFace(uint id, uint face, float2 uv) {
 // Applies exponential warp to normalized shadow depth
 float2 LV_EVSMWarpDepth(float depth) {
     depth = depth * 2.0f - 1.0f;
-    return float2(exp(LV_EVSM_POSITIVE_EXPONENT * depth), -exp(-LV_EVSM_NEGATIVE_EXPONENT * depth));
+    return float2(LV_FastExp(LV_EVSM_POSITIVE_EXPONENT * depth), -LV_FastExp(-LV_EVSM_NEGATIVE_EXPONENT * depth));
 }
 
 // Evaluates the one-tailed Chebyshev upper bound used by VSM and EVSM

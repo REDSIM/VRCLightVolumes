@@ -36,6 +36,22 @@ Shader "Hidden/VRCLV/PointLightShadowRuntimeBlur" {
             #define VRCLV_EVSM_NEGATIVE_EXPONENT 5.0f
         #endif
 
+        // Approximate exp for blur weights and EVSM-related ranges.
+        float VRCLV_FastExp(float x) {
+            x *= 0.25f;
+            float y = 1.0f + x * (1.0f + x * (0.5f + x * (0.16666667f + x * (0.04166667f + x * (0.00833333f + x * 0.00138889f)))));
+            y *= y;
+            return y * y;
+        }
+
+        // Approximate natural log for positive values using frexp and a quadratic log2 mantissa fit.
+        float VRCLV_FastLogPositive(float x) {
+            float exponent = 0;
+            float mantissa = frexp(max(x, 0.000001f), exponent);
+            float y = mantissa + mantissa - 1.0f;
+            return (exponent - 1.0f + y * (1.3465554f - 0.3465554f * y)) * 0.69314718056f;
+        }
+
         #if defined(VRCLV_EDITOR_SHADOW_BLUR_QUALITY) || defined(VRCLV_RUNTIME_SHADOW_BLUR_SPHERICAL)
             #define VRCLV_SHADOW_BLUR_SPHERICAL
         #endif
@@ -157,7 +173,7 @@ Shader "Hidden/VRCLV/PointLightShadowRuntimeBlur" {
 
             float2 ContrastRingDirection(int ringIndex, int sampleIndex) {
                 #if defined(VRCLV_EDITOR_SHADOW_BLUR_QUALITY)
-                    return contrastRingDirections[(ringIndex % 4) * 16 + sampleIndex];
+                    return contrastRingDirections[(int)((((uint)ringIndex) & 3u) * 16u + (uint)sampleIndex)];
                 #else
                     return contrastRingDirections[ringIndex * 16 + sampleIndex];
                 #endif
@@ -172,7 +188,7 @@ Shader "Hidden/VRCLV/PointLightShadowRuntimeBlur" {
 
                 float SphericalBlurRingWeight(int ringIndex) {
                     float ringRadius = SphericalBlurRingRadius(ringIndex);
-                    return ringRadius * exp(-2.0f * ringRadius * ringRadius);
+                    return ringRadius * VRCLV_FastExp(-2.0f * ringRadius * ringRadius);
                 }
             #elif defined(VRCLV_RUNTIME_SHADOW_QUALITY_HIGH)
                 static const float sphericalBlurRingRadii[8] = {
@@ -233,7 +249,7 @@ Shader "Hidden/VRCLV/PointLightShadowRuntimeBlur" {
 
             float2 SphericalBlurRingDirection(int ringIndex, int sampleIndex) {
                 #if defined(VRCLV_EDITOR_SHADOW_BLUR_QUALITY)
-                    return sphericalBlurDirections[(ringIndex % 16) * 16 + sampleIndex];
+                    return sphericalBlurDirections[(int)((((uint)ringIndex) & 15u) * 16u + (uint)sampleIndex)];
                 #else
                     return sphericalBlurDirections[ringIndex * 16 + sampleIndex];
                 #endif
@@ -250,7 +266,7 @@ Shader "Hidden/VRCLV/PointLightShadowRuntimeBlur" {
         };
 
         float GaussianWeight(float normalizedDistance) {
-            return exp(-2.0f * normalizedDistance * normalizedDistance);
+            return VRCLV_FastExp(-2.0f * normalizedDistance * normalizedDistance);
         }
 
         bool KernelFitsFace(float2 uv, float2 absExtent) {
@@ -261,7 +277,7 @@ Shader "Hidden/VRCLV/PointLightShadowRuntimeBlur" {
         #if !defined(VRCLV_RUNTIME_SHADOW_BLUR_UNIFORM)
             float DecodeDepth01(float4 moments) {
                 float negativeMagnitude = max(-moments.y, 0.000001f);
-                float depth = -log(negativeMagnitude) * rcp(VRCLV_EVSM_NEGATIVE_EXPONENT);
+                float depth = -VRCLV_FastLogPositive(negativeMagnitude) * rcp(VRCLV_EVSM_NEGATIVE_EXPONENT);
                 return saturate(depth * 0.5f + 0.5f);
             }
         #endif

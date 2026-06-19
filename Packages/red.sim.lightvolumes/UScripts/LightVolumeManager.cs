@@ -255,6 +255,7 @@ namespace VRCLightVolumes {
         private int _pointLightCubeCountID;
         private int _pointLightTextureID;
         private int _pointLightTextureTexelCountID;
+        private int _pointLightTextureMaxMipID;
         private int _pointLightShadowReprojectionDataID;
         private int _pointLightShadowRotationDataID;
         private int _pointLightShadowCountID;
@@ -465,6 +466,7 @@ namespace VRCLightVolumes {
             _pointLightCubeCountID = VRCShader.PropertyToID("_UdonPointLightVolumeCubeCount");
             _pointLightTextureID = VRCShader.PropertyToID("_UdonPointLightVolumeTexture");
             _pointLightTextureTexelCountID = VRCShader.PropertyToID("_UdonPointLightVolumeTextureTexelCount");
+            _pointLightTextureMaxMipID = VRCShader.PropertyToID("_UdonPointLightVolumeTextureMaxMip");
             _pointLightShadowReprojectionDataID = VRCShader.PropertyToID("_UdonPointLightVolumeShadowReprojectionData");
             _pointLightShadowRotationDataID = VRCShader.PropertyToID("_UdonPointLightVolumeShadowRotationData");
             _pointLightShadowCountID = VRCShader.PropertyToID("_UdonPointLightVolumeShadowCount");
@@ -1277,6 +1279,7 @@ namespace VRCLightVolumes {
             if (!_isInitialized) return;
             VRCShader.SetGlobalTexture(_pointLightTextureID, texture);
             VRCShader.SetGlobalFloat(_pointLightTextureTexelCountID, texture.width * texture.height);
+            VRCShader.SetGlobalFloat(_pointLightTextureMaxMipID, Mathf.Max(texture.mipmapCount - 1, 0));
         }
 
         // Returns the resolved custom projection texture ID for a point light instance
@@ -1770,6 +1773,7 @@ namespace VRCLightVolumes {
                 if (CustomTextures != null) {
                     VRCShader.SetGlobalTexture(_pointLightTextureID, CustomTextures);
                     VRCShader.SetGlobalFloat(_pointLightTextureTexelCountID, CustomTextures.width * CustomTextures.height);
+                    VRCShader.SetGlobalFloat(_pointLightTextureMaxMipID, Mathf.Max(CustomTextures.mipmapCount - 1, 0));
                 }
                 if (_activeShadowCount > 0 && ShadowTextures != null) VRCShader.SetGlobalTexture(_pointLightShadowTextureID, ShadowTextures);
 

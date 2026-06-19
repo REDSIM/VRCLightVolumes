@@ -111,6 +111,7 @@ uniform SamplerState sampler_UdonLightVolume;
 uniform Texture2DArray _UdonPointLightVolumeTexture;
 uniform SamplerState sampler_UdonPointLightVolumeTexture;
 uniform float _UdonPointLightVolumeTextureTexelCount;
+uniform float _UdonPointLightVolumeTextureMaxMip;
 // First elements are baked shadow cubemap faces, 6 face textures per cubemap.
 uniform Texture2DArray _UdonPointLightVolumeShadowTexture;
 uniform SamplerState sampler_UdonPointLightVolumeShadowTexture;
@@ -370,9 +371,11 @@ float2 LV_SphereSpotLightCookieUv(float3 dirN, float4 lightRot, float tanAngle) 
     }
 }
 
-// Resolves area cookie UV and mip level from a cheap representative point on the visible quad.
-// Mip selection follows filtered importance sampling: https://developer.nvidia.com/gpugems/gpugems3/part-iii-rendering/chapter-20-gpu-based-importance-sampling
-float3 LV_AreaLightCookieUvMip(float3 localPos, float2 size) {
+// Samples a textured area emitter as a prefiltered mip-chain average: local high-frequency detail is blended with all available coarser mip levels to approximate the solid-angle tail from neighboring texels.
+// Based on textured LTC prefiltering and filtered importance sampling:
+// https://eheitzresearch.wordpress.com/415-2/
+// https://developer.nvidia.com/gpugems/gpugems3/part-iii-rendering/chapter-20-gpu-based-importance-sampling
+float4 LV_AreaLightCookie(float3 localPos, float2 size, uint textureId) {
     float2 safeSize = max(size, float2(0.0001, 0.0001));
     float2 halfSize = safeSize * 0.5;
     float2 closestXY = clamp(localPos.xy, -halfSize, halfSize);
@@ -389,10 +392,22 @@ float3 LV_AreaLightCookieUvMip(float3 localPos, float2 size) {
     float edgeBlend = LV_Smoothstep01(saturate((max(edgeUv.x, edgeUv.y) - 0.65) * 2.8571429));
     float grazingBlend = saturate(1 - abs(localPos.z) * rsqrt(max(dot(localPos, localPos), 0.000001)));
     float mip = 0.5 * LV_FastLog2Positive(texelsCovered) + edgeBlend * grazingBlend * (1.0 - shapeBlend) * 2.0;
+    float maxMip = max(_UdonPointLightVolumeTextureMaxMip, 0.0);
+    mip = min(mip, maxMip);
 
     float2 uv = representativeXY * rcp(safeSize) + 0.5;
     uv.x = 1.0 - uv.x;
-    return float3(uv, mip);
+
+    float mipRange = max(maxMip - mip, 0.0);
+    float middleMip = mip + mipRange * 0.5;
+
+    float4 localCookie = LV_SAMPLE_POINT_LOD(float3(uv, textureId), mip);
+    float4 middleCookie = LV_SAMPLE_POINT_LOD(float3(uv, textureId), middleMip);
+    float4 averageCookie = LV_SAMPLE_POINT_LOD(float3(uv, textureId), maxMip);
+    float3 localEmission = localCookie.rgb * localCookie.a;
+    float3 middleEmission = middleCookie.rgb * middleCookie.a;
+    float3 averageEmission = averageCookie.rgb * averageCookie.a;
+    return float4((localEmission + middleEmission + averageEmission) * 0.3333333, 1.0);
 }
 
 // Samples a spot light, point light, area light
@@ -512,8 +527,7 @@ void LV_PointLight(uint id, float3 worldPos, inout float3 L0, inout float3 L1r, 
             // No cookie keeps the original fast quad attenuation path and skips filtered projection.
             [branch] if (customId < 0 && lightVisible) {
                 uint textureId = (uint) _UdonPointLightVolumeCubeCount * 5 - customId - 1;
-                float3 cookieUvMip = LV_AreaLightCookieUvMip(areaLocalPos, areaSize);
-                cookie = LV_SAMPLE_POINT_LOD(float3(cookieUvMip.xy, textureId), cookieUvMip.z);
+                cookie = LV_AreaLightCookie(areaLocalPos, areaSize, textureId);
                 lightVisible = min(cookie.a, max(max(cookie.r, cookie.g), cookie.b)) > 0;
             }
 

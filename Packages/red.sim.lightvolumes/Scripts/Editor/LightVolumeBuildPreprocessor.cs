@@ -174,7 +174,7 @@ namespace VRCLightVolumes {
             ApplyManagerMaterial(manager);
         }
 
-        // Prepares the EVSM depth camera, encode material and blur material for one runtime shadow baker
+        // Prepares the shadow depth camera, encode material and blur material for one runtime shadow baker
         static void PrepareShadowBakerDependencies(PointLightShadowRuntimeBaker baker, Shader depthEncodeShader, Shader blurShader, bool editorTemporary) {
             if (baker == null) return;
             baker.ShadowCamera = CreateRuntimeShadowCamera(baker, editorTemporary);

@@ -34,6 +34,7 @@ namespace VRCLightVolumes {
         private const string ShadowBlurKeywordDirect = "VRCLV_RUNTIME_SHADOW_BLUR_DIRECT";
         private const string ShadowBlurKeywordSpherical = "VRCLV_RUNTIME_SHADOW_BLUR_SPHERICAL";
         private const float ShadowBlurBaseResolution = 128f;
+        private const int ShadowTextureFormatHalf = 0;
 
         [Tooltip("Point Light Volume instance that receives the runtime-baked shadow texture.")]
         public PointLightVolumeInstance TargetPointLightVolume;
@@ -41,7 +42,7 @@ namespace VRCLightVolumes {
         public bool BakeOnEnable = true;
         [Tooltip("Continuously update shadow faces through a delayed Udon event loop.")]
         public bool Realtime = false;
-        [Tooltip("Resolution used by the camera depth target and local EVSM texture array.")]
+        [Tooltip("Resolution used by the camera depth target and local shadow texture array.")]
         [Min(16)] public int Resolution = 128;
         [Tooltip("How many cubemap faces are rendered per bake loop tick.")]
         [Range(1, 6)] public int RealtimeFacesPerFrame = 1;
@@ -129,7 +130,7 @@ namespace VRCLightVolumes {
         private RenderTexture _completedOutputTexture;
         private RenderTexture _materialBlitInputTexture;
 
-        // Cubemap face rotations for the texture-array layout used by the EVSM shadow array
+        // Cubemap face rotations for the texture-array layout used by the shadow array
         private Quaternion _faceRotation0 = new Quaternion(0f, -0.70710678f, 0f, 0.70710678f);
         private Quaternion _faceRotation1 = new Quaternion(0f, 0.70710678f, 0f, 0.70710678f);
         private Quaternion _faceRotation2 = new Quaternion(0f, -0.70710678f, 0.70710678f, 0f);
@@ -299,7 +300,7 @@ namespace VRCLightVolumes {
 
             RefreshBakeSettings();
 
-            RenderTextureFormat format = _manager != null && _manager.ShadowTextureFormat == 0 ? RenderTextureFormat.ARGBHalf : RenderTextureFormat.ARGBFloat;
+            RenderTextureFormat format = _manager != null && _manager.ShadowTextureFormat == ShadowTextureFormatHalf ? RenderTextureFormat.RGHalf : RenderTextureFormat.RGFloat;
 
             if (!EnsureDepthTexture(_bakeResolution)) return false;
             if (_useDirectOutput) {
@@ -668,7 +669,8 @@ namespace VRCLightVolumes {
 
             RenderTexture previousTargetTexture = ShadowCamera.targetTexture;
             ShadowCamera.targetTexture = _depthTexture;
-            // Face rotation and EVSM encode are inlined here to avoid per-face Udon method calls
+
+            // Face rotation and shadow encode are inlined here to avoid per-face Udon method calls
             for (int face = 0; face < 6; face++) {
                 // Apply the cubemap-array face orientation expected by the shader sampling layout
                 if (face == 0) _cameraTransform.rotation = bakeRotation * _faceRotation0;
@@ -834,7 +836,7 @@ namespace VRCLightVolumes {
         // Finalizes a completed distributed bake cycle and snapshots direct realtime output when the realtime loop stops
         private void FinishBakeLoopCycle(Vector3 bakePosition, float farClip, float bias) {
             if (_cycleUseDirectOutput && _useDirectOutput && !Realtime && _manager != null && _target != null && _manager.ShadowTextures != null && _target.ShadowMapID >= 0) {
-                RenderTextureFormat format = _manager.ShadowTextureFormat == 0 ? RenderTextureFormat.ARGBHalf : RenderTextureFormat.ARGBFloat;
+                RenderTextureFormat format = _manager.ShadowTextureFormat == ShadowTextureFormatHalf ? RenderTextureFormat.RGHalf : RenderTextureFormat.RGFloat;
                 _shadowTexture = EnsureOwnedArrayTexture(_shadowTexture, format, _bakeResolution, _bakeSliceCount, FilterMode.Bilinear);
                 if (_shadowTexture != null) {
                     int shadowId = (int)_target.ShadowMapID;

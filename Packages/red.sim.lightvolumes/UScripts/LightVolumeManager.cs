@@ -37,6 +37,8 @@ namespace VRCLightVolumes {
         private const int MaxLightVolumeLegacyUvwVectors = MaxLightVolumeCount * 6;
         private const RenderTextureFormat FixedCustomTexturesFormat = RenderTextureFormat.ARGBHalf;
         private const float DisabledShadingShadowId = 10000f;
+        private const int ShadowTextureFormatHalf = 0;
+        public const float ShadowMinVariance = 0.000001f;
 #endregion
 
 #region Inspector And Runtime References
@@ -58,8 +60,10 @@ namespace VRCLightVolumes {
         public int ShadowTexturesWidth = 128;
         [Tooltip("Height of each runtime shadow cubemap face.")]
         public int ShadowTexturesHeight = 128;
-        [Tooltip("Precision used for baked EVSM shadow cubemaps and the runtime shadow texture array. Half is cheaper, Float reduces EVSM precision artifacts.")]
+        [Tooltip("Precision used for baked VSM shadow maps and the runtime shadow texture array. 0 = RGHalf, 1 = RGFloat.")]
         public int ShadowTextureFormat = 1;
+        [Tooltip("VSM light bleed reduction applied by the shadow receiver shader. 0 disables reduction, 1 is strongest.")]
+        public float ShadowBleedReduction = 0.2f;
 
         [Header("Visuals")]
         [Tooltip("When enabled, areas outside Light Volumes fall back to light probes. Otherwise, the Light Volume with the smallest weight is used as fallback. It also improves performance.")]
@@ -274,6 +278,8 @@ namespace VRCLightVolumes {
         private int _pointLightShadowCountID;
         private int _pointLightShadowCubeCountID;
         private int _pointLightShadowTextureID;
+        private int _pointLightShadowBleedReductionID;
+        private int _pointLightShadowMinVarianceID;
         private int _lightBrightnessCutoffID;
         // Other
         private int _forceSceneLightingID;
@@ -492,6 +498,8 @@ namespace VRCLightVolumes {
             _pointLightShadowCountID = VRCShader.PropertyToID("_UdonPointLightVolumeShadowCount");
             _pointLightShadowCubeCountID = VRCShader.PropertyToID("_UdonPointLightVolumeShadowCubeCount");
             _pointLightShadowTextureID = VRCShader.PropertyToID("_UdonPointLightVolumeShadowTexture");
+            _pointLightShadowBleedReductionID = VRCShader.PropertyToID("_UdonPointLightVolumeShadowBleedReduction");
+            _pointLightShadowMinVarianceID = VRCShader.PropertyToID("_UdonPointLightVolumeShadowMinVariance");
             _lightBrightnessCutoffID = VRCShader.PropertyToID("_UdonLightBrightnessCutoff");
             // Other
             _forceSceneLightingID = VRCShader.PropertyToID("_UdonForceSceneLighting");
@@ -518,6 +526,8 @@ namespace VRCLightVolumes {
             VRCShader.SetGlobalVectorArray(_pointLightCustomIdID, _pointLightCustomId);
             VRCShader.SetGlobalVectorArray(_pointLightShadowReprojectionDataID, _pointLightShadowReprojectionData);
             VRCShader.SetGlobalVectorArray(_pointLightShadowRotationDataID, _pointLightShadowRotationData);
+            VRCShader.SetGlobalFloat(_pointLightShadowBleedReductionID, Mathf.Clamp01(ShadowBleedReduction));
+            VRCShader.SetGlobalFloat(_pointLightShadowMinVarianceID, ShadowMinVariance);
             _isInitialized = true;
         }
 
@@ -529,6 +539,8 @@ namespace VRCLightVolumes {
             VRCShader.SetGlobalFloat(_pointLightCubeCountID, 0);
             VRCShader.SetGlobalFloat(_pointLightShadowCubeCountID, 0);
             VRCShader.SetGlobalFloat(_pointLightShadowCountID, 0);
+            VRCShader.SetGlobalFloat(_pointLightShadowBleedReductionID, Mathf.Clamp01(ShadowBleedReduction));
+            VRCShader.SetGlobalFloat(_pointLightShadowMinVarianceID, ShadowMinVariance);
             VRCShader.SetGlobalFloat(_lightVolumeEnabledID, 0);
         }
 
@@ -1299,7 +1311,7 @@ namespace VRCLightVolumes {
         // Creates or recreates the runtime shadow texture array so it matches an explicit texture layout
         private bool EnsureRuntimeShadowTextures(int width, int height, int depth) {
             if (width <= 0 || height <= 0 || depth <= 0) return false;
-            RenderTextureFormat renderTextureFormat = ShadowTextureFormat == 0 ? RenderTextureFormat.ARGBHalf : RenderTextureFormat.ARGBFloat;
+            RenderTextureFormat renderTextureFormat = ShadowTextureFormat == ShadowTextureFormatHalf ? RenderTextureFormat.RGHalf : RenderTextureFormat.RGFloat;
             bool recreate = ShouldRecreateRuntimeTextureArray(ShadowTextures, width, height, depth, renderTextureFormat, false, FilterMode.Bilinear);
             if (!recreate) return ShadowTextures != null;
             ReleaseRuntimeRenderTexture(ShadowTextures);
@@ -1929,6 +1941,8 @@ namespace VRCLightVolumes {
                 int shadowCount = _activeShadowCount > 0 ? ShadowMapsCount : 0;
                 VRCShader.SetGlobalFloat(_pointLightShadowCubeCountID, _activeShadowCount > 0 ? ShadowCubemapsCount : 0);
                 VRCShader.SetGlobalFloat(_pointLightShadowCountID, shadowCount);
+                VRCShader.SetGlobalFloat(_pointLightShadowBleedReductionID, Mathf.Clamp01(ShadowBleedReduction));
+                VRCShader.SetGlobalFloat(_pointLightShadowMinVarianceID, ShadowMinVariance);
                 if (_pointLightCount != 0) {
                     VRCShader.SetGlobalVectorArray(_pointLightColorID, _pointLightColor);
                     VRCShader.SetGlobalVectorArray(_pointLightCookieDataID, _pointLightCookieData);

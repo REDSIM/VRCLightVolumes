@@ -2391,8 +2391,8 @@ MonoBehaviour:
       Data: 139|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Far clip distance used when the EVSM shadow map was baked. 0 falls back
-        to this light's current culling range.
+      Data: Far clip distance used when the shadow map was baked. 0 falls back to
+        this light's current culling range.
     - Name: 
       Entry: 8
       Data: 

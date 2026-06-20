@@ -36,6 +36,8 @@ namespace VRCLightVolumes.Tests {
         private static readonly int _pointLightShadowCubeCountID = Shader.PropertyToID("_UdonPointLightVolumeShadowCubeCount");
         private static readonly int _pointLightShadowCountID = Shader.PropertyToID("_UdonPointLightVolumeShadowCount");
         private static readonly int _pointLightShadowTextureID = Shader.PropertyToID("_UdonPointLightVolumeShadowTexture");
+        private static readonly int _pointLightShadowBleedReductionID = Shader.PropertyToID("_UdonPointLightVolumeShadowBleedReduction");
+        private static readonly int _pointLightShadowMinVarianceID = Shader.PropertyToID("_UdonPointLightVolumeShadowMinVariance");
         private static readonly int _lightBrightnessCutoffID = Shader.PropertyToID("_UdonLightBrightnessCutoff");
         private static readonly BindingFlags _lifecycleMethodFlags = BindingFlags.Instance | BindingFlags.NonPublic;
         private static readonly FieldInfo _customTexturesDepthField = typeof(LightVolumeManager).GetField("_customTextureArrayDepth", _lifecycleMethodFlags);
@@ -884,7 +886,7 @@ namespace VRCLightVolumes.Tests {
             Assert.That(manager.ShadowTextures.width, Is.EqualTo(8));
             Assert.That(manager.ShadowTextures.height, Is.EqualTo(8));
             Assert.That(manager.ShadowTextures.volumeDepth, Is.EqualTo(6));
-            Assert.That(manager.ShadowTextures.format, Is.EqualTo(RenderTextureFormat.ARGBFloat));
+            Assert.That(manager.ShadowTextures.format, Is.EqualTo(RenderTextureFormat.RGFloat));
             Assert.That(manager.ShadowTextures.useMipMap, Is.False);
             Assert.That(manager.ShadowTextures.autoGenerateMips, Is.False);
             Assert.That(manager.ShadowTextures.filterMode, Is.EqualTo(FilterMode.Bilinear));
@@ -911,7 +913,7 @@ namespace VRCLightVolumes.Tests {
             Assert.That(manager.ShadowTextures, Is.Not.Null);
             Assert.That(manager.ShadowTextures.width, Is.EqualTo(16));
             Assert.That(manager.ShadowTextures.height, Is.EqualTo(8));
-            Assert.That(manager.ShadowTextures.format, Is.EqualTo(RenderTextureFormat.ARGBFloat));
+            Assert.That(manager.ShadowTextures.format, Is.EqualTo(RenderTextureFormat.RGFloat));
             Assert.That(manager.ShadowTextures.useMipMap, Is.False);
             Assert.That(manager.ShadowTextures.autoGenerateMips, Is.False);
         }
@@ -933,9 +935,9 @@ namespace VRCLightVolumes.Tests {
             Assert.That(manager.ShadowTextures, Is.Null);
         }
 
-        // Verifies shadow runtime arrays use the default EVSM float format.
+        // Verifies shadow runtime arrays use the default VSM float format.
         [Test]
-        public void ShadowRuntimeArrayUsesDefaultEVSMFloatPrecision() {
+        public void ShadowRuntimeArrayUsesDefaultVSMFloatFormat() {
             LightVolumeManager manager = CreateManager("Shadow Default Format Manager", false);
             Cubemap source = CreateCubemap("Shadow Default Format Source");
             manager.ShadowTexturesWidth = 4;
@@ -948,21 +950,22 @@ namespace VRCLightVolumes.Tests {
             manager.ReinitializeShadowTextures();
 
             Assert.That(manager.ShadowTextures, Is.Not.Null);
-            Assert.That(manager.ShadowTextures.format, Is.EqualTo(RenderTextureFormat.ARGBFloat));
+            Assert.That(manager.ShadowTextures.format, Is.EqualTo(RenderTextureFormat.RGFloat));
             Assert.That(manager.ShadowTextures.useMipMap, Is.False);
             Assert.That(manager.ShadowTextures.autoGenerateMips, Is.False);
         }
 
-        // Verifies half precision shadows use a half texture array with the shared EVSM shader path.
+        // Verifies VSM Half shadows use an RGHalf texture array.
         [Test]
-        public void ShadowRuntimeArrayUsesConfiguredEVSMHalfFormat() {
-            LightVolumeManager manager = CreateManager("Shadow Half Format Manager", false);
-            Cubemap source = CreateCubemap("Shadow Half Format Source");
+        public void ShadowRuntimeArrayUsesConfiguredHalfFormat() {
+            LightVolumeManager manager = CreateManager("Shadow VSM Half Type Manager", false);
+            Cubemap source = CreateCubemap("Shadow VSM Half Type Source");
             manager.ShadowTextureFormat = 0;
+            manager.ShadowBleedReduction = 0.35f;
             manager.ShadowTexturesWidth = 4;
             manager.ShadowTexturesHeight = 4;
 
-            PointLightVolumeInstance point = CreatePointLight(manager, "Shadow Half Format Light", true);
+            PointLightVolumeInstance point = CreatePointLight(manager, "Shadow VSM Half Type Light", true);
             point.WorldSpaceShadows = true;
             point.Bias = 0;
             ConfigureShadowTexture(point, source, false, true, false);
@@ -972,15 +975,40 @@ namespace VRCLightVolumes.Tests {
             manager.UpdateVolumes();
 
             Assert.That(manager.ShadowTextures, Is.Not.Null);
-            Assert.That(manager.ShadowTextures.format, Is.EqualTo(RenderTextureFormat.ARGBHalf));
+            Assert.That(manager.ShadowTextures.format, Is.EqualTo(RenderTextureFormat.RGHalf));
+            Assert.That(manager.ShadowTextures.useMipMap, Is.False);
+            Assert.That(manager.ShadowTextures.autoGenerateMips, Is.False);
+            AssertGlobalFloat(_pointLightShadowBleedReductionID, 0.35f);
+            AssertGlobalFloat(_pointLightShadowMinVarianceID, LightVolumeManager.ShadowMinVariance);
+            AssertPointCustomData(point, 0, 1);
+        }
+
+        // Verifies VSM Float shadows use an RGFloat texture array.
+        [Test]
+        public void ShadowRuntimeArrayUsesConfiguredFloatFormat() {
+            LightVolumeManager manager = CreateManager("Shadow VSM Float Type Manager", false);
+            Cubemap source = CreateCubemap("Shadow VSM Float Type Source");
+            manager.ShadowTextureFormat = 1;
+            manager.ShadowTexturesWidth = 4;
+            manager.ShadowTexturesHeight = 4;
+
+            PointLightVolumeInstance point = CreatePointLight(manager, "Shadow VSM Float Type Light", true);
+            ConfigureShadowTexture(point, source, false, true, false);
+            manager.PointLightVolumeInstances = new[] { point };
+
+            manager.ReinitializeShadowTextures();
+            manager.UpdateVolumes();
+
+            Assert.That(manager.ShadowTextures, Is.Not.Null);
+            Assert.That(manager.ShadowTextures.format, Is.EqualTo(RenderTextureFormat.RGFloat));
             Assert.That(manager.ShadowTextures.useMipMap, Is.False);
             Assert.That(manager.ShadowTextures.autoGenerateMips, Is.False);
             AssertPointCustomData(point, 0, 1);
         }
 
-        // Verifies realtime EVSM baking uses the target light far clip data.
+        // Verifies runtime shadow baking uses the target light far clip data.
         [Test]
-        public void RuntimeShadowBakerUsesTargetRangeForEVSMFarClip() {
+        public void RuntimeShadowBakerUsesTargetRangeForShadowFarClip() {
             LightVolumeManager manager = CreateManager("Runtime Shadow Far Clip Manager", false);
             PointLightVolumeInstance point = CreatePointLight(manager, "Runtime Shadow Far Clip Light", true);
             point.SquaredRange = 64;
@@ -1055,7 +1083,7 @@ namespace VRCLightVolumes.Tests {
             Assert.That(point.FarClip, Is.EqualTo(2).Within(Epsilon));
         }
 
-        // Verifies realtime EVSM baking uses the target light bias so it matches editor shadow bakes.
+        // Verifies runtime shadow baking uses the target light bias so it matches editor shadow bakes.
         [Test]
         public void RuntimeShadowBakerUsesTargetBakeBias() {
             LightVolumeManager manager = CreateManager("Runtime Shadow Bias Manager", false);
@@ -1084,7 +1112,7 @@ namespace VRCLightVolumes.Tests {
             Assert.That((float)bakeBiasField.GetValue(baker), Is.EqualTo(0.125f).Within(Epsilon));
         }
 
-        // Verifies realtime EVSM baking reads camera and blur settings from the target light instance.
+        // Verifies runtime shadow baking reads camera and blur settings from the target light instance.
         [Test]
         public void RuntimeShadowBakerUsesTargetBakeSettings() {
             LightVolumeManager manager = CreateManager("Runtime Shadow Settings Manager", false);
@@ -1210,7 +1238,7 @@ namespace VRCLightVolumes.Tests {
             Assert.That(spot.ShadowMapTextureHasDepthSlices, Is.False);
         }
 
-        // Verifies realtime EVSM baking reports metadata changes so manager globals can refresh after the first bake.
+        // Verifies runtime shadow baking reports metadata changes so manager globals can refresh after the first bake.
         [Test]
         public void RuntimeShadowBakerDetectsRealtimeShadowMetadataChanges() {
             LightVolumeManager manager = CreateManager("Runtime Shadow Metadata Manager", false);
@@ -2076,6 +2104,8 @@ namespace VRCLightVolumes.Tests {
             Shader.SetGlobalFloat(_pointLightCubeCountID, 0);
             Shader.SetGlobalFloat(_pointLightShadowCubeCountID, 0);
             Shader.SetGlobalFloat(_pointLightShadowCountID, 0);
+            Shader.SetGlobalFloat(_pointLightShadowBleedReductionID, 0.2f);
+            Shader.SetGlobalFloat(_pointLightShadowMinVarianceID, LightVolumeManager.ShadowMinVariance);
             Shader.SetGlobalFloat(_lightBrightnessCutoffID, 0);
         }
 

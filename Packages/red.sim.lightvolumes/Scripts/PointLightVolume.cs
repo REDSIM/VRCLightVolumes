@@ -66,7 +66,7 @@ namespace VRCLightVolumes {
         [Tooltip("Forces spotlight shadows to bake and store as a cubemap even when the spot angle is below 180 degrees.")]
         public bool ForceCubemapShadows = false;
 
-        //G enerated EVSM Texture2DArray, cubemap, RenderTexture, CustomRenderTexture or Material used by the shared shadow texture array.
+        // Generated shadow Texture2DArray, cubemap, RenderTexture, CustomRenderTexture or Material used by the shared shadow texture array.
         [HideInInspector] public UnityEngine.Object ShadowMap = null;
 
         public PointLightVolumeInstance PointLightVolumeInstance;
@@ -521,7 +521,7 @@ namespace VRCLightVolumes {
             float nearClip = GetShadowNearClip();
             if (nearClip >= farClip) nearClip = farClip * 0.5f;
             int resolution = LightVolumeSetup != null ? (int)LightVolumeSetup.ShadowResolution : 128;
-            TextureFormat format = LightVolumeSetup != null ? LightVolumeSetup.GetShadowMapBakeFormat() : TextureFormat.RGBAFloat;
+            TextureFormat format = LightVolumeSetup != null ? LightVolumeSetup.GetShadowMapBakeFormat() : TextureFormat.RGFloat;
             UnityEngine.Object shadowTexture = ShouldBakeCubemapShadows() ? (UnityEngine.Object)PointLightShadowBaker.BakeShadowMap(this, resolution, farClip, format, Blur, ContactHardening, infoString) : PointLightShadowBaker.BakeSingleShadowMap(this, resolution, farClip, format, Blur, ContactHardening, infoString);
             if (shadowTexture == null) return false;
 

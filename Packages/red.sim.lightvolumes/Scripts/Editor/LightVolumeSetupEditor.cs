@@ -21,6 +21,7 @@ namespace VRCLightVolumes {
 
         private bool _isMultipleInstancesError = false;
         private static readonly string[] _bakeryBitmaskLabels = new string[] { "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "29", "30" };
+        private const double BundleCompressionEstimate = 0.315d;
 
         private void OnEnable() {
 
@@ -253,6 +254,7 @@ namespace VRCLightVolumes {
 
             ulong atlasVoxelCount = 0;
             ulong vramBytes = 0;
+            ulong bundleRawBytes = 0;
             if (_lightVolumeSetup.LightVolumeManager != null) {
                 LightVolumeManager manager = _lightVolumeSetup.LightVolumeManager;
                 Texture atlasBase = GetSerializedTexture(manager, "LightVolumeAtlasBase");
@@ -260,24 +262,29 @@ namespace VRCLightVolumes {
                 Texture3D atlas3D = atlas as Texture3D;
                 if (atlas3D != null) {
                     atlasVoxelCount = (ulong)atlas3D.width * (ulong)atlas3D.height * (ulong)atlas3D.depth;
-                    vramBytes += atlasVoxelCount * 8;
+                    ulong atlasBytes = atlasVoxelCount * 8;
+                    vramBytes += atlasBytes;
+                    bundleRawBytes += atlasBytes;
                 }
 
                 RenderTexture atlasRT = atlas as RenderTexture;
                 if (atlasRT != null) vramBytes += (ulong)atlasRT.width * (ulong)atlasRT.height * (ulong)Mathf.Max(atlasRT.volumeDepth, 1) * 8;
 
                 RenderTexture customTexturesRT = GetSerializedTexture(manager, "CustomTextures") as RenderTexture;
-                if (customTexturesRT != null) vramBytes += (ulong)customTexturesRT.width * (ulong)customTexturesRT.height * (ulong)Mathf.Max(customTexturesRT.volumeDepth, 1) * 8;
+                if (customTexturesRT != null) vramBytes += GetRenderTextureArrayBytes(customTexturesRT, 8UL);
 
                 RenderTexture shadowTexturesRT = GetSerializedTexture(manager, "ShadowTextures") as RenderTexture;
                 if (shadowTexturesRT != null) {
-                    ulong shadowBytesPerPixel = shadowTexturesRT.format == RenderTextureFormat.ARGBHalf ? 8UL : 16UL;
-                    vramBytes += (ulong)shadowTexturesRT.width * (ulong)shadowTexturesRT.height * (ulong)Mathf.Max(shadowTexturesRT.volumeDepth, 1) * shadowBytesPerPixel * 4 / 3;
+                    ulong shadowBytesPerPixel = _lightVolumeSetup.ShadowTextureFormat == LightVolumeSetup.ShadowTexturePrecision.Half ? 4UL : 8UL;
+                    vramBytes += GetRenderTextureArrayBytes(shadowTexturesRT, shadowBytesPerPixel);
                 }
             }
+            ulong bakedShadowTextureBytes = GetBakedShadowTextureBytes();
+            vramBytes += bakedShadowTextureBytes;
+            bundleRawBytes += bakedShadowTextureBytes;
 
-            GUILayout.Label(new GUIContent($"Data size in VRAM: {SizeInVRAM(vramBytes)} MB", "Includes only the Light Volume 3D atlas, cookie texture arrays and shadow map arrays."));
-            GUILayout.Label(new GUIContent($"Data size in bundle: {SizeInBundle(atlasVoxelCount)} MB (Approximately)", "Includes only the Light Volume 3D atlas."));
+            GUILayout.Label(new GUIContent($"Data size in VRAM: {SizeInVRAM(vramBytes)} MB", "Includes only the Light Volume 3D atlas, cookie texture arrays, baked VSM shadow map assets and shadow map arrays."));
+            GUILayout.Label(new GUIContent($"Data size in bundle: {SizeInBundle(bundleRawBytes)} MB (Approximately)", "Includes only the Light Volume 3D atlas and baked VSM shadow map assets."));
 
             GUILayout.Space(10);
 
@@ -286,6 +293,7 @@ namespace VRCLightVolumes {
             hiddenFields.Add("BrightnessCutoff");
             hiddenFields.Add("ShadowResolution");
             hiddenFields.Add("ShadowTextureFormat");
+            hiddenFields.Add("ShadowBleedReduction");
             hiddenFields.Add("AtlasPostProcessors");
             int plvCount = _lightVolumeSetup.PointLightVolumes.Count;
             bool isShadowBatchBake = false;
@@ -311,6 +319,7 @@ namespace VRCLightVolumes {
                 EditorGUILayout.PropertyField(serializedObject.FindProperty("CookieResolution"));
                 EditorGUILayout.PropertyField(serializedObject.FindProperty("ShadowResolution"));
                 EditorGUILayout.PropertyField(serializedObject.FindProperty("ShadowTextureFormat"));
+                EditorGUILayout.PropertyField(serializedObject.FindProperty("ShadowBleedReduction"));
                 EditorGUILayout.PropertyField(serializedObject.FindProperty("BrightnessCutoff"));
             }
 
@@ -371,9 +380,38 @@ namespace VRCLightVolumes {
         }
 
         // Approximate size in Asset bundle.
-        private string SizeInBundle(ulong atlasVoxelCount) {
-            double mb = atlasVoxelCount * 8 * 0.315f / (double)(1024 * 1024);
+        private string SizeInBundle(ulong rawByteCount) {
+            double mb = rawByteCount * BundleCompressionEstimate / (double)(1024 * 1024);
             return mb.ToString("0.00");
+        }
+
+        // Returns the estimated runtime memory for a render texture array.
+        private static ulong GetRenderTextureArrayBytes(RenderTexture texture, ulong bytesPerPixel) {
+            ulong bytes = (ulong)texture.width * (ulong)texture.height * (ulong)Mathf.Max(texture.volumeDepth, 1) * bytesPerPixel;
+            return texture.useMipMap ? bytes * 4UL / 3UL : bytes;
+        }
+
+        // Returns the estimated raw byte size of unique baked VSM shadow texture assets included in the bundle.
+        private ulong GetBakedShadowTextureBytes() {
+            ulong bytes = 0;
+            ulong bytesPerPixel = _lightVolumeSetup.ShadowTextureFormat == LightVolumeSetup.ShadowTexturePrecision.Half ? 4UL : 8UL;
+            HashSet<Texture> countedTextures = new HashSet<Texture>();
+            for (int i = 0; i < _lightVolumeSetup.PointLightVolumes.Count; i++) {
+                PointLightVolume pointLightVolume = _lightVolumeSetup.PointLightVolumes[i];
+                if (pointLightVolume == null || !pointLightVolume.Shadows) continue;
+                Texture texture = pointLightVolume.GetShadowMapTexture();
+                if (texture == null || texture is RenderTexture || !countedTextures.Add(texture)) continue;
+                bytes += GetShadowTextureTexelCount(texture) * bytesPerPixel;
+            }
+            return bytes;
+        }
+
+        // Returns the texel count for baked shadow texture asset shapes.
+        private static ulong GetShadowTextureTexelCount(Texture texture) {
+            if (texture is Texture2DArray textureArray) return (ulong)textureArray.width * (ulong)textureArray.height * (ulong)textureArray.depth;
+            if (texture is Cubemap) return (ulong)texture.width * (ulong)texture.height * 6UL;
+            if (texture is Texture2D) return (ulong)texture.width * (ulong)texture.height;
+            return 0UL;
         }
 
         // Reads texture references without touching UdonSharp proxy fields that may be stale after 2.x scene load.

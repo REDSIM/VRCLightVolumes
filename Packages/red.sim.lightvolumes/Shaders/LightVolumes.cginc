@@ -61,6 +61,11 @@ uniform float _UdonPointLightVolumeShadowCubeCount;
 // Total shadow maps count in the shadow texture array
 uniform float _UdonPointLightVolumeShadowCount;
 
+// VSM light bleed reduction amount. 0 disables reduction, 1 is strongest.
+uniform float _UdonPointLightVolumeShadowBleedReduction;
+// VSM minimum variance clamp.
+uniform float _UdonPointLightVolumeShadowMinVariance;
+
 // For point light: XYZ = Position, W = Inverse squared range
 // For spot light: XYZ = Position, W = Inverse squared range, negated
 // For area light: XYZ = Position, W = Width
@@ -82,9 +87,9 @@ uniform float4 _UdonPointLightVolumeDirection[VRCLV_MAX_LIGHTS_COUNT];
 //   If parametric: X stores 0
 //   If uses custom lut: X stores LUT ID with positive sign
 //   If uses custom texture: X stores texture ID with negative sign
-// Y = EVSM shadow map ID when _UdonLightVolumeOcclusionCount is 0. Fraction stores inverted shading strength. Abs >= 10000 disables shading.
+// Y = shadow map ID when _UdonLightVolumeOcclusionCount is 0. Fraction stores inverted shading strength. Abs >= 10000 disables shading.
 // Z = Squared Culling Range. Just a precalculated culling range to not recalculate it in shader.
-// W = EVSM shadow far clip used to normalize shadow depth. 0 for lights without shadows.
+// W = shadow far clip used to normalize shadow depth. 0 for lights without shadows.
 uniform float4 _UdonPointLightVolumeCustomID[VRCLV_MAX_LIGHTS_COUNT];
 
 // For World Space Shadows:
@@ -138,9 +143,6 @@ uniform SamplerState sampler_UdonPointLightVolumeShadowTexture;
 #define LV_PI 3.141592653589793f
 #define LV_INV_PI 0.3183098861837907f
 #define LV_PI2 6.283185307179586f
-#define LV_EVSM_POSITIVE_EXPONENT 5.54f
-#define LV_EVSM_NEGATIVE_EXPONENT 5.0f
-#define LV_EVSM_MIN_VARIANCE 0.00001f
 
 // Smoothstep to 0, 1 but cheaper
 float LV_Smoothstep01(float x) {
@@ -153,14 +155,6 @@ float LV_FastLog2Positive(float x) {
     float mantissa = frexp(max(x, 1.0), exponent);
     float y = mantissa + mantissa - 1.0;
     return exponent - 1.0 + y * (1.3465554 - 0.3465554 * y);
-}
-
-// Approximate exp for EVSM and shadow filtering ranges. Uses a short polynomial on x / 4 and squares twice.
-float LV_FastExp(float x) {
-    x *= 0.25f;
-    float y = 1.0f + x * (1.0f + x * (0.5f + x * (0.16666667f + x * (0.04166667f + x * (0.00833333f + x * 0.00138889f)))));
-    y *= y;
-    return y * y;
 }
 
 // Rotates vector by Quaternion
@@ -253,24 +247,27 @@ float4 LV_SampleShadowMapArrayFace(uint id, uint face, float2 uv) {
     return LV_SAMPLE_SHADOW(float3(uv, id * 6 + face));
 }
 
-// Applies exponential warp to normalized shadow depth
-float2 LV_EVSMWarpDepth(float depth) {
-    depth = depth * 2.0f - 1.0f;
-    return float2(LV_FastExp(LV_EVSM_POSITIVE_EXPONENT * depth), -LV_FastExp(-LV_EVSM_NEGATIVE_EXPONENT * depth));
+// Remaps visibility to suppress VSM-style light bleeding.
+float LV_ReduceLightBleeding(float visibility, float amount) {
+    amount = saturate(amount);
+    float edge = min(amount, 0.999f);
+    float t = saturate((visibility - edge) * rcp(1.0f - edge));
+    return LV_Smoothstep01(t);
 }
 
-// Evaluates the one-tailed Chebyshev upper bound used by VSM and EVSM
-float LV_EVSMChebyshevUpperBound(float2 moments, float mean) {
-    float variance = max(moments.y - moments.x * moments.x, LV_EVSM_MIN_VARIANCE);
+// Evaluates the one-tailed Chebyshev upper bound used by VSM.
+float LV_VSMChebyshevUpperBound(float2 moments, float mean, float minVariance, float bleedReduction) {
+    float variance = max(moments.y - moments.x * moments.x, minVariance);
     float d = mean - moments.x;
     float pMax = variance * rcp(variance + d * d);
+    pMax = LV_ReduceLightBleeding(pMax, bleedReduction);
     return mean <= moments.x ? 1.0f : pMax;
 }
 
-// Evaluates EVSM filtered visibility from sampled shadow moments
-float LV_ShadowEVSM(float4 moments, float distanceToShadowCenter, float farClip) {
-    float2 warpedDepth = LV_EVSMWarpDepth(saturate(distanceToShadowCenter * rcp(max(farClip, 0.0001f))));
-    return min(LV_EVSMChebyshevUpperBound(moments.xz, warpedDepth.x), LV_EVSMChebyshevUpperBound(moments.yw, warpedDepth.y));
+// Evaluates filtered VSM visibility.
+float LV_ShadowMoments(float2 moments, float distanceToShadowCenter, float farClip) {
+    float normalizedDepth = saturate(distanceToShadowCenter * rcp(max(farClip, 0.0001f)));
+    return LV_VSMChebyshevUpperBound(moments, normalizedDepth, max(_UdonPointLightVolumeShadowMinVariance, 0.0f), saturate(_UdonPointLightVolumeShadowBleedReduction));
 }
 
 // Samples the per-light shadow map and returns attenuation
@@ -299,7 +296,7 @@ float LV_PointLightShadow(uint id, float3 worldPos, float3 dirN, float sqDistanc
         [branch] if (localDir.z > 0) { // Only sample receivers in front of the baked spot shadow camera
             float2 uv = localDir.xy * rcp(localDir.z * max(shadowReprojectionData.w, 0.0001f));
             [branch] if (max(abs(uv.x), abs(uv.y)) <= 1) { // Only sample inside the projected single shadow texture
-                attenuation = LV_ShadowEVSM(LV_SAMPLE_SHADOW(float3(uv * 0.5 + 0.5, shadowId + shadowCubeCount * 5)), distanceToShadowCenter, shadowFarClip);
+                attenuation = LV_ShadowMoments(LV_SAMPLE_SHADOW(float3(uv * 0.5 + 0.5, shadowId + shadowCubeCount * 5)).xy, distanceToShadowCenter, shadowFarClip);
             }
         }
 
@@ -320,7 +317,7 @@ float LV_PointLightShadow(uint id, float3 worldPos, float3 dirN, float sqDistanc
             }
         }
         float3 uvFace = LV_CubemapUvFace(sampleDir);
-        attenuation = LV_ShadowEVSM(LV_SampleShadowMapArrayFace(shadowId, (uint)uvFace.z, uvFace.xy), distanceToShadowCenter, shadowFarClip);
+        attenuation = LV_ShadowMoments(LV_SampleShadowMapArrayFace(shadowId, (uint)uvFace.z, uvFace.xy).xy, distanceToShadowCenter, shadowFarClip);
 
     }
     return attenuation;

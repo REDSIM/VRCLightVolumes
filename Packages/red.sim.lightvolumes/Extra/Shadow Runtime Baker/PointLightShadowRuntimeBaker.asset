@@ -281,7 +281,7 @@ MonoBehaviour:
       Data: 17|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Resolution used by the camera depth target and local EVSM texture array.
+      Data: Resolution used by the camera depth target and local shadow texture array.
     - Name: 
       Entry: 8
       Data: 

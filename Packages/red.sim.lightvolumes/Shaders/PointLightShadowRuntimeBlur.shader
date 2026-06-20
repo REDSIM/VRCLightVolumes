@@ -33,23 +33,14 @@ Shader "Hidden/VRCLV/PointLightShadowRuntimeBlur" {
         #if !defined(VRCLV_RUNTIME_SHADOW_BLUR_UNIFORM)
             float _DepthBaseSlice;
             float _BlurDepth;
-            #define VRCLV_EVSM_NEGATIVE_EXPONENT 5.0f
         #endif
 
-        // Approximate exp for blur weights and EVSM-related ranges.
+        // Approximate exp for blur weights.
         float VRCLV_FastExp(float x) {
             x *= 0.25f;
             float y = 1.0f + x * (1.0f + x * (0.5f + x * (0.16666667f + x * (0.04166667f + x * (0.00833333f + x * 0.00138889f)))));
             y *= y;
             return y * y;
-        }
-
-        // Approximate natural log for positive values using frexp and a quadratic log2 mantissa fit.
-        float VRCLV_FastLogPositive(float x) {
-            float exponent = 0;
-            float mantissa = frexp(max(x, 0.000001f), exponent);
-            float y = mantissa + mantissa - 1.0f;
-            return (exponent - 1.0f + y * (1.3465554f - 0.3465554f * y)) * 0.69314718056f;
         }
 
         #if defined(VRCLV_EDITOR_SHADOW_BLUR_QUALITY) || defined(VRCLV_RUNTIME_SHADOW_BLUR_SPHERICAL)
@@ -78,59 +69,49 @@ Shader "Hidden/VRCLV/PointLightShadowRuntimeBlur" {
 
         #if defined(VRCLV_SHADOW_BLUR_SPHERICAL) || !defined(VRCLV_RUNTIME_SHADOW_BLUR_UNIFORM)
             #if defined(VRCLV_EDITOR_SHADOW_BLUR_QUALITY)
-                #define VRCLV_CONTRAST_RING_COUNT 32
-                #define VRCLV_CONTRAST_DIRECTION_COUNT 16
+                #define VRCLV_CONTRAST_SAMPLE_COUNT 512
                 #define VRCLV_CONTRAST_INV_SAMPLE_COUNT 0.001953125f
             #elif defined(VRCLV_RUNTIME_SHADOW_BLUR_SPHERICAL)
                 #if defined(VRCLV_RUNTIME_SHADOW_QUALITY_HIGH)
-                    #define VRCLV_CONTRAST_RING_COUNT 3
-                    #define VRCLV_CONTRAST_DIRECTION_COUNT 16
+                    #define VRCLV_CONTRAST_SAMPLE_COUNT 48
                     #define VRCLV_CONTRAST_INV_SAMPLE_COUNT 0.0208333333f
                 #elif defined(VRCLV_RUNTIME_SHADOW_QUALITY_LOW)
-                    #define VRCLV_CONTRAST_RING_COUNT 1
-                    #define VRCLV_CONTRAST_DIRECTION_COUNT 16
+                    #define VRCLV_CONTRAST_SAMPLE_COUNT 16
                     #define VRCLV_CONTRAST_INV_SAMPLE_COUNT 0.0625f
                 #else
-                    #define VRCLV_CONTRAST_RING_COUNT 2
-                    #define VRCLV_CONTRAST_DIRECTION_COUNT 16
+                    #define VRCLV_CONTRAST_SAMPLE_COUNT 32
                     #define VRCLV_CONTRAST_INV_SAMPLE_COUNT 0.03125f
                 #endif
             #elif defined(VRCLV_RUNTIME_SHADOW_QUALITY_HIGH)
-                #define VRCLV_CONTRAST_RING_COUNT 2
-                #define VRCLV_CONTRAST_DIRECTION_COUNT 8
+                #define VRCLV_CONTRAST_SAMPLE_COUNT 16
                 #define VRCLV_CONTRAST_INV_SAMPLE_COUNT 0.0625f
             #elif defined(VRCLV_RUNTIME_SHADOW_QUALITY_LOW)
-                #define VRCLV_CONTRAST_RING_COUNT 1
-                #define VRCLV_CONTRAST_DIRECTION_COUNT 4
+                #define VRCLV_CONTRAST_SAMPLE_COUNT 4
                 #define VRCLV_CONTRAST_INV_SAMPLE_COUNT 0.25f
             #else
-                #define VRCLV_CONTRAST_RING_COUNT 2
-                #define VRCLV_CONTRAST_DIRECTION_COUNT 4
+                #define VRCLV_CONTRAST_SAMPLE_COUNT 8
                 #define VRCLV_CONTRAST_INV_SAMPLE_COUNT 0.125f
             #endif
-            #if defined(VRCLV_EDITOR_SHADOW_BLUR_QUALITY)
-                #define VRCLV_CONTRAST_MAX_RING_RADIUS 1.0f
-            #elif VRCLV_CONTRAST_RING_COUNT > 1
-                #define VRCLV_CONTRAST_MAX_RING_RADIUS 0.8660254f
-            #else
-                #define VRCLV_CONTRAST_MAX_RING_RADIUS 0.5f
-            #endif
+            #define VRCLV_CONTRAST_MAX_RADIUS 1.0f
         #endif
 
         #if defined(VRCLV_SHADOW_BLUR_SPHERICAL)
-            #define VRCLV_SPHERICAL_BLUR_DIRECTION_COUNT 16
             #if defined(VRCLV_EDITOR_SHADOW_BLUR_QUALITY)
-                #define VRCLV_SPHERICAL_BLUR_RING_COUNT 128
                 #define VRCLV_SPHERICAL_BLUR_RADIUS_SCALE 1.0547f
+                #define VRCLV_SPHERICAL_BLUR_SAMPLE_COUNT 2048
+                #define VRCLV_SPHERICAL_BLUR_INV_SAMPLE_COUNT 0.00048828125f
             #elif defined(VRCLV_RUNTIME_SHADOW_QUALITY_HIGH)
-                #define VRCLV_SPHERICAL_BLUR_RING_COUNT 8
                 #define VRCLV_SPHERICAL_BLUR_RADIUS_SCALE 1.0475f
+                #define VRCLV_SPHERICAL_BLUR_SAMPLE_COUNT 128
+                #define VRCLV_SPHERICAL_BLUR_INV_SAMPLE_COUNT 0.0078125f
             #elif defined(VRCLV_RUNTIME_SHADOW_QUALITY_LOW)
-                #define VRCLV_SPHERICAL_BLUR_RING_COUNT 2
                 #define VRCLV_SPHERICAL_BLUR_RADIUS_SCALE 1.0000f
+                #define VRCLV_SPHERICAL_BLUR_SAMPLE_COUNT 32
+                #define VRCLV_SPHERICAL_BLUR_INV_SAMPLE_COUNT 0.03125f
             #else
-                #define VRCLV_SPHERICAL_BLUR_RING_COUNT 4
                 #define VRCLV_SPHERICAL_BLUR_RADIUS_SCALE 1.0313f
+                #define VRCLV_SPHERICAL_BLUR_SAMPLE_COUNT 64
+                #define VRCLV_SPHERICAL_BLUR_INV_SAMPLE_COUNT 0.015625f
             #endif
         #endif
 
@@ -152,107 +133,23 @@ Shader "Hidden/VRCLV/PointLightShadowRuntimeBlur" {
         }
 
         #if defined(VRCLV_SHADOW_BLUR_SPHERICAL) || !defined(VRCLV_RUNTIME_SHADOW_BLUR_UNIFORM)
-            static const float contrastRingRadii[4] = {
-                0.25f, 0.5f, 0.75f, 1.0f
+            #define VRCLV_DISK_KERNEL_DIRECTION_COUNT 128
+            // Direction LUT is sampled with a near-golden-angle stride; radius is derived from the active sample count.
+            static const float2 diskKernelDirections[128] = {
+                float2( 1.0000f,  0.0000f), float2( 0.9988f,  0.0491f), float2( 0.9952f,  0.0980f), float2( 0.9892f,  0.1467f), float2( 0.9808f,  0.1951f), float2( 0.9700f,  0.2430f), float2( 0.9569f,  0.2903f), float2( 0.9415f,  0.3369f), float2( 0.9239f,  0.3827f), float2( 0.9040f,  0.4276f), float2( 0.8819f,  0.4714f), float2( 0.8577f,  0.5141f), float2( 0.8315f,  0.5556f), float2( 0.8032f,  0.5957f), float2( 0.7730f,  0.6344f), float2( 0.7410f,  0.6716f),
+                float2( 0.7071f,  0.7071f), float2( 0.6716f,  0.7410f), float2( 0.6344f,  0.7730f), float2( 0.5957f,  0.8032f), float2( 0.5556f,  0.8315f), float2( 0.5141f,  0.8577f), float2( 0.4714f,  0.8819f), float2( 0.4276f,  0.9040f), float2( 0.3827f,  0.9239f), float2( 0.3369f,  0.9415f), float2( 0.2903f,  0.9569f), float2( 0.2430f,  0.9700f), float2( 0.1951f,  0.9808f), float2( 0.1467f,  0.9892f), float2( 0.0980f,  0.9952f), float2( 0.0491f,  0.9988f),
+                float2( 0.0000f,  1.0000f), float2(-0.0491f,  0.9988f), float2(-0.0980f,  0.9952f), float2(-0.1467f,  0.9892f), float2(-0.1951f,  0.9808f), float2(-0.2430f,  0.9700f), float2(-0.2903f,  0.9569f), float2(-0.3369f,  0.9415f), float2(-0.3827f,  0.9239f), float2(-0.4276f,  0.9040f), float2(-0.4714f,  0.8819f), float2(-0.5141f,  0.8577f), float2(-0.5556f,  0.8315f), float2(-0.5957f,  0.8032f), float2(-0.6344f,  0.7730f), float2(-0.6716f,  0.7410f),
+                float2(-0.7071f,  0.7071f), float2(-0.7410f,  0.6716f), float2(-0.7730f,  0.6344f), float2(-0.8032f,  0.5957f), float2(-0.8315f,  0.5556f), float2(-0.8577f,  0.5141f), float2(-0.8819f,  0.4714f), float2(-0.9040f,  0.4276f), float2(-0.9239f,  0.3827f), float2(-0.9415f,  0.3369f), float2(-0.9569f,  0.2903f), float2(-0.9700f,  0.2430f), float2(-0.9808f,  0.1951f), float2(-0.9892f,  0.1467f), float2(-0.9952f,  0.0980f), float2(-0.9988f,  0.0491f),
+                float2(-1.0000f,  0.0000f), float2(-0.9988f, -0.0491f), float2(-0.9952f, -0.0980f), float2(-0.9892f, -0.1467f), float2(-0.9808f, -0.1951f), float2(-0.9700f, -0.2430f), float2(-0.9569f, -0.2903f), float2(-0.9415f, -0.3369f), float2(-0.9239f, -0.3827f), float2(-0.9040f, -0.4276f), float2(-0.8819f, -0.4714f), float2(-0.8577f, -0.5141f), float2(-0.8315f, -0.5556f), float2(-0.8032f, -0.5957f), float2(-0.7730f, -0.6344f), float2(-0.7410f, -0.6716f),
+                float2(-0.7071f, -0.7071f), float2(-0.6716f, -0.7410f), float2(-0.6344f, -0.7730f), float2(-0.5957f, -0.8032f), float2(-0.5556f, -0.8315f), float2(-0.5141f, -0.8577f), float2(-0.4714f, -0.8819f), float2(-0.4276f, -0.9040f), float2(-0.3827f, -0.9239f), float2(-0.3369f, -0.9415f), float2(-0.2903f, -0.9569f), float2(-0.2430f, -0.9700f), float2(-0.1951f, -0.9808f), float2(-0.1467f, -0.9892f), float2(-0.0980f, -0.9952f), float2(-0.0491f, -0.9988f),
+                float2( 0.0000f, -1.0000f), float2( 0.0491f, -0.9988f), float2( 0.0980f, -0.9952f), float2( 0.1467f, -0.9892f), float2( 0.1951f, -0.9808f), float2( 0.2430f, -0.9700f), float2( 0.2903f, -0.9569f), float2( 0.3369f, -0.9415f), float2( 0.3827f, -0.9239f), float2( 0.4276f, -0.9040f), float2( 0.4714f, -0.8819f), float2( 0.5141f, -0.8577f), float2( 0.5556f, -0.8315f), float2( 0.5957f, -0.8032f), float2( 0.6344f, -0.7730f), float2( 0.6716f, -0.7410f),
+                float2( 0.7071f, -0.7071f), float2( 0.7410f, -0.6716f), float2( 0.7730f, -0.6344f), float2( 0.8032f, -0.5957f), float2( 0.8315f, -0.5556f), float2( 0.8577f, -0.5141f), float2( 0.8819f, -0.4714f), float2( 0.9040f, -0.4276f), float2( 0.9239f, -0.3827f), float2( 0.9415f, -0.3369f), float2( 0.9569f, -0.2903f), float2( 0.9700f, -0.2430f), float2( 0.9808f, -0.1951f), float2( 0.9892f, -0.1467f), float2( 0.9952f, -0.0980f), float2( 0.9988f, -0.0491f)
             };
 
-            static const float2 contrastRingDirections[64] = {
-                float2( 1.0000f,  0.0000f), float2( 0.9239f,  0.3827f), float2( 0.7071f,  0.7071f), float2( 0.3827f,  0.9239f), float2( 0.0000f,  1.0000f), float2(-0.3827f,  0.9239f), float2(-0.7071f,  0.7071f), float2(-0.9239f,  0.3827f), float2(-1.0000f,  0.0000f), float2(-0.9239f, -0.3827f), float2(-0.7071f, -0.7071f), float2(-0.3827f, -0.9239f), float2( 0.0000f, -1.0000f), float2( 0.3827f, -0.9239f), float2( 0.7071f, -0.7071f), float2( 0.9239f, -0.3827f),
-                float2( 0.9808f,  0.1951f), float2( 0.8315f,  0.5556f), float2( 0.5556f,  0.8315f), float2( 0.1951f,  0.9808f), float2(-0.1951f,  0.9808f), float2(-0.5556f,  0.8315f), float2(-0.8315f,  0.5556f), float2(-0.9808f,  0.1951f), float2(-0.9808f, -0.1951f), float2(-0.8315f, -0.5556f), float2(-0.5556f, -0.8315f), float2(-0.1951f, -0.9808f), float2( 0.1951f, -0.9808f), float2( 0.5556f, -0.8315f), float2( 0.8315f, -0.5556f), float2( 0.9808f, -0.1951f),
-                float2( 0.9239f,  0.3827f), float2( 0.7071f,  0.7071f), float2( 0.3827f,  0.9239f), float2( 0.0000f,  1.0000f), float2(-0.3827f,  0.9239f), float2(-0.7071f,  0.7071f), float2(-0.9239f,  0.3827f), float2(-1.0000f,  0.0000f), float2(-0.9239f, -0.3827f), float2(-0.7071f, -0.7071f), float2(-0.3827f, -0.9239f), float2( 0.0000f, -1.0000f), float2( 0.3827f, -0.9239f), float2( 0.7071f, -0.7071f), float2( 0.9239f, -0.3827f), float2( 1.0000f,  0.0000f),
-                float2( 0.8315f,  0.5556f), float2( 0.5556f,  0.8315f), float2( 0.1951f,  0.9808f), float2(-0.1951f,  0.9808f), float2(-0.5556f,  0.8315f), float2(-0.8315f,  0.5556f), float2(-0.9808f,  0.1951f), float2(-0.9808f, -0.1951f), float2(-0.8315f, -0.5556f), float2(-0.5556f, -0.8315f), float2(-0.1951f, -0.9808f), float2( 0.1951f, -0.9808f), float2( 0.5556f, -0.8315f), float2( 0.8315f, -0.5556f), float2( 0.9808f, -0.1951f), float2( 0.9808f,  0.1951f)
-            };
-
-            float ContrastRingRadius(int ringIndex) {
-                #if defined(VRCLV_EDITOR_SHADOW_BLUR_QUALITY)
-                    return (ringIndex + 1.0f) * (1.0f / VRCLV_CONTRAST_RING_COUNT);
-                #else
-                    return contrastRingRadii[ringIndex];
-                #endif
-            }
-
-            float2 ContrastRingDirection(int ringIndex, int sampleIndex) {
-                #if defined(VRCLV_EDITOR_SHADOW_BLUR_QUALITY)
-                    return contrastRingDirections[(int)((((uint)ringIndex) & 3u) * 16u + (uint)sampleIndex)];
-                #else
-                    return contrastRingDirections[ringIndex * 16 + sampleIndex];
-                #endif
-            }
-        #endif
-
-        #if defined(VRCLV_SHADOW_BLUR_SPHERICAL)
-            #if defined(VRCLV_EDITOR_SHADOW_BLUR_QUALITY)
-                float SphericalBlurRingRadius(int ringIndex) {
-                    return (ringIndex + 1.0f) * (1.0f / VRCLV_SPHERICAL_BLUR_RING_COUNT);
-                }
-
-                float SphericalBlurRingWeight(int ringIndex) {
-                    float ringRadius = SphericalBlurRingRadius(ringIndex);
-                    return ringRadius * VRCLV_FastExp(-2.0f * ringRadius * ringRadius);
-                }
-            #elif defined(VRCLV_RUNTIME_SHADOW_QUALITY_HIGH)
-                static const float sphericalBlurRingRadii[8] = {
-                    0.1250000000f, 0.2500000000f, 0.3750000000f, 0.5000000000f,
-                    0.6250000000f, 0.7500000000f, 0.8750000000f, 1.0000000000f
-                };
-
-                static const float sphericalBlurRingWeights[8] = {
-                    0.1211541543f, 0.2206242256f, 0.2830648507f, 0.3032653299f,
-                    0.2861458511f, 0.2434893505f, 0.1892320210f, 0.1353352832f
-                };
-            #elif defined(VRCLV_RUNTIME_SHADOW_QUALITY_LOW)
-                static const float sphericalBlurRingRadii[2] = {
-                    0.5000000000f, 1.0000000000f
-                };
-
-                static const float sphericalBlurRingWeights[2] = {
-                    0.3032653299f, 0.1353352832f
-                };
-            #else
-                static const float sphericalBlurRingRadii[4] = {
-                    0.2500000000f, 0.5000000000f, 0.7500000000f, 1.0000000000f
-                };
-
-                static const float sphericalBlurRingWeights[4] = {
-                    0.2206242256f, 0.3032653299f, 0.2434893505f, 0.1353352832f
-                };
-            #endif
-
-            #if !defined(VRCLV_EDITOR_SHADOW_BLUR_QUALITY)
-                float SphericalBlurRingRadius(int ringIndex) {
-                    return sphericalBlurRingRadii[ringIndex];
-                }
-
-                float SphericalBlurRingWeight(int ringIndex) {
-                    return sphericalBlurRingWeights[ringIndex];
-                }
-            #endif
-
-            static const float2 sphericalBlurDirections[256] = {
-                float2( 1.0000f,  0.0000f), float2( 0.9239f,  0.3827f), float2( 0.7071f,  0.7071f), float2( 0.3827f,  0.9239f), float2( 0.0000f,  1.0000f), float2(-0.3827f,  0.9239f), float2(-0.7071f,  0.7071f), float2(-0.9239f,  0.3827f), float2(-1.0000f,  0.0000f), float2(-0.9239f, -0.3827f), float2(-0.7071f, -0.7071f), float2(-0.3827f, -0.9239f), float2( 0.0000f, -1.0000f), float2( 0.3827f, -0.9239f), float2( 0.7071f, -0.7071f), float2( 0.9239f, -0.3827f),
-                float2( 0.9808f,  0.1951f), float2( 0.8315f,  0.5556f), float2( 0.5556f,  0.8315f), float2( 0.1951f,  0.9808f), float2(-0.1951f,  0.9808f), float2(-0.5556f,  0.8315f), float2(-0.8315f,  0.5556f), float2(-0.9808f,  0.1951f), float2(-0.9808f, -0.1951f), float2(-0.8315f, -0.5556f), float2(-0.5556f, -0.8315f), float2(-0.1951f, -0.9808f), float2( 0.1951f, -0.9808f), float2( 0.5556f, -0.8315f), float2( 0.8315f, -0.5556f), float2( 0.9808f, -0.1951f),
-                float2( 0.9239f,  0.3827f), float2( 0.7071f,  0.7071f), float2( 0.3827f,  0.9239f), float2( 0.0000f,  1.0000f), float2(-0.3827f,  0.9239f), float2(-0.7071f,  0.7071f), float2(-0.9239f,  0.3827f), float2(-1.0000f,  0.0000f), float2(-0.9239f, -0.3827f), float2(-0.7071f, -0.7071f), float2(-0.3827f, -0.9239f), float2( 0.0000f, -1.0000f), float2( 0.3827f, -0.9239f), float2( 0.7071f, -0.7071f), float2( 0.9239f, -0.3827f), float2( 1.0000f,  0.0000f),
-                float2( 0.8315f,  0.5556f), float2( 0.5556f,  0.8315f), float2( 0.1951f,  0.9808f), float2(-0.1951f,  0.9808f), float2(-0.5556f,  0.8315f), float2(-0.8315f,  0.5556f), float2(-0.9808f,  0.1951f), float2(-0.9808f, -0.1951f), float2(-0.8315f, -0.5556f), float2(-0.5556f, -0.8315f), float2(-0.1951f, -0.9808f), float2( 0.1951f, -0.9808f), float2( 0.5556f, -0.8315f), float2( 0.8315f, -0.5556f), float2( 0.9808f, -0.1951f), float2( 0.9808f,  0.1951f),
-                float2( 0.7071f,  0.7071f), float2( 0.3827f,  0.9239f), float2( 0.0000f,  1.0000f), float2(-0.3827f,  0.9239f), float2(-0.7071f,  0.7071f), float2(-0.9239f,  0.3827f), float2(-1.0000f,  0.0000f), float2(-0.9239f, -0.3827f), float2(-0.7071f, -0.7071f), float2(-0.3827f, -0.9239f), float2( 0.0000f, -1.0000f), float2( 0.3827f, -0.9239f), float2( 0.7071f, -0.7071f), float2( 0.9239f, -0.3827f), float2( 1.0000f,  0.0000f), float2( 0.9239f,  0.3827f),
-                float2( 0.5556f,  0.8315f), float2( 0.1951f,  0.9808f), float2(-0.1951f,  0.9808f), float2(-0.5556f,  0.8315f), float2(-0.8315f,  0.5556f), float2(-0.9808f,  0.1951f), float2(-0.9808f, -0.1951f), float2(-0.8315f, -0.5556f), float2(-0.5556f, -0.8315f), float2(-0.1951f, -0.9808f), float2( 0.1951f, -0.9808f), float2( 0.5556f, -0.8315f), float2( 0.8315f, -0.5556f), float2( 0.9808f, -0.1951f), float2( 0.9808f,  0.1951f), float2( 0.8315f,  0.5556f),
-                float2( 0.3827f,  0.9239f), float2( 0.0000f,  1.0000f), float2(-0.3827f,  0.9239f), float2(-0.7071f,  0.7071f), float2(-0.9239f,  0.3827f), float2(-1.0000f,  0.0000f), float2(-0.9239f, -0.3827f), float2(-0.7071f, -0.7071f), float2(-0.3827f, -0.9239f), float2( 0.0000f, -1.0000f), float2( 0.3827f, -0.9239f), float2( 0.7071f, -0.7071f), float2( 0.9239f, -0.3827f), float2( 1.0000f,  0.0000f), float2( 0.9239f,  0.3827f), float2( 0.7071f,  0.7071f),
-                float2( 0.1951f,  0.9808f), float2(-0.1951f,  0.9808f), float2(-0.5556f,  0.8315f), float2(-0.8315f,  0.5556f), float2(-0.9808f,  0.1951f), float2(-0.9808f, -0.1951f), float2(-0.8315f, -0.5556f), float2(-0.5556f, -0.8315f), float2(-0.1951f, -0.9808f), float2( 0.1951f, -0.9808f), float2( 0.5556f, -0.8315f), float2( 0.8315f, -0.5556f), float2( 0.9808f, -0.1951f), float2( 0.9808f,  0.1951f), float2( 0.8315f,  0.5556f), float2( 0.5556f,  0.8315f),
-                float2( 0.0000f,  1.0000f), float2(-0.3827f,  0.9239f), float2(-0.7071f,  0.7071f), float2(-0.9239f,  0.3827f), float2(-1.0000f,  0.0000f), float2(-0.9239f, -0.3827f), float2(-0.7071f, -0.7071f), float2(-0.3827f, -0.9239f), float2( 0.0000f, -1.0000f), float2( 0.3827f, -0.9239f), float2( 0.7071f, -0.7071f), float2( 0.9239f, -0.3827f), float2( 1.0000f,  0.0000f), float2( 0.9239f,  0.3827f), float2( 0.7071f,  0.7071f), float2( 0.3827f,  0.9239f),
-                float2(-0.1951f,  0.9808f), float2(-0.5556f,  0.8315f), float2(-0.8315f,  0.5556f), float2(-0.9808f,  0.1951f), float2(-0.9808f, -0.1951f), float2(-0.8315f, -0.5556f), float2(-0.5556f, -0.8315f), float2(-0.1951f, -0.9808f), float2( 0.1951f, -0.9808f), float2( 0.5556f, -0.8315f), float2( 0.8315f, -0.5556f), float2( 0.9808f, -0.1951f), float2( 0.9808f,  0.1951f), float2( 0.8315f,  0.5556f), float2( 0.5556f,  0.8315f), float2( 0.1951f,  0.9808f),
-                float2(-0.3827f,  0.9239f), float2(-0.7071f,  0.7071f), float2(-0.9239f,  0.3827f), float2(-1.0000f,  0.0000f), float2(-0.9239f, -0.3827f), float2(-0.7071f, -0.7071f), float2(-0.3827f, -0.9239f), float2( 0.0000f, -1.0000f), float2( 0.3827f, -0.9239f), float2( 0.7071f, -0.7071f), float2( 0.9239f, -0.3827f), float2( 1.0000f,  0.0000f), float2( 0.9239f,  0.3827f), float2( 0.7071f,  0.7071f), float2( 0.3827f,  0.9239f), float2( 0.0000f,  1.0000f),
-                float2(-0.5556f,  0.8315f), float2(-0.8315f,  0.5556f), float2(-0.9808f,  0.1951f), float2(-0.9808f, -0.1951f), float2(-0.8315f, -0.5556f), float2(-0.5556f, -0.8315f), float2(-0.1951f, -0.9808f), float2( 0.1951f, -0.9808f), float2( 0.5556f, -0.8315f), float2( 0.8315f, -0.5556f), float2( 0.9808f, -0.1951f), float2( 0.9808f,  0.1951f), float2( 0.8315f,  0.5556f), float2( 0.5556f,  0.8315f), float2( 0.1951f,  0.9808f), float2(-0.1951f,  0.9808f),
-                float2(-0.7071f,  0.7071f), float2(-0.9239f,  0.3827f), float2(-1.0000f,  0.0000f), float2(-0.9239f, -0.3827f), float2(-0.7071f, -0.7071f), float2(-0.3827f, -0.9239f), float2( 0.0000f, -1.0000f), float2( 0.3827f, -0.9239f), float2( 0.7071f, -0.7071f), float2( 0.9239f, -0.3827f), float2( 1.0000f,  0.0000f), float2( 0.9239f,  0.3827f), float2( 0.7071f,  0.7071f), float2( 0.3827f,  0.9239f), float2( 0.0000f,  1.0000f), float2(-0.3827f,  0.9239f),
-                float2(-0.8315f,  0.5556f), float2(-0.9808f,  0.1951f), float2(-0.9808f, -0.1951f), float2(-0.8315f, -0.5556f), float2(-0.5556f, -0.8315f), float2(-0.1951f, -0.9808f), float2( 0.1951f, -0.9808f), float2( 0.5556f, -0.8315f), float2( 0.8315f, -0.5556f), float2( 0.9808f, -0.1951f), float2( 0.9808f,  0.1951f), float2( 0.8315f,  0.5556f), float2( 0.5556f,  0.8315f), float2( 0.1951f,  0.9808f), float2(-0.1951f,  0.9808f), float2(-0.5556f,  0.8315f),
-                float2(-0.9239f,  0.3827f), float2(-1.0000f,  0.0000f), float2(-0.9239f, -0.3827f), float2(-0.7071f, -0.7071f), float2(-0.3827f, -0.9239f), float2( 0.0000f, -1.0000f), float2( 0.3827f, -0.9239f), float2( 0.7071f, -0.7071f), float2( 0.9239f, -0.3827f), float2( 1.0000f,  0.0000f), float2( 0.9239f,  0.3827f), float2( 0.7071f,  0.7071f), float2( 0.3827f,  0.9239f), float2( 0.0000f,  1.0000f), float2(-0.3827f,  0.9239f), float2(-0.7071f,  0.7071f),
-                float2(-0.9808f,  0.1951f), float2(-0.9808f, -0.1951f), float2(-0.8315f, -0.5556f), float2(-0.5556f, -0.8315f), float2(-0.1951f, -0.9808f), float2( 0.1951f, -0.9808f), float2( 0.5556f, -0.8315f), float2( 0.8315f, -0.5556f), float2( 0.9808f, -0.1951f), float2( 0.9808f,  0.1951f), float2( 0.8315f,  0.5556f), float2( 0.5556f,  0.8315f), float2( 0.1951f,  0.9808f), float2(-0.1951f,  0.9808f), float2(-0.5556f,  0.8315f), float2(-0.8315f,  0.5556f)
-            };
-
-            float2 SphericalBlurRingDirection(int ringIndex, int sampleIndex) {
-                #if defined(VRCLV_EDITOR_SHADOW_BLUR_QUALITY)
-                    return sphericalBlurDirections[(int)((((uint)ringIndex) & 15u) * 16u + (uint)sampleIndex)];
-                #else
-                    return sphericalBlurDirections[ringIndex * 16 + sampleIndex];
-                #endif
+            float2 DiskKernelSampleOffset(int sampleIndex, float invSampleCount, out float radiusSq) {
+                radiusSq = (sampleIndex + 0.5f) * invSampleCount;
+                int directionIndex = (sampleIndex * 49) % VRCLV_DISK_KERNEL_DIRECTION_COUNT;
+                return diskKernelDirections[directionIndex] * sqrt(radiusSq);
             }
         #endif
 
@@ -275,10 +172,8 @@ Shader "Hidden/VRCLV/PointLightShadowRuntimeBlur" {
         }
 
         #if !defined(VRCLV_RUNTIME_SHADOW_BLUR_UNIFORM)
-            float DecodeDepth01(float4 moments) {
-                float negativeMagnitude = max(-moments.y, 0.000001f);
-                float depth = -VRCLV_FastLogPositive(negativeMagnitude) * rcp(VRCLV_EVSM_NEGATIVE_EXPONENT);
-                return saturate(depth * 0.5f + 0.5f);
+            float DecodeDepth01(float depth) {
+                return saturate(depth);
             }
         #endif
 
@@ -349,10 +244,10 @@ Shader "Hidden/VRCLV/PointLightShadowRuntimeBlur" {
             return DirectionToArrayUv(FaceUvToDirection(uv));
         }
 
-        float4 SampleSource(float2 uv) {
+        float2 SampleSource(float2 uv) {
             float3 address = ArrayAddress(uv);
             address.z += _SourceBaseSlice;
-            return UNITY_SAMPLE_TEX2DARRAY(_SourceArrayTex, address);
+            return UNITY_SAMPLE_TEX2DARRAY(_SourceArrayTex, address).xy;
         }
 
         #if defined(VRCLV_SHADOW_BLUR_SPHERICAL)
@@ -362,80 +257,50 @@ Shader "Hidden/VRCLV/PointLightShadowRuntimeBlur" {
                 }
             #endif
 
-            float4 SampleSourceSpherical(float2 uv, float2 faceUvOffset) {
+            float2 SampleSourceSpherical(float2 uv, float2 faceUvOffset) {
                 #if defined(VRCLV_RUNTIME_SHADOW_BLUR_DIRECT)
-                    return UNITY_SAMPLE_TEX2DARRAY(_SourceArrayTex, float3(SphericalSpotUv(uv, faceUvOffset), _SourceBaseSlice + _FaceIndex));
+                    return UNITY_SAMPLE_TEX2DARRAY(_SourceArrayTex, float3(SphericalSpotUv(uv, faceUvOffset), _SourceBaseSlice + _FaceIndex)).xy;
                 #else
                     float3 address = SphericalArrayAddress(uv, faceUvOffset);
                     address.z += _SourceBaseSlice;
-                    return UNITY_SAMPLE_TEX2DARRAY(_SourceArrayTex, address);
+                    return UNITY_SAMPLE_TEX2DARRAY(_SourceArrayTex, address).xy;
                 #endif
             }
         #endif
 
-        float4 SampleSourceDirect(float2 uv) {
-            return UNITY_SAMPLE_TEX2DARRAY(_SourceArrayTex, float3(uv, _SourceBaseSlice + _FaceIndex));
+        float2 SampleSourceDirect(float2 uv) {
+            return UNITY_SAMPLE_TEX2DARRAY(_SourceArrayTex, float3(uv, _SourceBaseSlice + _FaceIndex)).xy;
         }
 
         #if !defined(VRCLV_RUNTIME_SHADOW_BLUR_UNIFORM)
-            float4 SampleDepth(float2 uv) {
+            float SampleDepth(float2 uv) {
                 float3 address = ArrayAddress(uv);
                 address.z += _DepthBaseSlice;
-                return UNITY_SAMPLE_TEX2DARRAY(_DepthArrayTex, address);
+                return UNITY_SAMPLE_TEX2DARRAY(_DepthArrayTex, address).x;
             }
 
-            float4 SampleDepthDirect(float2 uv) {
-                return UNITY_SAMPLE_TEX2DARRAY(_DepthArrayTex, float3(uv, _DepthBaseSlice + _FaceIndex));
+            float SampleDepthDirect(float2 uv) {
+                return UNITY_SAMPLE_TEX2DARRAY(_DepthArrayTex, float3(uv, _DepthBaseSlice + _FaceIndex)).x;
             }
 
             #if defined(VRCLV_SHADOW_BLUR_SPHERICAL)
-                float4 SampleDepthSpherical(float2 uv, float2 faceUvOffset) {
+                float SampleDepthSpherical(float2 uv, float2 faceUvOffset) {
                     #if defined(VRCLV_RUNTIME_SHADOW_BLUR_DIRECT)
-                        return UNITY_SAMPLE_TEX2DARRAY(_DepthArrayTex, float3(SphericalSpotUv(uv, faceUvOffset), _DepthBaseSlice + _FaceIndex));
+                        return UNITY_SAMPLE_TEX2DARRAY(_DepthArrayTex, float3(SphericalSpotUv(uv, faceUvOffset), _DepthBaseSlice + _FaceIndex)).x;
                     #else
                         float3 address = SphericalArrayAddress(uv, faceUvOffset);
                         address.z += _DepthBaseSlice;
-                        return UNITY_SAMPLE_TEX2DARRAY(_DepthArrayTex, address);
+                        return UNITY_SAMPLE_TEX2DARRAY(_DepthArrayTex, address).x;
                     #endif
                 }
             #endif
 
-            float DepthDifferenceRing(float2 uv, float centerDepth, float2 sampleScale, int ringIndex) {
-                float depthDifference = 0.0f;
-                float ringRadius = ContrastRingRadius(ringIndex);
-                VRCLV_BLUR_LOOP for (int sampleIndex = 0; sampleIndex < VRCLV_CONTRAST_DIRECTION_COUNT; sampleIndex++) {
-                    float2 rotatedDir = ContrastRingDirection(ringIndex, sampleIndex);
-                    depthDifference += abs(DecodeDepth01(SampleDepth(uv + rotatedDir * (sampleScale * ringRadius))) - centerDepth);
-                }
-                return depthDifference;
-            }
-
-            #if defined(VRCLV_SHADOW_BLUR_SPHERICAL)
-                float DepthDifferenceRingSpherical(float2 uv, float centerDepth, float2 sampleScale, int ringIndex) {
-                    float depthDifference = 0.0f;
-                    float ringRadius = ContrastRingRadius(ringIndex);
-                    VRCLV_BLUR_LOOP for (int sampleIndex = 0; sampleIndex < VRCLV_CONTRAST_DIRECTION_COUNT; sampleIndex++) {
-                        float2 rotatedDir = ContrastRingDirection(ringIndex, sampleIndex);
-                        depthDifference += abs(DecodeDepth01(SampleDepthSpherical(uv, rotatedDir * (sampleScale * ringRadius * 2.0f))) - centerDepth);
-                    }
-                    return depthDifference;
-                }
-            #endif
-
-            float DepthDifferenceRingDirect(float2 uv, float centerDepth, float2 sampleScale, int ringIndex) {
-                float depthDifference = 0.0f;
-                float ringRadius = ContrastRingRadius(ringIndex);
-                VRCLV_BLUR_LOOP for (int sampleIndex = 0; sampleIndex < VRCLV_CONTRAST_DIRECTION_COUNT; sampleIndex++) {
-                    float2 rotatedDir = ContrastRingDirection(ringIndex, sampleIndex);
-                    depthDifference += abs(DecodeDepth01(SampleDepthDirect(uv + rotatedDir * (sampleScale * ringRadius))) - centerDepth);
-                }
-                return depthDifference;
-            }
-
             float AverageDepthDifference(float2 uv, float centerDepth, float2 sampleScale) {
                 float depthDifference = 0.0f;
-                VRCLV_BLUR_LOOP for (int ringIndex = 0; ringIndex < VRCLV_CONTRAST_RING_COUNT; ringIndex++) {
-                    depthDifference += DepthDifferenceRing(uv, centerDepth, sampleScale, ringIndex);
+                VRCLV_BLUR_LOOP for (int sampleIndex = 0; sampleIndex < VRCLV_CONTRAST_SAMPLE_COUNT; sampleIndex++) {
+                    float radiusSq;
+                    float2 diskOffset = DiskKernelSampleOffset(sampleIndex, VRCLV_CONTRAST_INV_SAMPLE_COUNT, radiusSq);
+                    depthDifference += abs(DecodeDepth01(SampleDepth(uv + diskOffset * sampleScale)) - centerDepth);
                 }
                 return depthDifference * VRCLV_CONTRAST_INV_SAMPLE_COUNT;
             }
@@ -443,8 +308,10 @@ Shader "Hidden/VRCLV/PointLightShadowRuntimeBlur" {
             #if defined(VRCLV_SHADOW_BLUR_SPHERICAL)
                 float AverageDepthDifferenceSpherical(float2 uv, float centerDepth, float2 sampleScale) {
                     float depthDifference = 0.0f;
-                    VRCLV_BLUR_LOOP for (int ringIndex = 0; ringIndex < VRCLV_CONTRAST_RING_COUNT; ringIndex++) {
-                        depthDifference += DepthDifferenceRingSpherical(uv, centerDepth, sampleScale, ringIndex);
+                    VRCLV_BLUR_LOOP for (int sampleIndex = 0; sampleIndex < VRCLV_CONTRAST_SAMPLE_COUNT; sampleIndex++) {
+                        float radiusSq;
+                        float2 diskOffset = DiskKernelSampleOffset(sampleIndex, VRCLV_CONTRAST_INV_SAMPLE_COUNT, radiusSq);
+                        depthDifference += abs(DecodeDepth01(SampleDepthSpherical(uv, diskOffset * (sampleScale * 2.0f))) - centerDepth);
                     }
                     return depthDifference * VRCLV_CONTRAST_INV_SAMPLE_COUNT;
                 }
@@ -452,8 +319,10 @@ Shader "Hidden/VRCLV/PointLightShadowRuntimeBlur" {
 
             float AverageDepthDifferenceDirect(float2 uv, float centerDepth, float2 sampleScale) {
                 float depthDifference = 0.0f;
-                VRCLV_BLUR_LOOP for (int ringIndex = 0; ringIndex < VRCLV_CONTRAST_RING_COUNT; ringIndex++) {
-                    depthDifference += DepthDifferenceRingDirect(uv, centerDepth, sampleScale, ringIndex);
+                VRCLV_BLUR_LOOP for (int sampleIndex = 0; sampleIndex < VRCLV_CONTRAST_SAMPLE_COUNT; sampleIndex++) {
+                    float radiusSq;
+                    float2 diskOffset = DiskKernelSampleOffset(sampleIndex, VRCLV_CONTRAST_INV_SAMPLE_COUNT, radiusSq);
+                    depthDifference += abs(DecodeDepth01(SampleDepthDirect(uv + diskOffset * sampleScale)) - centerDepth);
                 }
                 return depthDifference * VRCLV_CONTRAST_INV_SAMPLE_COUNT;
             }
@@ -470,7 +339,7 @@ Shader "Hidden/VRCLV/PointLightShadowRuntimeBlur" {
                 #elif defined(VRCLV_RUNTIME_SHADOW_BLUR_DIRECT)
                     depthDifference = AverageDepthDifferenceDirect(uv, centerDepth, contrastSampleScale * rcp(max(_ShadowTanHalfFov, 0.000001f)));
                 #else
-                    float2 contrastExtent = contrastSampleScale * VRCLV_CONTRAST_MAX_RING_RADIUS;
+                    float2 contrastExtent = contrastSampleScale * VRCLV_CONTRAST_MAX_RADIUS;
                     [branch] if (KernelFitsFace(uv, contrastExtent)) depthDifference = AverageDepthDifferenceDirect(uv, centerDepth, contrastSampleScale);
                     else depthDifference = AverageDepthDifference(uv, centerDepth, contrastSampleScale);
                 #endif
@@ -488,8 +357,8 @@ Shader "Hidden/VRCLV/PointLightShadowRuntimeBlur" {
             return _BlurDirection * (_InvResolution * radius * (2.0f * VRCLV_BLUR_INV_SAMPLE_RADIUS) * spotScale);
         }
 
-        float4 BlurArrayDirect(float2 uv, float2 sampleStep) {
-            float4 color = 0.0f;
+        float2 BlurArrayDirect(float2 uv, float2 sampleStep) {
+            float2 color = 0.0f;
             float weightSum = 0.0f;
             VRCLV_BLUR_LOOP for (int sampleIndex = -VRCLV_BLUR_SAMPLE_RADIUS; sampleIndex <= VRCLV_BLUR_SAMPLE_RADIUS; sampleIndex++) {
                 float sampleDistance = sampleIndex * VRCLV_BLUR_INV_SAMPLE_RADIUS;
@@ -500,8 +369,8 @@ Shader "Hidden/VRCLV/PointLightShadowRuntimeBlur" {
             return color * rcp(weightSum);
         }
 
-        float4 BlurArraySeamAware(float2 uv, float2 sampleStep) {
-            float4 color = 0.0f;
+        float2 BlurArraySeamAware(float2 uv, float2 sampleStep) {
+            float2 color = 0.0f;
             float weightSum = 0.0f;
             VRCLV_BLUR_LOOP for (int sampleIndex = -VRCLV_BLUR_SAMPLE_RADIUS; sampleIndex <= VRCLV_BLUR_SAMPLE_RADIUS; sampleIndex++) {
                 float sampleDistance = sampleIndex * VRCLV_BLUR_INV_SAMPLE_RADIUS;
@@ -513,24 +382,22 @@ Shader "Hidden/VRCLV/PointLightShadowRuntimeBlur" {
         }
 
         #if defined(VRCLV_SHADOW_BLUR_SPHERICAL)
-            float4 BlurArraySpherical(float2 uv) {
-                float4 color = SampleSourceSpherical(uv, float2(0.0f, 0.0f));
+            float2 BlurArraySpherical(float2 uv) {
+                float2 color = SampleSourceSpherical(uv, float2(0.0f, 0.0f));
                 float weightSum = 1.0f;
                 float blurRadius = _InvResolution * RuntimeBlurRadius(uv) * (4.0f * VRCLV_SPHERICAL_BLUR_RADIUS_SCALE);
-                VRCLV_BLUR_LOOP for (int ringIndex = 0; ringIndex < VRCLV_SPHERICAL_BLUR_RING_COUNT; ringIndex++) {
-                    float ringRadius = SphericalBlurRingRadius(ringIndex);
-                    float weight = SphericalBlurRingWeight(ringIndex);
-                    VRCLV_BLUR_LOOP for (int sampleIndex = 0; sampleIndex < VRCLV_SPHERICAL_BLUR_DIRECTION_COUNT; sampleIndex++) {
-                        float2 dir = SphericalBlurRingDirection(ringIndex, sampleIndex);
-                        color += SampleSourceSpherical(uv, dir * (blurRadius * ringRadius)) * weight;
-                        weightSum += weight;
-                    }
+                VRCLV_BLUR_LOOP for (int sampleIndex = 0; sampleIndex < VRCLV_SPHERICAL_BLUR_SAMPLE_COUNT; sampleIndex++) {
+                    float radiusSq;
+                    float2 diskOffset = DiskKernelSampleOffset(sampleIndex, VRCLV_SPHERICAL_BLUR_INV_SAMPLE_COUNT, radiusSq);
+                    float weight = VRCLV_FastExp(-2.0f * radiusSq);
+                    color += SampleSourceSpherical(uv, diskOffset * blurRadius) * weight;
+                    weightSum += weight;
                 }
                 return color * rcp(weightSum);
             }
         #endif
 
-        float4 BlurArray(float2 uv) {
+        float2 BlurArray(float2 uv) {
             float2 sampleStep = RuntimeBlurStep(uv);
             float2 blurExtent = abs(sampleStep) * VRCLV_BLUR_SAMPLE_RADIUS;
             [branch] if (KernelFitsFace(uv, blurExtent)) {
@@ -542,11 +409,11 @@ Shader "Hidden/VRCLV/PointLightShadowRuntimeBlur" {
 
         float4 fragArray(v2f i) : SV_Target {
 #if defined(VRCLV_SHADOW_BLUR_SPHERICAL)
-            return BlurArraySpherical(i.uv);
+            return float4(BlurArraySpherical(i.uv), 0.0f, 0.0f);
 #elif defined(VRCLV_RUNTIME_SHADOW_BLUR_DIRECT)
-            return BlurArrayDirect(i.uv, RuntimeBlurStep(i.uv));
+            return float4(BlurArrayDirect(i.uv, RuntimeBlurStep(i.uv)), 0.0f, 0.0f);
 #else
-            return BlurArray(i.uv);
+            return float4(BlurArray(i.uv), 0.0f, 0.0f);
 #endif
         }
         ENDCG

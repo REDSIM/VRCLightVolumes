@@ -294,6 +294,7 @@ namespace VRCLightVolumes {
             hiddenFields.Add("ShadowResolution");
             hiddenFields.Add("ShadowTextureFormat");
             hiddenFields.Add("ShadowBleedReduction");
+            hiddenFields.Add("ShadowMinVariance");
             hiddenFields.Add("AtlasPostProcessors");
             int plvCount = _lightVolumeSetup.PointLightVolumes.Count;
             bool isShadowBatchBake = false;
@@ -320,6 +321,7 @@ namespace VRCLightVolumes {
                 EditorGUILayout.PropertyField(serializedObject.FindProperty("ShadowResolution"));
                 EditorGUILayout.PropertyField(serializedObject.FindProperty("ShadowTextureFormat"));
                 EditorGUILayout.PropertyField(serializedObject.FindProperty("ShadowBleedReduction"));
+                EditorGUILayout.PropertyField(serializedObject.FindProperty("ShadowMinVariance"));
                 EditorGUILayout.PropertyField(serializedObject.FindProperty("BrightnessCutoff"));
             }
 

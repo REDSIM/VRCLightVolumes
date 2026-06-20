@@ -38,7 +38,6 @@ namespace VRCLightVolumes {
         private const RenderTextureFormat FixedCustomTexturesFormat = RenderTextureFormat.ARGBHalf;
         private const float DisabledShadingShadowId = 10000f;
         private const int ShadowTextureFormatHalf = 0;
-        public const float ShadowMinVariance = 0.000001f;
 #endregion
 
 #region Inspector And Runtime References
@@ -51,19 +50,21 @@ namespace VRCLightVolumes {
 
         [Header("Point Light Volumes")]
         [Tooltip("Width of each runtime point light projection texture slice.")]
-        public int CustomTexturesWidth = 128;
+        public int CustomTexturesWidth = 512;
         [Tooltip("Height of each runtime point light projection texture slice.")]
-        public int CustomTexturesHeight = 128;
+        public int CustomTexturesHeight = 512;
         [Tooltip("The minimum brightness at a point due to lighting from a Point Light Volume, before the light is culled. Larger values will result in better performance, but light attenuation will be less physically correct.")]
         public float LightsBrightnessCutoff = 0.35f;
         [Tooltip("Width of each runtime shadow cubemap face.")]
-        public int ShadowTexturesWidth = 128;
+        public int ShadowTexturesWidth = 256;
         [Tooltip("Height of each runtime shadow cubemap face.")]
-        public int ShadowTexturesHeight = 128;
+        public int ShadowTexturesHeight = 256;
         [Tooltip("Precision used for baked VSM shadow maps and the runtime shadow texture array. 0 = RGHalf, 1 = RGFloat.")]
         public int ShadowTextureFormat = 1;
         [Tooltip("VSM light bleed reduction applied by the shadow receiver shader. 0 disables reduction, 1 is strongest.")]
-        public float ShadowBleedReduction = 0.2f;
+        public float ShadowBleedReduction = 0.1f;
+        [Tooltip("Minimum VSM variance used by the shadow receiver shader to prevent division artifacts.")]
+        public float ShadowMinVariance = 0.000001f;
 
         [Header("Visuals")]
         [Tooltip("When enabled, areas outside Light Volumes fall back to light probes. Otherwise, the Light Volume with the smallest weight is used as fallback. It also improves performance.")]
@@ -194,7 +195,7 @@ namespace VRCLightVolumes {
         private int[] _enabledPointIDs = new int[MaxPointLightCount];
         private Vector4[] _pointLightPosition = new Vector4[MaxPointLightCount];
         private Vector4[] _pointLightColor = new Vector4[MaxPointLightCount];
-        private Vector4[] _pointLightCookieData = new Vector4[MaxPointLightCount];
+        private Vector4[] _pointLightExtraData = new Vector4[MaxPointLightCount];
         private Vector4[] _pointLightDirection = new Vector4[MaxPointLightCount];
         private Vector4[] _pointLightCustomId = new Vector4[MaxPointLightCount];
         private Vector4[] _pointLightShadowReprojectionData = new Vector4[MaxPointLightCount];
@@ -265,7 +266,7 @@ namespace VRCLightVolumes {
         // Point Lights
         private int _pointLightPositionID;
         private int _pointLightColorID;
-        private int _pointLightCookieDataID;
+        private int _pointLightExtraDataID;
         private int _pointLightDirectionID;
         private int _pointLightCustomIdID;
         private int _pointLightCountID;
@@ -485,7 +486,7 @@ namespace VRCLightVolumes {
             // Point Lights
             _pointLightPositionID = VRCShader.PropertyToID("_UdonPointLightVolumePosition");
             _pointLightColorID = VRCShader.PropertyToID("_UdonPointLightVolumeColor");
-            _pointLightCookieDataID = VRCShader.PropertyToID("_UdonPointLightVolumeCookieData");
+            _pointLightExtraDataID = VRCShader.PropertyToID("_UdonPointLightVolumeExtraData");
             _pointLightDirectionID = VRCShader.PropertyToID("_UdonPointLightVolumeDirection");
             _pointLightCountID = VRCShader.PropertyToID("_UdonPointLightVolumeCount");
             _pointLightCustomIdID = VRCShader.PropertyToID("_UdonPointLightVolumeCustomID");
@@ -521,13 +522,13 @@ namespace VRCLightVolumes {
             // Point Lights
             VRCShader.SetGlobalVectorArray(_pointLightPositionID, _pointLightPosition);
             VRCShader.SetGlobalVectorArray(_pointLightColorID, _pointLightColor);
-            VRCShader.SetGlobalVectorArray(_pointLightCookieDataID, _pointLightCookieData);
+            VRCShader.SetGlobalVectorArray(_pointLightExtraDataID, _pointLightExtraData);
             VRCShader.SetGlobalVectorArray(_pointLightDirectionID, _pointLightDirection);
             VRCShader.SetGlobalVectorArray(_pointLightCustomIdID, _pointLightCustomId);
             VRCShader.SetGlobalVectorArray(_pointLightShadowReprojectionDataID, _pointLightShadowReprojectionData);
             VRCShader.SetGlobalVectorArray(_pointLightShadowRotationDataID, _pointLightShadowRotationData);
             VRCShader.SetGlobalFloat(_pointLightShadowBleedReductionID, Mathf.Clamp01(ShadowBleedReduction));
-            VRCShader.SetGlobalFloat(_pointLightShadowMinVarianceID, ShadowMinVariance);
+            VRCShader.SetGlobalFloat(_pointLightShadowMinVarianceID, Mathf.Max(ShadowMinVariance, 0f));
             _isInitialized = true;
         }
 
@@ -540,7 +541,7 @@ namespace VRCLightVolumes {
             VRCShader.SetGlobalFloat(_pointLightShadowCubeCountID, 0);
             VRCShader.SetGlobalFloat(_pointLightShadowCountID, 0);
             VRCShader.SetGlobalFloat(_pointLightShadowBleedReductionID, Mathf.Clamp01(ShadowBleedReduction));
-            VRCShader.SetGlobalFloat(_pointLightShadowMinVarianceID, ShadowMinVariance);
+            VRCShader.SetGlobalFloat(_pointLightShadowMinVarianceID, Mathf.Max(ShadowMinVariance, 0f));
             VRCShader.SetGlobalFloat(_lightVolumeEnabledID, 0);
         }
 
@@ -1046,10 +1047,10 @@ namespace VRCLightVolumes {
                 Vector4 shaderColor = _pointLightColor[shaderIndex];
                 if (shaderColor.w <= 1.5f) continue; // Area light height is encoded as 2 + Height
                 if (sourceIndex < _pointLightAreaCookieAverageColors.Length) _pointLightAreaCookieAverageColors[sourceIndex] = color;
-                Vector4 cookieData = _pointLightCookieData[shaderIndex];
-                float fallbackR = cookieData.x * color.r;
-                float fallbackG = cookieData.y * color.g;
-                float fallbackB = cookieData.z * color.b;
+                Vector4 extraData = _pointLightExtraData[shaderIndex];
+                float fallbackR = extraData.x * color.r;
+                float fallbackG = extraData.y * color.g;
+                float fallbackB = extraData.z * color.b;
                 if (shaderColor.x == fallbackR && shaderColor.y == fallbackG && shaderColor.z == fallbackB) continue;
                 shaderColor.x = fallbackR;
                 shaderColor.y = fallbackG;
@@ -1572,7 +1573,7 @@ namespace VRCLightVolumes {
             }
             if (_updatePointLightBuffers && _pointLightCount != 0) {
                 VRCShader.SetGlobalVectorArray(_pointLightColorID, _pointLightColor);
-                VRCShader.SetGlobalVectorArray(_pointLightCookieDataID, _pointLightCookieData);
+                VRCShader.SetGlobalVectorArray(_pointLightExtraDataID, _pointLightExtraData);
                 VRCShader.SetGlobalVectorArray(_pointLightPositionID, _pointLightPosition);
                 VRCShader.SetGlobalVectorArray(_pointLightDirectionID, _pointLightDirection);
                 VRCShader.SetGlobalVectorArray(_pointLightCustomIdID, _pointLightCustomId);
@@ -1729,16 +1730,16 @@ namespace VRCLightVolumes {
             _pointLightPosition[shaderIndex] = pos;
 
             Vector4 lightColor = instance.Color.linear * instance.Intensity;
-            Vector4 cookieData = lightColor;
-            cookieData.w = isSpot && isCustomCookie ? Mathf.Max(Mathf.Abs(instance.SpotCookieAspect), 0.001f) : 1f;
-            _pointLightCookieData[shaderIndex] = cookieData;
+            Vector4 extraData = lightColor;
+            if (isSpot && isCustomCookie) extraData.x = Mathf.Max(Mathf.Abs(instance.SpotCookieAspect), 0.001f);
+            extraData.w = 0f;
             Vector4 color = lightColor;
             int customSourceType = sourceIndex < _customSourceTypes.Length ? _customSourceTypes[sourceIndex] : 0;
             if (isArea && isCustomCookie && resolvedCustomId >= 0 && customSourceType >= 3) {
                 Color averageColor = sourceIndex < _pointLightAreaCookieAverageColors.Length ? _pointLightAreaCookieAverageColors[sourceIndex] : Color.white;
-                color.x = cookieData.x * averageColor.r;
-                color.y = cookieData.y * averageColor.g;
-                color.z = cookieData.z * averageColor.b;
+                color.x = extraData.x * averageColor.r;
+                color.y = extraData.y * averageColor.g;
+                color.z = extraData.z * averageColor.b;
             }
             color.w = angleData;
             _pointLightColor[shaderIndex] = color;
@@ -1764,10 +1765,15 @@ namespace VRCLightVolumes {
             bool hasShadow = hasShading && ShadowMapsCount > 0 && resolvedShadowId >= 0 && resolvedShadowId < ShadowMapsCount;
             if (countActiveShadow && hasShadow) _activeShadowCount++;
             float shadowFarClip = 0;
+            float shadowNearClip = 0;
             if (hasShadow) {
                 float farClip = instance.FarClip;
                 shadowFarClip = farClip > 0 ? farClip : Mathf.Sqrt(Mathf.Max(squaredRange, 0.000001f));
+                shadowNearClip = Mathf.Max(instance.NearClip, 0.0001f);
+                if (shadowNearClip >= shadowFarClip) shadowNearClip = shadowFarClip * 0.5f;
             }
+            extraData.w = shadowNearClip;
+            _pointLightExtraData[shaderIndex] = extraData;
             bool useLocalSpaceShadows = hasShadow && !instance.WorldSpaceShadows;
             float shadowMapID = DisabledShadingShadowId;
             if (hasShading) {
@@ -1942,10 +1948,10 @@ namespace VRCLightVolumes {
                 VRCShader.SetGlobalFloat(_pointLightShadowCubeCountID, _activeShadowCount > 0 ? ShadowCubemapsCount : 0);
                 VRCShader.SetGlobalFloat(_pointLightShadowCountID, shadowCount);
                 VRCShader.SetGlobalFloat(_pointLightShadowBleedReductionID, Mathf.Clamp01(ShadowBleedReduction));
-                VRCShader.SetGlobalFloat(_pointLightShadowMinVarianceID, ShadowMinVariance);
+                VRCShader.SetGlobalFloat(_pointLightShadowMinVarianceID, Mathf.Max(ShadowMinVariance, 0f));
                 if (_pointLightCount != 0) {
                     VRCShader.SetGlobalVectorArray(_pointLightColorID, _pointLightColor);
-                    VRCShader.SetGlobalVectorArray(_pointLightCookieDataID, _pointLightCookieData);
+                    VRCShader.SetGlobalVectorArray(_pointLightExtraDataID, _pointLightExtraData);
                     VRCShader.SetGlobalVectorArray(_pointLightPositionID, _pointLightPosition);
                     VRCShader.SetGlobalVectorArray(_pointLightDirectionID, _pointLightDirection);
                     VRCShader.SetGlobalVectorArray(_pointLightCustomIdID, _pointLightCustomId);

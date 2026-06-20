@@ -207,7 +207,7 @@ namespace VRCLightVolumes {
             Vector3 bakePosition = _targetTransform.position;
             Quaternion bakeRotation = _targetTransform.rotation;
 
-            if (_useDirectOutput && !PrepareOutput(bakePosition, _bakeFarClip, _bakeBias, true)) return;
+            if (_useDirectOutput && !PrepareOutput(bakePosition, _bakeFarClip, _bakeNearClip, _bakeBias, true)) return;
             // Select the active output once; face encode passes write directly into this texture/slice range
             if (_useDirectOutput && _manager != null) {
                 _currentOutputTexture = _manager.ShadowTextures;
@@ -223,15 +223,15 @@ namespace VRCLightVolumes {
                 _currentOutputBaseSlice = 0;
             }
             ConfigureCamera(_bakeFarClip, _bakeNearClip, _bakeCullingMask, _bakeFieldOfView);
-            if (_useCubemapShadow) RenderDepthFacesToShadowMap(bakePosition, bakeRotation, _bakeFarClip, _bakeBias);
-            else RenderDepthSingleToShadowMap(bakePosition, bakeRotation, _bakeFarClip, _bakeBias);
+            if (_useCubemapShadow) RenderDepthFacesToShadowMap(bakePosition, bakeRotation, _bakeFarClip, _bakeNearClip, _bakeBias);
+            else RenderDepthSingleToShadowMap(bakePosition, bakeRotation, _bakeFarClip, _bakeNearClip, _bakeBias);
             if (_useBlur && PrepareShadowBlurMaterial()) BlurFaces(0, _bakeSliceCount, _useDirectOutput, false);
             _completedOutputTexture = _currentOutputTexture;
             _completedOutputBaseSlice = _currentOutputBaseSlice;
             _hasCompletedFullBake = true;
             _deferBlurUntilFullCycle = false;
             if (!_useDirectOutput) {
-                if (!PrepareOutput(bakePosition, _bakeFarClip, _bakeBias, false)) return;
+                if (!PrepareOutput(bakePosition, _bakeFarClip, _bakeNearClip, _bakeBias, false)) return;
                 // Non-direct output uses a local array, so copy all baked slices into the manager array
                 if (_manager != null && _target != null) {
                     for (int i = 0; i < _bakeSliceCount; i++) _manager.UpdatePointLightShadowTextureSlice(_target, i);
@@ -390,13 +390,14 @@ namespace VRCLightVolumes {
             if (_target.IsRangeDirty) RefreshTargetRangeForBake();
             _bakeResolution = Resolution;
             _bakeCullingMask = _target.LayerMask;
-            _bakeNearClip = _target.NearClip;
+            _bakeNearClip = Mathf.Max(_target.NearClip, 0.0001f);
             _bakeBias = _target.Bias;
             _bakeBlur = _target.Blur;
             _bakeBlurDepth = _target.ContactHardening;
             float targetFarClip = _target.FarClip;
             bool useTargetFarClip = targetFarClip > 0f && (!_hasPublishedFarClip || Mathf.Abs(targetFarClip - _publishedFarClip) > 0.0001f);
             _bakeFarClip = useTargetFarClip ? Mathf.Max(targetFarClip, 0.0001f) : Mathf.Sqrt(Mathf.Max(_target.SquaredRange, 0.000001f));
+            if (_bakeNearClip >= _bakeFarClip) _bakeNearClip = _bakeFarClip * 0.5f;
             bool useCubemapShadow = _target.LightType != 1 || _target.ShadowMapUsesCubemap; // 1: spot
             int bakeSliceCount = useCubemapShadow ? 6 : 1;
             bool useSphericalBlur = SphericalBlur;
@@ -565,8 +566,8 @@ namespace VRCLightVolumes {
         }
 
         // Registers the output texture and refreshes manager metadata before a bake writes pixels
-        private bool PrepareOutput(Vector3 bakePosition, float farClip, float bias, bool useDirectOutput) {
-            bool shadowDataChanged = ApplyTargetShadowSourceInternal(bakePosition, farClip, bias, useDirectOutput);
+        private bool PrepareOutput(Vector3 bakePosition, float farClip, float nearClip, float bias, bool useDirectOutput) {
+            bool shadowDataChanged = ApplyTargetShadowSourceInternal(bakePosition, farClip, nearClip, bias, useDirectOutput);
             if (_manager == null) return !useDirectOutput;
             bool rebuildShadowArray = !_shadowSourceInitialized || _manager.ShadowTextures == null || _manager.ShadowMapsCount <= 0;
             if (rebuildShadowArray) {
@@ -587,7 +588,7 @@ namespace VRCLightVolumes {
         }
 
         // Updates the target light shadow source and returns whether shader-side metadata changed
-        private bool ApplyTargetShadowSourceInternal(Vector3 bakePosition, float farClip, float bias, bool useDirectOutput) {
+        private bool ApplyTargetShadowSourceInternal(Vector3 bakePosition, float farClip, float nearClip, float bias, bool useDirectOutput) {
             Texture sourceTexture = useDirectOutput ? _registrationTexture : _shadowTexture;
             bool sourceIsCubemap = sourceTexture != null && sourceTexture.dimension == TextureDimension.Cube;
             bool sourceHasSlices = sourceTexture != null && sourceTexture.dimension == TextureDimension.Tex2DArray && _useCubemapShadow;
@@ -596,7 +597,7 @@ namespace VRCLightVolumes {
             bool bakePositionChanged = _target.ShadowBakePosition != bakePosition;
             Quaternion bakeRotation = _targetTransform.rotation;
             bool bakeRotationChanged = _target.ShadowBakeRotation != bakeRotation;
-            bool metadataChanged = sourceChanged || _target.FarClip != farClip || (_target.WorldSpaceShadows && (bakePositionChanged || bakeRotationChanged));
+            bool metadataChanged = sourceChanged || _target.FarClip != farClip || _target.NearClip != nearClip || (_target.WorldSpaceShadows && (bakePositionChanged || bakeRotationChanged));
 
             if (_target.ShadowMapID < 0) {
 #if UDONSHARP
@@ -637,6 +638,13 @@ namespace VRCLightVolumes {
                 _target.FarClip = farClip;
 #endif
             }
+            if (_target.NearClip != nearClip) {
+#if UDONSHARP
+                _target.SetProgramVariable("NearClip", nearClip);
+#else
+                _target.NearClip = nearClip;
+#endif
+            }
             _publishedFarClip = farClip;
             _hasPublishedFarClip = true;
             if (bakePositionChanged) {
@@ -657,9 +665,9 @@ namespace VRCLightVolumes {
         }
 
         // Renders six point-light depth faces and encodes them into the active output texture
-        private void RenderDepthFacesToShadowMap(Vector3 bakePosition, Quaternion bakeRotation, float farClip, float bias) {
+        private void RenderDepthFacesToShadowMap(Vector3 bakePosition, Quaternion bakeRotation, float farClip, float nearClip, float bias) {
             _shadowDepthEncodeMaterial.SetFloat(_farClipID, farClip);
-            _shadowDepthEncodeMaterial.SetFloat(_nearClipID, _configuredNearClip);
+            _shadowDepthEncodeMaterial.SetFloat(_nearClipID, nearClip);
             _shadowDepthEncodeMaterial.SetFloat(_biasID, bias);
             _shadowDepthEncodeMaterial.SetFloat(_tanHalfFovID, _bakeTanHalfFov);
             _shadowDepthEncodeMaterial.SetTexture(_depthTextureID, _depthTexture, RenderTextureSubElement.Depth);
@@ -688,9 +696,9 @@ namespace VRCLightVolumes {
         }
 
         // Renders one spotlight depth view and encodes it into the active output texture
-        private void RenderDepthSingleToShadowMap(Vector3 bakePosition, Quaternion bakeRotation, float farClip, float bias) {
+        private void RenderDepthSingleToShadowMap(Vector3 bakePosition, Quaternion bakeRotation, float farClip, float nearClip, float bias) {
             _shadowDepthEncodeMaterial.SetFloat(_farClipID, farClip);
-            _shadowDepthEncodeMaterial.SetFloat(_nearClipID, _configuredNearClip);
+            _shadowDepthEncodeMaterial.SetFloat(_nearClipID, nearClip);
             _shadowDepthEncodeMaterial.SetFloat(_biasID, bias);
             _shadowDepthEncodeMaterial.SetFloat(_tanHalfFovID, _bakeTanHalfFov);
             _shadowDepthEncodeMaterial.SetTexture(_depthTextureID, _depthTexture, RenderTextureSubElement.Depth);
@@ -734,7 +742,7 @@ namespace VRCLightVolumes {
             float bakeBias = _cycleBakeBias;
             int bakeCullingMask = _cycleBakeCullingMask;
 
-            if (!PrepareOutput(bakePosition, bakeFarClip, bakeBias, _useDirectOutput)) return false;
+            if (!PrepareOutput(bakePosition, bakeFarClip, bakeNearClip, bakeBias, _useDirectOutput)) return false;
             // Direct mode writes into the manager array; fallback mode writes into the baker-local array first
             if (_useDirectOutput && _manager != null) {
                 _currentOutputTexture = _manager.ShadowTextures;
@@ -757,7 +765,7 @@ namespace VRCLightVolumes {
             }
             ConfigureCamera(bakeFarClip, bakeNearClip, bakeCullingMask, _bakeFieldOfView);
             _shadowDepthEncodeMaterial.SetFloat(_farClipID, bakeFarClip);
-            _shadowDepthEncodeMaterial.SetFloat(_nearClipID, _configuredNearClip);
+            _shadowDepthEncodeMaterial.SetFloat(_nearClipID, bakeNearClip);
             _shadowDepthEncodeMaterial.SetFloat(_biasID, bakeBias);
             _shadowDepthEncodeMaterial.SetFloat(_tanHalfFovID, _bakeTanHalfFov);
             _shadowDepthEncodeMaterial.SetTexture(_depthTextureID, _depthTexture, RenderTextureSubElement.Depth);
@@ -807,12 +815,12 @@ namespace VRCLightVolumes {
             if (_useBlur && _deferBlurUntilFullCycle) {
                 if (cycleComplete) {
                     BlurFaces(0, _bakeSliceCount, _useDirectOutput, !_useDirectOutput);
-                    FinishBakeLoopCycle(bakePosition, bakeFarClip, bakeBias);
+                    FinishBakeLoopCycle(bakePosition, bakeFarClip, bakeNearClip, bakeBias);
                 }
             } else if (_useBlur) {
                 BlurFaces(firstFace, faceCount, _useDirectOutput, !_useDirectOutput);
                 if (cycleComplete) {
-                    FinishBakeLoopCycle(bakePosition, bakeFarClip, bakeBias);
+                    FinishBakeLoopCycle(bakePosition, bakeFarClip, bakeNearClip, bakeBias);
                 }
             } else if (!_useDirectOutput && _manager != null && _target != null) {
                 // Without blur, local output slices can be copied to the manager immediately after encoding
@@ -825,16 +833,16 @@ namespace VRCLightVolumes {
                     if (face >= _bakeSliceCount) face = 0;
                 }
                 if (cycleComplete) {
-                    FinishBakeLoopCycle(bakePosition, bakeFarClip, bakeBias);
+                    FinishBakeLoopCycle(bakePosition, bakeFarClip, bakeNearClip, bakeBias);
                 }
             } else if (cycleComplete) {
-                FinishBakeLoopCycle(bakePosition, bakeFarClip, bakeBias);
+                FinishBakeLoopCycle(bakePosition, bakeFarClip, bakeNearClip, bakeBias);
             }
             return true;
         }
 
         // Finalizes a completed distributed bake cycle and snapshots direct realtime output when the realtime loop stops
-        private void FinishBakeLoopCycle(Vector3 bakePosition, float farClip, float bias) {
+        private void FinishBakeLoopCycle(Vector3 bakePosition, float farClip, float nearClip, float bias) {
             if (_cycleUseDirectOutput && _useDirectOutput && !Realtime && _manager != null && _target != null && _manager.ShadowTextures != null && _target.ShadowMapID >= 0) {
                 RenderTextureFormat format = _manager.ShadowTextureFormat == ShadowTextureFormatHalf ? RenderTextureFormat.RGHalf : RenderTextureFormat.RGFloat;
                 _shadowTexture = EnsureOwnedArrayTexture(_shadowTexture, format, _bakeResolution, _bakeSliceCount, FilterMode.Bilinear);
@@ -847,7 +855,7 @@ namespace VRCLightVolumes {
                         sourceBaseSlice = cubemapCount * 6 + shadowId - cubemapCount;
                     }
                     for (int i = 0; i < _bakeSliceCount; i++) VRCGraphics.Blit(_manager.ShadowTextures, _shadowTexture, sourceBaseSlice + i, i);
-                    ApplyTargetShadowSourceInternal(bakePosition, farClip, bias, false);
+                    ApplyTargetShadowSourceInternal(bakePosition, farClip, nearClip, bias, false);
                 }
             }
             _hasCompletedFullBake = true;

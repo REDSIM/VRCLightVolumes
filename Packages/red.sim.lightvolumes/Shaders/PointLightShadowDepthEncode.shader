@@ -64,7 +64,9 @@ Shader "Hidden/VRCLV/PointLightShadowDepthEncode" {
                 float eyeDepth = LinearShadowEyeDepth(rawDepth);
                 float2 ndc = (uv * 2.0f - 1.0f) * _ShadowTanHalfFov;
                 float radialDepth = eyeDepth * sqrt(dot(ndc, ndc) + 1.0f);
-                return saturate((radialDepth + max(_ShadowBakeBias, 0.0f)) * rcp(max(_ShadowFarClip, 0.0001f)));
+                float nearClip = max(_ShadowNearClip, 0.0001f);
+                float farClip = max(_ShadowFarClip, nearClip + 0.0001f);
+                return saturate((radialDepth + max(_ShadowBakeBias, 0.0f) - nearClip) * rcp(farClip - nearClip));
             }
 
             float4 frag(v2f i) : SV_Target {

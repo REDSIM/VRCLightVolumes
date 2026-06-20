@@ -26,6 +26,7 @@ namespace VRCLightVolumes.Tests {
         private static readonly int _pointLightPositionID = Shader.PropertyToID("_UdonPointLightVolumePosition");
         private static readonly int _pointLightColorID = Shader.PropertyToID("_UdonPointLightVolumeColor");
         private static readonly int _pointLightDirectionID = Shader.PropertyToID("_UdonPointLightVolumeDirection");
+        private static readonly int _pointLightExtraDataID = Shader.PropertyToID("_UdonPointLightVolumeExtraData");
         private static readonly int _pointLightCustomIdID = Shader.PropertyToID("_UdonPointLightVolumeCustomID");
         private static readonly int _pointLightCountID = Shader.PropertyToID("_UdonPointLightVolumeCount");
         private static readonly int _pointLightCubeCountID = Shader.PropertyToID("_UdonPointLightVolumeCubeCount");
@@ -617,6 +618,7 @@ namespace VRCLightVolumes.Tests {
             PointLightVolumeInstance point = CreatePointLight(manager, "Animated Spot Cookie Light", true);
             point.SetCustomTexture();
             point.SetSpotLight(60, 0.5f);
+            point.SpotCookieAspect = 1.75f;
             point.CustomTexture = source;
             point.ProjectionType = 1; // 1: texture
             point.AutoUpdateCustomTexture = true;
@@ -634,6 +636,7 @@ namespace VRCLightVolumes.Tests {
             Assert.That(manager.CustomTextures.useMipMap, Is.False);
             Assert.That(manager.CustomTextures.autoGenerateMips, Is.False);
             AssertPointCustomData(point, -1, 0);
+            Assert.That(Shader.GetGlobalVectorArray(_pointLightExtraDataID)[0].x, Is.EqualTo(1.75f).Within(Epsilon));
         }
 
         // Verifies area lights without a cookie keep the default fast area light shader path.
@@ -962,12 +965,14 @@ namespace VRCLightVolumes.Tests {
             Cubemap source = CreateCubemap("Shadow VSM Half Type Source");
             manager.ShadowTextureFormat = 0;
             manager.ShadowBleedReduction = 0.35f;
+            manager.ShadowMinVariance = 0.00001f;
             manager.ShadowTexturesWidth = 4;
             manager.ShadowTexturesHeight = 4;
 
             PointLightVolumeInstance point = CreatePointLight(manager, "Shadow VSM Half Type Light", true);
             point.WorldSpaceShadows = true;
             point.Bias = 0;
+            point.NearClip = 0.25f;
             ConfigureShadowTexture(point, source, false, true, false);
             manager.PointLightVolumeInstances = new[] { point };
 
@@ -979,8 +984,9 @@ namespace VRCLightVolumes.Tests {
             Assert.That(manager.ShadowTextures.useMipMap, Is.False);
             Assert.That(manager.ShadowTextures.autoGenerateMips, Is.False);
             AssertGlobalFloat(_pointLightShadowBleedReductionID, 0.35f);
-            AssertGlobalFloat(_pointLightShadowMinVarianceID, LightVolumeManager.ShadowMinVariance);
+            AssertGlobalFloat(_pointLightShadowMinVarianceID, 0.00001f);
             AssertPointCustomData(point, 0, 1);
+            Assert.That(Shader.GetGlobalVectorArray(_pointLightExtraDataID)[0].w, Is.EqualTo(0.25f).Within(Epsilon));
         }
 
         // Verifies VSM Float shadows use an RGFloat texture array.
@@ -993,6 +999,7 @@ namespace VRCLightVolumes.Tests {
             manager.ShadowTexturesHeight = 4;
 
             PointLightVolumeInstance point = CreatePointLight(manager, "Shadow VSM Float Type Light", true);
+            point.WorldSpaceShadows = true;
             ConfigureShadowTexture(point, source, false, true, false);
             manager.PointLightVolumeInstances = new[] { point };
 
@@ -1071,7 +1078,7 @@ namespace VRCLightVolumes.Tests {
             refreshSettingsMethod.Invoke(baker, null);
             float firstFarClip = (float)bakeFarClipField.GetValue(baker);
             Assert.That(firstFarClip, Is.EqualTo(8).Within(Epsilon));
-            Assert.That((bool)applyMethod.Invoke(baker, new object[] { Vector3.zero, firstFarClip, 0.1f, false }), Is.True);
+            Assert.That((bool)applyMethod.Invoke(baker, new object[] { Vector3.zero, firstFarClip, 0.01f, 0.1f, false }), Is.True);
             Assert.That(point.FarClip, Is.EqualTo(8).Within(Epsilon));
 
             point.SquaredRange = 4;
@@ -1079,7 +1086,7 @@ namespace VRCLightVolumes.Tests {
             refreshSettingsMethod.Invoke(baker, null);
             float secondFarClip = (float)bakeFarClipField.GetValue(baker);
             Assert.That(secondFarClip, Is.EqualTo(2).Within(Epsilon));
-            Assert.That((bool)applyMethod.Invoke(baker, new object[] { Vector3.zero, secondFarClip, 0.1f, false }), Is.True);
+            Assert.That((bool)applyMethod.Invoke(baker, new object[] { Vector3.zero, secondFarClip, 0.01f, 0.1f, false }), Is.True);
             Assert.That(point.FarClip, Is.EqualTo(2).Within(Epsilon));
         }
 
@@ -1232,7 +1239,7 @@ namespace VRCLightVolumes.Tests {
             Assert.That((float)bakeFieldOfViewField.GetValue(baker), Is.EqualTo(60).Within(Epsilon));
             Assert.That((float)bakeTanHalfFovField.GetValue(baker), Is.EqualTo(Mathf.Tan(30f * Mathf.Deg2Rad)).Within(Epsilon));
 
-            Assert.That((bool)applyMethod.Invoke(baker, new object[] { Vector3.zero, 8f, 0.1f, false }), Is.True);
+            Assert.That((bool)applyMethod.Invoke(baker, new object[] { Vector3.zero, 8f, 0.01f, 0.1f, false }), Is.True);
             Assert.That(spot.ShadowMapTexture, Is.SameAs(shadowTexture));
             Assert.That(spot.ShadowMapUsesCubemap, Is.False);
             Assert.That(spot.ShadowMapTextureHasDepthSlices, Is.False);
@@ -1265,14 +1272,15 @@ namespace VRCLightVolumes.Tests {
             shadowMapTextureField.SetValue(baker, source);
 
             Vector3 bakePosition = new Vector3(1, 2, 3);
-            Assert.That((bool)applyMethod.Invoke(baker, new object[] { bakePosition, 12f, 0.25f, false }), Is.True);
+            Assert.That((bool)applyMethod.Invoke(baker, new object[] { bakePosition, 12f, 0.35f, 0.25f, false }), Is.True);
             Assert.That(point.FarClip, Is.EqualTo(12f).Within(Epsilon));
+            Assert.That(point.NearClip, Is.EqualTo(0.35f).Within(Epsilon));
             Assert.That(point.Bias, Is.EqualTo(0.25f).Within(Epsilon));
             Assert.That(point.AutoUpdateShadowMap, Is.False);
             AssertVectorClose(new Vector4(bakePosition.x, bakePosition.y, bakePosition.z, 0), new Vector4(point.ShadowBakePosition.x, point.ShadowBakePosition.y, point.ShadowBakePosition.z, 0));
 
-            Assert.That((bool)applyMethod.Invoke(baker, new object[] { bakePosition, 12f, 0.25f, false }), Is.False);
-            Assert.That((bool)applyMethod.Invoke(baker, new object[] { bakePosition + Vector3.right, 12f, 0.25f, false }), Is.True);
+            Assert.That((bool)applyMethod.Invoke(baker, new object[] { bakePosition, 12f, 0.35f, 0.25f, false }), Is.False);
+            Assert.That((bool)applyMethod.Invoke(baker, new object[] { bakePosition + Vector3.right, 12f, 0.35f, 0.25f, false }), Is.True);
         }
 
         // Verifies direct runtime baker output reserves a manager shadow slot without entering the auto shadow update cache.
@@ -1309,7 +1317,7 @@ namespace VRCLightVolumes.Tests {
             registrationTextureField.SetValue(baker, registrationTexture);
             Assert.That((bool)useDirectOutputField.GetValue(baker), Is.True);
 
-            Assert.That((bool)applyMethod.Invoke(baker, new object[] { Vector3.zero, 8f, 0.1f, true }), Is.True);
+            Assert.That((bool)applyMethod.Invoke(baker, new object[] { Vector3.zero, 8f, 0.01f, 0.1f, true }), Is.True);
             manager.ReinitializeShadowTextures();
 
             Assert.That(point.AutoUpdateShadowMap, Is.False);
@@ -1342,8 +1350,8 @@ namespace VRCLightVolumes.Tests {
             shadowMapTextureField.SetValue(baker, source);
 
             Vector3 bakePosition = new Vector3(1, 2, 3);
-            Assert.That((bool)applyMethod.Invoke(baker, new object[] { bakePosition, 12f, 0.25f, false }), Is.True);
-            Assert.That((bool)applyMethod.Invoke(baker, new object[] { bakePosition + Vector3.right, 12f, 0.25f, false }), Is.False);
+            Assert.That((bool)applyMethod.Invoke(baker, new object[] { bakePosition, 12f, 0.35f, 0.25f, false }), Is.True);
+            Assert.That((bool)applyMethod.Invoke(baker, new object[] { bakePosition + Vector3.right, 12f, 0.35f, 0.25f, false }), Is.False);
         }
 
         // Verifies realtime baker settings refresh does not notify the manager for local-space transform-only movement.
@@ -1405,7 +1413,7 @@ namespace VRCLightVolumes.Tests {
             baker.RuntimeShadowBlurMaterial = CreateMaterial("Hidden/VRCLV/PointLightShadowRuntimeBlur");
             shadowMapTextureField.SetValue(baker, shadowSource);
 
-            Assert.That((bool)applyMethod.Invoke(baker, new object[] { Vector3.zero, 8f, 0.1f, false }), Is.True);
+            Assert.That((bool)applyMethod.Invoke(baker, new object[] { Vector3.zero, 8f, 0.01f, 0.1f, false }), Is.True);
             Assert.That(point.ShadowMapTexture, Is.SameAs(shadowSource));
             Assert.That(point.ShadowMapTextureIsCubemap, Is.False);
             Assert.That(point.ShadowMapTextureHasDepthSlices, Is.True);
@@ -2105,7 +2113,7 @@ namespace VRCLightVolumes.Tests {
             Shader.SetGlobalFloat(_pointLightShadowCubeCountID, 0);
             Shader.SetGlobalFloat(_pointLightShadowCountID, 0);
             Shader.SetGlobalFloat(_pointLightShadowBleedReductionID, 0.2f);
-            Shader.SetGlobalFloat(_pointLightShadowMinVarianceID, LightVolumeManager.ShadowMinVariance);
+            Shader.SetGlobalFloat(_pointLightShadowMinVarianceID, 0.000001f);
             Shader.SetGlobalFloat(_lightBrightnessCutoffID, 0);
         }
 

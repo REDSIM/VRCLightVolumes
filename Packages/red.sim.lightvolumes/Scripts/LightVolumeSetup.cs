@@ -19,6 +19,8 @@ using System.Linq;
 namespace VRCLightVolumes {
     [ExecuteAlways]
     public class LightVolumeSetup : MonoBehaviour {
+        private const float ShadowMinVarianceValueMin = 0.000001f;
+        private const float ShadowMinVarianceValueMax = 0.0001f;
 
         [SerializeField] public List<LightVolume> LightVolumes = new List<LightVolume>();
         [SerializeField] public List<float> LightVolumesWeights = new List<float>();
@@ -28,16 +30,18 @@ namespace VRCLightVolumes {
         [Header("Point Light Volumes")]
         [Tooltip("Resolution used for point light cookie, LUT and cubemap projection textures.")]
         [FormerlySerializedAs("Resolution")]
-        public TextureArrayResolution CookieResolution = TextureArrayResolution._128x128;
+        public TextureArrayResolution CookieResolution = TextureArrayResolution._512x512;
         [Tooltip("The minimum brightness at a point due to lighting from a Point Light Volume, before the light is culled. Larger values will result in better performance, but light attenuation will be less physically correct.")]
         [FormerlySerializedAs("LightsBrightnessCutoff")]
         [Range(0.05f, 1f)] public float BrightnessCutoff = 0.35f;
         [Tooltip("Resolution used for per-light shadow maps. Resolution represents a single cubemap side, so it's actually x6 for each light with shadow.")]
-        public TextureArrayResolution ShadowResolution = TextureArrayResolution._128x128;
+        public TextureArrayResolution ShadowResolution = TextureArrayResolution._256x256;
         [Tooltip("Precision used for baked VSM shadow maps and the runtime shadow texture array. Half uses RGHalf, Float uses RGFloat.")]
         public ShadowTexturePrecision ShadowTextureFormat = ShadowTexturePrecision.Float;
-        [Tooltip("VSM light bleed reduction applied by the shadow receiver shader. 0 disables reduction, 1 is strongest.")]
+        [Tooltip("Reduces VSM light bleeding in cost of shadow penumbra collapse. Tip: You can increase blur in light sources to compensate this.")]
         [Range(0f, 1f)] public float ShadowBleedReduction = 0.1f;
+        [Tooltip("Reduces artefacts that are mostly visible with Half texture fromat on Quest and Mobile. Higher values - less artefacts on shadow edges in cost of light bleeding.")]
+        [Range(0f, 1f)] public float ShadowMinVariance = 0f;
 
         [Header("Baking")]
         [Tooltip("Bakery usually gives better results and works faster.")]
@@ -226,6 +230,7 @@ namespace VRCLightVolumes {
                 LightVolumeManager.ShadowTexturesHeight = (int)ShadowResolution;
                 LightVolumeManager.ShadowTextureFormat = ShadowTextureFormat == ShadowTexturePrecision.Half ? 0 : 1;
                 LightVolumeManager.ShadowBleedReduction = ShadowBleedReduction;
+                LightVolumeManager.ShadowMinVariance = GetShadowMinVarianceValue();
             }
             LightVolumeManager.CubemapFaceMaterial = GetCubemapFaceMaterial();
 
@@ -648,10 +653,11 @@ namespace VRCLightVolumes {
 
             Vector4[] pointPositions = new Vector4[MaxProbeBakedPointLightCount];
             Vector4[] pointColors = new Vector4[MaxProbeBakedPointLightCount];
+            Vector4[] pointExtraData = new Vector4[MaxProbeBakedPointLightCount];
             Vector4[] pointDirections = new Vector4[MaxProbeBakedPointLightCount];
             Vector4[] pointCustomIds = new Vector4[MaxProbeBakedPointLightCount];
             Texture customTextureArray = GetProbeBakeCustomTextureArray();
-            int pointLightCount = BuildProbeBakePointLightData(pointPositions, pointColors, pointDirections, pointCustomIds, customTextureArray != null);
+            int pointLightCount = BuildProbeBakePointLightData(pointPositions, pointColors, pointExtraData, pointDirections, pointCustomIds, customTextureArray != null);
             if (pointLightCount == 0) return 0;
 
             ComputeShader compute = AssetDatabase.LoadAssetAtPath<ComputeShader>(ProbeBakeComputePath);
@@ -684,13 +690,14 @@ namespace VRCLightVolumes {
                 compute.SetFloat("_UdonPointLightVolumeShadowCubeCount", 0f);
                 compute.SetFloat("_UdonPointLightVolumeShadowCount", 0f);
                 compute.SetFloat("_UdonPointLightVolumeShadowBleedReduction", ShadowBleedReduction);
-                compute.SetFloat("_UdonPointLightVolumeShadowMinVariance", VRCLightVolumes.LightVolumeManager.ShadowMinVariance);
+                compute.SetFloat("_UdonPointLightVolumeShadowMinVariance", GetShadowMinVarianceValue());
                 compute.SetFloat("_UdonLightVolumeOcclusionCount", 0f);
                 compute.SetTexture(kernel, "_UdonLightVolume", GetProbeBakeDummyVolumeTexture());
                 compute.SetTexture(kernel, "_UdonPointLightVolumeTexture", customTextureArray != null ? customTextureArray : GetProbeBakeDummyTextureArray());
                 compute.SetTexture(kernel, "_UdonPointLightVolumeShadowTexture", GetProbeBakeDummyTextureArray());
                 compute.SetVectorArray("_UdonPointLightVolumePosition", pointPositions);
                 compute.SetVectorArray("_UdonPointLightVolumeColor", pointColors);
+                compute.SetVectorArray("_UdonPointLightVolumeExtraData", pointExtraData);
                 compute.SetVectorArray("_UdonPointLightVolumeDirection", pointDirections);
                 compute.SetVectorArray("_UdonPointLightVolumeCustomID", pointCustomIds);
                 compute.SetBuffer(kernel, "_ProbePositions", probePositionsBuffer);
@@ -730,6 +737,11 @@ namespace VRCLightVolumes {
             return customTextures != null && customTextures.volumeDepth > 0 && customTextures.IsCreated() ? customTextures : null;
         }
 
+        // Converts the normalized inspector slider into the small VSM variance value used by shaders.
+        public float GetShadowMinVarianceValue() {
+            return ShadowMinVarianceValueMin * Mathf.Pow(ShadowMinVarianceValueMax / ShadowMinVarianceValueMin, Mathf.Clamp01(ShadowMinVariance));
+        }
+
         // Reads manager render texture references through serialization so stale migrated Udon proxy fields do not break editor bake paths.
         private RenderTexture GetSerializedCustomTextures() {
             if (LightVolumeManager == null) return null;
@@ -745,7 +757,7 @@ namespace VRCLightVolumes {
         }
 
         // Builds compute shader uniforms for Point Light Volumes marked for probe baking
-        private int BuildProbeBakePointLightData(Vector4[] pointPositions, Vector4[] pointColors, Vector4[] pointDirections, Vector4[] pointCustomIds, bool hasCustomTextureArray) {
+        private int BuildProbeBakePointLightData(Vector4[] pointPositions, Vector4[] pointColors, Vector4[] pointExtraData, Vector4[] pointDirections, Vector4[] pointCustomIds, bool hasCustomTextureArray) {
             int pointLightCount = 0;
             int missingTextureCount = 0;
             int overflowCount = 0;
@@ -763,7 +775,7 @@ namespace VRCLightVolumes {
                     continue;
                 }
 
-                if (TryWriteProbeBakePointLightData(pointLightVolume, pointLightCount, customId, pointPositions, pointColors, pointDirections, pointCustomIds)) pointLightCount++;
+                if (TryWriteProbeBakePointLightData(pointLightVolume, pointLightCount, customId, pointPositions, pointColors, pointExtraData, pointDirections, pointCustomIds)) pointLightCount++;
             }
 
             if (missingTextureCount > 0) Debug.LogWarning($"[LightVolumeSetup] Skipped {missingTextureCount} Point Light Volumes while baking into Light Probes because their projection texture data is not available in the current Point Light Volume texture array.");
@@ -785,7 +797,7 @@ namespace VRCLightVolumes {
         }
 
         // Writes one Point Light Volume into compute shader uniform arrays
-        private bool TryWriteProbeBakePointLightData(PointLightVolume pointLightVolume, int index, float customId, Vector4[] pointPositions, Vector4[] pointColors, Vector4[] pointDirections, Vector4[] pointCustomIds) {
+        private bool TryWriteProbeBakePointLightData(PointLightVolume pointLightVolume, int index, float customId, Vector4[] pointPositions, Vector4[] pointColors, Vector4[] pointExtraData, Vector4[] pointDirections, Vector4[] pointCustomIds) {
             Transform lightTransform = pointLightVolume.transform;
             Color linearColor = pointLightVolume.Color.linear;
             Vector4 color = new Vector4(linearColor.r, linearColor.g, linearColor.b, 1f) * pointLightVolume.Intensity;
@@ -848,6 +860,9 @@ namespace VRCLightVolumes {
 
             pointPositions[index] = position;
             pointColors[index] = color;
+            Vector4 extraData = new Vector4(linearColor.r * pointLightVolume.Intensity, linearColor.g * pointLightVolume.Intensity, linearColor.b * pointLightVolume.Intensity, 0f);
+            if (isSpot && isCustomProjection) extraData.x = Mathf.Max(Mathf.Abs(pointLightVolume.SpotCookieAspect), 0.001f);
+            pointExtraData[index] = extraData;
             pointDirections[index] = direction;
             pointCustomIds[index] = new Vector4(customId, DisabledProbeBakeShadowId, squaredRange, 0);
             return true;
@@ -921,6 +936,7 @@ namespace VRCLightVolumes {
             SyncManagerProgramVariable("ShadowTexturesHeight", LightVolumeManager.ShadowTexturesHeight);
             SyncManagerProgramVariable("ShadowTextureFormat", LightVolumeManager.ShadowTextureFormat);
             SyncManagerProgramVariable("ShadowBleedReduction", LightVolumeManager.ShadowBleedReduction);
+            SyncManagerProgramVariable("ShadowMinVariance", LightVolumeManager.ShadowMinVariance);
             SyncManagerProgramVariable("CubemapFaceMaterial", LightVolumeManager.CubemapFaceMaterial);
         }
 
@@ -966,6 +982,7 @@ namespace VRCLightVolumes {
                 _lightVolumeManagerBehaviour.SetProgramVariable("ShadowTexturesHeight", (int)ShadowResolution);
                 _lightVolumeManagerBehaviour.SetProgramVariable("ShadowTextureFormat", ShadowTextureFormat == ShadowTexturePrecision.Half ? 0 : 1);
                 _lightVolumeManagerBehaviour.SetProgramVariable("ShadowBleedReduction", ShadowBleedReduction);
+                _lightVolumeManagerBehaviour.SetProgramVariable("ShadowMinVariance", GetShadowMinVarianceValue());
                 _lightVolumeManagerBehaviour.SetProgramVariable("ForceSceneLighting", ForceSceneLighting);
 #if UNITY_EDITOR
                 LightVolumeManager.CustomTexturesWidth = (int)CookieResolution;
@@ -974,6 +991,7 @@ namespace VRCLightVolumes {
                 LightVolumeManager.ShadowTexturesHeight = (int)ShadowResolution;
                 LightVolumeManager.ShadowTextureFormat = ShadowTextureFormat == ShadowTexturePrecision.Half ? 0 : 1;
                 LightVolumeManager.ShadowBleedReduction = ShadowBleedReduction;
+                LightVolumeManager.ShadowMinVariance = GetShadowMinVarianceValue();
                 LightVolumeManager.CubemapFaceMaterial = GetCubemapFaceMaterial();
 #endif
                 SyncBaseTextureMetadataToUdon();
@@ -1010,6 +1028,7 @@ namespace VRCLightVolumes {
                 LightVolumeManager.ShadowTexturesHeight = (int)ShadowResolution;
                 LightVolumeManager.ShadowTextureFormat = ShadowTextureFormat == ShadowTexturePrecision.Half ? 0 : 1;
                 LightVolumeManager.ShadowBleedReduction = ShadowBleedReduction;
+                LightVolumeManager.ShadowMinVariance = GetShadowMinVarianceValue();
                 LightVolumeManager.ForceSceneLighting = ForceSceneLighting;
 #if UNITY_EDITOR
                 LightVolumeManager.CustomTexturesWidth = (int)CookieResolution;

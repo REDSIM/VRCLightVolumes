@@ -28,14 +28,10 @@ namespace VRCLightVolumes {
         
 #if UDONSHARP
         private Color32[] _pixels;
-#else
-        private Unity.Collections.NativeArray<Color32> _pixels;
 #endif
         private Color _prevColor;
         private float _timePrev;
         private RenderTexture _downsampledTex;
-
-#if UDONSHARP
 
         private void Start() {
             _timePrev = Time.time;
@@ -44,9 +40,12 @@ namespace VRCLightVolumes {
             _downsampledTex.useMipMap = true;
             _downsampledTex.autoGenerateMips = true;
             _downsampledTex.Create();
+#if UDONSHARP
             _pixels = new Color32[1];
+#endif
         }
 
+#if UDONSHARP
         void Update() {
             VRCGraphics.Blit(TargetRenderTexture, _downsampledTex);
             VRCAsyncGPUReadback.Request(_downsampledTex, _downsampledTex.mipmapCount - 1, (IUdonEventReceiver)this);
@@ -54,7 +53,7 @@ namespace VRCLightVolumes {
 
         public override void OnAsyncGpuReadbackComplete(VRCAsyncGPUReadbackRequest request) {
             if (request.TryGetData(_pixels)) {
-                SetColor();
+                SetColor(_pixels[0]);
             }
         }
 
@@ -65,19 +64,17 @@ namespace VRCLightVolumes {
         }
 
         public void OnAsyncGpuReadbackComplete(UnityEngine.Rendering.AsyncGPUReadbackRequest request) {
-            var _pixels = request.GetData<Color32>();
-            SetColor();
-            _pixels.Dispose();
+            if (request.hasError) return;
+            Unity.Collections.NativeArray<Color32> pixels = request.GetData<Color32>();
+            if (pixels.Length > 0) SetColor(pixels[0]);
         }
 #endif
 
-        private void SetColor() {
+        private void SetColor(Color color) {
 
             // Custom delta time for the async stuff 
             float dTime = Time.time - _timePrev;
             _timePrev = Time.time;
-
-            Color color = _pixels[0]; // Current color
 
             if (AntiFlickering) {
                 float diff = ColorDifference(color, _prevColor); // Difference between prev and current color

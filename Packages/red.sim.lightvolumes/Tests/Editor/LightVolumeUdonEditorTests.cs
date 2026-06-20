@@ -687,9 +687,9 @@ namespace VRCLightVolumes.Tests {
             AssertPointCustomData(point, -1, 0);
         }
 
-        // Verifies area light material cookies use per-light single-slice sources with mipmapped projection data.
+        // Verifies area light material cookies reuse matching material sources with mipmapped projection data.
         [Test]
-        public void AreaMaterialCookieCreatesRuntimeArrayAndShaderIds() {
+        public void AreaMaterialCookieDeduplicatesRuntimeArrayAndShaderIds() {
             LightVolumeManager manager = CreateManager("Area Material Cookie Runtime Manager", false);
             Material material = CreateMaterial("Hidden/CubeFace");
             manager.CustomTexturesWidth = 4;
@@ -713,15 +713,15 @@ namespace VRCLightVolumes.Tests {
 
             Assert.That(manager.CubemapsCount, Is.EqualTo(0));
             Assert.That(GetManagerField<int>(manager, _customSingleTextureCountField), Is.EqualTo(0));
-            Assert.That(GetManagerField<int>(manager, _customSingleMaterialCountField), Is.EqualTo(2));
+            Assert.That(GetManagerField<int>(manager, _customSingleMaterialCountField), Is.EqualTo(1));
             Assert.That(manager.CustomTextures, Is.Not.Null);
             Assert.That(manager.CustomTextures.dimension, Is.EqualTo(TextureDimension.Tex2DArray));
-            Assert.That(manager.CustomTextures.volumeDepth, Is.EqualTo(2));
+            Assert.That(manager.CustomTextures.volumeDepth, Is.EqualTo(1));
             Assert.That(manager.CustomTextures.useMipMap, Is.True);
             Assert.That(manager.CustomTextures.autoGenerateMips, Is.True);
-            Assert.That(GetManagerField<int[]>(manager, _pointLightCustomIDsField), Is.EqualTo(new[] { 0, 1 }));
+            Assert.That(GetManagerField<int[]>(manager, _pointLightCustomIDsField), Is.EqualTo(new[] { 0, 0 }));
             AssertPointCustomData(0, firstPoint, -1, 0);
-            AssertPointCustomData(1, secondPoint, -2, 0);
+            AssertPointCustomData(1, secondPoint, -1, 0);
         }
 
         // Verifies the runtime API assigns a texture source and refreshes manager-owned projection arrays
@@ -1563,7 +1563,7 @@ namespace VRCLightVolumes.Tests {
             manager.CustomTextures = CreateRenderTexture("Animated Point Cubemap Material Runtime", 16, 8, 12, TextureDimension.Tex2DArray);
             SetManagerField(manager, _customTexturesDepthField, 12);
             Material material = CreateMaterial("Hidden/CubeFace");
-            MethodInfo method = typeof(LightVolumeManager).GetMethod("SetMaterialBlitProperties", _lifecycleMethodFlags);
+            MethodInfo method = typeof(LightVolumeManager).GetMethod("BlitMaterialSlice", _lifecycleMethodFlags);
             Assert.That(method, Is.Not.Null);
 
             method.Invoke(manager, new object[] { material, 4, 10, true, manager.CustomTextures });

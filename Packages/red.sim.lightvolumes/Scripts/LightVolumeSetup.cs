@@ -19,8 +19,8 @@ using System.Linq;
 namespace VRCLightVolumes {
     [ExecuteAlways]
     public class LightVolumeSetup : MonoBehaviour {
-        private const float ShadowMinVarianceValueMin = 0.000001f;
-        private const float ShadowMinVarianceValueMax = 0.0001f;
+        private const float ShadowMinVarianceValueMin = 0.0001f;
+        private const float ShadowMinVarianceValueMax = 1.0f;
 
         [SerializeField] public List<LightVolume> LightVolumes = new List<LightVolume>();
         [SerializeField] public List<float> LightVolumesWeights = new List<float>();
@@ -36,12 +36,12 @@ namespace VRCLightVolumes {
         [Range(0.05f, 1f)] public float BrightnessCutoff = 0.35f;
         [Tooltip("Resolution used for per-light shadow maps. Resolution represents a single cubemap side, so it's actually x6 for each light with shadow.")]
         public TextureArrayResolution ShadowResolution = TextureArrayResolution._256x256;
-        [Tooltip("Precision used for baked VSM shadow maps and the runtime shadow texture array. Half uses RGHalf, Float uses RGFloat.")]
+        [HideInInspector]
         public ShadowTexturePrecision ShadowTextureFormat = ShadowTexturePrecision.Float;
-        [Tooltip("Reduces VSM light bleeding at the cost of shadow penumbra collapse. Increase per-light Blur to compensate if shadows become too thin.")]
-        [Range(0f, 1f)] public float ShadowBleedReduction = 0.1f;
-        [Tooltip("Logarithmic VSM minimum variance slider. 0 = 0.000001, 1 = 0.0001. Higher values reduce Half precision edge noise on Quest and Mobile, but can detach contact shadows.")]
-        [Range(0f, 1f)] public float ShadowMinVariance = 0f;
+        [Tooltip("Reduces EVSM light bleeding at the cost of shadow penumbra collapse. Increase per-light Blur to compensate if shadows become too thin.")]
+        [Range(0f, 1f)] public float ShadowBleedReduction = 0.2f;
+        [Tooltip("Logarithmic EVSM minimum variance slider. 0 = 0.0001, 1 = 1.0. Higher values reduce Half precision edge noise on Quest and Mobile, but can detach contact shadows.")]
+        [Range(0f, 1f)] public float ShadowMinVariance = 1f;
 
         [Header("Baking")]
         [Tooltip("Bakery usually gives better results and works faster.")]
@@ -177,12 +177,46 @@ namespace VRCLightVolumes {
         private static readonly System.Reflection.FieldInfo _bakeryVolumeGroupField = typeof(ftBuildGraphics).GetField("volumeLMGroup", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic);
 #endif
         private bool _subscribedToUnityLightmapper = false;
+        private bool _subscribedToBuildTargetChanged = false;
         private bool _unityLightProbePostProcessApplied = false;
 
         private void OnSelectionChanged() {
             if (Selection.activeObject == gameObject) {
                 RefreshVolumesList();
             }
+        }
+
+        // Returns the shadow texture precision required by the active Unity build target.
+        private static ShadowTexturePrecision GetAutomaticShadowTextureFormat() {
+            BuildTarget activeBuildTarget = EditorUserBuildSettings.activeBuildTarget;
+            return activeBuildTarget == BuildTarget.Android || activeBuildTarget == BuildTarget.iOS ? ShadowTexturePrecision.Half : ShadowTexturePrecision.Float;
+        }
+
+        // Updates the hidden serialized shadow texture format from the active build target.
+        private bool ApplyAutomaticShadowTextureFormat() {
+            ShadowTexturePrecision textureFormat = GetAutomaticShadowTextureFormat();
+            if (ShadowTextureFormat == textureFormat) return false;
+            ShadowTextureFormat = textureFormat;
+            EditorUtility.SetDirty(this);
+            return true;
+        }
+
+        // Rebuilds shadow data after the build target changes the required texture format.
+        private void RebuildShadowsAfterTextureFormatChange() {
+            _shadowTextureFormatPrev = ShadowTextureFormat;
+            if (!Application.isPlaying) {
+                bool rebaked = BakeShadowMaps(true);
+                if (!rebaked) ReinitializeShadowTextures();
+            } else {
+                ReinitializeShadowTextures();
+            }
+        }
+
+        // Applies automatic shadow precision immediately when Unity or the VRC SDK switches build target.
+        private void OnActiveBuildTargetChanged() {
+            if (!ApplyAutomaticShadowTextureFormat()) return;
+            RebuildShadowsAfterTextureFormatChange();
+            SyncUdonScript();
         }
 
         // Rebuilds manager-owned cookie source caches and the runtime RenderTexture texture array
@@ -228,7 +262,7 @@ namespace VRCLightVolumes {
             } else {
                 LightVolumeManager.ShadowTexturesWidth = (int)ShadowResolution;
                 LightVolumeManager.ShadowTexturesHeight = (int)ShadowResolution;
-                LightVolumeManager.ShadowTextureFormat = ShadowTextureFormat == ShadowTexturePrecision.Half ? 0 : 1;
+                LightVolumeManager.ShadowTextureFormat = GetShadowTextureFormatValue();
                 LightVolumeManager.ShadowBleedReduction = ShadowBleedReduction;
                 LightVolumeManager.ShadowMinVariance = GetShadowMinVarianceValue();
             }
@@ -289,9 +323,15 @@ namespace VRCLightVolumes {
 
             Selection.selectionChanged += OnSelectionChanged;
 #if UNITY_EDITOR
+            bool shadowTextureFormatChanged = ApplyAutomaticShadowTextureFormat();
+            if (!_subscribedToBuildTargetChanged) {
+                EditorUserBuildSettings.activeBuildTargetChanged += OnActiveBuildTargetChanged;
+                _subscribedToBuildTargetChanged = true;
+            }
             _resolutionPrev = CookieResolution;
             _shadowResolutionPrev = ShadowResolution;
             _shadowTextureFormatPrev = ShadowTextureFormat;
+            if (shadowTextureFormatChanged) RebuildShadowsAfterTextureFormatChange();
 #endif
             SyncUdonScript();
         }
@@ -314,6 +354,12 @@ namespace VRCLightVolumes {
             }
 
             Selection.selectionChanged -= OnSelectionChanged;
+#if UNITY_EDITOR
+            if (_subscribedToBuildTargetChanged) {
+                EditorUserBuildSettings.activeBuildTargetChanged -= OnActiveBuildTargetChanged;
+                _subscribedToBuildTargetChanged = false;
+            }
+#endif
             SyncUdonScript();
         }
 
@@ -322,6 +368,9 @@ namespace VRCLightVolumes {
         }
 
         private void OnValidate() {
+#if UNITY_EDITOR
+            ApplyAutomaticShadowTextureFormat();
+#endif
             SyncUdonScript();
         }
 
@@ -461,6 +510,9 @@ namespace VRCLightVolumes {
         private void Update() {
             if (DontSync) return;
             SetupDependencies();
+#if UNITY_EDITOR
+            ApplyAutomaticShadowTextureFormat();
+#endif
             // Resetup required game objects and components for light volumes in new baking mode
             if (_bakingModePrev != BakingMode) {
                 _bakingModePrev = BakingMode;
@@ -910,9 +962,23 @@ namespace VRCLightVolumes {
 
 #endif
 
-        // Converts the normalized inspector slider into the small VSM variance value used by shaders.
+        // Converts the normalized inspector slider into the raw EVSM variance value used by shaders.
         public float GetShadowMinVarianceValue() {
             return ShadowMinVarianceValueMin * Mathf.Pow(ShadowMinVarianceValueMax / ShadowMinVarianceValueMin, Mathf.Clamp01(ShadowMinVariance));
+        }
+
+        // Returns the effective shadow texture precision used by the current build target.
+        public ShadowTexturePrecision GetResolvedShadowTextureFormat() {
+#if UNITY_EDITOR
+            return GetAutomaticShadowTextureFormat();
+#else
+            return ShadowTextureFormat;
+#endif
+        }
+
+        // Returns the manager integer value for the effective shadow texture precision.
+        public int GetShadowTextureFormatValue() {
+            return GetResolvedShadowTextureFormat() == ShadowTexturePrecision.Half ? 0 : 1;
         }
 
 #if UDONSHARP
@@ -980,7 +1046,7 @@ namespace VRCLightVolumes {
                 _lightVolumeManagerBehaviour.SetProgramVariable("LightsBrightnessCutoff", BrightnessCutoff);
                 _lightVolumeManagerBehaviour.SetProgramVariable("ShadowTexturesWidth", (int)ShadowResolution);
                 _lightVolumeManagerBehaviour.SetProgramVariable("ShadowTexturesHeight", (int)ShadowResolution);
-                _lightVolumeManagerBehaviour.SetProgramVariable("ShadowTextureFormat", ShadowTextureFormat == ShadowTexturePrecision.Half ? 0 : 1);
+                _lightVolumeManagerBehaviour.SetProgramVariable("ShadowTextureFormat", GetShadowTextureFormatValue());
                 _lightVolumeManagerBehaviour.SetProgramVariable("ShadowBleedReduction", ShadowBleedReduction);
                 _lightVolumeManagerBehaviour.SetProgramVariable("ShadowMinVariance", GetShadowMinVarianceValue());
                 _lightVolumeManagerBehaviour.SetProgramVariable("ForceSceneLighting", ForceSceneLighting);
@@ -989,7 +1055,7 @@ namespace VRCLightVolumes {
                 LightVolumeManager.CustomTexturesHeight = (int)CookieResolution;
                 LightVolumeManager.ShadowTexturesWidth = (int)ShadowResolution;
                 LightVolumeManager.ShadowTexturesHeight = (int)ShadowResolution;
-                LightVolumeManager.ShadowTextureFormat = ShadowTextureFormat == ShadowTexturePrecision.Half ? 0 : 1;
+                LightVolumeManager.ShadowTextureFormat = GetShadowTextureFormatValue();
                 LightVolumeManager.ShadowBleedReduction = ShadowBleedReduction;
                 LightVolumeManager.ShadowMinVariance = GetShadowMinVarianceValue();
                 LightVolumeManager.CubemapFaceMaterial = GetCubemapFaceMaterial();
@@ -1026,7 +1092,7 @@ namespace VRCLightVolumes {
                 LightVolumeManager.LightsBrightnessCutoff = BrightnessCutoff;
                 LightVolumeManager.ShadowTexturesWidth = (int)ShadowResolution;
                 LightVolumeManager.ShadowTexturesHeight = (int)ShadowResolution;
-                LightVolumeManager.ShadowTextureFormat = ShadowTextureFormat == ShadowTexturePrecision.Half ? 0 : 1;
+                LightVolumeManager.ShadowTextureFormat = GetShadowTextureFormatValue();
                 LightVolumeManager.ShadowBleedReduction = ShadowBleedReduction;
                 LightVolumeManager.ShadowMinVariance = GetShadowMinVarianceValue();
                 LightVolumeManager.ForceSceneLighting = ForceSceneLighting;
@@ -1326,7 +1392,7 @@ namespace VRCLightVolumes {
 
         // Returns the fixed texture format used for baked shadow map moments
         public TextureFormat GetShadowMapBakeFormat() {
-            return ShadowTextureFormat == ShadowTexturePrecision.Half ? TextureFormat.RGHalf : TextureFormat.RGFloat;
+            return GetResolvedShadowTextureFormat() == ShadowTexturePrecision.Half ? TextureFormat.RGBAHalf : TextureFormat.RGBAFloat;
         }
 
         // Bakes all requested per-light shadow maps

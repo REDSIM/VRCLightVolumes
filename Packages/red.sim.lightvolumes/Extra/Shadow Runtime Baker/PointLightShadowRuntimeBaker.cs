@@ -300,7 +300,7 @@ namespace VRCLightVolumes {
 
             RefreshBakeSettings();
 
-            RenderTextureFormat format = _manager != null && _manager.ShadowTextureFormat == ShadowTextureFormatHalf ? RenderTextureFormat.RGHalf : RenderTextureFormat.RGFloat;
+            RenderTextureFormat format = _manager != null && _manager.ShadowTextureFormat == ShadowTextureFormatHalf ? RenderTextureFormat.ARGBHalf : RenderTextureFormat.ARGBFloat;
 
             if (!EnsureDepthTexture(_bakeResolution)) return false;
             if (_useDirectOutput) {
@@ -844,7 +844,7 @@ namespace VRCLightVolumes {
         // Finalizes a completed distributed bake cycle and snapshots direct realtime output when the realtime loop stops
         private void FinishBakeLoopCycle(Vector3 bakePosition, float farClip, float nearClip, float bias) {
             if (_cycleUseDirectOutput && _useDirectOutput && !Realtime && _manager != null && _target != null && _manager.ShadowTextures != null && _target.ShadowMapID >= 0) {
-                RenderTextureFormat format = _manager.ShadowTextureFormat == ShadowTextureFormatHalf ? RenderTextureFormat.RGHalf : RenderTextureFormat.RGFloat;
+                RenderTextureFormat format = _manager.ShadowTextureFormat == ShadowTextureFormatHalf ? RenderTextureFormat.ARGBHalf : RenderTextureFormat.ARGBFloat;
                 _shadowTexture = EnsureOwnedArrayTexture(_shadowTexture, format, _bakeResolution, _bakeSliceCount, FilterMode.Bilinear);
                 if (_shadowTexture != null) {
                     int shadowId = (int)_target.ShadowMapID;

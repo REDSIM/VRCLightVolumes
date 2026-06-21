@@ -275,7 +275,7 @@ namespace VRCLightVolumes {
 
                 RenderTexture shadowTexturesRT = GetSerializedTexture(manager, "ShadowTextures") as RenderTexture;
                 if (shadowTexturesRT != null) {
-                    ulong shadowBytesPerPixel = _lightVolumeSetup.ShadowTextureFormat == LightVolumeSetup.ShadowTexturePrecision.Half ? 4UL : 8UL;
+                    ulong shadowBytesPerPixel = _lightVolumeSetup.GetResolvedShadowTextureFormat() == LightVolumeSetup.ShadowTexturePrecision.Half ? 8UL : 16UL;
                     vramBytes += GetRenderTextureArrayBytes(shadowTexturesRT, shadowBytesPerPixel);
                 }
             }
@@ -283,8 +283,8 @@ namespace VRCLightVolumes {
             vramBytes += bakedShadowTextureBytes;
             bundleRawBytes += bakedShadowTextureBytes;
 
-            GUILayout.Label(new GUIContent($"Data size in VRAM: {SizeInVRAM(vramBytes)} MB", "Includes only the Light Volume 3D atlas, cookie texture arrays, baked VSM shadow map assets and shadow map arrays."));
-            GUILayout.Label(new GUIContent($"Data size in bundle: {SizeInBundle(bundleRawBytes)} MB (Approximately)", "Includes only the Light Volume 3D atlas and baked VSM shadow map assets."));
+            GUILayout.Label(new GUIContent($"Data size in VRAM: {SizeInVRAM(vramBytes)} MB", "Includes only the Light Volume 3D atlas, cookie texture arrays, baked EVSM shadow map assets and shadow map arrays."));
+            GUILayout.Label(new GUIContent($"Data size in bundle: {SizeInBundle(bundleRawBytes)} MB (Approximately)", "Includes only the Light Volume 3D atlas and baked EVSM shadow map assets."));
 
             GUILayout.Space(10);
 
@@ -319,7 +319,6 @@ namespace VRCLightVolumes {
             if (plvCount > 0) {
                 EditorGUILayout.PropertyField(serializedObject.FindProperty("CookieResolution"));
                 EditorGUILayout.PropertyField(serializedObject.FindProperty("ShadowResolution"));
-                EditorGUILayout.PropertyField(serializedObject.FindProperty("ShadowTextureFormat"));
                 EditorGUILayout.PropertyField(serializedObject.FindProperty("ShadowBleedReduction"));
                 EditorGUILayout.PropertyField(serializedObject.FindProperty("ShadowMinVariance"));
                 EditorGUILayout.PropertyField(serializedObject.FindProperty("BrightnessCutoff"));
@@ -393,10 +392,10 @@ namespace VRCLightVolumes {
             return texture.useMipMap ? bytes * 4UL / 3UL : bytes;
         }
 
-        // Returns the estimated raw byte size of unique baked VSM shadow texture assets included in the bundle.
+        // Returns the estimated raw byte size of unique baked EVSM shadow texture assets included in the bundle.
         private ulong GetBakedShadowTextureBytes() {
             ulong bytes = 0;
-            ulong bytesPerPixel = _lightVolumeSetup.ShadowTextureFormat == LightVolumeSetup.ShadowTexturePrecision.Half ? 4UL : 8UL;
+            ulong bytesPerPixel = _lightVolumeSetup.GetResolvedShadowTextureFormat() == LightVolumeSetup.ShadowTexturePrecision.Half ? 8UL : 16UL;
             HashSet<Texture> countedTextures = new HashSet<Texture>();
             for (int i = 0; i < _lightVolumeSetup.PointLightVolumes.Count; i++) {
                 PointLightVolume pointLightVolume = _lightVolumeSetup.PointLightVolumes[i];

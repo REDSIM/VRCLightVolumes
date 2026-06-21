@@ -521,7 +521,7 @@ namespace VRCLightVolumes {
             float nearClip = GetShadowNearClip();
             if (nearClip >= farClip) nearClip = farClip * 0.5f;
             int resolution = LightVolumeSetup != null ? (int)LightVolumeSetup.ShadowResolution : 128;
-            TextureFormat format = LightVolumeSetup != null ? LightVolumeSetup.GetShadowMapBakeFormat() : TextureFormat.RGFloat;
+            TextureFormat format = LightVolumeSetup != null ? LightVolumeSetup.GetShadowMapBakeFormat() : TextureFormat.RGBAFloat;
             UnityEngine.Object shadowTexture = ShouldBakeCubemapShadows() ? (UnityEngine.Object)PointLightShadowBaker.BakeShadowMap(this, resolution, farClip, format, Blur, ContactHardening, infoString) : PointLightShadowBaker.BakeSingleShadowMap(this, resolution, farClip, format, Blur, ContactHardening, infoString);
             if (shadowTexture == null) return false;
 

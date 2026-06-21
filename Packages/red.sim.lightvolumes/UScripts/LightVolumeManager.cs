@@ -59,12 +59,12 @@ namespace VRCLightVolumes {
         public int ShadowTexturesWidth = 256;
         [Tooltip("Height of each runtime shadow cubemap face.")]
         public int ShadowTexturesHeight = 256;
-        [Tooltip("Precision used for baked VSM shadow maps and the runtime shadow texture array. 0 = RGHalf, 1 = RGFloat.")]
+        [Tooltip("Precision used for baked EVSM shadow maps and the runtime shadow texture array. 0 = ARGBHalf, 1 = ARGBFloat.")]
         public int ShadowTextureFormat = 1;
-        [Tooltip("VSM light bleed reduction applied by the shadow receiver shader. 0 disables reduction, 1 is strongest.")]
-        public float ShadowBleedReduction = 0.1f;
-        [Tooltip("Raw minimum VSM variance used by the shadow receiver shader. Authoring setup stores this as a 0..1 logarithmic slider.")]
-        public float ShadowMinVariance = 0.000001f;
+        [Tooltip("EVSM light bleed reduction applied by the shadow receiver shader. 0 disables reduction, 1 is strongest.")]
+        public float ShadowBleedReduction = 0.2f;
+        [Tooltip("Raw minimum EVSM variance used by the shadow receiver shader. Authoring setup stores this as a 0..1 logarithmic slider.")]
+        public float ShadowMinVariance = 1.0f;
 
         [Header("Visuals")]
         [Tooltip("When enabled, areas outside Light Volumes fall back to light probes. Otherwise, the Light Volume with the smallest weight is used as fallback. It also improves performance.")]
@@ -1312,7 +1312,7 @@ namespace VRCLightVolumes {
         // Creates or recreates the runtime shadow texture array so it matches an explicit texture layout
         private bool EnsureRuntimeShadowTextures(int width, int height, int depth) {
             if (width <= 0 || height <= 0 || depth <= 0) return false;
-            RenderTextureFormat renderTextureFormat = ShadowTextureFormat == ShadowTextureFormatHalf ? RenderTextureFormat.RGHalf : RenderTextureFormat.RGFloat;
+            RenderTextureFormat renderTextureFormat = ShadowTextureFormat == ShadowTextureFormatHalf ? RenderTextureFormat.ARGBHalf : RenderTextureFormat.ARGBFloat;
             bool recreate = ShouldRecreateRuntimeTextureArray(ShadowTextures, width, height, depth, renderTextureFormat, false, FilterMode.Bilinear);
             if (!recreate) return ShadowTextures != null;
             ReleaseRuntimeRenderTexture(ShadowTextures);

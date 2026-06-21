@@ -55,22 +55,22 @@ namespace VRCLightVolumes {
             Quaternion.identity
         };
 
-        // Bakes a shadow cubemap from the light position.
+        // Bakes an EVSM shadow cubemap from the light position.
         public static Cubemap BakeShadowMap(PointLightVolume pointLightVolume, int resolution, float farClip, string infoString = "") {
-            return BakeShadowMap(pointLightVolume, resolution, farClip, TextureFormat.RGFloat, 0, 0.05f, infoString);
+            return BakeShadowMap(pointLightVolume, resolution, farClip, TextureFormat.RGBAFloat, 0, 0.05f, infoString);
         }
 
-        // Bakes a shadow cubemap from the light position.
+        // Bakes an EVSM shadow cubemap from the light position.
         public static Cubemap BakeShadowMap(PointLightVolume pointLightVolume, int resolution, float farClip, TextureFormat textureFormat, string infoString = "") {
             return BakeShadowMap(pointLightVolume, resolution, farClip, textureFormat, 0, 0.05f, infoString);
         }
 
-        // Bakes a shadow cubemap from the light position.
+        // Bakes an EVSM shadow cubemap from the light position.
         public static Cubemap BakeShadowMap(PointLightVolume pointLightVolume, int resolution, float farClip, TextureFormat textureFormat, float blurRadius, string infoString = "") {
             return BakeShadowMap(pointLightVolume, resolution, farClip, textureFormat, blurRadius, 0.1f, infoString);
         }
 
-        // Bakes a shadow cubemap from the light position.
+        // Bakes an EVSM shadow cubemap from the light position.
         public static Cubemap BakeShadowMap(PointLightVolume pointLightVolume, int resolution, float farClip, TextureFormat textureFormat, float blurRadius, float blurDepth, string infoString = "") {
             RenderTexture cubeRT = BakeShadowMapRenderTexture(pointLightVolume, resolution, farClip, textureFormat, blurRadius, blurDepth, infoString);
             if (cubeRT == null) return null;
@@ -92,7 +92,7 @@ namespace VRCLightVolumes {
             }
         }
 
-        // Bakes a shadow texture array from the light position.
+        // Bakes an EVSM shadow texture array from the light position.
         public static Texture2DArray BakeShadowMapTextureArray(PointLightVolume pointLightVolume, int resolution, float farClip, TextureFormat textureFormat, float blurRadius, float blurDepth, string infoString = "") {
             RenderTexture arrayRT = BakeShadowMapRenderTexture(pointLightVolume, resolution, farClip, textureFormat, blurRadius, blurDepth, infoString);
             if (arrayRT == null) return null;
@@ -114,7 +114,7 @@ namespace VRCLightVolumes {
             }
         }
 
-        // Bakes a shadow texture from a spotlight position and direction.
+        // Bakes an EVSM shadow texture from a spotlight position and direction.
         public static Texture2D BakeSingleShadowMap(PointLightVolume pointLightVolume, int resolution, float farClip, TextureFormat textureFormat, float blurRadius, float blurDepth, string infoString = "") {
             RenderTexture textureRT = BakeShadowMapRenderTexture(pointLightVolume, resolution, farClip, textureFormat, blurRadius, blurDepth, false, infoString);
             if (textureRT == null) return null;
@@ -136,12 +136,12 @@ namespace VRCLightVolumes {
             }
         }
 
-        // Bakes a shadow texture into a live RenderTexture.
+        // Bakes an EVSM shadow texture into a live RenderTexture.
         public static RenderTexture BakeShadowMapRenderTexture(PointLightVolume pointLightVolume, int resolution, float farClip, TextureFormat textureFormat, float blurRadius, float blurDepth, string infoString = "") {
             return BakeShadowMapRenderTexture(pointLightVolume, resolution, farClip, textureFormat, blurRadius, blurDepth, true, infoString);
         }
 
-        // Bakes a shadow texture into a live RenderTexture with either six cubemap faces or one spotlight slice.
+        // Bakes an EVSM shadow texture into a live RenderTexture with either six cubemap faces or one spotlight slice.
         private static RenderTexture BakeShadowMapRenderTexture(PointLightVolume pointLightVolume, int resolution, float farClip, TextureFormat textureFormat, float blurRadius, float blurDepth, bool cubemapShadows, string infoString) {
             if (pointLightVolume == null) return null;
 
@@ -449,20 +449,20 @@ namespace VRCLightVolumes {
             destination.SetPixelData(transformedFaceData, 0, _cubemapFaces[destinationFaceIndex]);
         }
 
-        // Returns the byte width of one shadow moment texel.
+        // Returns the byte width of one RGBA EVSM texel.
         private static int GetTextureFormatBytesPerPixel(TextureFormat textureFormat) {
-            if (textureFormat == TextureFormat.RGFloat) return 8;
-            return 4;
+            if (textureFormat == TextureFormat.RGBAFloat) return 16;
+            return 8;
         }
 
-        // Resolves the persistent texture format used to store baked shadow moments.
+        // Resolves the persistent texture format used to store baked EVSM moments.
         private static TextureFormat GetSafeShadowMomentFormat(TextureFormat textureFormat) {
-            return textureFormat == TextureFormat.RGHalf ? TextureFormat.RGHalf : TextureFormat.RGFloat;
+            return textureFormat == TextureFormat.RGBAHalf ? TextureFormat.RGBAHalf : TextureFormat.RGBAFloat;
         }
 
-        // Resolves the render texture format used while baking shadow moments.
+        // Resolves the render texture format used while baking EVSM moments.
         private static RenderTextureFormat GetShadowRenderTextureFormat(TextureFormat textureFormat) {
-            return textureFormat == TextureFormat.RGHalf ? RenderTextureFormat.RGHalf : RenderTextureFormat.RGFloat;
+            return textureFormat == TextureFormat.RGBAHalf ? RenderTextureFormat.ARGBHalf : RenderTextureFormat.ARGBFloat;
         }
 
         // Copies the baked render texture to a persistent Texture2DArray without changing face order or orientation.

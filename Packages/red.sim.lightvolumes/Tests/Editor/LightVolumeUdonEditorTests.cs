@@ -889,7 +889,7 @@ namespace VRCLightVolumes.Tests {
             Assert.That(manager.ShadowTextures.width, Is.EqualTo(8));
             Assert.That(manager.ShadowTextures.height, Is.EqualTo(8));
             Assert.That(manager.ShadowTextures.volumeDepth, Is.EqualTo(6));
-            Assert.That(manager.ShadowTextures.format, Is.EqualTo(RenderTextureFormat.RGFloat));
+            Assert.That(manager.ShadowTextures.format, Is.EqualTo(RenderTextureFormat.ARGBFloat));
             Assert.That(manager.ShadowTextures.useMipMap, Is.False);
             Assert.That(manager.ShadowTextures.autoGenerateMips, Is.False);
             Assert.That(manager.ShadowTextures.filterMode, Is.EqualTo(FilterMode.Bilinear));
@@ -916,7 +916,7 @@ namespace VRCLightVolumes.Tests {
             Assert.That(manager.ShadowTextures, Is.Not.Null);
             Assert.That(manager.ShadowTextures.width, Is.EqualTo(16));
             Assert.That(manager.ShadowTextures.height, Is.EqualTo(8));
-            Assert.That(manager.ShadowTextures.format, Is.EqualTo(RenderTextureFormat.RGFloat));
+            Assert.That(manager.ShadowTextures.format, Is.EqualTo(RenderTextureFormat.ARGBFloat));
             Assert.That(manager.ShadowTextures.useMipMap, Is.False);
             Assert.That(manager.ShadowTextures.autoGenerateMips, Is.False);
         }
@@ -938,9 +938,9 @@ namespace VRCLightVolumes.Tests {
             Assert.That(manager.ShadowTextures, Is.Null);
         }
 
-        // Verifies shadow runtime arrays use the default VSM float format.
+        // Verifies shadow runtime arrays use the default EVSM float format.
         [Test]
-        public void ShadowRuntimeArrayUsesDefaultVSMFloatFormat() {
+        public void ShadowRuntimeArrayUsesDefaultEVSMFloatFormat() {
             LightVolumeManager manager = CreateManager("Shadow Default Format Manager", false);
             Cubemap source = CreateCubemap("Shadow Default Format Source");
             manager.ShadowTexturesWidth = 4;
@@ -953,23 +953,23 @@ namespace VRCLightVolumes.Tests {
             manager.ReinitializeShadowTextures();
 
             Assert.That(manager.ShadowTextures, Is.Not.Null);
-            Assert.That(manager.ShadowTextures.format, Is.EqualTo(RenderTextureFormat.RGFloat));
+            Assert.That(manager.ShadowTextures.format, Is.EqualTo(RenderTextureFormat.ARGBFloat));
             Assert.That(manager.ShadowTextures.useMipMap, Is.False);
             Assert.That(manager.ShadowTextures.autoGenerateMips, Is.False);
         }
 
-        // Verifies VSM Half shadows use an RGHalf texture array.
+        // Verifies EVSM Half shadows use an ARGBHalf texture array.
         [Test]
         public void ShadowRuntimeArrayUsesConfiguredHalfFormat() {
-            LightVolumeManager manager = CreateManager("Shadow VSM Half Type Manager", false);
-            Cubemap source = CreateCubemap("Shadow VSM Half Type Source");
+            LightVolumeManager manager = CreateManager("Shadow EVSM Half Type Manager", false);
+            Cubemap source = CreateCubemap("Shadow EVSM Half Type Source");
             manager.ShadowTextureFormat = 0;
             manager.ShadowBleedReduction = 0.35f;
-            manager.ShadowMinVariance = 0.00001f;
+            manager.ShadowMinVariance = 0.01f;
             manager.ShadowTexturesWidth = 4;
             manager.ShadowTexturesHeight = 4;
 
-            PointLightVolumeInstance point = CreatePointLight(manager, "Shadow VSM Half Type Light", true);
+            PointLightVolumeInstance point = CreatePointLight(manager, "Shadow EVSM Half Type Light", true);
             point.WorldSpaceShadows = true;
             point.Bias = 0;
             point.NearClip = 0.25f;
@@ -980,25 +980,25 @@ namespace VRCLightVolumes.Tests {
             manager.UpdateVolumes();
 
             Assert.That(manager.ShadowTextures, Is.Not.Null);
-            Assert.That(manager.ShadowTextures.format, Is.EqualTo(RenderTextureFormat.RGHalf));
+            Assert.That(manager.ShadowTextures.format, Is.EqualTo(RenderTextureFormat.ARGBHalf));
             Assert.That(manager.ShadowTextures.useMipMap, Is.False);
             Assert.That(manager.ShadowTextures.autoGenerateMips, Is.False);
             AssertGlobalFloat(_pointLightShadowBleedReductionID, 0.35f);
-            AssertGlobalFloat(_pointLightShadowMinVarianceID, 0.00001f);
+            AssertGlobalFloat(_pointLightShadowMinVarianceID, 0.01f);
             AssertPointCustomData(point, 0, 1);
             Assert.That(Shader.GetGlobalVectorArray(_pointLightExtraDataID)[0].w, Is.EqualTo(0.25f).Within(Epsilon));
         }
 
-        // Verifies VSM Float shadows use an RGFloat texture array.
+        // Verifies EVSM Float shadows use an ARGBFloat texture array.
         [Test]
         public void ShadowRuntimeArrayUsesConfiguredFloatFormat() {
-            LightVolumeManager manager = CreateManager("Shadow VSM Float Type Manager", false);
-            Cubemap source = CreateCubemap("Shadow VSM Float Type Source");
+            LightVolumeManager manager = CreateManager("Shadow EVSM Float Type Manager", false);
+            Cubemap source = CreateCubemap("Shadow EVSM Float Type Source");
             manager.ShadowTextureFormat = 1;
             manager.ShadowTexturesWidth = 4;
             manager.ShadowTexturesHeight = 4;
 
-            PointLightVolumeInstance point = CreatePointLight(manager, "Shadow VSM Float Type Light", true);
+            PointLightVolumeInstance point = CreatePointLight(manager, "Shadow EVSM Float Type Light", true);
             point.WorldSpaceShadows = true;
             ConfigureShadowTexture(point, source, false, true, false);
             manager.PointLightVolumeInstances = new[] { point };
@@ -1007,7 +1007,7 @@ namespace VRCLightVolumes.Tests {
             manager.UpdateVolumes();
 
             Assert.That(manager.ShadowTextures, Is.Not.Null);
-            Assert.That(manager.ShadowTextures.format, Is.EqualTo(RenderTextureFormat.RGFloat));
+            Assert.That(manager.ShadowTextures.format, Is.EqualTo(RenderTextureFormat.ARGBFloat));
             Assert.That(manager.ShadowTextures.useMipMap, Is.False);
             Assert.That(manager.ShadowTextures.autoGenerateMips, Is.False);
             AssertPointCustomData(point, 0, 1);
@@ -2113,7 +2113,7 @@ namespace VRCLightVolumes.Tests {
             Shader.SetGlobalFloat(_pointLightShadowCubeCountID, 0);
             Shader.SetGlobalFloat(_pointLightShadowCountID, 0);
             Shader.SetGlobalFloat(_pointLightShadowBleedReductionID, 0.2f);
-            Shader.SetGlobalFloat(_pointLightShadowMinVarianceID, 0.000001f);
+            Shader.SetGlobalFloat(_pointLightShadowMinVarianceID, 1.0f);
             Shader.SetGlobalFloat(_lightBrightnessCutoffID, 0);
         }
 

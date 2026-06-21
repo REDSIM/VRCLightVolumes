@@ -63,7 +63,7 @@ namespace VRCLightVolumes {
         public int ShadowTextureFormat = 1;
         [Tooltip("VSM light bleed reduction applied by the shadow receiver shader. 0 disables reduction, 1 is strongest.")]
         public float ShadowBleedReduction = 0.1f;
-        [Tooltip("Minimum VSM variance used by the shadow receiver shader to prevent division artifacts.")]
+        [Tooltip("Raw minimum VSM variance used by the shadow receiver shader. Authoring setup stores this as a 0..1 logarithmic slider.")]
         public float ShadowMinVariance = 0.000001f;
 
         [Header("Visuals")]

@@ -2254,8 +2254,9 @@ MonoBehaviour:
       Data: 131|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Near clip plane used by the shadow bake camera. Higher values can clip
-        nearby occluders.
+      Data: Near clip plane used by the shadow bake camera. Shadow depth is normalized
+        between Near Clip and Far Clip, so higher values can improve precision but
+        can clip nearby occluders.
     - Name: 
       Entry: 8
       Data: 

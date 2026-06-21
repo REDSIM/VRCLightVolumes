@@ -38,9 +38,9 @@ namespace VRCLightVolumes {
         public TextureArrayResolution ShadowResolution = TextureArrayResolution._256x256;
         [Tooltip("Precision used for baked VSM shadow maps and the runtime shadow texture array. Half uses RGHalf, Float uses RGFloat.")]
         public ShadowTexturePrecision ShadowTextureFormat = ShadowTexturePrecision.Float;
-        [Tooltip("Reduces VSM light bleeding in cost of shadow penumbra collapse. Tip: You can increase blur in light sources to compensate this.")]
+        [Tooltip("Reduces VSM light bleeding at the cost of shadow penumbra collapse. Increase per-light Blur to compensate if shadows become too thin.")]
         [Range(0f, 1f)] public float ShadowBleedReduction = 0.1f;
-        [Tooltip("Reduces artefacts that are mostly visible with Half texture fromat on Quest and Mobile. Higher values - less artefacts on shadow edges in cost of light bleeding.")]
+        [Tooltip("Logarithmic VSM minimum variance slider. 0 = 0.000001, 1 = 0.0001. Higher values reduce Half precision edge noise on Quest and Mobile, but can detach contact shadows.")]
         [Range(0f, 1f)] public float ShadowMinVariance = 0f;
 
         [Header("Baking")]

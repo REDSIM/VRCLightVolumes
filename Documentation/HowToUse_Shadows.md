@@ -7,14 +7,15 @@
 |[VRC Light Volumes System](../Documentation/HowToUse.md)|
 |[Regular Light Volumes](../Documentation/HowToUse_RegularLightVolumes.md)|
 |[Point Light Volumes](../Documentation/HowToUse_PointLightVolumes.md)|
-|**Point Light Volume Shadows**<br />• [Shadow Types](#Shadow-Types)<br />• [Baked Shadows Setup](#Baked-Shadows-Setup)<br />• [Realtime Shadow Baker](#Realtime-Shadow-Baker)<br />• [Runtime Blur Modes](#Runtime-Blur-Modes)<br />• [Runtime Script Control](#Runtime-Script-Control)<br />• [Performance Notes](#Performance-Notes)<br />• [Shadow Parameters](#Shadow-Parameters)|
+|**Point Light Volume Shadows**<br />• [Shadow Types](#Shadow-Types)<br />• [Baked Shadows Setup](#Baked-Shadows-Setup)<br />• [Shadow Stability Tuning](#Shadow-Stability-Tuning)<br />• [Realtime Shadow Baker](#Realtime-Shadow-Baker)<br />• [Runtime Blur Modes](#Runtime-Blur-Modes)<br />• [Runtime Script Control](#Runtime-Script-Control)<br />• [Performance Notes](#Performance-Notes)<br />• [Shadow Parameters](#Shadow-Parameters)|
+|[Area Light Emission](../Documentation/HowToUse_AreaLightEmission.md)|
 |[Audio Link Integration](../Documentation/HowToUse_AudioLinkIntegration.md)|
 |[TV Screens Integration](../Documentation/HowToUse_TVScreensIntegration.md)|
 |[How Light Volumes Work?](../Documentation/HowToUse_HowItWorks.md)|
 
 ## Point Light Volume Shadows
 
-**Point Light Volumes** can use shadow maps. Under the hood, every shadow map is packed into a shared EVSM shadow texture array and sampled by shaders that support VRC Light Volumes.
+**Point Light Volumes** can use shadow maps. Under the hood, every shadow map is encoded as Exponential Variance Shadow Map (EVSM) moments, packed into a shared shadow texture array, and sampled by shaders that support VRC Light Volumes. EVSM stores positive and negative warped depth moments, so the shared array uses four channels with `Half` precision on Android/Quest/iOS and `Float` precision on PC.
 
 ![](../Documentation/Preview_9.png)
 
@@ -35,7 +36,7 @@ Editor-baked shadow blur always uses the spherical shadow-space blur path. This 
 
 The extra **Point Light Shadow Runtime Baker** component, renders shadow maps in runtime for a selected **Point Light Volume Instance**.
 
-This is the most expensive shadow mode. It renders one or more shadow cameras, encodes EVSM depth, can run blur passes, and then writes the result into the shared shadow texture array. In practice this is more expensive than regular Unity realtime shadows, so use it only for a small number of important lights.
+This is the most expensive shadow mode. It renders one or more shadow cameras, encodes EVSM moments, can run blur passes, and then writes the result into the shared shadow texture array. In practice this is more expensive than regular Unity realtime shadows, so use it only for a small number of important lights.
 
 ### Runtime Updated Texture Source
 
@@ -53,10 +54,29 @@ This mode is useful when another system already produces a shadow-like texture. 
 Optional:
 Configure `Object Mask` if needed. If not empty, only children of the listed objects are rendered during the bake.
 Increase `Near Plane` value if you want to clip the meshes near the light source.
-Configure `Bias` if you have vsisble artefacts.
-Use `Contact Hardening` if you want to increase shadow sharpness near the shadow casters. However it can cause visible artefacts, fo use it carefully! 
+Configure `Bias` if you have visible self-shadow artifacts.
+Use `Contact Hardening` if you want to increase shadow sharpness near the shadow casters. However it can cause visible artefacts, so use it carefully!
 `Use World Space` keeps the baked shadow projection fixed in world space instead of moving it with the light. This is useful for a light that changes color or intensity but should keep shadows attached to the room. It is less optimized than local-space shadows.
-`Shadow Resolution` and `Shadow Texture Format` are configured in **Light Volume Setup**. `Half` format is recommended for **Quest** and **Mobile**, but can cause artefacts. `Float` is recommended for **PC**, it makes no visible artefacts, but consumes x2 VRAM. Higher resolution improves detail but increases VRAM usage, especially for Point and Area Lights because cubemap shadows use 6 texture array slices.
+`Shadow Resolution` is configured in **Light Volume Setup**. Shadow precision is selected automatically from the active build target: Android/Quest/iOS uses `Half`, while PC uses `Float`. Higher resolution improves detail but increases VRAM usage, especially for Point and Area Lights because cubemap shadows use 6 texture array slices.
+
+Changing the active Unity build target forces shadow rebaking for lights marked with `Rebake Shadows`, because Half and Float baked assets use different texture formats.
+
+## Shadow Stability Tuning
+
+EVSM shadows are cheap and filter well, but they can show light bleeding or noisy bright edges, especially with `Half` precision on Quest and Mobile. The global correction controls are in **Light Volume Setup** and affect all Point Light Volume shadows:
+
+- `Shadow Bleed Reduction` suppresses EVSM light bleeding by remapping shadow visibility. Increase it when shadow edges leak too much light or Half precision shows bright edge noise. Higher values can collapse soft penumbra and visually eat the shadow, so compensate with a little more per-light `Blur` when needed.
+- `Shadow Min Variance` clamps the minimum EVSM variance used by the receiver shader. The Setup inspector exposes it as a human-readable `0..1` slider, mapped logarithmically to the raw shader range `0.0001..1.0`. Higher values reduce Half precision edge noise but can detach contact shadows and reduce contact darkness, so use the smallest value that fixes the artifact.
+
+Practical workflow:
+
+1. Switch the Unity build target to Android/Quest/iOS or PC first, so **Light Volume Setup** can select the matching shadow precision and rebake if needed.
+2. Keep per-light `Bias` only high enough to hide self-shadow acne. Bias is not the right tool for EVSM light bleeding and can detach contact shadows quickly.
+3. Raise `Shadow Bleed Reduction` gradually until obvious leaking disappears.
+4. If Half shadows still have noisy bright rims, raise `Shadow Min Variance` slightly.
+5. If the penumbra becomes too thin after bleed reduction or variance changes, increase the affected light's `Blur`.
+
+`Near Plane` also affects precision. Shadow depth is normalized between each light's `Near Plane` and `Far Clip`, so moving `Near Plane` farther from the light can improve usable depth precision. Do not push it past real shadow casters, or those casters will be clipped during baking. Changing `Near Plane`, `Far Clip`, `Bias`, `Blur` or `Contact Hardening` requires rebaking the affected shadow.
 
 ## Realtime Shadow Baker
 
@@ -130,7 +150,7 @@ No shadows is always the cheapest mode.
 
 Baked shadows are usually reasonable for static lights. They cost extra VRAM and extra shader sampling, but they do not render shadow maps in runtime. They are still more expensive than the same light without shadows.
 
-Realtime Shadow Baker is very expensive. It renders shadow camera views in runtime, encodes the depth into EVSM data, optionally blurs it, and updates the shared shadow array. It is more expensive than Unity realtime shadows, so avoid using it on many lights at the same time.
+Realtime Shadow Baker is very expensive. It renders shadow camera views in runtime, encodes the depth into EVSM moments, optionally blurs it, and updates the shared shadow array. It is more expensive than Unity realtime shadows, so avoid using it on many lights at the same time.
 
 For realtime shadows:
 
@@ -150,7 +170,7 @@ For realtime shadows:
 |`Shadow Map` | Shadow texture source used by this light. Can be generated by `Bake Shadows`, assigned manually, or updated by the runtime baker. Supports Cubemap, Texture2DArray, RenderTexture and Material.|
 |`Layer Mask` | Layers that can cast shadows during editor or runtime shadow baking.|
 |`Object Mask` | Optional object list. If empty, all objects on the selected layers can cast shadows. If not empty, only children of the listed objects are rendered during the bake.|
-|`Near Plane` | Near clip plane used by the shadow bake camera. Higher values can clip nearby occluders.|
+|`Near Plane` | Near clip plane used by the shadow bake camera. Shadow depth is normalized between `Near Plane` and `Far Clip`, so higher values can improve precision but can clip nearby occluders.|
 |`Bias` | World-space bias in meters used while baking shadows. Larger values reduce self-shadow artifacts but can detach contact edges.|
 |`Blur` | Shadow blur radius applied after baking, normalized to 128x128 shadow resolution. Editor baking uses spherical shadow-space blur to reduce visible cubemap and Spot Light projection seams. Runtime baking uses `Planar Blur` unless `Spherical Blur` is enabled. `0` keeps shadows unblurred.|
 |`Contact Hardening` | Hardens shadows near contact areas. It can produce artifacts and is more expensive in runtime shadow mode. When `Spherical Blur` is enabled on the runtime baker, contact hardening samples use the same spherical shadow-space kernel.|
@@ -158,7 +178,9 @@ For realtime shadows:
 |`Force Cubemap Shadows` | Forces Spot Light shadows to bake and store as a cubemap even when the spot angle could use a single projected shadow texture.|
 |`Rebake Shadows` | Includes this light when pressing `Bake Shadows` in **Light Volume Setup**.|
 |`Shadow Resolution` | Resolution used by the shared shadow texture array. For cubemap shadows this value is per face.|
-|`Shadow Texture Format` | Precision used by baked EVSM shadow maps and the runtime shadow texture array. `Half` is cheaper, `Float` reduces EVSM precision artifacts.|
+|`Shadow Format` | Read-only precision selected automatically by the active build target. Android/Quest/iOS uses `Half`; PC uses `Float`.|
+|`Shadow Bleed Reduction` | Global EVSM light bleeding correction. Higher values reduce leaking and some Half edge noise, but can collapse soft penumbra.|
+|`Shadow Min Variance` | Global minimum EVSM variance clamp. In **Light Volume Setup** this is a `0..1` logarithmic slider over the raw `0.0001..1.0` range. Higher values reduce Half precision edge noise but can detach contact shadows.|
 |`Bake On Enable` | Realtime Shadow Baker option. Runs one distributed bake cycle when the baker becomes active.|
 |`Realtime` | Realtime Shadow Baker option. Continuously updates shadow slices through a delayed Udon event loop.|
 |`Realtime Faces Per Frame` | Realtime Shadow Baker option. Number of cubemap faces updated per bake tick. Single-slice Spot Light shadows ignore this and update one slice.|

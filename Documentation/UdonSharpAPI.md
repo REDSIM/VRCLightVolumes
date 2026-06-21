@@ -19,7 +19,9 @@ Stores the Light Volume atlas, Point Light Volume texture arrays and references 
 |`float LightsBrightnessCutoff` | Minimum brightness used to cull Point Light Volumes. Larger values improve performance by shrinking light range, but make attenuation less physically correct. |
 |`int ShadowTexturesWidth` | Width of each runtime shadow map slice. |
 |`int ShadowTexturesHeight` | Height of each runtime shadow map slice. |
-|`int ShadowTextureFormat` | Precision used for EVSM shadow maps and the runtime shadow texture array. `0` = Half, `1` = Float. |
+|`int ShadowTextureFormat` | Precision used for EVSM shadow maps and the runtime shadow texture array. `0` = `ARGBHalf`, `1` = `ARGBFloat`. The authoring Setup component assigns this automatically from the active build target. |
+|`float ShadowBleedReduction` | Global EVSM light bleeding correction. `0` disables it, `1` is strongest. Higher values can collapse soft penumbra. |
+|`float ShadowMinVariance` | Raw global minimum EVSM variance used by the receiver shader. The authoring Setup component stores a `0..1` logarithmic slider, but the Udon manager stores the raw value. |
 |`bool LightProbesBlending` | When enabled, areas outside Light Volumes fall back to Unity Light Probes. Otherwise, the Light Volume with the smallest weight is used as fallback. It also improves performance. |
 |`bool SharpBounds` | Disables smooth blending with areas outside Light Volumes. Use it if your entire scene's play area is covered by Light Volumes. It also improves performance. |
 |`bool AutoUpdateVolumes` | Automatically updates transform data for volumes marked `IsDynamic`. Enabling/disabling, `Color` and `Intensity` changes update without this option. |
@@ -28,7 +30,7 @@ Stores the Light Volume atlas, Point Light Volume texture arrays and references 
 |`bool ForceSceneLighting` | Disables min/max brightness limits for modern avatar shaders such as lilToon or Poiyomi. Enable only if you're sure your scene lighting is properly configured. |
 |`LightVolumeInstance[] LightVolumeInstances` | All registered Light Volume instances. You can enable or disable volume GameObjects at runtime. Manually disabling unnecessary volumes improves performance. |
 |`PointLightVolumeInstance[] PointLightVolumeInstances` | All registered Point Light Volume instances. You can enable or disable point light GameObjects at runtime. Manually disabling unnecessary point lights improves performance. |
-|`RenderTexture CustomTextures` | Runtime texture array used for Point Light Volume cubemaps, LUTs and cookies. Cubemap faces are stored first, 6 slices per cubemap. |
+|`RenderTexture CustomTextures` | Runtime texture array used for Point Light Volume cubemaps, LUTs and cookies. Cubemap faces are stored first, 6 slices per cubemap. Area Light cookies use its mip chain for textured emission and old-shader average-color fallback. |
 |`int CubemapsCount` | Number of cubemaps stored in `CustomTextures`. Cubemap faces start from the beginning, 6 elements per cubemap. |
 |`bool HasAutoCustomTextureUpdates` | Internal state. True when at least one projection source needs per-frame texture updates. |
 |`RenderTexture ShadowTextures` | Runtime texture array used for Point Light Volume shadow maps. |
@@ -113,6 +115,7 @@ Stores all runtime Point Light Volume configuration including light type, projec
 |`float Angle` | Half-angle of the spotlight cone, in radians. |
 |`float OuterAngleCos` | Cosine of the spotlight outer angle used by parametric and LUT spot lights. |
 |`float OuterAngleTan` | Tangent of the spotlight outer angle used by cookie projection and single-slice spot shadows. |
+|`float SpotCookieAspect` | Width / height aspect used by custom Spot Light cookie projection. |
 |`float Height` | Area light height in meters. |
 |`float SquaredRange` | Squared range after which the light is culled. Recalculated by the manager when `IsRangeDirty` is true. |
 |`float SquaredScale` | Average squared lossy scale of the light. `LightSourceSize` gets multiplied by it at the end. |
@@ -159,6 +162,7 @@ Stores all runtime Point Light Volume configuration including light type, projec
 |`void SetSpotLight(float angleDeg, float falloff)` | Sets this light into Spot Light type with angle and falloff. |
 |`void SetSpotLight(float angleDeg)` | Sets this light into Spot Light type with angle only. |
 |`void SetAreaLight()` | Sets this light into Area Light type and updates width, height and rotation data from the transform. |
+|`void SetSpotCookieAspect(float aspect)` | Sets custom Spot Light cookie projection aspect and updates shader data. |
 |`void SetColor(Color color)` | Sets light source color and marks range dirty. |
 |`void SetIntensity(float intensity)` | Sets light source intensity and marks range dirty. |
 |`void SetShadingStrength(float shadingStrength)` | Sets normal masking and shadow strength in the 0..1 range. |

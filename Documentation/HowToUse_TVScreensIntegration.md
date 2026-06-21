@@ -8,6 +8,7 @@
 |[Regular Light Volumes](../Documentation/HowToUse_RegularLightVolumes.md)|
 | [Point Light Volumes](../Documentation/HowToUse_PointLightVolumes.md)|
 |[Point Light Volume Shadows](../Documentation/HowToUse_Shadows.md)|
+|[Area Light Emission](../Documentation/HowToUse_AreaLightEmission.md)|
 | [Audio Link Integration](../Documentation/HowToUse_AudioLinkIntegration.md)|
 | **TV Screens Integration**<br />• [TV Screen Quick Setup](#TV-Screen-Quick-Setup)<br />• [Light Volume TVGI Component Description](#Light-Volume-TVGI-Component-Description) |
 | [How Light Volumes Work?](../Documentation/HowToUse_HowItWorks.md) |
@@ -19,6 +20,9 @@ This package includes a simple Udon script for making realtime global illuminati
 ![](../Documentation/Preview_13.png)
 
 It works visually similar to [LTCGI](https://github.com/PiMaker/ltcgi) in some cases, but it does **not** support real screen reflections. Instead, it works best with **matte** environment materials.
+
+> [!IMPORTANT]
+> **LightVolumeTVGI** is mostly a legacy workflow now. For new TV screens, monitors and emissive panels, prefer [Area Light Emission](../Documentation/HowToUse_AreaLightEmission.md). It projects the screen texture itself, keeps local color detail near the screen, and has an average-color fallback for older VRC Light Volumes shaders.
 
 #### Advantages
 

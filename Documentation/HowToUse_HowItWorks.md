@@ -8,9 +8,10 @@
 | [Regular Light Volumes](../Documentation/HowToUse_RegularLightVolumes.md)|
 | [Point Light Volumes](../Documentation/HowToUse_PointLightVolumes.md)|
 | [Point Light Volume Shadows](../Documentation/HowToUse_Shadows.md)|
+| [Area Light Emission](../Documentation/HowToUse_AreaLightEmission.md)|
 | [Audio Link Integration](../Documentation/HowToUse_AudioLinkIntegration.md)|
 | [TV Screens Integration](../Documentation/HowToUse_TVScreensIntegration.md)|
-| **How Light Volumes Work?**<br />• [Spherical Harmonics](#Spherical-Harmonics)<br />• [Light Data](#Light-Data)<br />• [Light Data Storage](#Light-Data-Storage)<br />• [Light Volumes Evaluating](#Light-Volumes-Evaluating)<br />• [Point Light Volumes](#Point-Light-Volumes) |
+| **How Light Volumes Work?**<br />• [Spherical Harmonics](#Spherical-Harmonics)<br />• [Light Data](#Light-Data)<br />• [Light Data Storage](#Light-Data-Storage)<br />• [Light Volumes Evaluating](#Light-Volumes-Evaluating)<br />• [Point Light Volumes](#Point-Light-Volumes)<br />• [Textured Area Light Emission](#Textured-Area-Light-Emission) |
 
 ## How Do Light Volumes Work?
 
@@ -99,6 +100,14 @@ Mask = \text{Saturate}\left(1 - \frac{\text{DistanceToLight}^2}{\text{CutoffDist
 
 The `Saturate()` function clamps the value between 0 and 1. The final light color is multiplied by this squared mask.
 
-In Light Volumes 3.0, Point Light Volumes can also apply normal masking and EVSM shadow maps before their SH contribution is added. Shadow maps are stored in a shared runtime texture array. Point and Area lights usually use cubemap shadows, while Spot Lights can use a cheaper single projected shadow texture when the cone angle allows it.
+In Light Volumes 3.0, Point Light Volumes can also apply normal masking and EVSM shadow maps before their SH contribution is added. Shadow maps are stored in a shared runtime texture array as warped depth moments. Point and Area lights usually use cubemap shadows, while Spot Lights can use a cheaper single projected shadow texture when the cone angle allows it.
 
 `Additive Max Overdraw` limits how many Point Light Volumes and additive Light Volumes can be accumulated for one pixel. This keeps the worst-case shader cost predictable when many dynamic lights overlap.
+
+### Textured Area Light Emission
+
+Area Lights can also use a Cookie source as a textured emitter. The Cookie is packed into the shared Point Light Volume texture array, and the array gets mipmaps when at least one Area Light cookie is present.
+
+The shader samples the local Cookie detail close to the Area Light and blends toward coarser mip levels as the receiver gets farther away or sees the emitter at a grazing angle. This keeps nearby high-frequency texture detail while still letting bright areas influence darker parts of the projection through the averaged mip levels.
+
+For old shaders that do not support Area Light cookies, the manager reads the final mip level from the packed texture array and uses it as an average-color fallback for that Area Light.

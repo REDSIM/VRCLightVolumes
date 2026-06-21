@@ -4,7 +4,7 @@
 
 | Menu |
 | ----|
-| **Best Practices**<br />• [Regular Light Volumes Use Cases](#Regular-Light-Volumes-Use-Cases)<br />• [Point Light Volumes Use Cases](#Point-Light-Volumes-Use-Cases)<br />• [Point Light Volume Baked Realtime Shadows](#Point-Light-Volume-Baked-Realtime-Shadows)<br />• [Point Light Volume Realtime Shadows](#Point-Light-Volume-Realtime-Shadows)<br />• [Custom Render Textures Projections](#Custom-Render-Textures-Projections)<br />• [Naming Light Volumes](#Naming-Light-Volumes)<br />• [Volume Bounds Smoothing](#Volume-Bounds-Smoothing)<br />• [Culling Light Volumes](#Culling-Light-Volumes)<br />• [Moving Light Volumes](#Moving-Light-Volumes)<br />• [Additive Volumes](#Additive-Volumes)<br />• [Bakery Volume Rotation](#Bakery-Volume-Rotation)<br />• [Fixing Bakery Light Probes](#Fixing-Bakery-Light-Probes)<br />• [Spawning New Light Volumes In Runtime](#Spawning-New-Light-Volumes-In-Runtime) |
+| **Best Practices**<br />• [Regular Light Volumes Use Cases](#Regular-Light-Volumes-Use-Cases)<br />• [Point Light Volumes Use Cases](#Point-Light-Volumes-Use-Cases)<br />• [Area Light Emission](#Area-Light-Emission)<br />• [Point Light Volume Baked Realtime Shadows](#Point-Light-Volume-Baked-Realtime-Shadows)<br />• [Point Light Volume Realtime Shadows](#Point-Light-Volume-Realtime-Shadows)<br />• [Custom Render Textures Projections](#Custom-Render-Textures-Projections)<br />• [Naming Light Volumes](#Naming-Light-Volumes)<br />• [Volume Bounds Smoothing](#Volume-Bounds-Smoothing)<br />• [Culling Light Volumes](#Culling-Light-Volumes)<br />• [Moving Light Volumes](#Moving-Light-Volumes)<br />• [Additive Volumes](#Additive-Volumes)<br />• [Bakery Volume Rotation](#Bakery-Volume-Rotation)<br />• [Fixing Bakery Light Probes](#Fixing-Bakery-Light-Probes)<br />• [Spawning New Light Volumes In Runtime](#Spawning-New-Light-Volumes-In-Runtime) |
 
 ## Regular Light Volumes Use Cases
 
@@ -21,17 +21,28 @@
 - Spot Lights as portable flashlights
 - Point Lights as other dynamic light sources
 - Area Lights as studio light soft boxes
+- Area Lights with Cookie as textured emissive panels, TV screens, windows and signs
 - Moving blinking lighting for clubs
 - Image and cubemaps projectors
 - TV Screens dynamic Global Illumination
 - Audio Link Dynamic Lights
 - And much more!
 
+## Area Light Emission
+
+Use **Area Light Emission** when a rectangular source needs to emit non-uniform color in runtime: TV screens, monitors, windows with colored patterns, animated signs, LED walls or soft boxes with texture detail.
+
+For new screen-light setups, prefer Area Light Emission over the old **LightVolumeTVGI** script. TVGI only drives lighting from a single average screen color and is mostly a legacy workflow now. Area Light Emission projects the actual texture near the screen and gradually blends toward the average color with distance.
+
+Keep using baked regular or additive Light Volumes when the light is fully static and does not need runtime texture changes. Baking is still cheaper for large static illumination zones.
+
+For runtime screens, keep `Cookie Resolution` as low as acceptable and enable `Auto Update Textures` only for RenderTexture or Material sources that actually change.
+
 ## Point Light Volume Baked Realtime Shadows
 
 Point Light Volume Shadows are shadows similar to Unity's realtime point light shadows, but they are made to work mostly in baked mode, which is much more optimized! You usually prebake depth shadow maps in editor (or only once on start in runtime) and use this data to project shadows even on movable dynamic objects. However, dynamic objects will not cast shadows themselves in that case. It's usually more than enough in most of the cases, and it gives a much more persormant behaviour than regular realtime approach.
 
-Point Light Volume Shadows uses **Exponential Variance Shadow Maps (EVSM)**, which gives much more smooth and good looking result than Unity's default shadows, whithout any serious performance tradeoff.
+Point Light Volume Shadows use **Exponential Variance Shadow Maps (EVSM)**. They are cheap to filter, support wide blur kernels well, and keep the same shadow pipeline on PC and Quest.
 
 Editor-baked shadow blur uses the spherical shadow-space blur path, so larger `Blur` values stay more consistent across cubemap faces and single-slice Spot Light projections.
 
@@ -42,7 +53,9 @@ Use shadows only where they visibly matter. Shadowed Point Light Volumes need ex
 
 For Spot Lights below 180 degrees, prefer the default single projected shadow texture. Enable `Force Cubemap Shadows` only when the projection really needs cubemap behavior. For example, when you need to animate the rotation of a **Spot Light** and still need shadows in all directions.
 
-Keep `Shadow Resolution` as low as acceptable. `Half` shadow precision can be cheaper on Quest and Mobile, while `Float` can reduces artifacts, so it's always recommended for **PC**. Increase `Bias` only enough to hide self-shadow artifacts, because large bias detaches contact shadows.
+Keep `Shadow Resolution` as low as acceptable. Shadow precision is selected automatically from the active build target: Android/Quest/iOS uses `Half`, while PC uses `Float`. Increase `Bias` only enough to hide self-shadow artifacts, because large bias detaches contact shadows.
+
+If `Half` shadows show noisy bright rims or light leaking on Quest, tune the global EVSM controls in **Light Volume Setup** instead of relying on `Bias`: raise `Shadow Bleed Reduction` first, then adjust `Shadow Min Variance` if needed, and compensate lost penumbra with a little more per-light `Blur`.
 
 See [Point Light Volume Shadows](../Documentation/HowToUse_Shadows.md) for the full setup workflow. 
 

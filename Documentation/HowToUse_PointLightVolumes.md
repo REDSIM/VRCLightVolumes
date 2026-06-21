@@ -8,6 +8,7 @@
 |[Regular Light Volumes](../Documentation/HowToUse_RegularLightVolumes.md)|
 |**Point Light Volumes**<br />• [Point Light Volumes Placement](#Point-Light-Volumes-Placement)<br />• [Light Projection](#Light-Projection)<br />• [Point Light Volume Component Description](#Point-Light-Volume-Component-Description)|
 |[Point Light Volume Shadows](../Documentation/HowToUse_Shadows.md)|
+|[Area Light Emission](../Documentation/HowToUse_AreaLightEmission.md)|
 |[Audio Link Integration](../Documentation/HowToUse_AudioLinkIntegration.md)|
 |[TV Screens Integration](../Documentation/HowToUse_TVScreensIntegration.md)|
 |[How Light Volumes Work?](../Documentation/HowToUse_HowItWorks.md)|
@@ -32,7 +33,7 @@ The `Point Light Volume Instance` component is a VRChat Udon script that stores 
 
 If you just have a lot of point light sources that are static and don't change any of their properties in runtime, consider using a regular Light Volume and bake as much lights into it as you want. It is usually much more optimized than placing a lot of individual point lights. However, one Point Light Volume is usually much cheaper than a one regular additive light volume when you need runtime control.
 
-Area Lights are a bit heavier than Point and Spot Lights, but they are not dramatically heavier anymore. You can safely use them for movable and scalable runtime soft boxes. Just avoid excessive overlaps, and still prefer baking a regular Light Volume in a shape of an area light when the light is fully static.
+Area Lights are a bit heavier than Point and Spot Lights, but they are not dramatically heavier anymore. You can safely use them for movable and scalable runtime soft boxes. If you assign a Cookie to an Area Light, it becomes a textured emitter for TV screens, signs, windows and similar panels. See [Area Light Emission](../Documentation/HowToUse_AreaLightEmission.md) for setup details. Just avoid excessive overlaps, and still prefer baking a regular Light Volume in a shape of an area light when the light is fully static.
 
 Note that more point lights you have active in your scene, the less performance you'll have. So, consider manually turning off unused point lights if you have a lot of them at your scene.
 
@@ -84,6 +85,8 @@ If you want just to project a light cookie texture, you can use `Custom` project
 
 Point Light in `Custom` projection mode can project a cubemap instead of a regular cookie. So it's a perfect solution to make disco balls, lamps that projects stars or anything else you want.
 
+Area Lights do not expose the `Projection` dropdown. Assigning a `Cookie` source automatically enables textured Area Light Emission. Close to the light it keeps the rectangular texture detail, and with distance it blends through mip levels toward the average emitted color.
+
 ### Projection Texture Resolution
 
 When you assign a LUT, Cookie texture, Cubemap, Render Texture, or Material, the **Light Volumes** system automatically packs everything into a shared runtime **Texture Array**. The `Cookie Resolution` of this array can be configured in the **Light Volumes Setup** component.
@@ -96,6 +99,8 @@ LUTs and Cookie textures share the same resolution, as they are packed into the 
 Duplicated LUTs, Cubemaps, and Cookie textures are only uploaded to VRChat once and are reused by all lights that reference them. So don’t worry about using the same textures across multiple Point Light Volumes - it won’t increase the build size.
 
 If you use a `RenderTexture` or a `Material` as the source, the shared texture array can be updated in runtime. This is controlled by `Auto Update Textures` in **Light Volume Setup**. Keep it disabled if all projection sources are static textures.
+
+Area Light cookies use the mip chain of this shared texture array to approximate soft textured emission. Modern shaders sample the texture directly. Older VRC Light Volumes shaders receive an average-color fallback from the final mip level, so they do not turn black when an Area Light uses a cookie.
 
 > [!IMPORTANT]
 > It’s recommended to completely disable compression for any texture used as a Cookie or a LUT. The Light Volumes system does not inherit the compression settings, but compression artifacts will still remain and affect the result.
@@ -121,20 +126,23 @@ For shadow setup, baked shadows, the Realtime Shadow Baker and runtime script co
 |`Shading Strength` | Controls normal masking and shadow opacity for this light. Lower values are cheaper and softer. `0` disables this extra shading.|
 |`Bake Into Probes` | Bakes this Point Light Volume into Unity Light Probes. Useful for static lights that should affect objects without Light Volumes shader support.|
 |`Debug Range` | Shows overdrawing range gizmo. Less point light volumes intersections - more performance!|
-|`Projection` | Parametric uses settings to compute light falloff. LUT uses a texture: X - cone falloff, Y - attenuation (Y only for point lights). Cookie projects a texture for spot lights. Cubemap projects a cubemap for point lights.|
+|`Projection` | Parametric uses settings to compute light falloff. LUT uses a texture: X - cone falloff, Y - attenuation (Y only for point lights). Cookie projects a texture for spot lights. Cubemap projects a cubemap for point lights. Area Lights hide this dropdown and use the Cookie field directly when a source is assigned.|
 |`Angle` | Angle of a spotlight cone in degrees. (Only available in spotlight mode)|
 |`Falloff` | Spotlight cone falloff. (Only available in parametric spotlight mode)|
 |`Falloff LUT` | Texture that defines custom light shape. Similar to IES. X - cone falloff, Y - attenuation. No compression and RGBA Float or RGBA Half format is recommended.|
-|`Cookie` | Projects a square texture, RenderTexture or Material for spot lights.|
+|`Cookie` | Projects a texture, RenderTexture or Material for Spot Light cookies and Area Light Emission.|
+|`Spot Cookie Aspect` | Width / height aspect used by custom Spot Light cookie projection. Area Light cookies use the Area Light transform scale instead.|
 |`Cubemap` | Projects a texture, Cubemap, Texture2DArray, RenderTexture, or Material for point lights. Cubemap and array sources use independent faces; a single 2D texture is copied to all faces.|
 |`Shadows` | Enables shadow map sampling for this light. Requires a baked or assigned shadow source.|
 |`Shadow Map` | Shadow texture source used by this light. Can be generated by `Bake Shadows`, assigned manually, or updated by the runtime baker.|
 |`Layer Mask` | Layers that can cast shadows during shadow baking.|
 |`Object Mask` | Optional object list. If empty, all objects on the selected layers can cast shadows. If not empty, only children of the listed objects are rendered during the bake.|
-|`Near Plane` | Near clip plane used by the shadow bake camera. Higher values can clip nearby occluders.|
+|`Near Plane` | Near clip plane used by the shadow bake camera. Shadow depth is normalized between `Near Plane` and `Far Clip`, so raising it can improve precision but can also clip nearby occluders.|
 |`Bias` | World-space bias in meters used while baking shadows. Larger values reduce self-shadow artifacts but can detach contact edges.|
 |`Blur` | Shadow blur radius applied after baking, normalized to 128x128 shadow resolution. Editor baking uses spherical shadow-space blur to reduce visible cubemap and Spot Light projection seams. Runtime baking uses `Planar Blur` unless `Spherical Blur` is enabled on the runtime baker. `0` keeps shadows unblurred.|
 |`Contact Hardening` | Hardens shadows near contact areas. Can produce artifacts, so use it carefully. More performant when set to `0` in runtime shadow mode. Runtime baker `Spherical Blur` also applies to contact hardening samples.|
 |`Use World Space` | Keeps baked shadows attached to the baked world-space pose instead of moving them with the light. Less optimized when enabled.|
 |`Force Cubemap Shadows` | Forces spotlight shadows to bake and store as a cubemap even when the spot angle could use a single projected shadow texture.|
 |`Rebake Shadows` | Includes this light when pressing `Bake Shadows` in **Light Volume Setup**.|
+
+Global EVSM shadow settings, including automatic `Shadow Format`, `Shadow Bleed Reduction` and `Shadow Min Variance`, are configured in **Light Volume Setup**. See [Point Light Volume Shadows](../Documentation/HowToUse_Shadows.md) for the recommended tuning workflow.

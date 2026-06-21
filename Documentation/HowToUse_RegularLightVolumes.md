@@ -7,6 +7,7 @@
 |**Regular Light Volumes**<br />• [Light Volumes Placement](#Light-Volumes-Placement)<br />• [Auto Light Probes Placement](#Auto-Light-Probes-Placement)<br />• [Additive Light Volumes](#Additive-Light-Volumes)<br />• [Light Volumes Color Correction](#Light-Volumes-Color-Correction)<br />• [Light Volume Component Description](#Light-Volume-Component-Description)|
 |[Point Light Volumes](../Documentation/HowToUse_PointLightVolumes.md)|
 |[Point Light Volume Shadows](../Documentation/HowToUse_Shadows.md)|
+|[Area Light Emission](../Documentation/HowToUse_AreaLightEmission.md)|
 |[Audio Link Integration](../Documentation/HowToUse_AudioLinkIntegration.md)|
 |[TV Screens Integration](../Documentation/HowToUse_TVScreensIntegration.md)|
 |[How Light Volumes Work?](../Documentation/HowToUse_HowItWorks.md)|

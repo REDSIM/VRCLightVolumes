@@ -853,19 +853,28 @@ MonoBehaviour:
   Range: 0.05
   Color: {r: 1, g: 0.57535565, b: 0.2471698, a: 1}
   Intensity: 100
-  Shape: 0
+  ShadingStrength: 1
+  Projection: 0
   Angle: 60
   Falloff: 1
   FalloffLUT: {fileID: 0}
   Cookie: {fileID: 0}
+  SpotCookieAspect: 1
   Cubemap: {fileID: 0}
+  BakeIntoProbes: 0
   DebugRange: 0
+  Shadows: 0
   RebakeShadows: 0
+  LayerMask:
+    serializedVersion: 2
+    m_Bits: 270849
+  ObjectMask: []
   Bias: 0.03
-  BiasSmoothness: 0.02
+  NearPlane: 0.01
+  Blur: 1
+  ContactHardening: 0
   UseWorldSpace: 0
-  CustomID: 2
-  ShadowID: 2
+  ForceCubemapShadows: 0
   ShadowMap: {fileID: 8900000, guid: ba4c7c0b3c40d1d4883b3d6b1aa8cce7, type: 2}
   PointLightVolumeInstance: {fileID: 2073672221931085055}
   LightVolumeSetup: {fileID: 0}
@@ -891,24 +900,50 @@ MonoBehaviour:
     PrefabModifications: []
     SerializationNodes: []
   _udonSharpBackingUdonBehaviour: {fileID: 1453519098725405757}
+  IsDynamic: 1
+  LightType: 0
   Color: {r: 1, g: 0.57535565, b: 0.2471698, a: 1}
   Intensity: 100
-  IsDynamic: 1
-  PositionData: {x: 0, y: 0.75, z: 5, w: 0.25}
-  DirectionData: {x: 0, y: 0, z: 0, w: 1}
-  CustomID: 0
+  ShadingStrength: 1
+  Position: {x: 0, y: 0, z: 0}
+  LightSourceSize: 1
+  InverseSquaredRange: 1
+  Width: 1
+  Direction: {x: 0, y: 0, z: 1}
+  Rotation: {x: 0, y: 0, z: 0, w: 1}
+  ConeFalloff: 1
   Angle: 0
-  AngleData: 1
-  ShadowMapID: 2
-  WorldSpaceShadows: 0
-  ShadowBias: 0.03
-  ShadowBiasSmoothness: 0.02
-  ShadowBakePosition: {x: 0, y: 2, z: 12}
-  ShadowBakeRotation: {x: -0, y: -0, z: -0, w: 1}
-  IsInitialized: 1
+  OuterAngleCos: 1
+  OuterAngleTan: 0
+  SpotCookieAspect: 1
+  Height: 1
   SquaredRange: 115.38296
   SquaredScale: 0.09
   LightVolumeManager: {fileID: 0}
+  IsActive: 1
+  CustomTexture: {fileID: 0}
+  CustomTextureMaterial: {fileID: 0}
+  ProjectionType: 0
+  ProjectionMode: 0
+  AutoUpdateCustomTexture: 0
+  ShadowMapTexture: {fileID: 0}
+  ShadowMapMaterial: {fileID: 0}
+  AutoUpdateShadowMap: 0
+  ShadowMapID: 2
+  WorldSpaceShadows: 0
+  ShadowBakePosition: {x: 0, y: 2, z: 12}
+  ShadowBakeRotation: {x: -0, y: -0, z: -0, w: 1}
+  LayerMask: -1
+  NearClip: 0.01
+  Bias: 0.03
+  FarClip: 0
+  Blur: 1
+  ContactHardening: 0
+  CustomTextureIsCubemap: 0
+  CustomTextureHasDepthSlices: 0
+  ShadowMapTextureIsCubemap: 0
+  ShadowMapTextureHasDepthSlices: 0
+  ShadowMapUsesCubemap: 1
   IsRangeDirty: 0
 --- !u!114 &1453519098725405757
 MonoBehaviour:
@@ -1230,6 +1265,7 @@ MonoBehaviour:
   currentlyHeldBy: {fileID: 0}
   pickupable: 1
   proximity: 2
+  version: 0
 --- !u!114 &6775558353752608298
 MonoBehaviour:
   m_ObjectHideFlags: 0

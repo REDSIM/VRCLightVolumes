@@ -737,11 +737,6 @@ namespace VRCLightVolumes {
             return customTextures != null && customTextures.volumeDepth > 0 && customTextures.IsCreated() ? customTextures : null;
         }
 
-        // Converts the normalized inspector slider into the small VSM variance value used by shaders.
-        public float GetShadowMinVarianceValue() {
-            return ShadowMinVarianceValueMin * Mathf.Pow(ShadowMinVarianceValueMax / ShadowMinVarianceValueMin, Mathf.Clamp01(ShadowMinVariance));
-        }
-
         // Reads manager render texture references through serialization so stale migrated Udon proxy fields do not break editor bake paths.
         private RenderTexture GetSerializedCustomTextures() {
             if (LightVolumeManager == null) return null;
@@ -914,6 +909,11 @@ namespace VRCLightVolumes {
         }
 
 #endif
+
+        // Converts the normalized inspector slider into the small VSM variance value used by shaders.
+        public float GetShadowMinVarianceValue() {
+            return ShadowMinVarianceValueMin * Mathf.Pow(ShadowMinVarianceValueMax / ShadowMinVarianceValueMin, Mathf.Clamp01(ShadowMinVariance));
+        }
 
 #if UDONSHARP
         // Syncs atlas, cookie and shadow metadata to the Udon manager without rebuilding runtime texture arrays

@@ -564,8 +564,7 @@ namespace VRCLightVolumes {
             // @pimaker: If there are post processors, the 3D texture will run through a Custom Render Texture every frame
             // Unity dispatches CRT renders on 3D textures in slices by depth, so we want to reduce the z axis of the atlas
             // as much as possible to reduce per-frame drawcalls - even at the cost of slightly higher VRAM efficiency
-            var packingStrategy = AtlasPostProcessors != null && AtlasPostProcessors.Length > 0 && AtlasPostProcessors.Any(pp => pp.RT is CustomRenderTexture)
-                ? TexturePackingStrategy.MinimumDepth : TexturePackingStrategy.MinimumVRAM;
+            var packingStrategy = AtlasPostProcessors != null && AtlasPostProcessors.Length > 0 ? TexturePackingStrategy.MinimumDepth : TexturePackingStrategy.MinimumVRAM;
 
             _generateAtlasCoroutine = EditorCoroutineUtility.StartCoroutine(Texture3DAtlasGenerator.CreateAtlas(LightVolumes.ToArray(), (Atlas3D atlas) => {
 

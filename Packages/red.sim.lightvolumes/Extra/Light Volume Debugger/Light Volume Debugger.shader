@@ -53,6 +53,13 @@ Shader "Light Volume Samples/Light Volume Debugger" {
         float4 _DebugAdditiveBoundsColor;
         float4 _DebugAreaLightRectColor;
         sampler2D _DebugLightIcon;
+        uniform float3 _UdonLightVolumeUvw[VRCLV_MAX_VOLUMES_COUNT * 6];
+
+        // Returns true when the active Light Volumes data uses the legacy v1 atlas layout.
+        bool LVDebugUseLegacyVolumeLayout() {
+            return _UdonLightVolumeVersion < VRCLV_MIN_SUPPORTED_VERSION;
+        }
+
         // Inverts a 3x3 matrix stored as rows.
         float3x3 LVDebugInverse3x3(float3x3 m) {
             float3 row0 = m[0];
@@ -84,6 +91,49 @@ Shader "Light Volume Samples/Light Volume Debugger" {
         float3 LVDebugSafeNormalize(float3 value, float3 fallback) {
             float lengthSq = dot(value, value);
             return lengthSq > 1e-8 ? value * rsqrt(lengthSq) : fallback;
+        }
+
+        // Calculates atlas UVW coordinates for legacy v1 volume data.
+        void LVDebugLegacyVolumeAtlasUVW(uint volumeID, float3 localUVW, out float3 uvw0, out float3 uvw1, out float3 uvw2) {
+            uint uvwID = volumeID * 6u;
+            float3 uvwScaled = saturate(localUVW + 0.5) * (_UdonLightVolumeUvw[uvwID + 1u].xyz - _UdonLightVolumeUvw[uvwID].xyz);
+            uvw0 = _UdonLightVolumeUvw[uvwID].xyz + uvwScaled;
+            uvw1 = _UdonLightVolumeUvw[uvwID + 2u].xyz + uvwScaled;
+            uvw2 = _UdonLightVolumeUvw[uvwID + 4u].xyz + uvwScaled;
+        }
+
+        // Samples only the selected legacy v1 baked volume, excluding point lights and shadow volumes.
+        void LVDebugSampleLegacyVolume(uint volumeID, float3 localUVW, inout float3 L0, inout float3 L1r, inout float3 L1g, inout float3 L1b) {
+            float3 uvw0;
+            float3 uvw1;
+            float3 uvw2;
+            LVDebugLegacyVolumeAtlasUVW(volumeID, localUVW, uvw0, uvw1, uvw2);
+
+            float3 l0;
+            float3 l1r;
+            float3 l1g;
+            float3 l1b;
+            LV_SampleLightVolumeTex(uvw0, uvw1, uvw2, l0, l1r, l1g, l1b);
+
+            float4 color = _UdonLightVolumeColor[volumeID];
+            L0 += l0 * color.rgb;
+            l1r *= color.r;
+            l1g *= color.g;
+            l1b *= color.b;
+
+            if (color.a != 0.0) {
+                uint rotationID = volumeID * 2u;
+                float3 r0 = _UdonLightVolumeRotation[rotationID].xyz;
+                float3 r1 = _UdonLightVolumeRotation[rotationID + 1u].xyz;
+                float3 r2 = cross(r0, r1);
+                L1r += LV_MultiplyVectorByMatrix3x3(l1r, r0, r1, r2);
+                L1g += LV_MultiplyVectorByMatrix3x3(l1g, r0, r1, r2);
+                L1b += LV_MultiplyVectorByMatrix3x3(l1b, r0, r1, r2);
+            } else {
+                L1r += l1r;
+                L1g += l1g;
+                L1b += l1b;
+            }
         }
 
         // Clamps the material draw mode to a valid enum value.
@@ -371,7 +421,8 @@ Shader "Light Volume Samples/Light Volume Debugger" {
                 L1r = 0.0;
                 L1g = 0.0;
                 L1b = 0.0;
-                LV_SampleVolume(volumeID, localUVW, L0, L1r, L1g, L1b);
+                if (LVDebugUseLegacyVolumeLayout()) LVDebugSampleLegacyVolume(volumeID, localUVW, L0, L1r, L1g, L1b);
+                else LV_SampleVolume(volumeID, localUVW, L0, L1r, L1g, L1b);
             }
 
             // Reconstructs baked voxel resolution from the global atlas size and this volume's atlas island scale.
@@ -381,8 +432,14 @@ Shader "Light Volume Samples/Light Volume Debugger" {
                 uint atlasDepth = 1u;
                 _UdonLightVolume.GetDimensions(atlasWidth, atlasHeight, atlasDepth);
 
-                uint uvwID = volumeID * 3u;
-                float3 islandScale = float3(_UdonLightVolumeUvwScale[uvwID].w, _UdonLightVolumeUvwScale[uvwID + 1u].w, _UdonLightVolumeUvwScale[uvwID + 2u].w);
+                float3 islandScale = float3(1.0, 1.0, 1.0);
+                if (LVDebugUseLegacyVolumeLayout()) {
+                    uint uvwID = volumeID * 6u;
+                    islandScale = _UdonLightVolumeUvw[uvwID + 1u].xyz - _UdonLightVolumeUvw[uvwID].xyz;
+                } else {
+                    uint uvwID = volumeID * 3u;
+                    islandScale = float3(_UdonLightVolumeUvwScale[uvwID].w, _UdonLightVolumeUvwScale[uvwID + 1u].w, _UdonLightVolumeUvwScale[uvwID + 2u].w);
+                }
 
                 float3 atlasResolution = float3((float)atlasWidth, (float)atlasHeight, (float)atlasDepth);
                 return (int3)max(round(abs(islandScale) * atlasResolution), float3(1.0, 1.0, 1.0));
@@ -532,6 +589,10 @@ Shader "Light Volume Samples/Light Volume Debugger" {
             bool TryResolveLightCard(uint cardID, out uint lightID, out uint lightType, out uint lightPart) {
                 lightID = cardID / LVDEBUG_LIGHT_CARD_STRIDE;
                 lightPart = cardID - lightID * LVDEBUG_LIGHT_CARD_STRIDE;
+                if (LVDebugUseLegacyVolumeLayout()) {
+                    lightType = LVDEBUG_LIGHT_TYPE_POINT;
+                    return false;
+                }
 
                 uint lightCount = min((uint)_UdonPointLightVolumeCount, (uint)VRCLV_MAX_LIGHTS_COUNT);
                 if (lightID >= lightCount) {

@@ -80,6 +80,9 @@ namespace VRCLightVolumes {
         private UnityEngine.Object _shadowMapPrev = null;
         private bool _shadowsPrev = false;
         private bool _forceCubemapShadowsPrev = false;
+        private UnityEngine.Object _projectionSourcePrev = null;
+        private LightType _typePrev = LightType.PointLight;
+        private LightProjection _projectionPrev = LightProjection.Parametric;
 
         // To check if object was edited this frame
         private Vector3 _prevPos = Vector3.zero;
@@ -263,6 +266,14 @@ namespace VRCLightVolumes {
                 _forceCubemapShadowsPrev = ForceCubemapShadows;
                 LightVolumeSetup.ReinitializeShadowTextures();
             }
+            // Regenerate custom projection texture array after Undo/Redo or serialized changes outside the inspector path
+            UnityEngine.Object projectionSource = GetProjectionSource();
+            if (_projectionSourcePrev != projectionSource || _typePrev != Type || _projectionPrev != Projection) {
+                _projectionSourcePrev = projectionSource;
+                _typePrev = Type;
+                _projectionPrev = Projection;
+                LightVolumeSetup.ReinitializeCustomTextures();
+            }
             // Sync udon script
             if (_prevPos != transform.position || _prevRot != transform.rotation || _prevScl != transform.localScale) {
                 _prevPos = transform.position;
@@ -365,6 +376,22 @@ namespace VRCLightVolumes {
             }
 #endif
         }
+
+#if UNITY_EDITOR
+        // Stores texture source state after editor code has already rebuilt the matching shared arrays.
+        public void CacheEditorTextureSourceState(bool customTextures, bool shadowTextures) {
+            if (shadowTextures) {
+                _shadowMapPrev = ShadowMap;
+                _shadowsPrev = Shadows;
+                _forceCubemapShadowsPrev = ForceCubemapShadows;
+            }
+            if (customTextures) {
+                _projectionSourcePrev = GetProjectionSource();
+                _typePrev = Type;
+                _projectionPrev = Projection;
+            }
+        }
+#endif
 
 #if UDONSHARP
         // Copies projection texture sources into the Udon behaviour proxy in play mode

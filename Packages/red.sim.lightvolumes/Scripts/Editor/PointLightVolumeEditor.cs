@@ -148,10 +148,18 @@ namespace VRCLightVolumes {
                 PointLightVolume pointLightVolume = targets[i] as PointLightVolume;
                 if (pointLightVolume == null) continue;
                 pointLightVolume.SyncUdonScript(customTexturesChanged || shadowTexturesChanged);
+                bool textureArraysReinitialized = false;
                 if (pointLightVolume.LightVolumeSetup != null) {
-                    if (customTexturesChanged) pointLightVolume.LightVolumeSetup.ReinitializeCustomTextures();
-                    if (shadowTexturesChanged) pointLightVolume.LightVolumeSetup.ReinitializeShadowTextures();
+                    if (customTexturesChanged) {
+                        pointLightVolume.LightVolumeSetup.ReinitializeCustomTextures();
+                        textureArraysReinitialized = true;
+                    }
+                    if (shadowTexturesChanged) {
+                        pointLightVolume.LightVolumeSetup.ReinitializeShadowTextures();
+                        textureArraysReinitialized = true;
+                    }
                 }
+                if (textureArraysReinitialized) pointLightVolume.CacheEditorTextureSourceState(customTexturesChanged, shadowTexturesChanged);
             }
         }
 

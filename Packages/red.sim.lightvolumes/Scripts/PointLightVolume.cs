@@ -396,11 +396,16 @@ namespace VRCLightVolumes {
 #if UDONSHARP
         // Copies projection texture sources into the Udon behaviour proxy in play mode
         private void SyncTextureSourcesToUdon() {
-            _pointLightVolumeBehaviour.SetProgramVariable("CustomTexture", GetCustomTexture());
-            _pointLightVolumeBehaviour.SetProgramVariable("CustomTextureMaterial", GetCustomTextureMaterial());
-            _pointLightVolumeBehaviour.SetProgramVariable("ProjectionType", GetProjectionType());
-            _pointLightVolumeBehaviour.SetProgramVariable("ProjectionMode", GetProjectionMode());
-            _pointLightVolumeBehaviour.SetProgramVariable("AutoUpdateCustomTexture", ShouldAutoUpdateCustomTexture());
+            Texture customTexture = GetCustomTexture();
+            Material customTextureMaterial = GetCustomTextureMaterial();
+            int projectionType = GetProjectionType();
+            int projectionMode = GetProjectionMode();
+            bool customSourceChanged = CustomTextureSourceChanged(_pointLightVolumeBehaviour, customTexture, customTextureMaterial, projectionType, projectionMode);
+            _pointLightVolumeBehaviour.SetProgramVariable("CustomTexture", customTexture);
+            _pointLightVolumeBehaviour.SetProgramVariable("CustomTextureMaterial", customTextureMaterial);
+            _pointLightVolumeBehaviour.SetProgramVariable("ProjectionType", projectionType);
+            _pointLightVolumeBehaviour.SetProgramVariable("ProjectionMode", projectionMode);
+            if (customSourceChanged) _pointLightVolumeBehaviour.SetProgramVariable("AutoUpdateCustomTexture", ShouldAutoUpdateCustomTexture());
             _pointLightVolumeBehaviour.SetProgramVariable("CustomTextureIsCubemap", IsProjectionTextureCubemap());
             _pointLightVolumeBehaviour.SetProgramVariable("CustomTextureHasDepthSlices", ProjectionTextureHasDepthSlices());
             _pointLightVolumeBehaviour.SetProgramVariable("ShadowMapTexture", GetShadowMapTexture());
@@ -414,11 +419,16 @@ namespace VRCLightVolumes {
 
         // Copies projection texture sources into the runtime point light instance
         private void SyncTextureSourcesToInstance() {
-            PointLightVolumeInstance.CustomTexture = GetCustomTexture();
-            PointLightVolumeInstance.CustomTextureMaterial = GetCustomTextureMaterial();
-            PointLightVolumeInstance.ProjectionType = GetProjectionType();
-            PointLightVolumeInstance.ProjectionMode = GetProjectionMode();
-            PointLightVolumeInstance.AutoUpdateCustomTexture = ShouldAutoUpdateCustomTexture();
+            Texture customTexture = GetCustomTexture();
+            Material customTextureMaterial = GetCustomTextureMaterial();
+            int projectionType = GetProjectionType();
+            int projectionMode = GetProjectionMode();
+            bool customSourceChanged = CustomTextureSourceChanged(customTexture, customTextureMaterial, projectionType, projectionMode);
+            PointLightVolumeInstance.CustomTexture = customTexture;
+            PointLightVolumeInstance.CustomTextureMaterial = customTextureMaterial;
+            PointLightVolumeInstance.ProjectionType = projectionType;
+            PointLightVolumeInstance.ProjectionMode = projectionMode;
+            if (customSourceChanged) PointLightVolumeInstance.AutoUpdateCustomTexture = ShouldAutoUpdateCustomTexture();
             PointLightVolumeInstance.CustomTextureIsCubemap = IsProjectionTextureCubemap();
             PointLightVolumeInstance.CustomTextureHasDepthSlices = ProjectionTextureHasDepthSlices();
             Texture shadowMapTexture = GetShadowMapTexture();
@@ -435,6 +445,25 @@ namespace VRCLightVolumes {
                 PointLightVolumeInstance.ShadowBakeRotation = transform.rotation;
             }
         }
+
+        // Checks whether editor sync is assigning a new projection source that should reset the auto-update default.
+        private bool CustomTextureSourceChanged(Texture customTexture, Material customTextureMaterial, int projectionType, int projectionMode) {
+            return PointLightVolumeInstance == null || PointLightVolumeInstance.CustomTexture != customTexture || PointLightVolumeInstance.CustomTextureMaterial != customTextureMaterial || PointLightVolumeInstance.ProjectionType != projectionType || PointLightVolumeInstance.ProjectionMode != projectionMode;
+        }
+
+#if UDONSHARP
+        // Checks whether Udon proxy sync is assigning a new projection source that should reset the auto-update default.
+        private bool CustomTextureSourceChanged(UdonBehaviour behaviour, Texture customTexture, Material customTextureMaterial, int projectionType, int projectionMode) {
+            if (behaviour == null) return true;
+            Texture oldTexture = behaviour.GetProgramVariable("CustomTexture") as Texture;
+            Material oldMaterial = behaviour.GetProgramVariable("CustomTextureMaterial") as Material;
+            object currentProjectionType = behaviour.GetProgramVariable("ProjectionType");
+            object currentProjectionMode = behaviour.GetProgramVariable("ProjectionMode");
+            int oldProjectionType = currentProjectionType is int ? (int)currentProjectionType : -1;
+            int oldProjectionMode = currentProjectionMode is int ? (int)currentProjectionMode : -1;
+            return oldTexture != customTexture || oldMaterial != customTextureMaterial || oldProjectionType != projectionType || oldProjectionMode != projectionMode;
+        }
+#endif
 
         private void Reset() {
             SetupDependencies();

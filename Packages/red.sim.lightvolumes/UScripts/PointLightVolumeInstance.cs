@@ -2,6 +2,11 @@ using UnityEngine;
 #if UDONSHARP
 using UdonSharp;
 #endif
+#if COMPILER_UDONSHARP
+using VRC.SDK3.Rendering;
+#else
+using UnityEngine.Rendering;
+#endif
 
 namespace VRCLightVolumes {
     [DisallowMultipleComponent]
@@ -125,6 +130,10 @@ namespace VRCLightVolumes {
         private float _old_Intensity = 1;
         private float _old_ShadingStrength = 1;
         private bool _isRegisteredWithManager = false;
+        [HideInInspector] public int AreaCookieAverageCustomId = -1;
+#if COMPILER_UDONSHARP
+        private Color32[] _areaCookieAveragePixels = new Color32[0];
+#endif
 
 #if UDONSHARP
         // Works only when changing values directly on UdonBehaviour
@@ -210,6 +219,30 @@ namespace VRCLightVolumes {
             }
             _isRegisteredWithManager = false;
         }
+
+#if COMPILER_UDONSHARP
+        // Receives the area-cookie fallback average and sends it back to the manager
+        public override void OnAsyncGpuReadbackComplete(VRCAsyncGPUReadbackRequest request) {
+            if (request.hasError) return;
+            if (_areaCookieAveragePixels.Length != 1) _areaCookieAveragePixels = new Color32[1];
+            if (!request.TryGetData(_areaCookieAveragePixels)) return;
+            LightVolumeManager.UploadAreaCookieAverageColor(AreaCookieAverageCustomId, _areaCookieAveragePixels[0]);
+        }
+#else
+        // Receives the area-cookie fallback average and sends it back to the manager
+        public void OnAsyncGpuReadbackComplete(AsyncGPUReadbackRequest request) {
+            if (request.hasError) return;
+            Unity.Collections.NativeArray<Color32> pixels = request.GetData<Color32>();
+            if (pixels.Length <= 0) return;
+            LightVolumeManager.UploadAreaCookieAverageColor(AreaCookieAverageCustomId, pixels[0]);
+#if UNITY_EDITOR
+            if (!Application.isPlaying) {
+                UnityEditor.EditorApplication.QueuePlayerLoopUpdate();
+                UnityEditor.SceneView.RepaintAll();
+            }
+#endif
+        }
+#endif
 
         // Sets light source size or range data for LUT mode
         public void SetLightSourceSize(float size) {

@@ -760,7 +760,7 @@ void LV_SampleVolume(uint id, float3 localUVW, inout float3 L0, inout float3 L1r
 }
 
 // Calculates L1 SH based on the world position. Only samples point lights, not volumes.
-void LV_PointLightVolumeSH(float3 worldPos, inout float3 L0, inout float3 L1r, inout float3 L1g, inout float3 L1b, float3 worldNormal = 0) {
+void LV_LightVolumePointSH(float3 worldPos, inout float3 L0, inout float3 L1r, inout float3 L1g, inout float3 L1b, float3 worldNormal = 0) {
 
     uint pointCount = min((uint) _UdonPointLightVolumeCount, VRCLV_MAX_LIGHTS_COUNT);
     [branch] if (_UdonLightVolumeVersion < VRCLV_MIN_SUPPORTED_VERSION || pointCount == 0) {
@@ -778,7 +778,7 @@ void LV_PointLightVolumeSH(float3 worldPos, inout float3 L0, inout float3 L1r, i
 }
 
 // Calculates L1 SH based on the world position from regular volumes only.
-void LV_RegularLightVolumeSH(float3 worldPos, inout float3 L0, inout float3 L1r, inout float3 L1g, inout float3 L1b) {
+void LV_LightVolumeRegularSH(float3 worldPos, inout float3 L0, inout float3 L1r, inout float3 L1g, inout float3 L1b) {
     
     // Clamping global iteration counts
     uint volumesCount = min((uint) _UdonLightVolumeCount, VRCLV_MAX_VOLUMES_COUNT);
@@ -961,9 +961,9 @@ void LightVolumeSH(float3 worldPos, out float3 L0, out float3 L1r, out float3 L1
     [branch] if (_UdonLightVolumeEnabled == 0 || _UdonLightVolumeVersion < VRCLV_MIN_SUPPORTED_VERSION) {
         LV_SampleLightProbeDering(L0, L1r, L1g, L1b);
     } else {
-        LV_RegularLightVolumeSH(worldPos + worldPosOffset, L0, L1r, L1g, L1b);
+        LV_LightVolumeRegularSH(worldPos + worldPosOffset, L0, L1r, L1g, L1b);
         LV_LightVolumeAdditiveSH(worldPos + worldPosOffset, L0, L1r, L1g, L1b);
-        LV_PointLightVolumeSH(worldPos, L0, L1r, L1g, L1b, worldNormal);
+        LV_LightVolumePointSH(worldPos, L0, L1r, L1g, L1b, worldNormal);
     }
 }
 
@@ -972,7 +972,7 @@ void LightVolumeAdditiveSH(float3 worldPos, out float3 L0, out float3 L1r, out f
     L0 = 0; L1r = 0; L1g = 0; L1b = 0;
     [branch] if (_UdonLightVolumeEnabled != 0 && _UdonLightVolumeVersion >= VRCLV_MIN_SUPPORTED_VERSION) {
         LV_LightVolumeAdditiveSH(worldPos + worldPosOffset, L0, L1r, L1g, L1b);
-        LV_PointLightVolumeSH(worldPos, L0, L1r, L1g, L1b, worldNormal);
+        LV_LightVolumePointSH(worldPos, L0, L1r, L1g, L1b, worldNormal);
     }
 }
 
@@ -983,9 +983,9 @@ float3 LightVolumeSH_L0(float3 worldPos, float3 worldPosOffset = 0, float3 world
     } else {
         float3 L0 = 0;
         float3 unused_L1 = 0; // Let's just pray that compiler will strip everything x.x
-        LV_RegularLightVolumeSH(worldPos + worldPosOffset, L0, unused_L1, unused_L1, unused_L1);
+        LV_LightVolumeRegularSH(worldPos + worldPosOffset, L0, unused_L1, unused_L1, unused_L1);
         LV_LightVolumeAdditiveSH(worldPos + worldPosOffset, L0, unused_L1, unused_L1, unused_L1);
-        LV_PointLightVolumeSH(worldPos, L0, unused_L1, unused_L1, unused_L1, worldNormal);
+        LV_LightVolumePointSH(worldPos, L0, unused_L1, unused_L1, unused_L1, worldNormal);
         return L0;
     }
 }
@@ -998,7 +998,7 @@ float3 LightVolumeAdditiveSH_L0(float3 worldPos, float3 worldPosOffset = 0, floa
         float3 L0 = 0;
         float3 unused_L1 = 0; // Let's just pray that compiler will strip everything x.x
         LV_LightVolumeAdditiveSH(worldPos + worldPosOffset, L0, unused_L1, unused_L1, unused_L1);
-        LV_PointLightVolumeSH(worldPos, L0, unused_L1, unused_L1, unused_L1, worldNormal);
+        LV_LightVolumePointSH(worldPos, L0, unused_L1, unused_L1, unused_L1, worldNormal);
         return L0;
     }
 }

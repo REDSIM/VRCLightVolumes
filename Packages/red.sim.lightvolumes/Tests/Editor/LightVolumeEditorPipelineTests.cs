@@ -24,7 +24,7 @@ namespace VRCLightVolumes.Tests {
             _createdObjects.Clear();
         }
 
-        // Verifies PointLightVolume infers auto-update from projection source type and only overwrites it on full texture sync.
+        // Verifies PointLightVolume infers auto-update on projection source assignment and preserves manual overrides until the next assignment.
         [Test]
         public void PointLightVolumeInfersAutoUpdateFromProjectionSourceType() {
             GameObject setupObject = CreateGameObject("Projection Auto Update Setup", true);
@@ -53,17 +53,30 @@ namespace VRCLightVolumes.Tests {
 
             Assert.That(instance.AutoUpdateCustomTexture, Is.True);
 
+            instance.AutoUpdateCustomTexture = false;
+            pointLight.Intensity = 2f;
+            pointLight.SyncUdonScript();
+
+            Assert.That(instance.AutoUpdateCustomTexture, Is.False);
+
             pointLight.Cookie = CreateMaterial("Hidden/CubeFace");
             pointLight.SyncUdonScript();
 
             Assert.That(instance.AutoUpdateCustomTexture, Is.True);
             Assert.That(instance.ProjectionType, Is.EqualTo(2)); // 2: material
 
-            pointLight.Cookie = CreateTexture2D("Static Cookie Source After Refresh");
-            pointLight.SyncUdonScript(false);
+            pointLight.Cookie = CreateTexture2D("Static Cookie Source After Material");
+            pointLight.SyncUdonScript();
+
+            Assert.That(instance.AutoUpdateCustomTexture, Is.False);
+
+            instance.AutoUpdateCustomTexture = true;
+            pointLight.ShadingStrength = 0.5f;
+            pointLight.SyncUdonScript();
 
             Assert.That(instance.AutoUpdateCustomTexture, Is.True);
 
+            pointLight.Cookie = CreateTexture2D("Static Cookie Source After Manual Override");
             pointLight.SyncUdonScript();
 
             Assert.That(instance.AutoUpdateCustomTexture, Is.False);

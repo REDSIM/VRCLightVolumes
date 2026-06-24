@@ -52,6 +52,7 @@ namespace VRCLightVolumes.Tests {
         private static readonly FieldInfo _pointLightShadowIDsField = typeof(LightVolumeManager).GetField("_pointLightShadowIDs", _lifecycleMethodFlags);
         private static readonly FieldInfo _pointLightArraysDirtyField = typeof(LightVolumeManager).GetField("_pointLightArraysDirty", _lifecycleMethodFlags);
         private static readonly FieldInfo _isUpdatingVolumesField = typeof(LightVolumeManager).GetField("_isUpdatingVolumes", _lifecycleMethodFlags);
+        private static readonly MethodInfo _uploadAreaCookieAverageColorMethod = typeof(LightVolumeManager).GetMethod("UploadAreaCookieAverageColor", _lifecycleMethodFlags);
         private static readonly BindingFlags _staticMigrationMethodFlags = BindingFlags.Static | BindingFlags.NonPublic;
 
         private readonly List<UnityEngine.Object> _createdObjects = new List<UnityEngine.Object>();
@@ -125,6 +126,7 @@ namespace VRCLightVolumes.Tests {
         // Destroys all temporary scene and texture objects created by a test case.
         [TearDown]
         public void TearDown() {
+            AsyncGPUReadback.WaitAllRequests();
             ResetShaderGlobals();
             for (int i = _createdObjects.Count - 1; i >= 0; i--) {
                 DestroyTestObject(_createdObjects[i]);
@@ -140,6 +142,13 @@ namespace VRCLightVolumes.Tests {
         // Assigns a private LightVolumeManager field used by focused regression tests.
         private static void SetManagerField<T>(LightVolumeManager manager, FieldInfo field, T value) {
             field.SetValue(manager, value);
+        }
+
+        // Injects an area cookie average readback result into the manager's private callback path.
+        private static void UploadAreaCookieAverageColor(LightVolumeManager manager, int customId, Color color) {
+            Assert.That(_uploadAreaCookieAverageColorMethod, Is.Not.Null);
+            AsyncGPUReadback.WaitAllRequests();
+            _uploadAreaCookieAverageColorMethod.Invoke(manager, new object[] { customId, color });
         }
 
         // Invokes editor-only point light migration from a serialized YAML component block.
@@ -690,6 +699,118 @@ namespace VRCLightVolumes.Tests {
             AssertVectorClose(ExpectedPointLightPosition(point), Shader.GetGlobalVectorArray(_pointLightPositionID)[0]);
             AssertVectorClose(ExpectedPointLightColor(point), Shader.GetGlobalVectorArray(_pointLightColorID)[0]);
             AssertPointCustomData(point, -1, 0);
+        }
+
+        // Verifies the runtime manager respects a manual auto-update override on an area RenderTexture cookie.
+        [Test]
+        public void AreaRenderTextureCookieRespectsManualAutoUpdateOverride() {
+            LightVolumeManager manager = CreateManager("Area Render Texture Manual Auto Update Manager", false);
+            RenderTexture source = CreateRenderTexture("Area Render Texture Cookie Source", 4, 4, 1, TextureDimension.Tex2D);
+            manager.CustomTexturesWidth = 4;
+            manager.CustomTexturesHeight = 4;
+
+            PointLightVolumeInstance point = CreatePointLight(manager, "Area Render Texture Manual Cookie Light", true);
+            point.transform.localScale = new Vector3(2, 3, 1);
+            point.SetCustomTexture();
+            point.SetAreaLight();
+            point.CustomTexture = source;
+            point.ProjectionType = 1; // 1: texture
+            point.AutoUpdateCustomTexture = false;
+            manager.PointLightVolumeInstances = new[] { point };
+
+            manager.ReinitializeCustomTextures();
+
+            Assert.That(manager.HasAutoCustomTextureUpdates, Is.False);
+        }
+
+        // Verifies area cookie fallback averages cache before shader buffers exist, patch live buffers, and survive rebuilds.
+        [Test]
+        public void AreaCookieFallbackAverageCachesAndSurvivesTextureCacheRebuild() {
+            LightVolumeManager manager = CreateManager("Area Cookie Fallback Average Manager", false);
+            Texture2D source = CreateTexture2D("Area Average Cookie Source");
+            Color averageColor = new Color(0.25f, 0.5f, 0.75f, 1f);
+            Color liveAverageColor = new Color(0.5f, 0.25f, 0.125f, 1f);
+            manager.CustomTexturesWidth = 4;
+            manager.CustomTexturesHeight = 4;
+
+            PointLightVolumeInstance point = CreatePointLight(manager, "Area Average Cookie Light", true);
+            point.transform.localScale = new Vector3(2, 3, 1);
+            point.Color = new Color(0.25f, 0.5f, 1f, 1f);
+            point.Intensity = 2f;
+            point.SetCustomTexture();
+            point.SetAreaLight();
+            point.CustomTexture = source;
+            point.ProjectionType = 1; // 1: texture
+            manager.PointLightVolumeInstances = new[] { point };
+
+            manager.ReinitializeCustomTextures();
+
+            Assert.That(manager.HasAutoCustomTextureUpdates, Is.False);
+
+            manager.PointLightVolumeInstances = new PointLightVolumeInstance[0];
+            UploadAreaCookieAverageColor(manager, 0, averageColor);
+            manager.PointLightVolumeInstances = new[] { point };
+            manager.UpdateVolumes();
+
+            AssertVectorClose(ExpectedAreaCookieFallbackColor(point, averageColor), Shader.GetGlobalVectorArray(_pointLightColorID)[0]);
+
+            UploadAreaCookieAverageColor(manager, 0, liveAverageColor);
+            AssertVectorClose(ExpectedAreaCookieFallbackColor(point, liveAverageColor), Shader.GetGlobalVectorArray(_pointLightColorID)[0]);
+
+            manager.ReinitializeCustomTextures();
+            point.Color = new Color(1f, 0.5f, 0.25f, 1f);
+            manager.UpdateVolumes();
+
+            AssertVectorClose(ExpectedAreaCookieFallbackColor(point, liveAverageColor), Shader.GetGlobalVectorArray(_pointLightColorID)[0]);
+
+            point.CustomTexture = CreateTexture2D("Area Average Cookie Replacement Source");
+            manager.ReinitializeCustomTextures();
+            point.Color = new Color(0.5f, 1f, 0.25f, 1f);
+            manager.UpdateVolumes();
+
+            AssertVectorClose(ExpectedAreaCookieFallbackColor(point, liveAverageColor), Shader.GetGlobalVectorArray(_pointLightColorID)[0]);
+
+            point.IsActive = false;
+            manager.ReinitializeCustomTextures();
+
+            point.IsActive = true;
+            manager.ReinitializeCustomTextures();
+
+            manager.UpdateVolumes();
+            AssertVectorClose(ExpectedAreaCookieFallbackColor(point, liveAverageColor), Shader.GetGlobalVectorArray(_pointLightColorID)[0]);
+        }
+
+        // Verifies area cookie readback does not live-patch spot lights that share the same single-slice source ID.
+        [Test]
+        public void AreaCookieFallbackReadbackDoesNotPatchSharedSpotCookie() {
+            LightVolumeManager manager = CreateManager("Area Cookie Shared Spot Manager", false);
+            Texture2D source = CreateTexture2D("Area Cookie Shared Spot Source");
+            Color averageColor = new Color(0.25f, 0.5f, 0.75f, 1f);
+            manager.CustomTexturesWidth = 4;
+            manager.CustomTexturesHeight = 4;
+
+            PointLightVolumeInstance area = CreatePointLight(manager, "Area Cookie Shared Source Light", true);
+            area.transform.localScale = new Vector3(2, 3, 1);
+            area.SetCustomTexture();
+            area.SetAreaLight();
+            area.CustomTexture = source;
+            area.ProjectionType = 1; // 1: texture
+
+            PointLightVolumeInstance spot = CreatePointLight(manager, "Wide Spot Shared Cookie Light", true);
+            spot.SetCustomTexture();
+            spot.SetSpotLight(150, 0.25f);
+            spot.CustomTexture = source;
+            spot.ProjectionType = 1; // 1: texture
+
+            manager.PointLightVolumeInstances = new[] { area, spot };
+
+            manager.ReinitializeCustomTextures();
+            manager.UpdateVolumes();
+            UploadAreaCookieAverageColor(manager, 0, averageColor);
+
+            Vector4[] colors = Shader.GetGlobalVectorArray(_pointLightColorID);
+            AssertVectorClose(ExpectedAreaCookieFallbackColor(area, averageColor), colors[0]);
+            AssertVectorClose(ExpectedPointLightColor(spot), colors[1]);
         }
 
         // Verifies area light material cookies reuse matching material sources with mipmapped projection data.
@@ -1999,6 +2120,13 @@ namespace VRCLightVolumes.Tests {
         private static Vector4 ExpectedPointLightColor(PointLightVolumeInstance instance) {
             Color color = instance.Color.linear * instance.Intensity;
             return new Vector4(color.r, color.g, color.b, ExpectedPointLightAngleData(instance));
+        }
+
+        // Converts an area light color with a cookie fallback average exactly like LightVolumeManager does.
+        private static Vector4 ExpectedAreaCookieFallbackColor(PointLightVolumeInstance instance, Color averageColor) {
+            Color color = instance.Color.linear * instance.Intensity;
+            float alpha = averageColor.a;
+            return new Vector4(color.r * averageColor.r * alpha, color.g * averageColor.g * alpha, color.b * averageColor.b * alpha, ExpectedPointLightAngleData(instance));
         }
 
         // Assigns the readable point light size field using the old packed squared-size value used by previous tests.

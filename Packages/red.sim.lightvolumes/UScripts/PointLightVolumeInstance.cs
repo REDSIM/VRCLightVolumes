@@ -244,11 +244,20 @@ namespace VRCLightVolumes {
         }
 #endif
 
+        // Sets dynamic mode and rebuilds the manager light list only when it changes
+        public void SetDynamic(bool isDynamic) {
+            if (IsDynamic == isDynamic) return;
+            IsDynamic = isDynamic;
+            NotifyManager(true, false, false);
+        }
+
         // Sets light source size or range data for LUT mode
         public void SetLightSourceSize(float size) {
             float safeSize = Mathf.Max(Mathf.Abs(size), 0.0001f);
+            float inverseSquaredRange = 1f / (safeSize * safeSize);
+            if (LightSourceSize == safeSize && InverseSquaredRange == inverseSquaredRange) return;
             LightSourceSize = safeSize;
-            InverseSquaredRange = 1f / (safeSize * safeSize);
+            InverseSquaredRange = inverseSquaredRange;
             MarkRangeDirtyAndNotify(false, false, false);
         }
 
@@ -314,43 +323,61 @@ namespace VRCLightVolumes {
 
         // Sets the light into parametric mode
         public void SetParametric() {
+            if (ProjectionMode == 0) return;
             SetParametricMode();
             MarkRangeDirtyAndNotify(true, CustomTexture != null || CustomTextureMaterial != null, false);
         }
 
         // Sets the light into the point light type
         public void SetPointLight() {
+            Vector3 position = transform.position;
+            if (LightType == 0 && Position == position) return;
             LightType = 0; // 0: point
-            Position = transform.position;
+            Position = position;
             UpdateRotation();
-            MarkRangeDirtyAndNotify(true, CustomTexture != null || CustomTextureMaterial != null, false);
+            MarkRangeDirtyAndNotify(false, false, false);
         }
 
         // Sets the light into the spotlight type with both angle and falloff because angle is required to determine falloff
         public void SetSpotLight(float angleDeg, float falloff) {
+            float angle = angleDeg * Mathf.Deg2Rad * 0.5f;
+            float outerAngleTan = Mathf.Tan(angle);
+            float outerAngleCos = Mathf.Cos(angle);
+            float coneFalloff = 1f / (Mathf.Cos(angle * (1.0f - Mathf.Clamp01(falloff))) - outerAngleCos);
+            Vector3 position = transform.position;
+            Vector3 direction = transform.forward;
+            Quaternion rotation = Quaternion.Inverse(transform.rotation);
+            if (LightType == 1 && Angle == angle && OuterAngleTan == outerAngleTan && Position == position && (ProjectionMode == 2 ? Rotation == rotation : Direction == direction && OuterAngleCos == outerAngleCos && ConeFalloff == coneFalloff)) return;
             LightType = 1; // 1: spot
-            Angle = angleDeg * Mathf.Deg2Rad * 0.5f;
-            OuterAngleTan = Mathf.Tan(Angle);
+            Angle = angle;
+            OuterAngleTan = outerAngleTan;
             if (ProjectionMode != 2) { // 2: custom cookie or cubemap
-                OuterAngleCos = Mathf.Cos(Angle);
-                ConeFalloff = 1f / (Mathf.Cos(Angle * (1.0f - Mathf.Clamp01(falloff))) - OuterAngleCos);
+                OuterAngleCos = outerAngleCos;
+                ConeFalloff = coneFalloff;
             }
-            Position = transform.position;
+            Position = position;
             UpdateRotation();
-            MarkRangeDirtyAndNotify(true, CustomTexture != null || CustomTextureMaterial != null, false);
+            MarkRangeDirtyAndNotify(false, false, false);
         }
 
         // Sets the light into the spotlight type with a specified angle
         public void SetSpotLight(float angleDeg) {
+            float angle = angleDeg * Mathf.Deg2Rad * 0.5f;
+            float outerAngleTan = Mathf.Tan(angle);
+            float outerAngleCos = Mathf.Cos(angle);
+            Vector3 position = transform.position;
+            Vector3 direction = transform.forward;
+            Quaternion rotation = Quaternion.Inverse(transform.rotation);
+            if (LightType == 1 && Angle == angle && OuterAngleTan == outerAngleTan && Position == position && (ProjectionMode == 2 ? Rotation == rotation : Direction == direction && OuterAngleCos == outerAngleCos)) return;
             LightType = 1; // 1: spot
-            Angle = angleDeg * Mathf.Deg2Rad * 0.5f;
-            OuterAngleTan = Mathf.Tan(Angle);
+            Angle = angle;
+            OuterAngleTan = outerAngleTan;
             if (ProjectionMode != 2) { // 2: custom cookie or cubemap
-                OuterAngleCos = Mathf.Cos(Angle);
+                OuterAngleCos = outerAngleCos;
             }
-            Position = transform.position;
+            Position = position;
             UpdateRotation();
-            MarkRangeDirtyAndNotify(true, CustomTexture != null || CustomTextureMaterial != null, false);
+            MarkRangeDirtyAndNotify(false, false, false);
         }
         
         // Sets the light into the area light type
@@ -365,13 +392,17 @@ namespace VRCLightVolumes {
 
         // Sets light source color
         public void SetColor(Color color) {
+            if (Color == color) return;
             Color = color;
+            _old_Color = color;
             MarkRangeDirtyAndNotify(false, false, false);
         }
 
         // Sets light source intensity
         public void SetIntensity(float intensity) {
+            if (Intensity == intensity) return;
             Intensity = intensity;
+            _old_Intensity = intensity;
             MarkRangeDirtyAndNotify(false, false, false);
         }
 
@@ -381,6 +412,7 @@ namespace VRCLightVolumes {
             if (ShadingStrength == strength) return;
             float oldStrength = ShadingStrength;
             ShadingStrength = strength;
+            _old_ShadingStrength = strength;
             NotifyManager((Mathf.Clamp01(oldStrength) <= 0) != (strength <= 0), false, false);
         }
 
@@ -390,6 +422,24 @@ namespace VRCLightVolumes {
             if (SpotCookieAspect == safeAspect) return;
             SpotCookieAspect = safeAspect;
             NotifyManager(false, false, false);
+        }
+
+        // Sets shadow bake and projection parameters without rebuilding unrelated light data
+        public void SetShadowSettings(float shadowMapID, bool worldSpaceShadows, int layerMask, float nearClip, float bias, float blur, float contactHardening) {
+            float safeNearClip = Mathf.Max(nearClip, 0.0001f);
+            float safeBias = Mathf.Max(bias, 0f);
+            float safeBlur = Mathf.Max(blur, 0f);
+            float safeContactHardening = Mathf.Clamp01(contactHardening);
+            bool shaderDataChanged = ShadowMapID != shadowMapID || WorldSpaceShadows != worldSpaceShadows || NearClip != safeNearClip;
+            if (!shaderDataChanged && LayerMask == layerMask && Bias == safeBias && Blur == safeBlur && ContactHardening == safeContactHardening) return;
+            ShadowMapID = shadowMapID;
+            WorldSpaceShadows = worldSpaceShadows;
+            LayerMask = layerMask;
+            NearClip = safeNearClip;
+            Bias = safeBias;
+            Blur = safeBlur;
+            ContactHardening = safeContactHardening;
+            if (shaderDataChanged) NotifyManager(false, false, false);
         }
 
         // Marks this light range dirty and tells the manager which runtime data needs rebuilding.

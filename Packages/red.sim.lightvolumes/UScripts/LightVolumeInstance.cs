@@ -120,11 +120,44 @@ namespace VRCLightVolumes {
             _isRegisteredWithManager = false;
         }
 
+        // Sets dynamic mode and rebuilds the manager volume list only when it changes
+        public void SetDynamic(bool isDynamic) {
+            if (IsDynamic == isDynamic) return;
+            IsDynamic = isDynamic;
+            NotifyManager(true);
+        }
+
+        // Sets additive mode and rebuilds the manager volume list only when it changes
+        public void SetAdditive(bool isAdditive) {
+            if (IsAdditive == isAdditive) return;
+            IsAdditive = isAdditive;
+            NotifyManager(true);
+        }
+
+        // Sets light source color
+        public void SetColor(Color color) {
+            if (Color == color) return;
+            Color = color;
+            _old_Color = color;
+            NotifyManager(false);
+        }
+
+        // Sets light source intensity
+        public void SetIntensity(float intensity) {
+            if (Intensity == intensity) return;
+            Intensity = intensity;
+            _old_Intensity = intensity;
+            NotifyManager(false);
+        }
+
         // Calculates and sets invLocalEdgeBlending
         public void SetSmoothBlending(float radius) {
             Vector3 scl = transform.lossyScale;
-            InvLocalEdgeSmoothing = scl / Mathf.Max(radius, 0.00001f);
-            NotifyManager(true);
+            float safeRadius = Mathf.Max(radius, 0.00001f);
+            Vector4 invLocalEdgeSmoothing = new Vector4(scl.x / safeRadius, scl.y / safeRadius, scl.z / safeRadius, 0f);
+            if (InvLocalEdgeSmoothing == invLocalEdgeSmoothing) return;
+            InvLocalEdgeSmoothing = invLocalEdgeSmoothing;
+            NotifyManager(false);
         }
 
         // Recalculates inv TRS matrix and Relative L1 rotation

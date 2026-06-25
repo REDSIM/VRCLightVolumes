@@ -74,6 +74,11 @@ namespace VRCLightVolumes {
         private Vector3 _prevPos = Vector3.zero;
         private Quaternion _prevRot = Quaternion.identity;
         private Vector3 _prevScl = Vector3.one;
+        private bool _prevDynamic = false;
+        private bool _prevAdditive = false;
+        private Color _prevColor = Color.white;
+        private float _prevIntensity = 1f;
+        private float _prevSmoothBlending = 0.25f;
 
         private float _prevExposure = 0;
         private float _prevShadows = 0;
@@ -465,6 +470,57 @@ namespace VRCLightVolumes {
 
 #if UNITY_EDITOR
 
+        // Caches editor-facing fields used to detect granular inspector changes
+        private void CacheEditorState() {
+            _prevDynamic = Dynamic;
+            _prevAdditive = Additive;
+            _prevColor = Color;
+            _prevIntensity = Intensity;
+            _prevSmoothBlending = SmoothBlending;
+        }
+
+        // Applies only editor fields that actually changed to the runtime instance
+        public void SyncEditorChanges(bool recordUndo = false) {
+            if (gameObject == null) return;
+            SetupDependencies();
+#if UDONSHARP
+            if (Application.isPlaying) {
+                SyncUdonScript();
+                CacheEditorState();
+                _isValidated = false;
+                return;
+            }
+#endif
+            LightVolumeInstance.LightVolumeManager = LightVolumeSetup.LightVolumeManager;
+            bool dynamicChanged = _prevDynamic != Dynamic;
+            bool additiveChanged = _prevAdditive != Additive;
+            bool colorChanged = _prevColor != Color;
+            bool intensityChanged = _prevIntensity != Intensity;
+            bool smoothBlendingChanged = _prevSmoothBlending != SmoothBlending;
+            if (recordUndo && (dynamicChanged || additiveChanged || colorChanged || intensityChanged || smoothBlendingChanged)) UnityEditor.Undo.RecordObject(LightVolumeInstance, "Sync Light Volume Instance");
+            if (dynamicChanged) {
+                LightVolumeInstance.SetDynamic(Dynamic);
+                _prevDynamic = Dynamic;
+            }
+            if (additiveChanged) {
+                LightVolumeInstance.SetAdditive(Additive);
+                _prevAdditive = Additive;
+            }
+            if (colorChanged) {
+                LightVolumeInstance.SetColor(Color);
+                _prevColor = Color;
+            }
+            if (intensityChanged) {
+                LightVolumeInstance.SetIntensity(Intensity);
+                _prevIntensity = Intensity;
+            }
+            if (smoothBlendingChanged) {
+                LightVolumeInstance.SetSmoothBlending(SmoothBlending);
+                _prevSmoothBlending = SmoothBlending;
+            }
+            _isValidated = false;
+        }
+
         private void Update() {
 
             SetupDependencies();
@@ -489,9 +545,7 @@ namespace VRCLightVolumes {
             }
 
             if (_isValidated) {
-                _isValidated = false;
-                SyncUdonScript();
-                LightVolumeSetup.SyncUdonScript();
+                SyncEditorChanges();
             }
 
             // Regenerating atlas if color correction values were changed and 0.5 seconds delay passed
@@ -516,6 +570,7 @@ namespace VRCLightVolumes {
             _prevExposure = Exposure;
             _prevHighlights = Highlights;
             _prevShadows = Shadows;
+            CacheEditorState();
             _lastTimeColorCorrection = 0;
         }
 
@@ -524,6 +579,7 @@ namespace VRCLightVolumes {
             SetupBakeryDependencies();
             LightVolumeSetup.RefreshVolumesList();
             LightVolumeSetup.SyncUdonScript();
+            CacheEditorState();
         }
 
         private void OnDisable() {

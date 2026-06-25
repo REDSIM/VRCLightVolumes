@@ -19,30 +19,17 @@ namespace VRCLightVolumes {
 
         private void OnEnable() {
             PointLightVolume = (PointLightVolume)target;
+            Undo.undoRedoPerformed += OnUndoRedoPerformed;
+        }
+
+        private void OnDisable() {
+            Undo.undoRedoPerformed -= OnUndoRedoPerformed;
         }
 
         public override void OnInspectorGUI() {
 
             serializedObject.Update();
-            int targetCount = targets.Length;
-            PointLightVolume[] pointLightVolumes = new PointLightVolume[targetCount];
-            PointLightVolume.LightType[] previousTypes = new PointLightVolume.LightType[targetCount];
-            PointLightVolume.LightProjection[] previousProjections = new PointLightVolume.LightProjection[targetCount];
-            UnityEngine.Object[] previousProjectionSources = new UnityEngine.Object[targetCount];
-            UnityEngine.Object[] previousShadowMaps = new UnityEngine.Object[targetCount];
-            bool[] previousShadows = new bool[targetCount];
-            bool[] previousForceCubemapShadows = new bool[targetCount];
-            for (int i = 0; i < targetCount; i++) {
-                PointLightVolume pointLightVolume = targets[i] as PointLightVolume;
-                pointLightVolumes[i] = pointLightVolume;
-                if (pointLightVolume == null) continue;
-                previousTypes[i] = pointLightVolume.Type;
-                previousProjections[i] = pointLightVolume.Projection;
-                previousProjectionSources[i] = pointLightVolume.GetProjectionSource();
-                previousShadowMaps[i] = pointLightVolume.ShadowMap;
-                previousShadows[i] = pointLightVolume.Shadows;
-                previousForceCubemapShadows[i] = pointLightVolume.ForceCubemapShadows;
-            }
+            int undoGroup = Undo.GetCurrentGroup();
 
             List<string> hiddenFields = new List<string> { "m_Script", "PointLightVolumeInstance", "LightVolumeSetup" };
             hiddenFields.Add("ShadowMap");
@@ -129,38 +116,45 @@ namespace VRCLightVolumes {
 
             propertiesChanged |= serializedObject.ApplyModifiedProperties();
             if (propertiesChanged) {
-                bool customTexturesChanged = false;
-                bool shadowTexturesChanged = false;
-                for (int i = 0; i < targetCount; i++) {
-                    PointLightVolume pointLightVolume = pointLightVolumes[i];
-                    if (pointLightVolume == null) continue;
-                    if (previousTypes[i] != pointLightVolume.Type || previousProjections[i] != pointLightVolume.Projection || previousProjectionSources[i] != pointLightVolume.GetProjectionSource()) customTexturesChanged = true;
-                    if (previousShadows[i] != pointLightVolume.Shadows || previousShadowMaps[i] != pointLightVolume.ShadowMap || previousForceCubemapShadows[i] != pointLightVolume.ForceCubemapShadows) shadowTexturesChanged = true;
-                }
-                SyncTargets(customTexturesChanged, shadowTexturesChanged);
+                SyncTargets(true);
+                Undo.CollapseUndoOperations(undoGroup);
             }
 
         }
 
         // Syncs changed inspector values into runtime instances and shader globals immediately.
-        private void SyncTargets(bool customTexturesChanged, bool shadowTexturesChanged) {
+        private void SyncTargets(bool recordUndo) {
+            HashSet<LightVolumeSetup> textureUndoRecordedSetups = null;
             for (int i = 0; i < targets.Length; i++) {
                 PointLightVolume pointLightVolume = targets[i] as PointLightVolume;
                 if (pointLightVolume == null) continue;
-                pointLightVolume.SyncUdonScript(customTexturesChanged || shadowTexturesChanged);
-                bool textureArraysReinitialized = false;
-                if (pointLightVolume.LightVolumeSetup != null) {
-                    if (customTexturesChanged) {
-                        pointLightVolume.LightVolumeSetup.ReinitializeCustomTextures();
-                        textureArraysReinitialized = true;
-                    }
-                    if (shadowTexturesChanged) {
-                        pointLightVolume.LightVolumeSetup.ReinitializeShadowTextures();
-                        textureArraysReinitialized = true;
-                    }
+                bool customTexturesChanged = pointLightVolume.HasEditorCustomTextureChanges();
+                bool shadowTexturesChanged = pointLightVolume.HasEditorShadowTextureChanges();
+                if (recordUndo && (customTexturesChanged || shadowTexturesChanged) && pointLightVolume.LightVolumeSetup != null) {
+                    if (textureUndoRecordedSetups == null) textureUndoRecordedSetups = new HashSet<LightVolumeSetup>();
+                    if (textureUndoRecordedSetups.Add(pointLightVolume.LightVolumeSetup)) RecordTextureReinitializeUndo(pointLightVolume.LightVolumeSetup);
                 }
-                if (textureArraysReinitialized) pointLightVolume.CacheEditorTextureSourceState(customTexturesChanged, shadowTexturesChanged);
+                pointLightVolume.SyncEditorChanges(customTexturesChanged, shadowTexturesChanged, recordUndo);
+                if (pointLightVolume.LightVolumeSetup != null) {
+                    if (customTexturesChanged) pointLightVolume.LightVolumeSetup.ReinitializeCustomTextures();
+                    if (shadowTexturesChanged) pointLightVolume.LightVolumeSetup.ReinitializeShadowTextures();
+                }
             }
+        }
+
+        // Records objects that can be rewritten when point light texture arrays are reindexed.
+        private void RecordTextureReinitializeUndo(LightVolumeSetup lightVolumeSetup) {
+            if (lightVolumeSetup.LightVolumeManager != null) Undo.RecordObject(lightVolumeSetup.LightVolumeManager, "Sync Point Light Volume Textures");
+            for (int i = 0; i < lightVolumeSetup.PointLightVolumes.Count; i++) {
+                PointLightVolume pointLightVolume = lightVolumeSetup.PointLightVolumes[i];
+                if (pointLightVolume != null && pointLightVolume.PointLightVolumeInstance != null) Undo.RecordObject(pointLightVolume.PointLightVolumeInstance, "Sync Point Light Volume Textures");
+            }
+        }
+
+        // Restores runtime mirror data after Unity applies Undo or Redo to the authoring component.
+        private void OnUndoRedoPerformed() {
+            SyncTargets(false);
+            Repaint();
         }
 
         // Draws the projection source that matches the selected projection and light type.

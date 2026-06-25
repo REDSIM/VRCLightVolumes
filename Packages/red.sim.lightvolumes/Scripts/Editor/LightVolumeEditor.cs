@@ -18,6 +18,7 @@ namespace VRCLightVolumes {
             _previousTool = Tools.current;
             LightVolume = (LightVolume)target;
             LightVolumePreviewSceneRenderer.RequestRefresh();
+            Undo.undoRedoPerformed += OnUndoRedoPerformed;
         }
 
         public override void OnInspectorGUI() {
@@ -25,6 +26,7 @@ namespace VRCLightVolumes {
             LightVolume.SetupDependencies();
 
             serializedObject.Update();
+            int undoGroup = Undo.GetCurrentGroup();
 
             GUIContent editBoundsContent = EditorGUIUtility.IconContent("EditCollider");
             editBoundsContent.text = " Edit Bounds";
@@ -157,8 +159,25 @@ namespace VRCLightVolumes {
             GUILayout.FlexibleSpace();
             GUILayout.EndHorizontal();
 
-            serializedObject.ApplyModifiedProperties();
+            if (serializedObject.ApplyModifiedProperties()) {
+                SyncTargets(true);
+                Undo.CollapseUndoOperations(undoGroup);
+            }
 
+        }
+
+        // Restores runtime mirror data after Unity applies Undo or Redo to the authoring component.
+        private void OnUndoRedoPerformed() {
+            SyncTargets(false);
+            Repaint();
+        }
+
+        // Syncs changed inspector values into runtime instances and shader globals immediately.
+        private void SyncTargets(bool recordUndo) {
+            for (int i = 0; i < targets.Length; i++) {
+                LightVolume volume = targets[i] as LightVolume;
+                if (volume != null) volume.SyncEditorChanges(recordUndo);
+            }
         }
 
         // Drowing bounds for a light volume
@@ -259,6 +278,7 @@ namespace VRCLightVolumes {
 
         // Bring back tools
         void OnDisable() {
+            Undo.undoRedoPerformed -= OnUndoRedoPerformed;
             LightVolumePreviewSceneRenderer.RequestRefresh();
             Tools.hidden = false;
             if (_isEditMode) {

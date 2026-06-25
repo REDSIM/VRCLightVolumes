@@ -83,6 +83,21 @@ namespace VRCLightVolumes {
         private UnityEngine.Object _projectionSourcePrev = null;
         private LightType _typePrev = LightType.PointLight;
         private LightProjection _projectionPrev = LightProjection.Parametric;
+        private bool _dynamicPrev = false;
+        private float _lightSourceSizePrev = 0.25f;
+        private float _rangePrev = 10f;
+        private Color _colorPrev = Color.white;
+        private float _intensityPrev = 1f;
+        private float _shadingStrengthPrev = 1f;
+        private float _anglePrev = 60f;
+        private float _falloffPrev = 1f;
+        private float _spotCookieAspectPrev = 1f;
+        private bool _useWorldSpacePrev = false;
+        private int _layerMaskPrev = 270849;
+        private float _nearPlanePrev = 0.01f;
+        private float _biasPrev = 0.1f;
+        private float _blurPrev = 1f;
+        private float _contactHardeningPrev = 0f;
 
         // To check if object was edited this frame
         private Vector3 _prevPos = Vector3.zero;
@@ -253,27 +268,9 @@ namespace VRCLightVolumes {
             if (gameObject == null) return;
             SetupDependencies();
 #if UNITY_EDITOR
-            // Regenerate Shadow texture array
-            if (_shadowMapPrev != ShadowMap) {
-                _shadowMapPrev = ShadowMap;
-                LightVolumeSetup.ReinitializeShadowTextures();
-            }
-            if (_shadowsPrev != Shadows) {
-                _shadowsPrev = Shadows;
-                LightVolumeSetup.ReinitializeShadowTextures();
-            }
-            if (_forceCubemapShadowsPrev != ForceCubemapShadows) {
-                _forceCubemapShadowsPrev = ForceCubemapShadows;
-                LightVolumeSetup.ReinitializeShadowTextures();
-            }
-            // Regenerate custom projection texture array after Undo/Redo or serialized changes outside the inspector path
-            UnityEngine.Object projectionSource = GetProjectionSource();
-            if (_projectionSourcePrev != projectionSource || _typePrev != Type || _projectionPrev != Projection) {
-                _projectionSourcePrev = projectionSource;
-                _typePrev = Type;
-                _projectionPrev = Projection;
-                LightVolumeSetup.ReinitializeCustomTextures();
-            }
+            // Regenerate texture arrays after Undo/Redo or serialized changes outside the inspector path
+            bool shadowTexturesChanged = HasEditorShadowTextureChanges();
+            bool customTexturesChanged = HasEditorCustomTextureChanges();
             // Sync udon script
             if (_prevPos != transform.position || _prevRot != transform.rotation || _prevScl != transform.localScale) {
                 _prevPos = transform.position;
@@ -282,9 +279,10 @@ namespace VRCLightVolumes {
                 if (!Application.isPlaying) LightVolumeSetup.SyncUdonScript();
             }
 
-            if (_isValidated) {
-                _isValidated = false;
-                SyncUdonScript(false);
+            if (_isValidated || customTexturesChanged || shadowTexturesChanged) {
+                SyncEditorChanges(customTexturesChanged, shadowTexturesChanged);
+                if (customTexturesChanged && LightVolumeSetup != null) LightVolumeSetup.ReinitializeCustomTextures();
+                if (shadowTexturesChanged && LightVolumeSetup != null) LightVolumeSetup.ReinitializeShadowTextures();
             }
 #endif
         }
@@ -391,6 +389,133 @@ namespace VRCLightVolumes {
                 _projectionPrev = Projection;
             }
         }
+
+        // Returns true when projection texture array metadata needs rebuilding.
+        public bool HasEditorCustomTextureChanges() {
+            return _projectionSourcePrev != GetProjectionSource() || _typePrev != Type || _projectionPrev != Projection;
+        }
+
+        // Returns true when shadow texture array metadata needs rebuilding.
+        public bool HasEditorShadowTextureChanges() {
+            return _shadowMapPrev != ShadowMap || _shadowsPrev != Shadows || _forceCubemapShadowsPrev != ForceCubemapShadows;
+        }
+
+        // Caches editor-facing fields used to detect granular inspector changes.
+        private void CacheEditorState() {
+            _dynamicPrev = Dynamic;
+            _lightSourceSizePrev = LightSourceSize;
+            _rangePrev = Range;
+            _colorPrev = Color;
+            _intensityPrev = Intensity;
+            _shadingStrengthPrev = ShadingStrength;
+            _anglePrev = Angle;
+            _falloffPrev = Falloff;
+            _spotCookieAspectPrev = SpotCookieAspect;
+            _useWorldSpacePrev = UseWorldSpace;
+            _layerMaskPrev = LayerMask.value;
+            _nearPlanePrev = NearPlane;
+            _biasPrev = Bias;
+            _blurPrev = Blur;
+            _contactHardeningPrev = ContactHardening;
+            CacheEditorTextureSourceState(true, true);
+        }
+
+        // Applies only editor fields that actually changed to the runtime instance.
+        public void SyncEditorChanges(bool customTexturesChanged, bool shadowTexturesChanged, bool recordUndo = false) {
+            if (gameObject == null) return;
+            SetupDependencies();
+#if UDONSHARP
+            if (Application.isPlaying) {
+                SyncUdonScript(customTexturesChanged || shadowTexturesChanged);
+                CacheEditorState();
+                _isValidated = false;
+                return;
+            }
+#endif
+            PointLightVolumeInstance.LightVolumeManager = LightVolumeSetup.LightVolumeManager;
+
+            bool dynamicChanged = _dynamicPrev != Dynamic;
+            bool colorChanged = _colorPrev != Color;
+            bool intensityChanged = _intensityPrev != Intensity;
+            bool shadingStrengthChanged = _shadingStrengthPrev != ShadingStrength;
+            bool spotCookieAspectChanged = _spotCookieAspectPrev != SpotCookieAspect;
+            UnityEngine.Object projectionSource = GetProjectionSource();
+            bool typeChanged = _typePrev != Type;
+            bool projectionChanged = _projectionPrev != Projection;
+            bool sourceChanged = _projectionSourcePrev != projectionSource;
+            customTexturesChanged = customTexturesChanged || typeChanged || projectionChanged || sourceChanged;
+            shadowTexturesChanged = shadowTexturesChanged || HasEditorShadowTextureChanges();
+            bool sizeChanged = _lightSourceSizePrev != LightSourceSize || _rangePrev != Range;
+            bool spotShapeChanged = _anglePrev != Angle || _falloffPrev != Falloff;
+            bool shadowSettingsChanged = shadowTexturesChanged || _useWorldSpacePrev != UseWorldSpace || _layerMaskPrev != LayerMask.value || _nearPlanePrev != NearPlane || _biasPrev != Bias || _blurPrev != Blur || _contactHardeningPrev != ContactHardening;
+
+            if (recordUndo && (dynamicChanged || colorChanged || intensityChanged || shadingStrengthChanged || spotCookieAspectChanged || customTexturesChanged || sizeChanged || spotShapeChanged || shadowSettingsChanged)) UnityEditor.Undo.RecordObject(PointLightVolumeInstance, "Sync Point Light Volume Instance");
+
+            if (dynamicChanged) {
+                PointLightVolumeInstance.SetDynamic(Dynamic);
+                _dynamicPrev = Dynamic;
+            }
+            if (colorChanged) {
+                PointLightVolumeInstance.SetColor(Color);
+                _colorPrev = Color;
+            }
+            if (intensityChanged) {
+                PointLightVolumeInstance.SetIntensity(Intensity);
+                _intensityPrev = Intensity;
+            }
+            if (shadingStrengthChanged) {
+                PointLightVolumeInstance.SetShadingStrength(ShadingStrength);
+                _shadingStrengthPrev = ShadingStrength;
+            }
+            if (spotCookieAspectChanged) {
+                PointLightVolumeInstance.SetSpotCookieAspect(SpotCookieAspect);
+                _spotCookieAspectPrev = SpotCookieAspect;
+            }
+
+            if (customTexturesChanged) SyncTextureSourcesToInstance();
+
+            bool hasProjectionSource = HasProjectionSource();
+            if (customTexturesChanged || sizeChanged || spotShapeChanged) {
+                if (Type == LightType.AreaLight) {
+                    if (customTexturesChanged) PointLightVolumeInstance.SetAreaLight();
+                } else {
+                    bool usesLut = Projection == LightProjection.LUT && hasProjectionSource;
+                    bool usesCustom = Projection == LightProjection.Custom && hasProjectionSource;
+                    if (sizeChanged || customTexturesChanged) PointLightVolumeInstance.SetLightSourceSize(usesLut ? Range : LightSourceSize);
+                    if (customTexturesChanged) {
+                        if (usesCustom) PointLightVolumeInstance.SetCustomTexture();
+                        else if (usesLut) PointLightVolumeInstance.SetLut();
+                        else PointLightVolumeInstance.SetParametric();
+                    }
+                    if (typeChanged || spotShapeChanged || projectionChanged) {
+                        if (Type == LightType.PointLight) PointLightVolumeInstance.SetPointLight();
+                        else if (Type == LightType.SpotLight) PointLightVolumeInstance.SetSpotLight(Angle, Falloff);
+                    }
+                }
+                _typePrev = Type;
+                _projectionPrev = Projection;
+                _projectionSourcePrev = projectionSource;
+                _lightSourceSizePrev = LightSourceSize;
+                _rangePrev = Range;
+                _anglePrev = Angle;
+                _falloffPrev = Falloff;
+            }
+
+            if (shadowSettingsChanged) {
+                if (shadowTexturesChanged) SyncTextureSourcesToInstance();
+                PointLightVolumeInstance.SetShadowSettings(GetShadowRuntimeID(), UseWorldSpace, LayerMask.value, GetShadowNearClip(), Bias, Blur, ContactHardening);
+                _useWorldSpacePrev = UseWorldSpace;
+                _layerMaskPrev = LayerMask.value;
+                _nearPlanePrev = NearPlane;
+                _biasPrev = Bias;
+                _blurPrev = Blur;
+                _contactHardeningPrev = ContactHardening;
+                CacheEditorTextureSourceState(false, shadowTexturesChanged);
+            }
+
+            if (customTexturesChanged) CacheEditorTextureSourceState(true, false);
+            _isValidated = false;
+        }
 #endif
 
 #if UDONSHARP
@@ -470,12 +595,18 @@ namespace VRCLightVolumes {
             SyncUdonScript();
             LightVolumeSetup.RefreshVolumesList();
             LightVolumeSetup.SyncUdonScript();
+#if UNITY_EDITOR
+            CacheEditorState();
+#endif
         }
 
         private void OnEnable() {
             SetupDependencies();
             LightVolumeSetup.RefreshVolumesList();
             LightVolumeSetup.SyncUdonScript();
+#if UNITY_EDITOR
+            CacheEditorState();
+#endif
         }
 
         private void OnDisable() {

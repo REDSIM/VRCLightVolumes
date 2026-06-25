@@ -9,7 +9,7 @@ namespace VRCLightVolumes {
     public class PointLightVolumeEditor : Editor {
 
         PointLightVolume PointLightVolume;
-        private static readonly GUIContent _bakeShadowsButtonContent = new GUIContent("Bake Shadows", "Bakes or re-bakes a shadow map for this light.");
+        private static readonly GUIContent _bakeShadowsButtonContent = new GUIContent("Bake Shadows", "Bakes or re-bakes shadow maps for all selected lights with Shadows enabled.");
         private static readonly GUIContent _emptyContent = GUIContent.none;
         private static readonly string _textureMaterialHint = "None (Texture/Material)";
         private static readonly string _cubemapMaterialHint = "None (Texture/Material)";
@@ -104,12 +104,7 @@ namespace VRCLightVolumes {
 
                 if (GUILayout.Button(_bakeShadowsButtonContent)) {
                     propertiesChanged |= serializedObject.ApplyModifiedProperties();
-                    for (int i = 0; i < targets.Length; i++) {
-                        PointLightVolume pointLightVolume = targets[i] as PointLightVolume;
-                        if (pointLightVolume != null && pointLightVolume.Shadows) {
-                            pointLightVolume.BakeShadowMap();
-                        }
-                    }
+                    propertiesChanged |= BakeSelectedShadowMaps();
                     serializedObject.Update();
                 }
             }
@@ -120,6 +115,27 @@ namespace VRCLightVolumes {
                 Undo.CollapseUndoOperations(undoGroup);
             }
 
+        }
+
+        // Bakes shadows for selected point light volumes and rebuilds each touched shadow array once.
+        private bool BakeSelectedShadowMaps() {
+            bool bakedAny = false;
+            HashSet<LightVolumeSetup> reinitializeSetups = null;
+            for (int i = 0; i < targets.Length; i++) {
+                PointLightVolume pointLightVolume = targets[i] as PointLightVolume;
+                if (pointLightVolume == null || !pointLightVolume.Shadows) continue;
+                if (!pointLightVolume.BakeShadowMap($"| {pointLightVolume.gameObject.name} ({i + 1}/{targets.Length})", false)) continue;
+                bakedAny = true;
+                if (pointLightVolume.LightVolumeSetup == null) continue;
+                if (reinitializeSetups == null) reinitializeSetups = new HashSet<LightVolumeSetup>();
+                reinitializeSetups.Add(pointLightVolume.LightVolumeSetup);
+            }
+            if (reinitializeSetups != null) {
+                foreach (LightVolumeSetup lightVolumeSetup in reinitializeSetups) {
+                    if (lightVolumeSetup != null) lightVolumeSetup.ReinitializeShadowTextures();
+                }
+            }
+            return bakedAny;
         }
 
         // Syncs changed inspector values into runtime instances and shader globals immediately.

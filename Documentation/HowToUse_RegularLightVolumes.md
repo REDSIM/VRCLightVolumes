@@ -24,6 +24,8 @@ The `Light Volume` component is an editor-only script that helps you configure t
 
 The `Light Volume Instance` component is a VRChat Udon script that stores all the data required by the Light Volumes system to render the volume. You generally shouldn’t modify its values manually in the editor - use the `Light Volume` script instead. However, if you’re writing game logic that changes volume parameters at runtime, you should reference the `Light Volume Instance` component, since it is the one that actually functions as the real volume in-game.
 
+For runtime changes from Udon, prefer `Light Volume Instance` setter methods such as `SetColor()`, `SetIntensity()`, `SetDynamic()`, `SetAdditive()` and `SetSmoothBlending()` so the manager receives only the update it actually needs.
+
 ## Light Volumes Placement
 
 **Light Volumes** should be placed to cover most of the walkable areas in your world. It's perfectly fine to leave some areas uncovered - in those cases, regular Unity Light Probes will be used as a fallback.

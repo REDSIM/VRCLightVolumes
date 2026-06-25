@@ -102,6 +102,8 @@ Disabling **Light Volumes Manager** object disables all the Light Volumes system
 
 To update a volume's transform in runtime, enable **Dynamic** on it's component and check **Auto Update Volumes** in Light Volume Setup. Otherwise, you must manually update positions of Dynamic volumes via an Udon script. Color, Intensity, enabling and disabling update without **Auto Update Volumes**. If you don’t need runtime transform updates, leave both options off for better performance.
 
+When changing Light Volume or Point Light Volume data from Udon, prefer the instance setter methods such as `SetColor()`, `SetIntensity()`, `SetDynamic()`, `SetAdditive()`, `SetLightSourceSize()` and `SetShadowSettings()` instead of writing public fields directly. These methods skip unchanged values and notify the manager with a more targeted update.
+
 ## Additive Volumes
 
 For dynamic lighting, set the volume to **Additive** so it layers on top of others and also affects lightmapped static meshes with a compatible shader. Minimize overlapping additive volumes to reduce overhead. Use **Additive Max Overdraw** value in Light Volume Setup to limit how many additive volumes and Point Light Volumes can affect a pixel. Lower values improve worst-case performance in overlap-heavy areas.

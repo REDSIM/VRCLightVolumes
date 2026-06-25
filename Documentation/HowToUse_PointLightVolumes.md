@@ -25,6 +25,8 @@ The `Point Light Volume` component is an editor-only script that helps you confi
 
 The `Point Light Volume Instance` component is a VRChat Udon script that stores all the data required by the Light Volumes system to render the light. You generally shouldn’t modify its values manually in the editor - use the `Point Light Volume` script instead. However, if you’re writing game logic that changes light parameters at runtime, you should reference the `Point Light Volume Instance` component, since it is the one that actually functions as the real light in-game.
 
+For runtime changes from Udon, prefer `Point Light Volume Instance` setter methods such as `SetColor()`, `SetIntensity()`, `SetDynamic()`, `SetLightSourceSize()`, `SetPointLight()`, `SetSpotLight()` and `SetShadowSettings()` so the manager receives only the update it actually needs.
+
 ## Point Light Volumes Placement
 
 ![](../Documentation/Preview_5.png)

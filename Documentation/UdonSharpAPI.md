@@ -67,6 +67,8 @@ Stores the Light Volume atlas, Point Light Volume texture arrays and references 
 ## LightVolumeInstance
 Stores all runtime regular Light Volume configuration including atlas UVW data, transform data, color and intensity.
 
+When changing a Light Volume from another Udon script, prefer the setter methods below over direct field writes. They skip unchanged values and notify the manager with the smallest required update path.
+
 ### Public Fields
 | Public Field | Description |
 | --- | --- |
@@ -91,11 +93,17 @@ Stores all runtime regular Light Volume configuration including atlas UVW data, 
 | --- | --- |
 |`void _onVarChange_Color()` | Internal Udon event used to detect direct color changes on the UdonBehaviour. Usually don't call it manually. |
 |`void _onVarChange_Intensity()` | Internal Udon event used to detect direct intensity changes on the UdonBehaviour. Usually don't call it manually. |
-|`void SetSmoothBlending(float radius)` | Calculates `InvLocalEdgeSmoothing`. Execute it if you want to control edge smoothing in runtime. |
+|`void SetDynamic(bool isDynamic)` | Sets dynamic mode and rebuilds the manager volume list only when the value changes. |
+|`void SetAdditive(bool isAdditive)` | Sets additive mode and rebuilds the manager volume list only when the value changes. |
+|`void SetColor(Color color)` | Sets volume color, updates the internal change cache and notifies the manager only when the value changes. |
+|`void SetIntensity(float intensity)` | Sets volume intensity, updates the internal change cache and notifies the manager only when the value changes. |
+|`void SetSmoothBlending(float radius)` | Calculates `InvLocalEdgeSmoothing` from the current lossy scale and radius. Notifies the manager only when the resulting smoothing data changes. |
 |`void UpdateTransform()` | Recalculates `InvWorldMatrix`, `RelativeRotationRow0`, `RelativeRotationRow1` and `IsRotated`, then notifies the manager. Executes automatically from the manager for dynamic volumes when `AutoUpdateVolumes` is enabled. |
 
 ## PointLightVolumeInstance
 Stores all runtime Point Light Volume configuration including light type, projection source, shadow source, transform data, color and culling range.
+
+When changing a Point Light Volume from another Udon script, prefer the setter methods below over direct field writes. They skip unchanged values, keep internal change caches in sync and notify the manager without rebuilding unrelated texture or light data.
 
 ### Public Fields
 | Public Field | Description |
@@ -152,20 +160,22 @@ Stores all runtime Point Light Volume configuration including light type, projec
 |`void _onVarChange_Color()` | Internal Udon event used to detect direct color changes on the UdonBehaviour. Usually don't call it manually. |
 |`void _onVarChange_Intensity()` | Internal Udon event used to detect direct intensity changes on the UdonBehaviour. Usually don't call it manually. |
 |`void _onVarChange_ShadingStrength()` | Internal Udon event used to detect direct shading strength changes on the UdonBehaviour. Usually don't call it manually. |
-|`void SetLightSourceSize(float size)` | Sets light source size, or range data for LUT mode, then marks the range dirty. |
+|`void SetDynamic(bool isDynamic)` | Sets dynamic mode and rebuilds the manager light list only when the value changes. |
+|`void SetLightSourceSize(float size)` | Sets light source size, or range data for LUT mode, then marks the range dirty only when the stored size/range data changes. |
 |`void SetLut()` | Sets this light into LUT projection mode and recalculates angle/rotation data. |
 |`void SetCustomTexture()` | Sets this light into custom cookie or cubemap projection mode using the current source fields. |
 |`void SetCustomTexture(Texture texture, bool isCubemap, bool autoUpdate)` | Assigns a texture projection source, sets projection metadata and optionally marks it for automatic runtime updates. |
 |`void SetCustomMaterial(Material material, bool autoUpdate)` | Assigns a material projection source and optionally marks it for automatic runtime updates. |
-|`void SetParametric()` | Sets this light into parametric projection mode. |
-|`void SetPointLight()` | Sets this light into Point Light type and updates position/rotation data. |
-|`void SetSpotLight(float angleDeg, float falloff)` | Sets this light into Spot Light type with angle and falloff. |
-|`void SetSpotLight(float angleDeg)` | Sets this light into Spot Light type with angle only. |
+|`void SetParametric()` | Sets this light into parametric projection mode if it is not already parametric. |
+|`void SetPointLight()` | Sets this light into Point Light type and updates position/rotation data only when needed. |
+|`void SetSpotLight(float angleDeg, float falloff)` | Sets this light into Spot Light type with angle and falloff, updating only changed shader data. |
+|`void SetSpotLight(float angleDeg)` | Sets this light into Spot Light type with angle only, updating only changed shader data. |
 |`void SetAreaLight()` | Sets this light into Area Light type and updates width, height and rotation data from the transform. |
 |`void SetSpotCookieAspect(float aspect)` | Sets custom Spot Light cookie projection aspect and updates shader data. |
-|`void SetColor(Color color)` | Sets light source color and marks range dirty. |
-|`void SetIntensity(float intensity)` | Sets light source intensity and marks range dirty. |
-|`void SetShadingStrength(float shadingStrength)` | Sets normal masking and shadow strength in the 0..1 range. |
+|`void SetColor(Color color)` | Sets light source color, updates the internal change cache and marks range dirty only when the value changes. |
+|`void SetIntensity(float intensity)` | Sets light source intensity, updates the internal change cache and marks range dirty only when the value changes. |
+|`void SetShadingStrength(float shadingStrength)` | Sets normal masking and shadow strength in the `0..1` range, updating the internal change cache only when the value changes. |
+|`void SetShadowSettings(float shadowMapID, bool worldSpaceShadows, int layerMask, float nearClip, float bias, float blur, float contactHardening)` | Sets shadow ID, shadow projection mode and runtime bake settings in one call. Notifies the manager only when shader-facing shadow data changes; layer mask, bias, blur and contact hardening changes are stored for runtime bakers without forcing unrelated rebuilds. |
 |`void UpdateTransform()` | Updates position, rotation and scale data only when transform values changed. |
 |`void UpdatePosition()` | Forces position data update and notifies the manager. |
 |`void UpdateRotation()` | Forces rotation or direction data update and notifies the manager. |

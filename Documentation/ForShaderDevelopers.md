@@ -20,8 +20,8 @@ There are few ASE nodes available for you for an easy integration. Look into `Pa
 
 | ASE Node | Description |
 | --- | --- |
-| Light Volume | Required to get the Spherical Harmonics components. Using the output values you get from it, you can calculate the speculars for your custom lighting setup. <br/> `AdditiveOnly` flag specifies if you need to only sample additive volumes and Point Light Volumes. Useful for static lightmapped meshes. `WorldPositionOffset` offsets only regular Light Volume sampling. `WorldNormal` enables Point Light Volume normal masking and shadows. |
-| Light Volume L0 | Required to get the L0 spherical harmonics component, or just the overall ambient color, with no directionality. This is much lighter than the LightVolume node, and recommended to use in places where there are no directionality needed. <br/> `AdditiveOnly` flag specifies if you need to only sample additive volumes and Point Light Volumes. Useful for static lightmapped meshes. `WorldPositionOffset` offsets only regular Light Volume sampling. `WorldNormal` enables Point Light Volume normal masking and shadows. |
+| Light Volume | Required to get the Spherical Harmonics components. Using the output values you get from it, you can calculate the speculars for your custom lighting setup. <br/> `AdditiveOnly` flag specifies if you need to only sample additive volumes and Point Light Volumes. Useful for static lightmapped meshes. `WorldPositionOffset` offsets only regular Light Volume sampling. `WorldNormal` enables Point Light Volume normal masking. Its vector length controls normal mask hardness. |
+| Light Volume L0 | Required to get the L0 spherical harmonics component, or just the overall ambient color, with no directionality. This is much lighter than the LightVolume node, and recommended to use in places where there are no directionality needed. <br/> `AdditiveOnly` flag specifies if you need to only sample additive volumes and Point Light Volumes. Useful for static lightmapped meshes. `WorldPositionOffset` offsets only regular Light Volume sampling. `WorldNormal` enables Point Light Volume normal masking. Its vector length controls normal mask hardness. |
 | Light Volume Evaluate | Calculates the final color you get from the light volume in some kind of a physically realistic way. But alternatively you can implement your own "Evaluate" function to make the result matching your toon shader, for example. <br/> You should usually multiply it by your "Albedo" and add to the final color, as an emission. |
 | Light Volume Specular | Calculates approximated speculars based on SH components. Can be used with Light Volumes or even with any other SH L1 values, like Unity default light probes. The result should be added to the final color, just like emission. You should NOT multiply this by albedo color! <br/> `Dominant Direction` flag specifies if you want to use a simpler and lighter way of generating speculars. Generates one color specular for the dominant light direction instead of three color speculars in a regular method. |
 | Is Light Volumes | Returns `0` if there are no light volumes support on the current scene, or `1` if light volumes system is provided. |
@@ -44,7 +44,7 @@ Evaluate the returned SH data using `LightVolumeEvaluate()` But you can use your
 
 Typically, the result color should be multiplied by the albedo and added to the final fragment color. You may also apply AO or other adjustments before combining it.
 
-If your shader has a reliable world normal, pass it to `LightVolumeSH()` as the optional `worldNormal` argument. This enables Point Light Volume normal masking and shadow strength. Without it, Point Light Volumes still work, but they will not use the per-surface normal mask.
+If your shader has a reliable world normal, pass it to `LightVolumeSH()` as the optional `worldNormal` argument. This enables Point Light Volume normal masking. Point Light Volume shadows are still included without it, but they will not be additionally shaped by the per-surface normal mask.
 
 > [!TIP]
 > `LightVolumeSH()` automatically falls back to Unity’s built-in light probes if Light Volumes are not available. No need for a manual check.
@@ -64,9 +64,46 @@ Then evaluate the color with `LightVolumeEvaluate()` and **add** the resulting c
 
 `worldPosOffset` is useful when you want to sample regular Light Volumes from a slightly different position, for example to reduce artifacts on custom vertex effects. This offset only affects regular voxel Light Volume sampling. Point Light Volumes still use the original `worldPos`, because their attenuation and shadows are based on the real fragment position.
 
-`worldNormal` is optional, but recommended for surface shaders. Point Light Volumes use it for normal masking and shadow strength. Keep it normalized.
+`worldNormal` is optional, but recommended for surface shaders. In `LightVolumeSH()`, `LightVolumeSH_L0()`, `LightVolumeAdditiveSH()` and `LightVolumeAdditiveSH_L0()`, Point Light Volumes use it for normal masking. The vector direction controls where the mask points, and the vector length controls mask hardness: `0` disables normal masking, `1` is the default smooth front-to-back gradient, and values above `1` make the mask sharper.
 
-### 4. Custom SH Evaluation Notes
+### 4. Advanced Component Sampling for Stylized Shaders
+
+For advanced setups, such as stylized toon shaders, you can sample Light Volume components separately and decide how to combine, ramp, posterize or tint them yourself.
+
+Use these lower-level functions when you need separate control:
+
+| Function | Result |
+| --- | --- |
+| `LV_LightVolumeRegularSH()` | Regular non-additive Light Volumes only. |
+| `LV_LightVolumeAdditiveSH()` | Additive Light Volumes only. |
+| `LV_LightVolumePointSH()` | Point Light Volumes only, with Point Light Volume shadows already included. Pass `worldNormal` to apply standard normal masking, or pass `0` if your shader handles normal masking itself. |
+
+This is the same sampling order used by `LightVolumeSH()`, split into separate buffers:
+
+```hlsl
+float3 regularL0 = 0, regularL1r = 0, regularL1g = 0, regularL1b = 0;
+float3 additiveL0 = 0, additiveL1r = 0, additiveL1g = 0, additiveL1b = 0;
+float3 pointL0 = 0, pointL1r = 0, pointL1g = 0, pointL1b = 0;
+
+if (_UdonLightVolumeEnabled == 0 || _UdonLightVolumeVersion < VRCLV_MIN_SUPPORTED_VERSION) {
+    LV_SampleLightProbeDering(regularL0, regularL1r, regularL1g, regularL1b);
+} else {
+    LV_LightVolumeRegularSH(worldPos + worldPosOffset, regularL0, regularL1r, regularL1g, regularL1b);
+    LV_LightVolumeAdditiveSH(worldPos + worldPosOffset, additiveL0, additiveL1r, additiveL1g, additiveL1b);
+    LV_LightVolumePointSH(worldPos, pointL0, pointL1r, pointL1g, pointL1b, worldNormal);
+}
+
+float3 regularLight = LightVolumeEvaluate(surfaceNormal, regularL0, regularL1r, regularL1g, regularL1b);
+float3 additiveLight = LightVolumeEvaluate(surfaceNormal, additiveL0, additiveL1r, additiveL1g, additiveL1b);
+float3 pointLight = LightVolumeEvaluate(surfaceNormal, pointL0, pointL1r, pointL1g, pointL1b);
+
+// Replace this with your own toon ramps, contrast curves, color grading or masks.
+float3 lightVolumes = regularLight + additiveLight + pointLight;
+```
+
+`worldPosOffset` should only be applied to regular and additive Light Volume sampling. Point Light Volumes should use the original `worldPos`, because their attenuation and shadows are based on the real fragment position.
+
+### 5. Custom SH Evaluation Notes
 
 If you use a custom evaluation method instead of `LightVolumeEvaluate()`, make sure you use L1 components too.
 
@@ -74,7 +111,7 @@ If you use a custom evaluation method instead of `LightVolumeEvaluate()`, make s
 > Using L0 only (ambient term) results in unrealistic shading and can make objects look translucent.
 > You must consider L1 directions—or at least the dominant direction and its magnitude for proper shading.
 
-### 5. Specular Lighting (Optional but Recommended)
+### 6. Specular Lighting (Optional but Recommended)
 
 You can enhance gloss and metal surfaces with speculars from SH data:
 
@@ -106,7 +143,7 @@ void LightVolumeSH(float3 worldPos, out float3 L0, out float3 L1r, out float3 L1
 |`out float3 L0` | Outputs ambient color of the current fragment.|
 |`out float3 L1r`<br/>`out float3 L1g`<br/>`out float3 L1b` | Outputs vectors that stores the Red, Green and Blue light directions and power, as a magnitude of these vectors.|
 |`float3 worldPosOffset` | Optional offset applied only to regular Light Volume sampling. Point Light Volumes still use `worldPos`.|
-|`float3 worldNormal` | Optional normalized world normal used by Point Light Volumes for normal masking and shadows.|
+|`float3 worldNormal` | Optional world normal used by Point Light Volumes for normal masking. Its length controls mask hardness: `0` disables it, `1` is the default smooth gradient, and values above `1` make it sharper.|
 
 ### float3 LightVolumeSH_L0()
 
@@ -120,7 +157,7 @@ float3 LightVolumeSH_L0(float3 worldPos, float3 worldPosOffset = 0, float3 world
 | --- | --- |
 |`float3 worldPos` | World position of the current fragment.|
 |`float3 worldPosOffset` | Optional offset applied only to regular Light Volume sampling.|
-|`float3 worldNormal` | Optional normalized world normal used by Point Light Volumes for normal masking and shadows.|
+|`float3 worldNormal` | Optional world normal used by Point Light Volumes for normal masking. Its length controls mask hardness: `0` disables it, `1` is the default smooth gradient, and values above `1` make it sharper.|
 
 ### void LightVolumeAdditiveSH()
 Returns Spherical Harmonics components, just as LightVolumeSH() does, but only for additive Light Volumes and Point Light Volumes. This function is much lighter than LightVolumeSH(), and useful for shaders that can be used in baked lightmaps mode.
@@ -137,7 +174,7 @@ void LightVolumeAdditiveSH(float3 worldPos, out float3 L0, out float3 L1r, out f
 |`out float3 L0` | Outputs ambient color of the current fragment.|
 |`out float3 L1r` <br/> `out float3 L1g` <br/> `out float3 L1b` | Outputs vectors that stores the Red, Green and Blue light directions and power, as a magnitude of these vectors.|
 |`float3 worldPosOffset` | Optional offset applied only to regular additive Light Volume sampling. Point Light Volumes still use `worldPos`.|
-|`float3 worldNormal` | Optional normalized world normal used by Point Light Volumes for normal masking and shadows.|
+|`float3 worldNormal` | Optional world normal used by Point Light Volumes for normal masking. Its length controls mask hardness: `0` disables it, `1` is the default smooth gradient, and values above `1` make it sharper.|
 
 ### float3 LightVolumeAdditiveSH_L0()
 
@@ -153,7 +190,7 @@ float3 LightVolumeAdditiveSH_L0(float3 worldPos, float3 worldPosOffset = 0, floa
 | --- | --- |
 |`float3 worldPos` | World position of the current fragment. |
 |`float3 worldPosOffset` | Optional offset applied only to regular additive Light Volume sampling.|
-|`float3 worldNormal` | Optional normalized world normal used by Point Light Volumes for normal masking and shadows.|
+|`float3 worldNormal` | Optional world normal used by Point Light Volumes for normal masking. Its length controls mask hardness: `0` disables it, `1` is the default smooth gradient, and values above `1` make it sharper.|
 
 ### float3 LightVolumeEvaluate()
 

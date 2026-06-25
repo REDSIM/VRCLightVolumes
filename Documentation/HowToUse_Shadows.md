@@ -140,6 +140,8 @@ If you turn realtime mode on from script while the baker is already enabled, cal
 
 If you replace a Point Light Volume shadow source manually from Udon, rebuild the shadow texture cache through the manager after changing the source. Use `NotifyPointLightVolumeChanged()` when changing one light, or `ReinitializeShadowTextures()` after several changes.
 
+If you only change shadow ID, world-space shadow mode, near clip or runtime bake settings from Udon, use `PointLightVolumeInstance.SetShadowSettings()` so the instance stores the new values and updates the manager only when shader-facing shadow data actually changes.
+
 If you change `AutoUpdateShadowMap` from Udon, the manager's `AutoUpdateTextures` must also be enabled for the source to update automatically.
 
 Do not call shadow cache rebuild methods every frame. For per-frame shadows, use `PointLightShadowRuntimeBaker` with `Realtime` enabled, or use `Auto Update Textures` only for RenderTexture or Material sources that really need continuous updates.

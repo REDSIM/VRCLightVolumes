@@ -18,7 +18,7 @@ Material:
   - _ADDITIVEONLY_ON
   - _EMISSION
   - _LIGHTVOLUMES1_ON
-  m_LightmapFlags: 0
+  m_LightmapFlags: 4
   m_EnableInstancingVariants: 0
   m_DoubleSidedGI: 0
   m_CustomRenderQueue: -1
@@ -92,12 +92,13 @@ Material:
     - _LightVolumes: 1
     - _LightVolumes1: 1
     - _LightVolumesBias: 0
-    - _Metallic: 0.904
+    - _Metallic: 0.9
     - _Metalness: 0
     - _Mode: 0
     - _NormalPower: 1
     - _OcclusionStrength: 1
     - _Parallax: 0.02
+    - _PointLightVolumesShading: 2
     - _Smoothness: 0
     - _SmoothnessTextureChannel: 0
     - _SpecularHighlights: 1

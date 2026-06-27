@@ -527,6 +527,8 @@ MonoBehaviour:
   BrightnessCutoff: 0.35
   ShadowResolution: 512
   ShadowTextureFormat: 1
+  ShadowBleedReduction: 0.2
+  ShadowMinVariance: 1
   BakingMode: 0
   VolumeBitmask: 1
   ProbeBitmask: 1
@@ -591,6 +593,8 @@ MonoBehaviour:
   ShadowTexturesWidth: 512
   ShadowTexturesHeight: 512
   ShadowTextureFormat: 1
+  ShadowBleedReduction: 0.2
+  ShadowMinVariance: 1
   LightProbesBlending: 1
   SharpBounds: 1
   AutoUpdateVolumes: 1
@@ -610,8 +614,8 @@ MonoBehaviour:
   CustomTextures: {fileID: 0}
   CubemapsCount: 0
   ShadowTextures: {fileID: 0}
-  ShadowCubemapsCount: 1
-  ShadowMapsCount: 1
+  ShadowCubemapsCount: 0
+  ShadowMapsCount: 0
   CubemapFaceMaterial: {fileID: 0}
   HasAutoCustomTextureUpdates: 0
   HasAutoShadowTextureUpdates: 0
@@ -675,7 +679,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 3859439054152126729, guid: 65271766caa0f64439c02e090bf0bf86, type: 3}
       propertyPath: m_IsActive
-      value: 0
+      value: 1
       objectReference: {fileID: 0}
     - target: {fileID: 6093600397715888964, guid: 65271766caa0f64439c02e090bf0bf86, type: 3}
       propertyPath: Color.b
@@ -1663,6 +1667,10 @@ MonoBehaviour:
     ID: 32
     SerializedTypeNames:
     - VRC.Udon.UdonBehaviour
+  - gameObject: {fileID: 0}
+    ID: 33
+    SerializedTypeNames:
+    - VRC.Udon.UdonBehaviour
   portraitCameraPositionOffset: {x: 0, y: 0, z: 0}
   portraitCameraRotationOffset: {x: 0, y: 1, z: 0, w: -0.00000004371139}
   PlayerPersistence: []
@@ -1700,7 +1708,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!114 &1331001684
 MonoBehaviour:
   m_ObjectHideFlags: 2
@@ -1763,17 +1771,18 @@ MonoBehaviour:
   Angle: 0
   OuterAngleCos: 1
   OuterAngleTan: 0
+  SpotCookieAspect: 1
   Height: 1
   SquaredRange: 51.28132
   SquaredScale: 0.040000003
   LightVolumeManager: {fileID: 446951794}
-  IsActive: 1
+  IsActive: 0
   CustomTexture: {fileID: 0}
   CustomTextureMaterial: {fileID: 0}
   ProjectionType: 0
   ProjectionMode: 0
   AutoUpdateCustomTexture: 0
-  ShadowMapTexture: {fileID: 8900000, guid: 036a2921249e3f34caadbe42caab29b4, type: 2}
+  ShadowMapTexture: {fileID: 8900000, guid: 91cb1b0f01c7d8f449bbd26d4a3e09c1, type: 2}
   ShadowMapMaterial: {fileID: 0}
   AutoUpdateShadowMap: 0
   ShadowMapID: 0
@@ -1782,16 +1791,17 @@ MonoBehaviour:
   ShadowBakeRotation: {x: -0, y: -0, z: -0, w: 1}
   LayerMask: 262657
   NearClip: 0.1
-  Bias: 0.05
+  Bias: 0
   FarClip: 7.1610975
-  Blur: 2
-  ContactHardening: 0
+  Blur: 5
+  ContactHardening: 0.222
   CustomTextureIsCubemap: 0
   CustomTextureHasDepthSlices: 0
   ShadowMapTextureIsCubemap: 1
   ShadowMapTextureHasDepthSlices: 0
   ShadowMapUsesCubemap: 1
   IsRangeDirty: 0
+  AreaCookieAverageCustomId: -1
 --- !u!114 &1331001686
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1816,6 +1826,7 @@ MonoBehaviour:
   Falloff: 1
   FalloffLUT: {fileID: 0}
   Cookie: {fileID: 0}
+  SpotCookieAspect: 1
   Cubemap: {fileID: 0}
   BakeIntoProbes: 0
   DebugRange: 1
@@ -1825,13 +1836,13 @@ MonoBehaviour:
     serializedVersion: 2
     m_Bits: 262657
   ObjectMask: []
-  Bias: 0.05
+  Bias: 0
   NearPlane: 0.1
-  Blur: 2
-  ContactHardening: 0
+  Blur: 5
+  ContactHardening: 0.222
   UseWorldSpace: 0
   ForceCubemapShadows: 0
-  ShadowMap: {fileID: 8900000, guid: 036a2921249e3f34caadbe42caab29b4, type: 2}
+  ShadowMap: {fileID: 8900000, guid: 91cb1b0f01c7d8f449bbd26d4a3e09c1, type: 2}
   PointLightVolumeInstance: {fileID: 1331001685}
   LightVolumeSetup: {fileID: 446951793}
 --- !u!4 &1331001687
@@ -1857,6 +1868,10 @@ PrefabInstance:
     serializedVersion: 3
     m_TransformParent: {fileID: 0}
     m_Modifications:
+    - target: {fileID: 1316810878114844990, guid: f5925da828840f0428c5d22cb1712206, type: 3}
+      propertyPath: m_IsActive
+      value: 1
+      objectReference: {fileID: 0}
     - target: {fileID: 3450446412956921555, guid: f5925da828840f0428c5d22cb1712206, type: 3}
       propertyPath: m_LocalPosition.x
       value: 0
@@ -1900,6 +1915,10 @@ PrefabInstance:
     - target: {fileID: 8096166845694996992, guid: f5925da828840f0428c5d22cb1712206, type: 3}
       propertyPath: m_Name
       value: Light Baking
+      objectReference: {fileID: 0}
+    - target: {fileID: 8096166845694996992, guid: f5925da828840f0428c5d22cb1712206, type: 3}
+      propertyPath: m_IsActive
+      value: 1
       objectReference: {fileID: 0}
     m_RemovedComponents: []
     m_RemovedGameObjects: []

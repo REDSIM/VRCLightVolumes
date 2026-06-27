@@ -75,7 +75,7 @@ namespace VRCLightVolumes {
         public bool AutoUpdateVolumes = true;
         [Tooltip("Automatically updates dynamic point light cookie and shadow texture sources in runtime. It's more performant to keep it off.")]
         public bool AutoUpdateTextures = true;
-        [Tooltip("Limits the maximum number of additive volumes and point light volumes that can affect a single pixel. If you have many dynamic additive or point light volumes that may overlap, it's good practice to limit overdraw to maintain performance.")]
+        [Tooltip("Limits the maximum number of additive volumes and Point Light Volumes that can affect a single pixel. This also limits individual Point Light Volume speculars in modern compatible shaders. Lower values improve worst-case performance in overlap-heavy areas.")]
         public int AdditiveMaxOverdraw = 4;
         [Tooltip("Disables min/max brightness limits for modern avatar shaders such as lilToon or Poiyomi. This feature prevents avatars from standing out from the scene due to their brightness. Check this only if you're sure your scene lighting is properly configured.")]
         public bool ForceSceneLighting = false;

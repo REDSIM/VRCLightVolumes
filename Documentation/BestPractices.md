@@ -28,6 +28,8 @@
 - Audio Link Dynamic Lights
 - And much more!
 
+For glossy PBR materials, tune Point Light Volume source size intentionally. In modern compatible shaders, larger Point, Spot and Area Light sources create broader and softer specular highlights, while smaller sources create sharper highlights. Do not use `Light Source Size` only as a range control when the light is visible in reflections.
+
 ## Area Light Emission
 
 Use **Area Light Emission** when a rectangular source needs to emit non-uniform color in runtime: TV screens, monitors, windows with colored patterns, animated signs, LED walls or soft boxes with texture detail.

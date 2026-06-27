@@ -14,7 +14,7 @@ namespace VRCLightVolumes {
         public bool Dynamic = false;
         [Tooltip("Point light is the most performant type. For static lighting, it's recommended to bake regular additive light volumes instead.")]
         public LightType Type = LightType.PointLight;
-        [Tooltip("Physical radius of a light source if it was a matte glowing sphere for a point light, or a flashlight reflector for a spot light. Larger size emits more light without increasing overall intensity.")]
+        [Tooltip("Physical radius of the light source for Point and Spot Lights. Larger size emits more light without increasing overall intensity, increases calculated range, and broadens size-aware specular highlights in modern compatible shaders.")]
         [Min(0.0001f)] public float LightSourceSize = 0.25f;
         [Tooltip("Radius in meters beyond which light is culled. Fewer overlapping lights result in better performance.")]
         [Min(0.0001f)] public float Range = 10f;
@@ -22,7 +22,7 @@ namespace VRCLightVolumes {
         [ColorUsage(showAlpha: false)] public Color Color = Color.white;
         [Tooltip("Brightness of the point light volume.")]
         public float Intensity = 1f;
-        [Tooltip("Controls shading and shadows opacity based on surface normal for this point light volume.")]
+        [Tooltip("Controls per-surface Point Light shading and shadow opacity based on surface normal. 0 disables this extra shading and shadows for this light; 1 applies them fully. Modern individual speculars use the same light mask.")]
         [Range(0, 1)] public float ShadingStrength = 1f;
         [Tooltip("Parametric uses settings to compute light falloff. LUT uses a texture: X - cone falloff, Y - attenuation (Y only for point lights). Cookie projects a texture for spot lights. Cubemap projects a cubemap for point lights.")]
         [FormerlySerializedAs("Shape")] public LightProjection Projection = LightProjection.Parametric;
@@ -32,7 +32,7 @@ namespace VRCLightVolumes {
         [Range(0.001f, 1)] public float Falloff = 1f;
         [Tooltip("X - cone falloff, Y - attenuation. No compression and RGBA Float or RGBA Half format is recommended.")]
         public UnityEngine.Object FalloffLUT = null;
-        [Tooltip("Projects a texture for spot lights, or a textured emitter surface for area lights.")]
+        [Tooltip("Projects a texture for Spot Light cookies, or a textured emitter surface for Area Lights. Modern compatible shaders sample Area Light cookies directly and use their source size for softer speculars.")]
         public UnityEngine.Object Cookie = null;
         [Tooltip("Width / height aspect used by custom spotlight cookie projection. 1 keeps a square projector; values above 1 compress projected height.")]
         [Min(0.001f)] public float SpotCookieAspect = 1f;

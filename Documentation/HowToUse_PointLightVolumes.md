@@ -17,7 +17,7 @@
 
 ![](../Documentation/Preview_4.png)
 
-**Point Light Volumes** is a fast and optimized custom lighting system that has it's own parametric Point Lights, Spot Lights and Area Lights. Point Light Volumes are not voxel based, they forms the light parametrically, or based on special LUT textures (similar to IES). They can project light cookies or cubemaps and can use baked or runtime-updated shadow maps. It can be up to 128 point lights visible in one scene at the same time.
+**Point Light Volumes** is a fast and optimized custom lighting system that has it's own parametric Point Lights, Spot Lights and Area Lights. Point Light Volumes are not voxel based, they forms the light parametrically, or based on special LUT textures (similar to IES). They can project light cookies or cubemaps and can use baked or runtime-updated shadow maps. Modern compatible shaders can also calculate individual Point Light Volume speculars, including shadows, cookies, per-surface shading and source size. It can be up to 128 point lights visible in one scene at the same time.
 
 **Point Light Volumes** consist of two components in the editor: `Point Light Volume` and `Point Light Volume Instance`.
 
@@ -43,6 +43,8 @@ The **more** point light volumes overlap, the **less** performance you'll have!
 
 **Point light Volumes** calculates the **range** automatically based on their `Light Source Size` value, their scale, `Intensity` and `Color`. You can also configure the `Brightness Cutoff` value in the **Light Volume Setup** to limit the effective range of the light and improve performance. Higher values reduce the light's visible radius, which generally increases performance, but results in less realistic light attenuation.
 
+`Light Source Size` is also important for specular highlights in modern compatible shaders. Larger sources produce wider, softer speculars and a smoother horizon fade. Smaller sources produce tighter and sharper highlights. If glossy surfaces look too sharp, too wide, or too bright near the light, tune `Light Source Size` before compensating with material smoothness.
+
 Try not to make an insanely huge range for your lights. Use `Debug Range` flag in your Point Light Volume component to preview the region affected by your point light.
 
 If a static Point Light Volume should also affect avatars or props with no Light Volumes shader support, enable `Bake Into Probes` before baking. This bakes the point light contribution into regular Unity Light Probes. It is not needed for objects using shaders with VRC Light Volumes support.
@@ -56,6 +58,8 @@ Point Light Volumes and Spot Light Volumes use `Parametric` projection by defaul
 ![](../Documentation/Preview_7.png)
 
 The main difference to Unity’s built-in lights is the `Light Source Size` property. It represents the physical radius of the light-emitting surface, like a matte light bulb for point lights, or a flashlight reflector for spotlights.
+
+In shaders that use the modern `LightVolumeSHSpecular()` path, this size strongly affects specular lighting. A small light behaves more like a sharp point source. A large light behaves more like a broad source: specular highlights become wider and softer, and grazing angles fade more smoothly instead of cutting off at a hard `NoL` horizon.
 
 Note that `Intensity` can be very high (in the hundreds or even thousands) for small `Light Source Size` values. This is because intensity here represents the light emitted per unit of surface area. A smaller light source must emit more intense light to achieve a reasonable visible range.
 
@@ -121,7 +125,7 @@ For shadow setup, baked shadows, the Realtime Shadow Baker and runtime script co
 | --- | --- |
 |`Dynamic` | Defines whether this point light volume can be moved in runtime. Disabling this option slightly improves performance on the CPU side. If you want to make Dynamic lights auto-update their positions and other parameters in runtime, enable **Auto Update Volumes** in **Light Volume Setup**, or call the **UpdateVolumes()** function manually through an Udon script. Otherwise, they will stay in one place in game.|
 |`Type` | Changes the light mode between Point Light, Spot Light and Area Light.|
-|`Light Source Size` | Physical radius of a light source if it was a matte glowing sphere for a point light, or a flashlight reflector for a spot light. Larger size emits more light without increasing overall intensity.|
+|`Light Source Size` | Physical radius of a light source if it was a matte glowing sphere for a point light, or a flashlight reflector for a spot light. Larger size emits more light without increasing overall intensity, increases calculated range, and strongly broadens size-aware specular highlights in modern compatible shaders.|
 |`Range` | Radius in meters beyond which point and spot lights are culled. (Only available in LUT light shape mode)|
 |`Color` | Multiplies the point light volume’s color by this value.|
 |`Intensity` | Brightness of the point light volume.|

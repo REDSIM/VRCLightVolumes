@@ -114,9 +114,9 @@ When changing a Point Light Volume from another Udon script, prefer the setter m
 |`float Intensity` | Multiplies the color. Basically controls brightness. |
 |`float ShadingStrength` | Controls per-surface Point Light Volume shading and shadow opacity based on surface normal. `0` disables this extra shading and shadows for the light, `1` applies them fully. |
 |`Vector3 Position` | World-space position used by this point light volume. |
-|`float LightSourceSize` | Light source size used by parametric point lights, parametric spot lights, cookies and cubemap projections. |
+|`float LightSourceSize` | Light source size used by parametric point lights, parametric spot lights, cookies and cubemap projections. It affects calculated range and strongly affects size-aware specular width in modern compatible shaders. |
 |`float InverseSquaredRange` | Inverse squared range used by LUT projection. |
-|`float Width` | Area light width in meters. |
+|`float Width` | Area light width in meters. Affects textured Area Light emission and size-aware Area Light speculars in modern compatible shaders. |
 |`Vector3 Direction` | World-space spotlight direction used by parametric and LUT spot lights. |
 |`Quaternion Rotation` | Rotation used by area lights, cubemap projections and cookie projections. |
 |`float ConeFalloff` | Spotlight cone falloff multiplier used by parametric spot lights. |
@@ -124,7 +124,7 @@ When changing a Point Light Volume from another Udon script, prefer the setter m
 |`float OuterAngleCos` | Cosine of the spotlight outer angle used by parametric and LUT spot lights. |
 |`float OuterAngleTan` | Tangent of the spotlight outer angle used by cookie projection and single-slice spot shadows. |
 |`float SpotCookieAspect` | Width / height aspect used by custom Spot Light cookie projection. |
-|`float Height` | Area light height in meters. |
+|`float Height` | Area light height in meters. Affects textured Area Light emission and size-aware Area Light speculars in modern compatible shaders. |
 |`float SquaredRange` | Squared range after which the light is culled. Recalculated by the manager when `IsRangeDirty` is true. |
 |`float SquaredScale` | Average squared lossy scale of the light. `LightSourceSize` gets multiplied by it at the end. |
 |`LightVolumeManager LightVolumeManager` | Reference to the Light Volume Manager. Needed for runtime registration and updates. |
@@ -161,7 +161,7 @@ When changing a Point Light Volume from another Udon script, prefer the setter m
 |`void _onVarChange_Intensity()` | Internal Udon event used to detect direct intensity changes on the UdonBehaviour. Usually don't call it manually. |
 |`void _onVarChange_ShadingStrength()` | Internal Udon event used to detect direct shading strength changes on the UdonBehaviour. Usually don't call it manually. |
 |`void SetDynamic(bool isDynamic)` | Sets dynamic mode and rebuilds the manager light list only when the value changes. |
-|`void SetLightSourceSize(float size)` | Sets light source size, or range data for LUT mode, then marks the range dirty only when the stored size/range data changes. |
+|`void SetLightSourceSize(float size)` | Sets light source size, or range data for LUT mode, then marks the range dirty only when the stored size/range data changes. For non-LUT lights this also changes size-aware specular width in modern compatible shaders. |
 |`void SetLut()` | Sets this light into LUT projection mode and recalculates angle/rotation data. |
 |`void SetCustomTexture()` | Sets this light into custom cookie or cubemap projection mode using the current source fields. |
 |`void SetCustomTexture(Texture texture, bool isCubemap, bool autoUpdate)` | Assigns a texture projection source, sets projection metadata and optionally marks it for automatic runtime updates. |

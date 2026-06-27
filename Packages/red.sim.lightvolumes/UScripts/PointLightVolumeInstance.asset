@@ -372,8 +372,9 @@ MonoBehaviour:
       Data: 22|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Controls shading and shadows opacity based on surface normal for this
-        point light volume.
+      Data: Controls per-surface Point Light shading and shadow opacity based on
+        surface normal. 0 disables this extra shading and shadows for this light;
+        1 applies them fully. Modern individual speculars use the same light mask.
     - Name: 
       Entry: 8
       Data: 
@@ -514,8 +515,9 @@ MonoBehaviour:
       Data: 31|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Light source size used by parametric point lights, parametric spot lights,
-        cookies and cubemap projections.
+      Data: Light source size used by parametric Point Lights, parametric Spot Lights,
+        cookies and cubemap projections. It affects calculated range and broadens
+        size-aware specular highlights in modern compatible shaders.
     - Name: 
       Entry: 8
       Data: 
@@ -647,7 +649,8 @@ MonoBehaviour:
       Data: 39|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Area light width in meters.
+      Data: Area Light width in meters. Affects textured Area Light emission and
+        size-aware Area Light speculars in modern compatible shaders.
     - Name: 
       Entry: 8
       Data: 
@@ -1146,7 +1149,8 @@ MonoBehaviour:
       Data: 68|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Area light height in meters.
+      Data: Area Light height in meters. Affects textured Area Light emission and
+        size-aware Area Light speculars in modern compatible shaders.
     - Name: 
       Entry: 8
       Data: 
@@ -1279,8 +1283,9 @@ MonoBehaviour:
       Data: 76|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Average squared lossy scale of the light. Light Source Size gets multiplied
-        by it at the end. Updates with UpdateTransform() method.
+      Data: Average squared lossy scale of the light. Light Source Size uses this
+        for range and size-aware specular calculations. Updates with UpdateTransform()
+        method.
     - Name: 
       Entry: 8
       Data: 

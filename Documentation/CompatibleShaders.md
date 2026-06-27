@@ -5,10 +5,10 @@
 ## Light Volumes v.3.0.0+ compatible
 *Shaders yet to be added. Stay tuned!*
 
-VRC Light Volumes v.3.0.0+ shader integration is required for Point Light Volume shadows, per-surface Point Light Volume shading and full textured **Area Light Emission**. Older v.2.x compatible shaders still receive the average-color fallback for Area Light cookies, but they will not show the projected texture detail.
+VRC Light Volumes v.3.0.0+ shader integration is required for Point Light Volume shadows, per-surface Point Light Volume shading, full textured **Area Light Emission**, and the new individual Point Light Volume specular path. Older v.2.x compatible shaders still receive the average-color fallback for Area Light cookies, but they will not show the projected texture detail or size-aware individual specular highlights.
 
 ## Light Volumes v.2.0.0+ compatible
-All of these shaders also work with v.3.0.0, but without Point Light Volume shadows and per-surface Point Light Volume shading support.
+All of these shaders also work with v.3.0.0, but without Point Light Volume shadows, per-surface Point Light Volume shading and size-aware individual Point Light Volume specular support.
 
 | Shader                                                       | Description                                                  | Supported since |
 | ------------------------------------------------------------ | ------------------------------------------------------------ | :-------------: |

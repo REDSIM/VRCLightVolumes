@@ -26,17 +26,17 @@ namespace VRCLightVolumes {
         [ColorUsage(showAlpha: false)] public Color Color = Color.white;
         [Tooltip("Brightness of the point light volume.")]
         public float Intensity = 1f;
-        [Tooltip("Controls shading and shadows opacity based on surface normal for this point light volume.")]
+        [Tooltip("Controls per-surface Point Light shading and shadow opacity based on surface normal. 0 disables this extra shading and shadows for this light; 1 applies them fully. Modern individual speculars use the same light mask.")]
         [Range(0, 1)] public float ShadingStrength = 1f;
 
         [Header("Position Data")]
         [Tooltip("World-space position used by this point light volume.")]
         public Vector3 Position = Vector3.zero;
-        [Tooltip("Light source size used by parametric point lights, parametric spot lights, cookies and cubemap projections.")]
+        [Tooltip("Light source size used by parametric Point Lights, parametric Spot Lights, cookies and cubemap projections. It affects calculated range and broadens size-aware specular highlights in modern compatible shaders.")]
         [Min(0.0001f)] public float LightSourceSize = 1f;
         [Tooltip("Inverse squared range used by LUT projection.")]
         [Min(0)] public float InverseSquaredRange = 1f;
-        [Tooltip("Area light width in meters.")]
+        [Tooltip("Area Light width in meters. Affects textured Area Light emission and size-aware Area Light speculars in modern compatible shaders.")]
         [Min(0.001f)] public float Width = 1f;
 
         [Header("Direction Data")]
@@ -56,13 +56,13 @@ namespace VRCLightVolumes {
         public float OuterAngleTan = 0f;
         [Tooltip("Width / height aspect used by custom spotlight cookie projection. 1 keeps a square projector; values above 1 compress projected height.")]
         [Min(0.001f)] public float SpotCookieAspect = 1f;
-        [Tooltip("Area light height in meters.")]
+        [Tooltip("Area Light height in meters. Affects textured Area Light emission and size-aware Area Light speculars in modern compatible shaders.")]
         [Min(0.001f)] public float Height = 1f;
 
         [Header("Runtime State")]
         [Tooltip("Squared range after which light will be culled. Recalculated by the Light Volume Manager.")]
         public float SquaredRange = 1f;
-        [Tooltip("Average squared lossy scale of the light. Light Source Size gets multiplied by it at the end. Updates with UpdateTransform() method.")]
+        [Tooltip("Average squared lossy scale of the light. Light Source Size uses this for range and size-aware specular calculations. Updates with UpdateTransform() method.")]
         public float SquaredScale = 1f;
         [Tooltip("Reference to the Light Volume Manager. Needed for runtime initialization.")]
         public LightVolumeManager LightVolumeManager;

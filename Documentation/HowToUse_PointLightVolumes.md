@@ -125,7 +125,7 @@ For shadow setup, baked shadows, the Realtime Shadow Baker and runtime script co
 |`Range` | Radius in meters beyond which point and spot lights are culled. (Only available in LUT light shape mode)|
 |`Color` | Multiplies the point light volume’s color by this value.|
 |`Intensity` | Brightness of the point light volume.|
-|`Shading Strength` | Controls normal masking and shadow opacity for this light. Lower values are cheaper and softer. `0` disables this extra shading.|
+|`Shading Strength` | Controls per-surface Point Light Volume shading and shadow opacity for this light. Values between `0` and `1` fade the effect; `0` disables this extra shading and shadows for this light.|
 |`Bake Into Probes` | Bakes this Point Light Volume into Unity Light Probes. Useful for static lights that should affect objects without Light Volumes shader support.|
 |`Debug Range` | Shows overdrawing range gizmo. Less point light volumes intersections - more performance!|
 |`Projection` | Parametric uses settings to compute light falloff. LUT uses a texture: X - cone falloff, Y - attenuation (Y only for point lights). Cookie projects a texture for spot lights. Cubemap projects a cubemap for point lights. Area Lights hide this dropdown and use the Cookie field directly when a source is assigned.|

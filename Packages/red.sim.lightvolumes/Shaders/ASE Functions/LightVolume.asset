@@ -36,13 +36,12 @@ MonoBehaviour:
     AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;16;-368,208;Inherit;False;False;-1;L1b;3;False;1;0;FLOAT3;0,0,0;False;1;FLOAT3;0\nNode;AmplifyShaderEditor.FunctionOutput,
     AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;13;-368,-128;Inherit;False;True;-1;L0;0;False;1;0;FLOAT3;0,0,0;False;1;FLOAT3;0\nWireConnection;8;0;1;3\nWireConnection;8;1;9;3\nWireConnection;10;0;1;4\nWireConnection;10;1;9;4\nWireConnection;11;0;1;5\nWireConnection;11;1;9;5\nWireConnection;12;0;1;6\nWireConnection;12;1;9;6\nWireConnection;18;0;19;0\nWireConnection;6;0;7;0\nWireConnection;1;1;6;0\nWireConnection;1;6;17;0\nWireConnection;1;7;18;0\nWireConnection;9;1;6;0\nWireConnection;9;6;17;0\nWireConnection;9;7;18;0\nWireConnection;14;0;10;0\nWireConnection;15;0;11;0\nWireConnection;16;0;12;0\nWireConnection;13;0;8;0\nASEEND*/\n//CHKSM=838A65ED820E3F264377F6649020CA3A1CCD7C57"
   m_functionName: 
-  m_description: 'Samples VRC Light Volumes and returns color.
+  m_description: 'Samples VRC Light Volumes and returns SH conponents.
 
 
-    World Position
-    Offset only applies to Light Volumes sampling, not the Point Light Volumes. It''s
-    useful to apply some bias offset by sprcifying a value which is WorldNormal *
-    Bias'
+    NOTE:
+    World Position Offset only applies to Light Volumes sampling, not the Point Light
+    Volumes. It''s useful to apply some bias.'
   m_additionalIncludes:
     m_additionalIncludes: []
     m_outsideIncludes: []

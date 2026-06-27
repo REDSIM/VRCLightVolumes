@@ -112,7 +112,7 @@ When changing a Point Light Volume from another Udon script, prefer the setter m
 |`int LightType` | Light type. `0` = Point Light, `1` = Spot Light, `2` = Area Light. |
 |`Color Color` | Point light volume color. |
 |`float Intensity` | Multiplies the color. Basically controls brightness. |
-|`float ShadingStrength` | Controls normal masking and shadow opacity based on surface normal. `0` disables this extra shading, `1` applies it fully. |
+|`float ShadingStrength` | Controls per-surface Point Light Volume shading and shadow opacity based on surface normal. `0` disables this extra shading and shadows for the light, `1` applies them fully. |
 |`Vector3 Position` | World-space position used by this point light volume. |
 |`float LightSourceSize` | Light source size used by parametric point lights, parametric spot lights, cookies and cubemap projections. |
 |`float InverseSquaredRange` | Inverse squared range used by LUT projection. |
@@ -174,7 +174,7 @@ When changing a Point Light Volume from another Udon script, prefer the setter m
 |`void SetSpotCookieAspect(float aspect)` | Sets custom Spot Light cookie projection aspect and updates shader data. |
 |`void SetColor(Color color)` | Sets light source color, updates the internal change cache and marks range dirty only when the value changes. |
 |`void SetIntensity(float intensity)` | Sets light source intensity, updates the internal change cache and marks range dirty only when the value changes. |
-|`void SetShadingStrength(float shadingStrength)` | Sets normal masking and shadow strength in the `0..1` range, updating the internal change cache only when the value changes. |
+|`void SetShadingStrength(float shadingStrength)` | Sets per-surface Point Light Volume shading and shadow strength in the `0..1` range, updating the internal change cache only when the value changes. |
 |`void SetShadowSettings(float shadowMapID, bool worldSpaceShadows, int layerMask, float nearClip, float bias, float blur, float contactHardening)` | Sets shadow ID, shadow projection mode and runtime bake settings in one call. Notifies the manager only when shader-facing shadow data changes; layer mask, bias, blur and contact hardening changes are stored for runtime bakers without forcing unrelated rebuilds. |
 |`void UpdateTransform()` | Updates position, rotation and scale data only when transform values changed. |
 |`void UpdatePosition()` | Forces position data update and notifies the manager. |

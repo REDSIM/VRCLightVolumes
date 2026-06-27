@@ -45,7 +45,7 @@ There is a bunch of other cool assets you will get there!
 
 It would be greatly appreciated if you place in your VRChat world an attribution prefab provided with this package.
 
-Look for it here: `Packages/VRC Light Volumes/Attribution/`
+Look for it here: `Packages/red.sim.lightvolumes/Attribution/`
 
 This will help users know they can use avatars with VRC Light Volumes compatible shaders and also learn more about the system.
 

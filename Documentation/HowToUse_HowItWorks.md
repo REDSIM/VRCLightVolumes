@@ -100,7 +100,7 @@ Mask = \text{Saturate}\left(1 - \frac{\text{DistanceToLight}^2}{\text{CutoffDist
 
 The `Saturate()` function clamps the value between 0 and 1. The final light color is multiplied by this squared mask.
 
-In Light Volumes 3.0, Point Light Volumes can also apply normal masking and EVSM shadow maps before their SH contribution is added. Shadow maps are stored in a shared runtime texture array as warped depth moments. Point and Area lights usually use cubemap shadows, while Spot Lights can use a cheaper single projected shadow texture when the cone angle allows it.
+In Light Volumes 3.0, Point Light Volumes can also apply per-surface shading and EVSM shadow maps before their SH contribution is added. Shadow maps are stored in a shared runtime texture array as warped depth moments. Point and Area lights usually use cubemap shadows, while Spot Lights can use a cheaper single projected shadow texture when the cone angle allows it.
 
 `Additive Max Overdraw` limits how many Point Light Volumes and additive Light Volumes can be accumulated for one pixel. This keeps the worst-case shader cost predictable when many dynamic lights overlap.
 

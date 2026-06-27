@@ -143,6 +143,7 @@ Shader "Hidden/VRCLV/PointLightShadowRuntimeBlur" {
 
         #if defined(VRCLV_SHADOW_BLUR_SPHERICAL) || !defined(VRCLV_RUNTIME_SHADOW_BLUR_UNIFORM)
             #define VRCLV_DISK_KERNEL_DIRECTION_COUNT 128
+            #define VRCLV_DISK_KERNEL_DIRECTION_MASK 127u
             // Direction LUT is sampled with a near-golden-angle stride; radius is derived from the active sample count.
             static const float2 diskKernelDirections[128] = {
                 float2( 1.0000f,  0.0000f), float2( 0.9988f,  0.0491f), float2( 0.9952f,  0.0980f), float2( 0.9892f,  0.1467f), float2( 0.9808f,  0.1951f), float2( 0.9700f,  0.2430f), float2( 0.9569f,  0.2903f), float2( 0.9415f,  0.3369f), float2( 0.9239f,  0.3827f), float2( 0.9040f,  0.4276f), float2( 0.8819f,  0.4714f), float2( 0.8577f,  0.5141f), float2( 0.8315f,  0.5556f), float2( 0.8032f,  0.5957f), float2( 0.7730f,  0.6344f), float2( 0.7410f,  0.6716f),
@@ -157,7 +158,7 @@ Shader "Hidden/VRCLV/PointLightShadowRuntimeBlur" {
 
             float2 DiskKernelSampleOffset(int sampleIndex, float invSampleCount, out float radiusSq) {
                 radiusSq = (sampleIndex + 0.5f) * invSampleCount;
-                int directionIndex = (sampleIndex * 49) % VRCLV_DISK_KERNEL_DIRECTION_COUNT;
+                int directionIndex = (int)(((uint)sampleIndex * 49u) & VRCLV_DISK_KERNEL_DIRECTION_MASK);
                 return diskKernelDirections[directionIndex] * sqrt(radiusSq);
             }
         #endif

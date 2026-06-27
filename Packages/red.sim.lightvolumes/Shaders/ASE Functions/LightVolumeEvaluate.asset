@@ -12,11 +12,24 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 78b2425a2284af743826c689403a4924, type: 3}
   m_Name: LightVolumeEvaluate
   m_EditorClassIdentifier: 
-  m_functionInfo: "// Made with Amplify Shader Editor v1.9.8.1\n// Available at the
-    Unity Asset Store - http://u3d.as/y3X \n/*ASEBEGIN\nVersion=19801\nNode;AmplifyShaderEditor.CustomExpressionNode;2;-400,-64;Inherit;False;
-    ;3;File;5;True;worldNormal;FLOAT3;0,0,0;In;;Inherit;False;True;L0;FLOAT3;0,0,0;In;;Inherit;False;True;L1r;FLOAT3;0,0,0;In;;Inherit;False;True;L1g;FLOAT3;0,0,0;In;;Inherit;False;True;L1b;FLOAT3;0,0,0;In;;Inherit;False;LightVolumeEvaluate;False;True;0;4ae0b01e695ad7545a078e1e04d2e609;False;5;0;FLOAT3;0,0,0;False;1;FLOAT3;0,0,0;False;2;FLOAT3;0,0,0;False;3;FLOAT3;0,0,0;False;4;FLOAT3;0,0,0;False;1;FLOAT3;0\nNode;AmplifyShaderEditor.FunctionInput;14;-640,0;Inherit;False;L1r;3;2;False;1;0;FLOAT3;0,0,0;False;1;FLOAT3;0\nNode;AmplifyShaderEditor.FunctionInput;15;-640,80;Inherit;False;L1g;3;3;False;1;0;FLOAT3;0,0,0;False;1;FLOAT3;0\nNode;AmplifyShaderEditor.FunctionInput;16;-640,160;Inherit;False;L1b;3;4;False;1;0;FLOAT3;0,0,0;False;1;FLOAT3;0\nNode;AmplifyShaderEditor.FunctionInput;13;-640,-80;Inherit;False;L0;3;1;False;1;0;FLOAT3;1,1,1;False;1;FLOAT3;0\nNode;AmplifyShaderEditor.FunctionInput;5;-672,-160;Inherit;False;WorldNormal;3;0;False;1;0;FLOAT3;0,0,0;False;1;FLOAT3;0\nNode;AmplifyShaderEditor.NormalizeNode;17;-832,-160;Inherit;False;False;1;0;FLOAT3;0,0,0;False;1;FLOAT3;0\nNode;AmplifyShaderEditor.WorldNormalVector;4;-1024,-160;Inherit;False;False;1;0;FLOAT3;0,0,1;False;4;FLOAT3;0;FLOAT;1;FLOAT;2;FLOAT;3\nNode;AmplifyShaderEditor.FunctionOutput;0;-176,-64;Inherit;False;True;-1;Color;0;False;1;0;FLOAT3;0,0,0;False;1;FLOAT3;0\nWireConnection;2;0;5;0\nWireConnection;2;1;13;0\nWireConnection;2;2;14;0\nWireConnection;2;3;15;0\nWireConnection;2;4;16;0\nWireConnection;5;0;17;0\nWireConnection;17;0;4;0\nWireConnection;0;0;2;0\nASEEND*/\n//CHKSM=D83F29F1915A37DB102230DE6C6804C2FBAB7864"
+  m_functionInfo: "// Made with Amplify Shader Editor v1.9.9.9\n// Available at the
+    Unity Asset Store - http://u3d.as/y3X \n/*ASEBEGIN\nVersion=19909\nNode;AmplifyShaderEditor.CustomExpressionNode,
+    AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;2;-400,-64;Inherit;False;
+    ;3;File;5;True;worldNormal;FLOAT3;0,0,0;In;;Inherit;False;True;L0;FLOAT3;0,0,0;In;;Inherit;False;True;L1r;FLOAT3;0,0,0;In;;Inherit;False;True;L1g;FLOAT3;0,0,0;In;;Inherit;False;True;L1b;FLOAT3;0,0,0;In;;Inherit;False;LightVolumeEvaluate;False;True;0;4ae0b01e695ad7545a078e1e04d2e609;False;5;0;FLOAT3;0,0,0;False;1;FLOAT3;0,0,0;False;2;FLOAT3;0,0,0;False;3;FLOAT3;0,0,0;False;4;FLOAT3;0,0,0;False;1;FLOAT3;0\nNode;AmplifyShaderEditor.FunctionInput,
+    AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;14;-640,0;Inherit;False;L1r;3;2;False;1;0;FLOAT3;0,0,0;False;1;FLOAT3;0\nNode;AmplifyShaderEditor.FunctionInput,
+    AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;15;-640,80;Inherit;False;L1g;3;3;False;1;0;FLOAT3;0,0,0;False;1;FLOAT3;0\nNode;AmplifyShaderEditor.FunctionInput,
+    AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;16;-640,160;Inherit;False;L1b;3;4;False;1;0;FLOAT3;0,0,0;False;1;FLOAT3;0\nNode;AmplifyShaderEditor.FunctionInput,
+    AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;13;-640,-80;Inherit;False;L0;3;1;False;1;0;FLOAT3;1,1,1;False;1;FLOAT3;0\nNode;AmplifyShaderEditor.FunctionInput,
+    AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;5;-672,-160;Inherit;False;WorldNormal;3;0;False;1;0;FLOAT3;0,0,0;False;1;FLOAT3;0\nNode;AmplifyShaderEditor.NormalizeNode,
+    AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;17;-832,-160;Inherit;False;False;1;0;FLOAT3;0,0,0;False;1;FLOAT3;0\nNode;AmplifyShaderEditor.WorldNormalVector,
+    AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;4;-1024,-160;Inherit;False;False;1;0;FLOAT3;0,0,1;False;4;FLOAT3;0;FLOAT;1;FLOAT;2;FLOAT;3\nNode;AmplifyShaderEditor.FunctionOutput,
+    AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;0;-176,-64;Inherit;False;True;-1;Color;0;False;1;0;FLOAT3;0,0,0;False;1;FLOAT3;0\nWireConnection;2;0;5;0\nWireConnection;2;1;13;0\nWireConnection;2;2;14;0\nWireConnection;2;3;15;0\nWireConnection;2;4;16;0\nWireConnection;5;0;17;0\nWireConnection;17;0;4;0\nWireConnection;0;0;2;0\nASEEND*/\n//CHKSM=5CE7344860E0E748B1346ACC56F1DDF4E1426C92"
   m_functionName: 
-  m_description: Samples VRC Light Volumes and returns color
+  m_description: 'Samples VRC Light Volumes SH and returns color.
+
+
+    NOTE: Usually
+    Color should be multiplied by Albedo and added to final Emission.'
   m_additionalIncludes:
     m_additionalIncludes: []
     m_outsideIncludes: []

@@ -27,13 +27,16 @@ MonoBehaviour:
     AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;15;-1456,224;Inherit;False;True;1;0;FLOAT3;0,0,1;False;4;FLOAT3;0;FLOAT;1;FLOAT;2;FLOAT;3\nNode;AmplifyShaderEditor.FunctionOutput,
     AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;13;-496,-48;Inherit;False;True;-1;L0;0;False;1;0;FLOAT3;0,0,0;False;1;FLOAT3;0\nWireConnection;6;0;7;0\nWireConnection;8;0;1;0\nWireConnection;8;1;9;0\nWireConnection;1;0;6;0\nWireConnection;1;1;14;0\nWireConnection;1;2;16;0\nWireConnection;9;0;6;0\nWireConnection;9;1;14;0\nWireConnection;9;2;16;0\nWireConnection;16;0;15;0\nWireConnection;13;0;8;0\nASEEND*/\n//CHKSM=4CDD8515EDC6AE3DA7F65D9D2BAB91F9A39F719A"
   m_functionName: 
-  m_description: 'Samples VRC Light Volumes and returns color
+  m_description: 'Samples VRC Light Volumes and returns ambient color (L0 component).
 
 
-    World Position
-    Offset only applies to Light Volumes sampling, not the Point Light Volumes. It''s
-    useful to apply some bias offset by sprcifying a value which is WorldNormal *
-    Bias'
+    NOTE:
+    World Position Offset only applies to Light Volumes sampling, not the Point Light
+    Volumes. It''s useful to apply some bias.
+
+
+    Usually L0 should be multiplied
+    by Albedo and added to final Emission.'
   m_additionalIncludes:
     m_additionalIncludes: []
     m_outsideIncludes: []

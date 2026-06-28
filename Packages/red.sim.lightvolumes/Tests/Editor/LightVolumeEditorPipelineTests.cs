@@ -373,6 +373,33 @@ namespace VRCLightVolumes.Tests {
             Assert.That(manager.LightVolumeInstances[1], Is.SameAs(regularInstance));
         }
 
+        // Verifies setup sync restores stale runtime additive flags before sorting manager instances.
+        [Test]
+        public void SetupSyncCopiesAuthoringAdditiveBeforeSortingInstances() {
+            GameObject setupObject = CreateGameObject("Stale Additive Setup", false);
+            LightVolumeSetup setup = setupObject.AddComponent<LightVolumeSetup>();
+            setup.SetupDependencies();
+            LightVolumeManager manager = setup.LightVolumeManager;
+            if (manager == null) manager = setupObject.GetComponent<LightVolumeManager>();
+            Texture3D atlas = CreateAtlas("Stale Additive Atlas");
+            manager.LightVolumeAtlas = atlas;
+            manager.LightVolumeAtlasBase = atlas;
+
+            LightVolumeInstance regularInstance = CreateLightVolume(setup, manager, "Regular Volume", false);
+            LightVolumeInstance additiveInstance = CreateLightVolume(setup, manager, "Additive Volume", true);
+            additiveInstance.IsAdditive = false;
+            setup.LightVolumesWeights.Add(10);
+            setup.LightVolumesWeights.Add(0);
+            setup.LightVolumeDataList.Clear();
+
+            setup.SyncUdonScript();
+
+            Assert.That(additiveInstance.IsAdditive, Is.True);
+            Assert.That(manager.LightVolumeInstances, Has.Length.EqualTo(2));
+            Assert.That(manager.LightVolumeInstances[0], Is.SameAs(additiveInstance));
+            Assert.That(manager.LightVolumeInstances[1], Is.SameAs(regularInstance));
+        }
+
         // Verifies reserved UV space creates unique atlas islands filled with neutral SH data.
         [Test]
         public void ReservedUVSpaceCreatesUniqueWhiteAtlasIslands() {

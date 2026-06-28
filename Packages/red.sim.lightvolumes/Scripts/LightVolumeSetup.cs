@@ -1062,6 +1062,7 @@ namespace VRCLightVolumes {
                 SyncBaseTextureMetadataToUdon();
 
                 if (LightVolumes.Count != 0) {
+                    SyncLightVolumeRuntimeInstances();
                     var instances = GetLightVolumeInstances();
                     UdonBehaviour[] lightVolumeInstances = new UdonBehaviour[instances.Length];
                     for (int i = 0; i < instances.Length; i++) {
@@ -1102,7 +1103,10 @@ namespace VRCLightVolumes {
                 RefreshAtlasOutput();
 #endif
 
-                if (LightVolumes.Count != 0) LightVolumeManager.LightVolumeInstances = GetLightVolumeInstances();
+                if (LightVolumes.Count != 0) {
+                    SyncLightVolumeRuntimeInstances();
+                    LightVolumeManager.LightVolumeInstances = GetLightVolumeInstances();
+                }
 
                 if (PointLightVolumes.Count != 0) {
                     LightVolumeManager.PointLightVolumeInstances = GetPointLightVolumeInstances();
@@ -1152,6 +1156,17 @@ namespace VRCLightVolumes {
                     Destroy(s[i]);
                 }
 
+            }
+        }
+
+        // Synchronizes authoring Light Volume fields before setup sorts and uploads runtime instances.
+        private void SyncLightVolumeRuntimeInstances() {
+            int count = LightVolumes.Count;
+            for (int i = 0; i < count; i++) {
+                LightVolume lightVolume = LightVolumes[i];
+                if (lightVolume == null) continue;
+                lightVolume.SyncUdonScript();
+                if (lightVolume.LightVolumeInstance != null) lightVolume.LightVolumeInstance.IsAdditive = lightVolume.Additive;
             }
         }
 

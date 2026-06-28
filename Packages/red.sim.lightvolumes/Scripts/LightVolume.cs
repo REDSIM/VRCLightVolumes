@@ -435,7 +435,7 @@ namespace VRCLightVolumes {
         }
 
         // Syncs udon LightVolumeInstance script with this script
-        private void SyncUdonScript() {
+        public void SyncUdonScript() {
             SetupDependencies();
 #if UDONSHARP
             if (Application.isPlaying) {
@@ -577,6 +577,7 @@ namespace VRCLightVolumes {
         private void OnEnable() {
             SetupDependencies();
             SetupBakeryDependencies();
+            SyncUdonScript();
             LightVolumeSetup.RefreshVolumesList();
             LightVolumeSetup.SyncUdonScript();
             CacheEditorState();

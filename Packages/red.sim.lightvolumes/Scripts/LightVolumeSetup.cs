@@ -125,9 +125,18 @@ namespace VRCLightVolumes {
         private TextureArrayResolution _shadowResolutionPrev = TextureArrayResolution._64x64;
         private ShadowTexturePrecision _shadowTextureFormatPrev = ShadowTexturePrecision.Float;
         private EditorCoroutine _generateAtlasCoroutine = null;
+        private bool _postUndoSyncQueued = false;
+        private bool _postUndoReinitializePointLightTextures = false;
         private const string CubemapFaceShaderName = "Hidden/CubeFace";
 #endif
         public void RefreshVolumesList() {
+
+#if UNITY_EDITOR
+            if (Undo.isProcessing) {
+                QueuePostUndoSync(false);
+                return;
+            }
+#endif
 
             if(DontSync) return;
 
@@ -183,6 +192,33 @@ namespace VRCLightVolumes {
         private void OnSelectionChanged() {
             if (Selection.activeObject == gameObject) {
                 RefreshVolumesList();
+            }
+        }
+
+        // Queues setup synchronization until Unity finishes Undo and Transform access is valid again.
+        public void QueuePostUndoSync(bool reinitializePointLightTextures) {
+            _postUndoReinitializePointLightTextures |= reinitializePointLightTextures;
+            if (_postUndoSyncQueued) return;
+            _postUndoSyncQueued = true;
+            EditorApplication.delayCall += ApplyPostUndoSync;
+        }
+
+        // Applies deferred setup synchronization requested by component lifecycle callbacks during Undo.
+        private void ApplyPostUndoSync() {
+            if (this == null) return;
+            if (Undo.isProcessing) {
+                EditorApplication.delayCall += ApplyPostUndoSync;
+                return;
+            }
+
+            bool reinitializePointLightTextures = _postUndoReinitializePointLightTextures;
+            _postUndoSyncQueued = false;
+            _postUndoReinitializePointLightTextures = false;
+
+            RefreshVolumesList();
+            if (reinitializePointLightTextures) {
+                ReinitializeCustomTextures();
+                ReinitializeShadowTextures();
             }
         }
 
@@ -248,6 +284,12 @@ namespace VRCLightVolumes {
 
         // Rebuilds one of the manager-owned point light texture arrays and keeps Udon proxies in sync
         private void ReinitializePointLightTextureArray(bool customTextures) {
+#if UNITY_EDITOR
+            if (Undo.isProcessing) {
+                QueuePostUndoSync(true);
+                return;
+            }
+#endif
             SetupDependencies();
 
             if (LightVolumeManager == null || DontSync) return;
@@ -1030,6 +1072,10 @@ namespace VRCLightVolumes {
         // Syncs udon LightVolumeManager script with this script
         public void SyncUdonScript() {
 #if UNITY_EDITOR
+            if (Undo.isProcessing) {
+                QueuePostUndoSync(false);
+                return;
+            }
             SetupDependencies();
 #endif
             if (LightVolumeManager == null || DontSync) return;

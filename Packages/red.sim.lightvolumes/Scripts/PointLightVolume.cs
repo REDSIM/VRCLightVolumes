@@ -266,6 +266,12 @@ namespace VRCLightVolumes {
 
         private void Update() {
             if (gameObject == null) return;
+#if UNITY_EDITOR
+            if (UnityEditor.Undo.isProcessing) {
+                if (LightVolumeSetup != null) LightVolumeSetup.QueuePostUndoSync(false);
+                return;
+            }
+#endif
             SetupDependencies();
 #if UNITY_EDITOR
             // Regenerate texture arrays after Undo/Redo or serialized changes outside the inspector path
@@ -290,6 +296,12 @@ namespace VRCLightVolumes {
         // Syncs this authoring component into the runtime instance, optionally refreshing projection texture references
         public void SyncUdonScript(bool syncTextureSources = true) {
             if (gameObject == null) return;
+#if UNITY_EDITOR
+            if (UnityEditor.Undo.isProcessing) {
+                if (LightVolumeSetup != null) LightVolumeSetup.QueuePostUndoSync(syncTextureSources);
+                return;
+            }
+#endif
             SetupDependencies();
 #if UDONSHARP
             if (Application.isPlaying) {
@@ -423,6 +435,12 @@ namespace VRCLightVolumes {
         // Applies only editor fields that actually changed to the runtime instance.
         public void SyncEditorChanges(bool customTexturesChanged, bool shadowTexturesChanged, bool recordUndo = false) {
             if (gameObject == null) return;
+#if UNITY_EDITOR
+            if (UnityEditor.Undo.isProcessing) {
+                if (LightVolumeSetup != null) LightVolumeSetup.QueuePostUndoSync(customTexturesChanged || shadowTexturesChanged);
+                return;
+            }
+#endif
             SetupDependencies();
 #if UDONSHARP
             if (Application.isPlaying) {

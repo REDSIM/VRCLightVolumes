@@ -436,6 +436,12 @@ namespace VRCLightVolumes {
 
         // Syncs udon LightVolumeInstance script with this script
         public void SyncUdonScript() {
+#if UNITY_EDITOR
+            if (Undo.isProcessing) {
+                if (LightVolumeSetup != null) LightVolumeSetup.QueuePostUndoSync(false);
+                return;
+            }
+#endif
             SetupDependencies();
 #if UDONSHARP
             if (Application.isPlaying) {
@@ -482,6 +488,10 @@ namespace VRCLightVolumes {
         // Applies only editor fields that actually changed to the runtime instance
         public void SyncEditorChanges(bool recordUndo = false) {
             if (gameObject == null) return;
+            if (Undo.isProcessing) {
+                if (LightVolumeSetup != null) LightVolumeSetup.QueuePostUndoSync(false);
+                return;
+            }
             SetupDependencies();
 #if UDONSHARP
             if (Application.isPlaying) {
@@ -523,6 +533,11 @@ namespace VRCLightVolumes {
 
         private void Update() {
 
+            if (Undo.isProcessing) {
+                if (LightVolumeSetup != null) LightVolumeSetup.QueuePostUndoSync(false);
+                return;
+            }
+
             SetupDependencies();
 
 #if BAKERY_INCLUDED
@@ -563,6 +578,11 @@ namespace VRCLightVolumes {
         }
 
         private void Awake() {
+            if (Undo.isProcessing) {
+                if (LightVolumeSetup != null) LightVolumeSetup.QueuePostUndoSync(false);
+                return;
+            }
+
             _prevPos = transform.position;
             _prevRot = transform.rotation;
             _prevScl = transform.localScale;
@@ -575,6 +595,11 @@ namespace VRCLightVolumes {
         }
 
         private void OnEnable() {
+            if (Undo.isProcessing) {
+                if (LightVolumeSetup != null) LightVolumeSetup.QueuePostUndoSync(false);
+                return;
+            }
+
             SetupDependencies();
             SetupBakeryDependencies();
             SyncUdonScript();
@@ -599,6 +624,10 @@ namespace VRCLightVolumes {
 
         private void OnValidate() {
             _isValidated = true;
+            if (Undo.isProcessing) {
+                if (LightVolumeSetup != null) LightVolumeSetup.QueuePostUndoSync(false);
+                return;
+            }
             Recalculate();
         }
 #endif

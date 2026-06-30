@@ -27,9 +27,9 @@ void BakePointLightVolumesIntoProbes(uint3 id : SV_DispatchThreadID) {
     uint lightCount = min((uint)_UdonPointLightVolumeCount, (uint)VRCLV_MAX_LIGHTS_COUNT);
     [loop] for (uint i = 0; i < lightCount; i++) {
         float3 l0, l1, lightDirNormal;
-        float specularSizeSqOverDistSq, normalAttenuation, shadowAttenuation, shadingStrength;
-        if (LV_PointLightVolumeRawContribution(i, _ProbePositions[probeIndex], l0, l1, lightDirNormal, specularSizeSqOverDistSq, normalAttenuation, shadowAttenuation, shadingStrength, 0, 0, -1)) {
-            l0 *= lerp(1, shadowAttenuation, shadingStrength);
+        float specularSpreadSq, shadow;
+        if (LV_PointLightVolumeContribution(i, _ProbePositions[probeIndex], 0, 0, -1, l0, l1, lightDirNormal, specularSpreadSq, shadow)) {
+            l0 *= shadow;
             L0 += l0;
             L1r += l0.r * l1;
             L1g += l0.g * l1;

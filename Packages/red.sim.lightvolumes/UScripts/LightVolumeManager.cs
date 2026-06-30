@@ -802,29 +802,37 @@ namespace VRCLightVolumes {
 
                     if (usesCubemapProjection) { // TEXTURE CUBEMAP PROJECTION
 
-                        int index = Array.IndexOf((Array)_customCubemapTextures, textureSource, 0, cubemapTextureCount);
-                        if (index < 0) { // Append each unique source once so matching lights share the same texture ID
+                        int index = -1;
+                        for (int j = 0; j < cubemapTextureCount; j++) {
+                            if (_customCubemapTextures[j] == textureSource && _customCubemapTextureAutoUpdates[j] == autoUpdate) {
+                                index = j;
+                                break;
+                            }
+                        }
+                        if (index < 0) { // Append each unique source/update-mode pair once so matching lights share the same texture ID
                             index = cubemapTextureCount;
                             _customCubemapTextures[cubemapTextureCount] = textureSource;
                             _customCubemapTextureModes[cubemapTextureCount] = instance.CustomTextureIsCubemap ? 2 : (instance.CustomTextureHasDepthSlices ? 1 : 0); // Texture layout: 0 = single 2D texture, 1 = Texture2DArray face slices, 2 = native Cubemap.
                             _customCubemapTextureAutoUpdates[cubemapTextureCount] = autoUpdate;
                             cubemapTextureCount++;
-                        } else if (autoUpdate) {
-                            _customCubemapTextureAutoUpdates[index] = true;
                         }
                         _pointLightCustomIDs[i] = index;
                         _customSourceTypes[i] = 1; // 1: cubemap texture source, already indexed from the start of the cubemap source block
 
                     } else { // TEXTURE COOKIE PROJECTION
 
-                        int index = Array.IndexOf((Array)_customSingleTextures, textureSource, 0, singleTextureCount);
-                        if (index < 0) { // Append each unique source once so matching lights share the same texture ID
+                        int index = -1;
+                        for (int j = 0; j < singleTextureCount; j++) {
+                            if (_customSingleTextures[j] == textureSource && _customSingleTextureAutoUpdates[j] == autoUpdate) {
+                                index = j;
+                                break;
+                            }
+                        }
+                        if (index < 0) { // Append each unique source/update-mode pair once so matching lights share the same texture ID
                             index = singleTextureCount;
                             _customSingleTextures[singleTextureCount] = textureSource;
                             _customSingleTextureAutoUpdates[singleTextureCount] = autoUpdate;
                             singleTextureCount++;
-                        } else if (autoUpdate) {
-                            _customSingleTextureAutoUpdates[index] = true;
                         }
                         if (usesAreaCookieProjection) {
                             _customSingleTextureAreaCookies[index] = true;
@@ -844,28 +852,36 @@ namespace VRCLightVolumes {
 
                     if (usesCubemapProjection) { // MATERIAL CUBEMAP PROJECTION
 
-                        int index = Array.IndexOf((Array)_customCubemapMaterials, materialSource, 0, cubemapMaterialCount);
-                        if (index < 0) { // Append each unique material once so matching lights share the same texture ID
+                        int index = -1;
+                        for (int j = 0; j < cubemapMaterialCount; j++) {
+                            if (_customCubemapMaterials[j] == materialSource && _customCubemapMaterialAutoUpdates[j] == autoUpdate) {
+                                index = j;
+                                break;
+                            }
+                        }
+                        if (index < 0) { // Append each unique material/update-mode pair once so matching lights share the same texture ID
                             index = cubemapMaterialCount;
                             _customCubemapMaterials[cubemapMaterialCount] = materialSource;
                             _customCubemapMaterialAutoUpdates[cubemapMaterialCount] = autoUpdate;
                             cubemapMaterialCount++;
-                        } else if (autoUpdate) {
-                            _customCubemapMaterialAutoUpdates[index] = true;
                         }
                         _pointLightCustomIDs[i] = index;
                         _customSourceTypes[i] = 2; // 2: cubemap material source, offset after cubemap texture sources during final ID assignment
 
                     } else { // MATERIAL SINGLE SLICE PROJECTION
 
-                        int index = Array.IndexOf((Array)_customSingleMaterials, materialSource, 0, singleMaterialCount);
-                        if (index < 0) { // Append each unique material once so matching lights share the same texture ID
+                        int index = -1;
+                        for (int j = 0; j < singleMaterialCount; j++) {
+                            if (_customSingleMaterials[j] == materialSource && _customSingleMaterialAutoUpdates[j] == autoUpdate) {
+                                index = j;
+                                break;
+                            }
+                        }
+                        if (index < 0) { // Append each unique material/update-mode pair once so matching lights share the same texture ID
                             index = singleMaterialCount;
                             _customSingleMaterials[singleMaterialCount] = materialSource;
                             _customSingleMaterialAutoUpdates[singleMaterialCount] = autoUpdate;
                             singleMaterialCount++;
-                        } else if (autoUpdate) {
-                            _customSingleMaterialAutoUpdates[index] = true;
                         }
                         if (usesAreaCookieProjection) {
                             _customSingleMaterialAreaCookies[index] = true;

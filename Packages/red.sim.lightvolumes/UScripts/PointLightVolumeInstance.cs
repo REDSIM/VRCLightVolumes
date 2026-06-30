@@ -161,6 +161,13 @@ namespace VRCLightVolumes {
         }
 #endif
 
+#if UDONSHARP || UNITY_EDITOR
+        // Registers this instance after the manager reference is assigned at runtime.
+        public void _onVarChange_LightVolumeManager() {
+            RegisterWithManager();
+        }
+#endif
+
 #if !UDONSHARP || UNITY_EDITOR
         // To make it work when changing values on UdonSharpBehaviour in editor
         private void Update() {

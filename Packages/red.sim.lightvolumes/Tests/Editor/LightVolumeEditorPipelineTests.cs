@@ -103,7 +103,7 @@ namespace VRCLightVolumes.Tests {
             MethodInfo syncTargets = typeof(PointLightVolumeEditor).GetMethod("SyncTargets", _nonPublicInstanceFlags);
             Assert.That(syncTargets, Is.Not.Null);
 
-            syncTargets.Invoke(editor, new object[] { true, false });
+            syncTargets.Invoke(editor, new object[] { true });
 
             Assert.That(instance.CustomTexture, Is.SameAs(pointLight.Cookie));
             Assert.That(instance.ProjectionType, Is.EqualTo(1)); // 1: texture
@@ -130,7 +130,7 @@ namespace VRCLightVolumes.Tests {
             MethodInfo syncTargets = typeof(PointLightVolumeEditor).GetMethod("SyncTargets", _nonPublicInstanceFlags);
             Assert.That(syncTargets, Is.Not.Null);
 
-            syncTargets.Invoke(editor, new object[] { true, false });
+            syncTargets.Invoke(editor, new object[] { true });
 
             Assert.That(pointLight.GetProjectionSource(), Is.SameAs(pointLight.Cookie));
             Assert.That(instance.CustomTexture, Is.SameAs(pointLight.Cookie));

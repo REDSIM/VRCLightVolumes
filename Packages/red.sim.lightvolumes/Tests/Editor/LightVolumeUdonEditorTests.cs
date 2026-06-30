@@ -40,12 +40,13 @@ namespace VRCLightVolumes.Tests {
         private static readonly int _pointLightShadowBleedReductionID = Shader.PropertyToID("_UdonPointLightVolumeShadowBleedReduction");
         private static readonly int _pointLightShadowMinVarianceID = Shader.PropertyToID("_UdonPointLightVolumeShadowMinVariance");
         private static readonly int _lightBrightnessCutoffID = Shader.PropertyToID("_UdonLightBrightnessCutoff");
-        private static readonly BindingFlags _lifecycleMethodFlags = BindingFlags.Instance | BindingFlags.NonPublic;
+        private static readonly BindingFlags _lifecycleMethodFlags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
         private static readonly FieldInfo _customTexturesDepthField = typeof(LightVolumeManager).GetField("_customTextureArrayDepth", _lifecycleMethodFlags);
         private static readonly FieldInfo _shadowTexturesDepthField = typeof(LightVolumeManager).GetField("_shadowTextureArrayDepth", _lifecycleMethodFlags);
         private static readonly FieldInfo _customCubemapTextureCountField = typeof(LightVolumeManager).GetField("_customCubemapTextureCount", _lifecycleMethodFlags);
         private static readonly FieldInfo _customSingleTextureCountField = typeof(LightVolumeManager).GetField("_customSingleTextureCount", _lifecycleMethodFlags);
         private static readonly FieldInfo _customSingleMaterialCountField = typeof(LightVolumeManager).GetField("_customSingleMaterialCount", _lifecycleMethodFlags);
+        private static readonly FieldInfo _customSingleMaterialAutoUpdatesField = typeof(LightVolumeManager).GetField("_customSingleMaterialAutoUpdates", _lifecycleMethodFlags);
         private static readonly FieldInfo _shadowCubemapTextureCountField = typeof(LightVolumeManager).GetField("_shadowCubemapTextureCount", _lifecycleMethodFlags);
         private static readonly FieldInfo _shadowSingleTextureCountField = typeof(LightVolumeManager).GetField("_shadowSingleTextureCount", _lifecycleMethodFlags);
         private static readonly FieldInfo _pointLightCustomIDsField = typeof(LightVolumeManager).GetField("_pointLightCustomIDs", _lifecycleMethodFlags);
@@ -285,6 +286,60 @@ namespace VRCLightVolumes.Tests {
             AssertGlobalFloat(_lightVolumeEnabledID, 0);
             AssertGlobalFloat(_lightVolumeCountID, 0);
             AssertGlobalFloat(_pointLightCountID, 0);
+        }
+
+        // Verifies active runtime-spawned regular volumes self-register when their manager reference is assigned later.
+        [Test]
+        public void LateManagerAssignmentInitializesActiveLightVolumeWithoutUpdatePolling() {
+            LightVolumeManager manager = CreateManager("Late Assigned Volume Manager", true);
+            LightVolumeInstance volume = CreateManagerlessLightVolume("Late Assigned Runtime Volume");
+
+            Assert.That(volume.LightVolumeManager, Is.Null);
+            Assert.That(ContainsLightVolume(manager.LightVolumeInstances, volume), Is.False);
+
+            volume.LightVolumeManager = manager;
+            volume._onVarChange_LightVolumeManager();
+            manager.UpdateVolumes();
+
+            Assert.That(volume.LightVolumeManager, Is.SameAs(manager));
+            Assert.That(ContainsLightVolume(manager.LightVolumeInstances, volume), Is.True);
+            Assert.That(CountLightVolumeReferences(manager.LightVolumeInstances, volume), Is.EqualTo(1));
+            AssertGlobalFloat(_lightVolumeEnabledID, 1);
+            AssertGlobalFloat(_lightVolumeCountID, 1);
+            AssertVectorClose(ExpectedLightVolumeColor(volume), Shader.GetGlobalVectorArray(_lightVolumeColorID)[0]);
+
+            InvokeLifecycleMethod(volume, "OnEnable");
+            manager.UpdateVolumes();
+
+            Assert.That(CountLightVolumeReferences(manager.LightVolumeInstances, volume), Is.EqualTo(1));
+            AssertGlobalFloat(_lightVolumeCountID, 1);
+        }
+
+        // Verifies active runtime-spawned point lights self-register when their manager reference is assigned later.
+        [Test]
+        public void LateManagerAssignmentInitializesActivePointLightWithoutUpdatePolling() {
+            LightVolumeManager manager = CreateManager("Late Assigned Point Manager", false);
+            PointLightVolumeInstance point = CreateManagerlessPointLight("Late Assigned Runtime Point");
+
+            Assert.That(point.LightVolumeManager, Is.Null);
+            Assert.That(ContainsPointLightVolume(manager.PointLightVolumeInstances, point), Is.False);
+
+            point.LightVolumeManager = manager;
+            point._onVarChange_LightVolumeManager();
+            manager.UpdateVolumes();
+
+            Assert.That(point.LightVolumeManager, Is.SameAs(manager));
+            Assert.That(ContainsPointLightVolume(manager.PointLightVolumeInstances, point), Is.True);
+            Assert.That(CountPointLightVolumeReferences(manager.PointLightVolumeInstances, point), Is.EqualTo(1));
+            AssertGlobalFloat(_lightVolumeEnabledID, 1);
+            AssertGlobalFloat(_pointLightCountID, 1);
+            AssertVectorClose(ExpectedPointLightColor(point), Shader.GetGlobalVectorArray(_pointLightColorID)[0]);
+
+            InvokeLifecycleMethod(point, "OnEnable");
+            manager.UpdateVolumes();
+
+            Assert.That(CountPointLightVolumeReferences(manager.PointLightVolumeInstances, point), Is.EqualTo(1));
+            AssertGlobalFloat(_pointLightCountID, 1);
         }
 
         // Verifies inactive, black, and zero-intensity entries are removed from the final shader-visible arrays.
@@ -848,6 +903,39 @@ namespace VRCLightVolumes.Tests {
             Assert.That(GetManagerField<int[]>(manager, _pointLightCustomIDsField), Is.EqualTo(new[] { 0, 0 }));
             AssertPointCustomData(0, firstPoint, -1, 0);
             AssertPointCustomData(1, secondPoint, -1, 0);
+        }
+
+        // Verifies a shared material source is split when lights need different runtime auto-update behavior.
+        [Test]
+        public void AreaMaterialCookieAutoUpdateMismatchUsesSeparateRuntimeSlices() {
+            LightVolumeManager manager = CreateManager("Area Material Cookie Auto Update Split Manager", false);
+            Material material = CreateMaterial("Hidden/CubeFace");
+            manager.CustomTexturesWidth = 4;
+            manager.CustomTexturesHeight = 4;
+
+            PointLightVolumeInstance livePoint = CreatePointLight(manager, "Area Material Cookie Live", true);
+            livePoint.transform.localScale = new Vector3(2, 3, 1);
+            livePoint.SetCustomMaterial(material, true);
+            livePoint.SetAreaLight();
+
+            PointLightVolumeInstance snapshotPoint = CreatePointLight(manager, "Area Material Cookie Snapshot", true);
+            snapshotPoint.transform.localScale = new Vector3(2, 3, 1);
+            snapshotPoint.SetCustomMaterial(material, false);
+            snapshotPoint.SetAreaLight();
+
+            manager.PointLightVolumeInstances = new[] { livePoint, snapshotPoint };
+
+            manager.ReinitializeCustomTextures();
+            manager.UpdateVolumes();
+
+            Assert.That(GetManagerField<int>(manager, _customSingleMaterialCountField), Is.EqualTo(2));
+            Assert.That(manager.CustomTextures, Is.Not.Null);
+            Assert.That(manager.CustomTextures.volumeDepth, Is.EqualTo(2));
+            Assert.That(manager.HasAutoCustomTextureUpdates, Is.True);
+            Assert.That(GetManagerField<bool[]>(manager, _customSingleMaterialAutoUpdatesField), Is.EqualTo(new[] { true, false }));
+            Assert.That(GetManagerField<int[]>(manager, _pointLightCustomIDsField), Is.EqualTo(new[] { 0, 1 }));
+            AssertPointCustomData(0, livePoint, -1, 0);
+            AssertPointCustomData(1, snapshotPoint, -2, 0);
         }
 
         // Verifies the runtime API assigns a texture source and refreshes manager-owned projection arrays
@@ -1995,6 +2083,31 @@ namespace VRCLightVolumes.Tests {
             point.ConeFalloff = 1;
             point.Angle = 30 * Mathf.Deg2Rad;
             point.OuterAngleCos = Mathf.Cos(point.Angle);
+            return point;
+        }
+
+        // Creates an active light volume that has no manager reference after its initial enable pass.
+        private LightVolumeInstance CreateManagerlessLightVolume(string name) {
+            GameObject gameObject = CreateGameObject(name, true);
+            LightVolumeInstance volume = gameObject.AddComponent<LightVolumeInstance>();
+            volume.IsDynamic = true;
+            ConfigureLightVolume(volume, Color.white, 1, false, 0);
+            return volume;
+        }
+
+        // Creates an active point light volume that has no manager reference after its initial enable pass.
+        private PointLightVolumeInstance CreateManagerlessPointLight(string name) {
+            GameObject gameObject = CreateGameObject(name, true);
+            PointLightVolumeInstance point = gameObject.AddComponent<PointLightVolumeInstance>();
+            point.Color = Color.white;
+            point.Intensity = 1;
+            point.IsDynamic = true;
+            SetPointLightSquaredSize(point, 1);
+            point.Direction = Vector3.forward;
+            point.ConeFalloff = 1;
+            point.Angle = 30 * Mathf.Deg2Rad;
+            point.OuterAngleCos = Mathf.Cos(point.Angle);
+            point.OuterAngleTan = Mathf.Tan(point.Angle);
             return point;
         }
 

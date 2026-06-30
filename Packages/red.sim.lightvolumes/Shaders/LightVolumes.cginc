@@ -449,13 +449,14 @@ float4 LV_AreaLightCookie(float3 localPos, float2 size, uint textureId) {
     return float4(emission * 0.36363636, 1.0);
 }
 
-// Resolves point-light normal shading and baked shadows. Returns true when the light remains visible enough to consume one overdraw slot
-bool LV_PointLightVolumeShadowMask(uint id, float shadowIdData, float shadowFarClip, float3 worldPos, float3 lightDir, float distSq, float invDist, float sourceSpreadSq, float3 pointLightShadingNormal, float pointLightShadingScale, float pointLightShadingBias, out float shadow) {
+// Resolves point-light normal shading and baked shadows. lightDir samples shadows, normalMaskLightDir attenuates by surface normal.
+// Returns true when the light remains visible enough to consume one overdraw slot.
+bool LV_PointLightVolumeShadowMask(uint id, float shadowIdData, float shadowFarClip, float3 worldPos, float3 lightDir, float3 normalMaskLightDir, float distSq, float invDist, float sourceSpreadSq, float3 pointLightShadingNormal, float pointLightShadingScale, float pointLightShadingBias, out float shadow) {
     shadow = 1;
     bool shadowVisible = true;
     [branch] if (shadowIdData == 0) { // No baked shadow and full-strength normal shading
         [branch] if (pointLightShadingBias >= 0) { // Apply full-strength surface-normal shading when configured
-            shadow = LV_PointLightShading(pointLightShadingNormal, pointLightShadingScale, pointLightShadingBias, lightDir, sourceSpreadSq);
+            shadow = LV_PointLightShading(pointLightShadingNormal, pointLightShadingScale, pointLightShadingBias, normalMaskLightDir, sourceSpreadSq);
             shadowVisible = shadow > 0;
         }
     } else { // Optional normal shading strength and optional baked shadow map
@@ -465,7 +466,7 @@ bool LV_PointLightVolumeShadowMask(uint id, float shadowIdData, float shadowFarC
             float normalAttenuation = 1;
 
             [branch] if (pointLightShadingBias >= 0) { // Apply surface-normal shading before strength blending
-                normalAttenuation = LV_PointLightShading(pointLightShadingNormal, pointLightShadingScale, pointLightShadingBias, lightDir, sourceSpreadSq);
+                normalAttenuation = LV_PointLightShading(pointLightShadingNormal, pointLightShadingScale, pointLightShadingBias, normalMaskLightDir, sourceSpreadSq);
                 shadowVisible = normalAttenuation > 0 || shadingStrength < 1;
             }
 
@@ -506,7 +507,7 @@ bool LV_PointLightVolumeContribution(uint id, float3 worldPos, float3 pointLight
             float sourceSpreadSq = customId <= 0 ? pos.w * invDist * invDist : 0;
 
             // Point light is not fully culled by surface-normal shading or shadow visibility
-            [branch] if (LV_PointLightVolumeShadowMask(id, customID_data.y, customID_data.w, worldPos, lightDir, distSq, invDist, sourceSpreadSq, pointLightShadingNormal, pointLightShadingScale, pointLightShadingBias, shadow)) {
+            [branch] if (LV_PointLightVolumeShadowMask(id, customID_data.y, customID_data.w, worldPos, lightDir, lightDir, distSq, invDist, sourceSpreadSq, pointLightShadingNormal, pointLightShadingScale, pointLightShadingBias, shadow)) {
                 counted = true;
                 [branch] if (customId > 0) { // Point light with a baked attenuation LUT
                     float dirRadius = distSq * pos.w;
@@ -557,7 +558,7 @@ bool LV_PointLightVolumeContribution(uint id, float3 worldPos, float3 pointLight
                     float sourceSpreadSq = customId <= 0 ? -pos.w * invDist * invDist : 0;
 
                     // Spot light is not fully culled by surface-normal shading or shadow visibility
-                    [branch] if (LV_PointLightVolumeShadowMask(id, customID_data.y, customID_data.w, worldPos, lightDir, distSq, invDist, sourceSpreadSq, pointLightShadingNormal, pointLightShadingScale, pointLightShadingBias, shadow)) {
+                    [branch] if (LV_PointLightVolumeShadowMask(id, customID_data.y, customID_data.w, worldPos, lightDir, lightDir, distSq, invDist, sourceSpreadSq, pointLightShadingNormal, pointLightShadingScale, pointLightShadingBias, shadow)) {
                         counted = true;
 
                         [branch] if (customId > 0) { // Spot light with Attenuation LUT. LUT already includes cone attenuation
@@ -615,7 +616,7 @@ bool LV_PointLightVolumeContribution(uint id, float3 worldPos, float3 pointLight
                             float3 lightDir = dir * invDist;
 
                             // Area light is not fully culled by surface-normal shading or shadow visibility
-                            [branch] if (LV_PointLightVolumeShadowMask(id, customID_data.y, customID_data.w, worldPos, lightDir, distSq, invDist, sourceSpreadSq, areaPointLightShadingDir, pointLightShadingScale, pointLightShadingBias, shadow)) {
+                            [branch] if (LV_PointLightVolumeShadowMask(id, customID_data.y, customID_data.w, worldPos, lightDir, areaPointLightShadingDir, distSq, invDist, sourceSpreadSq, pointLightShadingNormal, pointLightShadingScale, pointLightShadingBias, shadow)) {
                                 counted = true;
                                 lightDirNormal = lightDir;
                                 specularSpreadSq = sourceSpreadSq;

@@ -201,6 +201,7 @@ namespace VRCLightVolumes.Tests {
             pointLight.Bias = 0.42f;
             pointLight.LayerMask = 1 << 6;
             pointLight.NearPlane = 0.15f;
+            pointLight.FarPlane = 6.5f;
             pointLight.Blur = 2.5f;
             pointLight.ContactHardening = 0.08f;
             pointLight.ShadingStrength = 0.42f;
@@ -216,6 +217,7 @@ namespace VRCLightVolumes.Tests {
             Assert.That(instance.Bias, Is.EqualTo(0.42f).Within(0.0001f));
             Assert.That(instance.LayerMask, Is.EqualTo(1 << 6));
             Assert.That(instance.NearClip, Is.EqualTo(0.15f).Within(0.0001f));
+            Assert.That(instance.FarClip, Is.EqualTo(6.5f).Within(0.0001f));
             Assert.That(instance.Blur, Is.EqualTo(2.5f).Within(0.0001f));
             Assert.That(instance.ContactHardening, Is.EqualTo(0.08f).Within(0.0001f));
             Assert.That(instance.ShadingStrength, Is.EqualTo(0.42f).Within(0.0001f));
@@ -315,6 +317,27 @@ namespace VRCLightVolumes.Tests {
             pointLightVolume.Shadows = true;
 
             Assert.That((int)method.Invoke(pointLightVolume, null), Is.EqualTo(0));
+        }
+
+        // Verifies zero Far Plane always recalculates from the current light range instead of reusing stale baked instance metadata.
+        [Test]
+        public void PointLightVolumeZeroFarPlaneRecalculatesFromCurrentRange() {
+            GameObject gameObject = CreateGameObject("Zero Far Plane Point Light Volume", false);
+            PointLightVolumeInstance instance = gameObject.AddComponent<PointLightVolumeInstance>();
+            PointLightVolume pointLightVolume = gameObject.AddComponent<PointLightVolume>();
+            pointLightVolume.PointLightVolumeInstance = instance;
+            pointLightVolume.Type = PointLightVolume.LightType.PointLight;
+            pointLightVolume.Projection = PointLightVolume.LightProjection.LUT;
+            pointLightVolume.FalloffLUT = CreateTexture2D("Zero Far Plane LUT");
+            pointLightVolume.FarPlane = 0f;
+            pointLightVolume.Range = 8f;
+            instance.FarClip = 2f;
+
+            Assert.That(pointLightVolume.GetShadowFarClip(), Is.EqualTo(8f).Within(Epsilon));
+
+            pointLightVolume.Range = 5f;
+
+            Assert.That(pointLightVolume.GetShadowFarClip(), Is.EqualTo(5f).Within(Epsilon));
         }
 
         // Verifies manager-created runtime texture arrays are hidden from scene and asset serialization.

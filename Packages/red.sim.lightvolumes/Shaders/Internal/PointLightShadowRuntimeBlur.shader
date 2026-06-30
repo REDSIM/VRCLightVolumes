@@ -340,7 +340,7 @@ Shader "Hidden/VRCLV/PointLightShadowRuntimeBlur" {
             }
         #endif
 
-        float RuntimeBlurRadius(float2 uv) {
+        float RuntimeBlurRadius(float2 uv, float spotScale) {
             float radius = max(_BlurRadius, 0.0f);
             #if !defined(VRCLV_RUNTIME_SHADOW_BLUR_UNIFORM)
                 float centerDepth = DecodeDepth01(SampleDepthDirect(uv));
@@ -349,7 +349,7 @@ Shader "Hidden/VRCLV/PointLightShadowRuntimeBlur" {
                 #if defined(VRCLV_SHADOW_BLUR_SPHERICAL)
                     depthDifference = AverageDepthDifferenceSpherical(uv, centerDepth, contrastSampleScale * VRCLV_SPHERICAL_BLUR_RADIUS_SCALE);
                 #elif defined(VRCLV_RUNTIME_SHADOW_BLUR_DIRECT)
-                    depthDifference = AverageDepthDifferenceDirect(uv, centerDepth, contrastSampleScale * rcp(max(_ShadowTanHalfFov, 0.000001f)));
+                    depthDifference = AverageDepthDifferenceDirect(uv, centerDepth, contrastSampleScale * spotScale);
                 #else
                     float2 contrastExtent = contrastSampleScale * VRCLV_CONTRAST_MAX_RADIUS;
                     [branch] if (KernelFitsFace(uv, contrastExtent)) depthDifference = AverageDepthDifferenceDirect(uv, centerDepth, contrastSampleScale);
@@ -361,11 +361,11 @@ Shader "Hidden/VRCLV/PointLightShadowRuntimeBlur" {
         }
 
         float2 RuntimeBlurStep(float2 uv) {
-            float radius = RuntimeBlurRadius(uv);
             float spotScale = 1.0f;
             #if defined(VRCLV_RUNTIME_SHADOW_BLUR_DIRECT)
                 spotScale = rcp(max(_ShadowTanHalfFov, 0.000001f));
             #endif
+            float radius = RuntimeBlurRadius(uv, spotScale);
             return _BlurDirection * (_InvResolution * radius * (2.0f * VRCLV_BLUR_INV_SAMPLE_RADIUS) * spotScale);
         }
 
@@ -397,7 +397,7 @@ Shader "Hidden/VRCLV/PointLightShadowRuntimeBlur" {
             float4 BlurArraySpherical(float2 uv) {
                 float4 color = SampleSourceSpherical(uv, float2(0.0f, 0.0f));
                 float weightSum = 1.0f;
-                float blurRadius = _InvResolution * RuntimeBlurRadius(uv) * (4.0f * VRCLV_SPHERICAL_BLUR_RADIUS_SCALE);
+                float blurRadius = _InvResolution * RuntimeBlurRadius(uv, 1.0f) * (4.0f * VRCLV_SPHERICAL_BLUR_RADIUS_SCALE);
                 VRCLV_BLUR_LOOP for (int sampleIndex = 0; sampleIndex < VRCLV_SPHERICAL_BLUR_SAMPLE_COUNT; sampleIndex++) {
                     float radiusSq;
                     float2 diskOffset = DiskKernelSampleOffset(sampleIndex, VRCLV_SPHERICAL_BLUR_INV_SAMPLE_COUNT, radiusSq);
@@ -437,8 +437,8 @@ Shader "Hidden/VRCLV/PointLightShadowRuntimeBlur" {
             #pragma fragment fragArray
             #pragma multi_compile_local_fragment VRCLV_RUNTIME_SHADOW_QUALITY_LOW VRCLV_RUNTIME_SHADOW_QUALITY_MEDIUM VRCLV_RUNTIME_SHADOW_QUALITY_HIGH
             #pragma multi_compile_local_fragment __ VRCLV_RUNTIME_SHADOW_BLUR_UNIFORM
-            #pragma shader_feature_local_fragment __ VRCLV_RUNTIME_SHADOW_BLUR_DIRECT
-            #pragma shader_feature_local_fragment __ VRCLV_RUNTIME_SHADOW_BLUR_SPHERICAL
+            #pragma multi_compile_local_fragment __ VRCLV_RUNTIME_SHADOW_BLUR_DIRECT
+            #pragma multi_compile_local_fragment __ VRCLV_RUNTIME_SHADOW_BLUR_SPHERICAL
             #pragma shader_feature_local_fragment __ VRCLV_EDITOR_SHADOW_BLUR_QUALITY
             ENDCG
         }

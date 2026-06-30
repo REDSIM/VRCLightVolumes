@@ -57,6 +57,9 @@ namespace VRCLightVolumes {
         [Min(0)] public float Bias = 0.1f;
         [Tooltip("Near clip plane used by the shadow bake camera. Higher values can clip nearby occluders.")]
         [Min(0.0001f)] public float NearPlane = 0.01f;
+        [Tooltip("Far clip plane used by the shadow bake camera. Shadow casters outside the near-far range are clipped. 0 recalculates it from this light's current culling range.")]
+        [FormerlySerializedAs("ShadowFarClip")]
+        [Min(0)] public float FarPlane = 0f;
         [Tooltip("Shadow blur radius applied after baking, normalized to 128x128 shadow resolution. Editor baking uses spherical shadow-space blur to reduce visible cubemap and Spot Light projection seams. Runtime baking uses Planar Blur unless Spherical Blur is enabled on the runtime baker. 0 keeps the baked shadow map unblurred. Requires rebaking.")]
         [Min(0)] public float Blur = 1f;
         [Tooltip("Hardens shadows near the contact areas. Can produce artefacts, so use with caution. Requires rebaking. More performant when set to 0 in realtime mode. Runtime baker Spherical Blur also applies to contact hardening samples.")]
@@ -95,6 +98,7 @@ namespace VRCLightVolumes {
         private bool _useWorldSpacePrev = false;
         private int _layerMaskPrev = 270849;
         private float _nearPlanePrev = 0.01f;
+        private float _farPlanePrev = 0f;
         private float _biasPrev = 0.1f;
         private float _blurPrev = 1f;
         private float _contactHardeningPrev = 0f;
@@ -317,6 +321,7 @@ namespace VRCLightVolumes {
                 _pointLightVolumeBehaviour.SetProgramVariable("Bias", Bias);
                 _pointLightVolumeBehaviour.SetProgramVariable("LayerMask", LayerMask.value);
                 _pointLightVolumeBehaviour.SetProgramVariable("NearClip", GetShadowNearClip());
+                _pointLightVolumeBehaviour.SetProgramVariable("FarClip", GetShadowFarClip());
                 _pointLightVolumeBehaviour.SetProgramVariable("Blur", Mathf.Max(Blur, 0));
                 _pointLightVolumeBehaviour.SetProgramVariable("ContactHardening", Mathf.Clamp01(ContactHardening));
                 _pointLightVolumeBehaviour.SetProgramVariable("ShadowBakePosition", PointLightVolumeInstance.ShadowBakePosition);
@@ -359,6 +364,7 @@ namespace VRCLightVolumes {
                 PointLightVolumeInstance.Bias = Bias;
                 PointLightVolumeInstance.LayerMask = LayerMask.value;
                 PointLightVolumeInstance.NearClip = GetShadowNearClip();
+                PointLightVolumeInstance.FarClip = GetShadowFarClip();
                 PointLightVolumeInstance.Blur = Mathf.Max(Blur, 0);
                 PointLightVolumeInstance.ContactHardening = Mathf.Clamp01(ContactHardening);
                 if (syncTextureSources) SyncTextureSourcesToInstance();
@@ -426,6 +432,7 @@ namespace VRCLightVolumes {
             _useWorldSpacePrev = UseWorldSpace;
             _layerMaskPrev = LayerMask.value;
             _nearPlanePrev = NearPlane;
+            _farPlanePrev = FarPlane;
             _biasPrev = Bias;
             _blurPrev = Blur;
             _contactHardeningPrev = ContactHardening;
@@ -465,7 +472,7 @@ namespace VRCLightVolumes {
             shadowTexturesChanged = shadowTexturesChanged || HasEditorShadowTextureChanges();
             bool sizeChanged = _lightSourceSizePrev != LightSourceSize || _rangePrev != Range;
             bool spotShapeChanged = _anglePrev != Angle || _falloffPrev != Falloff;
-            bool shadowSettingsChanged = shadowTexturesChanged || _useWorldSpacePrev != UseWorldSpace || _layerMaskPrev != LayerMask.value || _nearPlanePrev != NearPlane || _biasPrev != Bias || _blurPrev != Blur || _contactHardeningPrev != ContactHardening;
+            bool shadowSettingsChanged = shadowTexturesChanged || _useWorldSpacePrev != UseWorldSpace || _layerMaskPrev != LayerMask.value || _nearPlanePrev != NearPlane || _farPlanePrev != FarPlane || _biasPrev != Bias || _blurPrev != Blur || _contactHardeningPrev != ContactHardening;
 
             if (recordUndo && (dynamicChanged || colorChanged || intensityChanged || shadingStrengthChanged || spotCookieAspectChanged || customTexturesChanged || sizeChanged || spotShapeChanged || shadowSettingsChanged)) UnityEditor.Undo.RecordObject(PointLightVolumeInstance, "Sync Point Light Volume Instance");
 
@@ -521,10 +528,11 @@ namespace VRCLightVolumes {
 
             if (shadowSettingsChanged) {
                 if (shadowTexturesChanged) SyncTextureSourcesToInstance();
-                PointLightVolumeInstance.SetShadowSettings(GetShadowRuntimeID(), UseWorldSpace, LayerMask.value, GetShadowNearClip(), Bias, Blur, ContactHardening);
+                PointLightVolumeInstance.SetShadowSettings(GetShadowRuntimeID(), UseWorldSpace, LayerMask.value, GetShadowNearClip(), GetShadowFarClip(), Bias, Blur, ContactHardening);
                 _useWorldSpacePrev = UseWorldSpace;
                 _layerMaskPrev = LayerMask.value;
                 _nearPlanePrev = NearPlane;
+                _farPlanePrev = FarPlane;
                 _biasPrev = Bias;
                 _blurPrev = Blur;
                 _contactHardeningPrev = ContactHardening;
@@ -610,6 +618,7 @@ namespace VRCLightVolumes {
 
         private void Reset() {
             SetupDependencies();
+            if (FarPlane <= 0f) FarPlane = GetCalculatedShadowFarClip();
             SyncUdonScript();
             LightVolumeSetup.RefreshVolumesList();
             LightVolumeSetup.SyncUdonScript();
@@ -651,6 +660,8 @@ namespace VRCLightVolumes {
 
 #if UNITY_EDITOR
         private void OnValidate() {
+            if (FarPlane < 0f) FarPlane = 0f;
+            if (FarPlane > 0f && FarPlane <= NearPlane) FarPlane = NearPlane + 0.0001f;
             _isValidated = true;
         }
 #endif
@@ -660,8 +671,15 @@ namespace VRCLightVolumes {
             return Shadows && HasShadowMapSource() ? 0 : -1;
         }
 
-        // Returns the editor-only far clip used by the shadow map bake
+        // Returns the far clip used by the shadow map bake
         public float GetShadowFarClip() {
+            float farClip = FarPlane;
+            if (farClip <= 0f) farClip = GetCalculatedShadowFarClip();
+            return Mathf.Max(farClip, GetShadowNearClip() + 0.0001f);
+        }
+
+        // Returns the calculated far clip used as a compatibility fallback for old scenes
+        private float GetCalculatedShadowFarClip() {
             float scale = GetAverageLossyScale();
             float cutoff = LightVolumeSetup != null ? LightVolumeSetup.BrightnessCutoff : 0.35f;
             if (Type == LightType.AreaLight) {

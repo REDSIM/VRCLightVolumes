@@ -15,6 +15,8 @@ namespace VRCLightVolumes {
         private static readonly string _cubemapMaterialHint = "None (Texture/Material)";
         private static readonly string _projectionSourceObjectPickerFilter = "t:Texture t:Material";
         private const float ObjectSelectorButtonWidth = 19f;
+        private static readonly Color _shadowClipVisibleColor = new Color(0.2f, 0.65f, 1f, 0.75f);
+        private static readonly Color _shadowClipHiddenColor = new Color(0.2f, 0.65f, 1f, 0.18f);
         private static GUIStyle _projectionSourceHintStyle = null;
 
         private void OnEnable() {
@@ -38,6 +40,7 @@ namespace VRCLightVolumes {
             hiddenFields.Add("LayerMask");
             hiddenFields.Add("ObjectMask");
             hiddenFields.Add("NearPlane");
+            hiddenFields.Add("FarPlane");
             hiddenFields.Add("Blur");
             hiddenFields.Add("ContactHardening");
             hiddenFields.Add("UseWorldSpace");
@@ -95,6 +98,7 @@ namespace VRCLightVolumes {
                 EditorGUILayout.PropertyField(serializedObject.FindProperty("LayerMask"));
                 EditorGUILayout.PropertyField(serializedObject.FindProperty("ObjectMask"));
                 EditorGUILayout.PropertyField(serializedObject.FindProperty("NearPlane"));
+                EditorGUILayout.PropertyField(serializedObject.FindProperty("FarPlane"));
                 EditorGUILayout.PropertyField(serializedObject.FindProperty("Bias"));
                 EditorGUILayout.PropertyField(serializedObject.FindProperty("Blur"));
                 EditorGUILayout.PropertyField(serializedObject.FindProperty("ContactHardening"));
@@ -303,6 +307,7 @@ namespace VRCLightVolumes {
                 if (isDebug) {
                     DrawPointLight(origin, bounds);
                 }
+                DrawShadowClipGUI(pointLightVolume, origin, t);
 
                 Handles.zTest = UnityEngine.Rendering.CompareFunction.Greater;
                 Handles.color = new Color(1f, 1f, 0f, 0.15f);
@@ -310,6 +315,7 @@ namespace VRCLightVolumes {
                 if (isDebug) {
                     DrawPointLight(origin, bounds);
                 }
+                DrawShadowClipGUI(pointLightVolume, origin, t);
 
             } else if (pointLightVolume.Type == PointLightVolume.LightType.SpotLight) { // Spot Light Visualization
 
@@ -339,6 +345,7 @@ namespace VRCLightVolumes {
 
                 if (isDebug)
                     DrawSpotLight(origin, forward, halfAngleRad, bounds, dirs);
+                DrawShadowClipGUI(pointLightVolume, origin, t);
 
                 Handles.zTest = UnityEngine.Rendering.CompareFunction.Greater;
                 Handles.color = new Color(1f, 1f, 0f, 0.15f);
@@ -347,6 +354,7 @@ namespace VRCLightVolumes {
                 if (isDebug) {
                     DrawSpotLight(origin, forward, halfAngleRad, bounds, dirs);
                 }
+                DrawShadowClipGUI(pointLightVolume, origin, t);
 
             } else { // Area light
 
@@ -359,6 +367,7 @@ namespace VRCLightVolumes {
 
                 if(pointLightVolume.DebugRange)
                     DrawAreaLightDebug(origin, t.rotation, x, y, pointLightVolume.Color, pointLightVolume.Intensity, pointLightVolume.LightVolumeSetup.BrightnessCutoff);
+                DrawShadowClipGUI(pointLightVolume, origin, t);
 
                 Handles.zTest = UnityEngine.Rendering.CompareFunction.Greater;
                 Handles.color = new Color(1f, 1f, 0f, 0.15f);
@@ -366,6 +375,7 @@ namespace VRCLightVolumes {
 
                 if (pointLightVolume.DebugRange)
                     DrawAreaLightDebug(origin, t.rotation, x, y, pointLightVolume.Color, pointLightVolume.Intensity, pointLightVolume.LightVolumeSetup.BrightnessCutoff);
+                DrawShadowClipGUI(pointLightVolume, origin, t);
 
             }
 
@@ -402,6 +412,40 @@ namespace VRCLightVolumes {
             Handles.DrawWireArc(center, Vector3.right, Vector3.up, 360, radius);
             Handles.DrawWireArc(center, Vector3.up, Vector3.forward, 360, radius);
             Handles.DrawWireArc(center, Vector3.forward, Vector3.right, 360, radius);
+        }
+
+        // Draws the manually controlled shadow bake near-far space.
+        private void DrawShadowClipGUI(PointLightVolume pointLightVolume, Vector3 origin, Transform transform) {
+            if (!pointLightVolume.Shadows) return;
+
+            Handles.color = Handles.zTest == UnityEngine.Rendering.CompareFunction.LessEqual ? _shadowClipVisibleColor : _shadowClipHiddenColor;
+            float nearClip = pointLightVolume.GetShadowNearClip();
+            float farClip = pointLightVolume.GetShadowFarClip();
+            bool drawSpotFrustum = pointLightVolume.Type == PointLightVolume.LightType.SpotLight && !pointLightVolume.ShouldBakeCubemapShadows();
+            if (!drawSpotFrustum) {
+                DrawPointLight(origin, nearClip);
+                DrawPointLight(origin, farClip);
+                return;
+            }
+
+            float halfAngleRad = Mathf.Clamp(pointLightVolume.Angle, 0.1f, 179.9f) * 0.5f * Mathf.Deg2Rad;
+            DrawSpotShadowClip(origin, transform.forward, transform.right, transform.up, halfAngleRad, nearClip, farClip);
+        }
+
+        // Draws a truncated spotlight shadow frustum between the near and far clip planes.
+        private void DrawSpotShadowClip(Vector3 origin, Vector3 forward, Vector3 right, Vector3 up, float halfAngleRad, float nearClip, float farClip) {
+            float tanHalfAngle = Mathf.Tan(halfAngleRad);
+            Vector3 nearCenter = origin + forward * nearClip;
+            Vector3 farCenter = origin + forward * farClip;
+            float nearRadius = nearClip * tanHalfAngle;
+            float farRadius = farClip * tanHalfAngle;
+
+            Handles.DrawWireDisc(nearCenter, forward, nearRadius);
+            Handles.DrawWireDisc(farCenter, forward, farRadius);
+            Handles.DrawLine(nearCenter + right * nearRadius, farCenter + right * farRadius);
+            Handles.DrawLine(nearCenter - right * nearRadius, farCenter - right * farRadius);
+            Handles.DrawLine(nearCenter + up * nearRadius, farCenter + up * farRadius);
+            Handles.DrawLine(nearCenter - up * nearRadius, farCenter - up * farRadius);
         }
 
         private void DrawAreaLight(Vector3 center, Quaternion rotation, float width, float height) {

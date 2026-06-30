@@ -92,7 +92,6 @@ namespace VRCLightVolumes {
         private float _bakeNearClip = 0.01f;
         private float _bakeFieldOfView = 90f;
         private float _bakeTanHalfFov = 1f;
-        private float _publishedFarClip = 0f;
         private float _bakeBias = 0f;
         private float _bakeBlur = 0f;
         private float _bakeBlurDepth = 0f;
@@ -107,7 +106,7 @@ namespace VRCLightVolumes {
         private bool _useCubemapShadow = true;
         private bool _useBlur = false;
         private bool _useSphericalBlur = false;
-        private bool _hasPublishedFarClip = false;
+        private bool _bakeRangeChanged = false;
         private Vector3 _cycleBakePosition = Vector3.zero;
         private Quaternion _cycleBakeRotation = Quaternion.identity;
 
@@ -344,8 +343,6 @@ namespace VRCLightVolumes {
                 _completedOutputTexture = null;
                 _completedOutputBaseSlice = -1;
                 _cycleBakeSettingsValid = false;
-                _publishedFarClip = 0f;
-                _hasPublishedFarClip = false;
                 if (_target != null) {
 #if UDONSHARP
                     _target.SetProgramVariable("IsRangeDirty", true);
@@ -387,7 +384,8 @@ namespace VRCLightVolumes {
         // Copies target bake settings into local fields once before the bake hot path runs
         private void RefreshBakeSettings() {
             if (_target == null) return;
-            if (_target.IsRangeDirty) RefreshTargetRangeForBake();
+            _bakeRangeChanged = _target.IsRangeDirty;
+            if (_bakeRangeChanged) RefreshTargetRangeForBake();
             _bakeResolution = Resolution;
             _bakeCullingMask = _target.LayerMask;
             _bakeNearClip = Mathf.Max(_target.NearClip, 0.0001f);
@@ -395,9 +393,8 @@ namespace VRCLightVolumes {
             _bakeBlur = _target.Blur;
             _bakeBlurDepth = _target.ContactHardening;
             float targetFarClip = _target.FarClip;
-            bool useTargetFarClip = targetFarClip > 0f && (!_hasPublishedFarClip || Mathf.Abs(targetFarClip - _publishedFarClip) > 0.0001f);
-            _bakeFarClip = useTargetFarClip ? Mathf.Max(targetFarClip, 0.0001f) : Mathf.Sqrt(Mathf.Max(_target.SquaredRange, 0.000001f));
-            if (_bakeNearClip >= _bakeFarClip) _bakeNearClip = _bakeFarClip * 0.5f;
+            _bakeFarClip = targetFarClip > 0f ? Mathf.Max(targetFarClip, 0.0001f) : Mathf.Sqrt(Mathf.Max(_target.SquaredRange, 0.000001f));
+            if (_bakeNearClip >= _bakeFarClip) _bakeFarClip = _bakeNearClip + 0.0001f;
             bool useCubemapShadow = _target.LightType != 1 || _target.ShadowMapUsesCubemap; // 1: spot
             int bakeSliceCount = useCubemapShadow ? 6 : 1;
             bool useSphericalBlur = SphericalBlur;
@@ -597,7 +594,7 @@ namespace VRCLightVolumes {
             bool bakePositionChanged = _target.ShadowBakePosition != bakePosition;
             Quaternion bakeRotation = _targetTransform.rotation;
             bool bakeRotationChanged = _target.ShadowBakeRotation != bakeRotation;
-            bool metadataChanged = sourceChanged || _target.FarClip != farClip || _target.NearClip != nearClip || (_target.WorldSpaceShadows && (bakePositionChanged || bakeRotationChanged));
+            bool metadataChanged = sourceChanged || _bakeRangeChanged || _target.NearClip != nearClip || (_target.WorldSpaceShadows && (bakePositionChanged || bakeRotationChanged));
 
             if (_target.ShadowMapID < 0) {
 #if UDONSHARP
@@ -631,13 +628,6 @@ namespace VRCLightVolumes {
                 _target.Bias = bias;
 #endif
             }
-            if (_target.FarClip != farClip) {
-#if UDONSHARP
-                _target.SetProgramVariable("FarClip", farClip);
-#else
-                _target.FarClip = farClip;
-#endif
-            }
             if (_target.NearClip != nearClip) {
 #if UDONSHARP
                 _target.SetProgramVariable("NearClip", nearClip);
@@ -645,8 +635,6 @@ namespace VRCLightVolumes {
                 _target.NearClip = nearClip;
 #endif
             }
-            _publishedFarClip = farClip;
-            _hasPublishedFarClip = true;
             if (bakePositionChanged) {
 #if UDONSHARP
                 _target.SetProgramVariable("ShadowBakePosition", bakePosition);
@@ -661,6 +649,7 @@ namespace VRCLightVolumes {
                 _target.ShadowBakeRotation = bakeRotation;
 #endif
             }
+            _bakeRangeChanged = false;
             return metadataChanged;
         }
 

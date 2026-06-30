@@ -432,17 +432,19 @@ namespace VRCLightVolumes {
         }
 
         // Sets shadow bake and projection parameters without rebuilding unrelated light data
-        public void SetShadowSettings(float shadowMapID, bool worldSpaceShadows, int layerMask, float nearClip, float bias, float blur, float contactHardening) {
+        public void SetShadowSettings(float shadowMapID, bool worldSpaceShadows, int layerMask, float nearClip, float farClip, float bias, float blur, float contactHardening) {
             float safeNearClip = Mathf.Max(nearClip, 0.0001f);
+            float safeFarClip = farClip > 0f ? Mathf.Max(farClip, safeNearClip + 0.0001f) : 0f;
             float safeBias = Mathf.Max(bias, 0f);
             float safeBlur = Mathf.Max(blur, 0f);
             float safeContactHardening = Mathf.Clamp01(contactHardening);
-            bool shaderDataChanged = ShadowMapID != shadowMapID || WorldSpaceShadows != worldSpaceShadows || NearClip != safeNearClip;
+            bool shaderDataChanged = ShadowMapID != shadowMapID || WorldSpaceShadows != worldSpaceShadows || NearClip != safeNearClip || FarClip != safeFarClip;
             if (!shaderDataChanged && LayerMask == layerMask && Bias == safeBias && Blur == safeBlur && ContactHardening == safeContactHardening) return;
             ShadowMapID = shadowMapID;
             WorldSpaceShadows = worldSpaceShadows;
             LayerMask = layerMask;
             NearClip = safeNearClip;
+            FarClip = safeFarClip;
             Bias = safeBias;
             Blur = safeBlur;
             ContactHardening = safeContactHardening;

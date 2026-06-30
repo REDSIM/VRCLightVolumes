@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.IO;
 using System.Reflection;
 using NUnit.Framework;
 using UnityEngine;
@@ -9,6 +10,7 @@ namespace VRCLightVolumes.Tests {
     public class LightVolumeUdonEditorTests {
         private const float Epsilon = 0.0001f;
         private const string CustomRenderTextureInfoProperty = "_CustomRenderTextureInfo";
+        private const string RuntimeShadowBlurShaderPath = "Shaders/Internal/PointLightShadowRuntimeBlur.shader";
 
         private static readonly int _lightVolumeInvLocalEdgeSmoothID = Shader.PropertyToID("_UdonLightVolumeInvLocalEdgeSmooth");
         private static readonly int _lightVolumeColorID = Shader.PropertyToID("_UdonLightVolumeColor");
@@ -164,6 +166,15 @@ namespace VRCLightVolumes.Tests {
             MethodInfo method = typeof(LightVolumeUdonComponentSanitizer).GetMethod("MigrateLegacyLightVolumeData", _staticMigrationMethodFlags, null, new[] { typeof(LightVolumeInstance), typeof(string) }, null);
             Assert.That(method, Is.Not.Null);
             return (bool)method.Invoke(null, new object[] { volume, serializedBlock });
+        }
+
+        // Reads the runtime blur shader from either a Unity project root or this package directory.
+        private static string ReadRuntimeShadowBlurShaderSource() {
+            string projectPackagePath = Path.Combine("Packages", "red.sim.lightvolumes", RuntimeShadowBlurShaderPath);
+            string packagePath = RuntimeShadowBlurShaderPath;
+            string shaderPath = File.Exists(projectPackagePath) ? projectPackagePath : packagePath;
+            Assert.That(File.Exists(shaderPath), Is.True, shaderPath + " was not found");
+            return File.ReadAllText(shaderPath);
         }
 
         // Verifies that empty light-volume and point-light families do not block each other.
@@ -1259,9 +1270,9 @@ namespace VRCLightVolumes.Tests {
             Assert.That((float)bakeFarClipField.GetValue(baker), Is.EqualTo(3).Within(Epsilon));
         }
 
-        // Verifies runtime-published FarClip remains metadata and does not become a stale manual override.
+        // Verifies runtime shadow baking treats FarClip as an input setting and does not publish calculated range back to the target.
         [Test]
-        public void RuntimeShadowBakerRefreshesPublishedFarClipAfterRangeChanges() {
+        public void RuntimeShadowBakerDoesNotOverwriteTargetFarClip() {
             LightVolumeManager manager = CreateManager("Runtime Shadow Published Far Clip Manager", false);
             PointLightVolumeInstance point = CreatePointLight(manager, "Runtime Shadow Published Far Clip Light", true);
             point.SquaredRange = 64;
@@ -1288,15 +1299,21 @@ namespace VRCLightVolumes.Tests {
             float firstFarClip = (float)bakeFarClipField.GetValue(baker);
             Assert.That(firstFarClip, Is.EqualTo(8).Within(Epsilon));
             Assert.That((bool)applyMethod.Invoke(baker, new object[] { Vector3.zero, firstFarClip, 0.01f, 0.1f, false }), Is.True);
-            Assert.That(point.FarClip, Is.EqualTo(8).Within(Epsilon));
+            Assert.That(point.FarClip, Is.EqualTo(0).Within(Epsilon));
 
             point.SquaredRange = 4;
             point.IsRangeDirty = false;
             refreshSettingsMethod.Invoke(baker, null);
             float secondFarClip = (float)bakeFarClipField.GetValue(baker);
             Assert.That(secondFarClip, Is.EqualTo(2).Within(Epsilon));
-            Assert.That((bool)applyMethod.Invoke(baker, new object[] { Vector3.zero, secondFarClip, 0.01f, 0.1f, false }), Is.True);
-            Assert.That(point.FarClip, Is.EqualTo(2).Within(Epsilon));
+            applyMethod.Invoke(baker, new object[] { Vector3.zero, secondFarClip, 0.01f, 0.1f, false });
+            Assert.That(point.FarClip, Is.EqualTo(0).Within(Epsilon));
+
+            point.FarClip = 5;
+            refreshSettingsMethod.Invoke(baker, null);
+            Assert.That((float)bakeFarClipField.GetValue(baker), Is.EqualTo(5).Within(Epsilon));
+            applyMethod.Invoke(baker, new object[] { Vector3.zero, 5f, 0.01f, 0.1f, false });
+            Assert.That(point.FarClip, Is.EqualTo(5).Within(Epsilon));
         }
 
         // Verifies runtime shadow baking uses the target light bias so it matches editor shadow bakes.
@@ -1454,6 +1471,87 @@ namespace VRCLightVolumes.Tests {
             Assert.That(spot.ShadowMapTextureHasDepthSlices, Is.False);
         }
 
+        // Verifies runtime-selected blur variants are kept in player builds instead of relying on editor-only shader_feature fallback.
+        [Test]
+        public void RuntimeShadowBlurShaderKeepsRuntimeSpotVariantsInBuild() {
+            string shaderSource = ReadRuntimeShadowBlurShaderSource();
+
+            Assert.That(shaderSource, Does.Contain("#pragma multi_compile_local_fragment __ VRCLV_RUNTIME_SHADOW_BLUR_DIRECT"));
+            Assert.That(shaderSource, Does.Contain("#pragma multi_compile_local_fragment __ VRCLV_RUNTIME_SHADOW_BLUR_SPHERICAL"));
+        }
+
+        // Verifies runtime blur radius is normalized by resolution before shader sampling.
+        [Test]
+        public void RuntimeShadowBlurMaterialKeepsEffectiveRadiusStableAcrossResolution() {
+            GameObject bakerObject = CreateGameObject("Runtime Shadow Blur Resolution Baker", true);
+            PointLightShadowRuntimeBaker baker = bakerObject.AddComponent<PointLightShadowRuntimeBaker>();
+            Material blurMaterial = CreateMaterial("Hidden/VRCLV/PointLightShadowRuntimeBlur");
+
+            MethodInfo initializeShaderPropertiesMethod = typeof(PointLightShadowRuntimeBaker).GetMethod("InitializeShaderProperties", _lifecycleMethodFlags);
+            MethodInfo prepareShadowBlurMaterialMethod = typeof(PointLightShadowRuntimeBaker).GetMethod("PrepareShadowBlurMaterial", _lifecycleMethodFlags);
+            FieldInfo shadowBlurMaterialField = typeof(PointLightShadowRuntimeBaker).GetField("_shadowBlurMaterial", _lifecycleMethodFlags);
+            FieldInfo useBlurField = typeof(PointLightShadowRuntimeBaker).GetField("_useBlur", _lifecycleMethodFlags);
+            FieldInfo bakeBlurField = typeof(PointLightShadowRuntimeBaker).GetField("_bakeBlur", _lifecycleMethodFlags);
+            FieldInfo bakeBlurDepthField = typeof(PointLightShadowRuntimeBaker).GetField("_bakeBlurDepth", _lifecycleMethodFlags);
+            FieldInfo bakeResolutionField = typeof(PointLightShadowRuntimeBaker).GetField("_bakeResolution", _lifecycleMethodFlags);
+            FieldInfo useCubemapShadowField = typeof(PointLightShadowRuntimeBaker).GetField("_useCubemapShadow", _lifecycleMethodFlags);
+            FieldInfo bakeTanHalfFovField = typeof(PointLightShadowRuntimeBaker).GetField("_bakeTanHalfFov", _lifecycleMethodFlags);
+            Assert.That(initializeShaderPropertiesMethod, Is.Not.Null);
+            Assert.That(prepareShadowBlurMaterialMethod, Is.Not.Null);
+            Assert.That(shadowBlurMaterialField, Is.Not.Null);
+            Assert.That(useBlurField, Is.Not.Null);
+            Assert.That(bakeBlurField, Is.Not.Null);
+            Assert.That(bakeBlurDepthField, Is.Not.Null);
+            Assert.That(bakeResolutionField, Is.Not.Null);
+            Assert.That(useCubemapShadowField, Is.Not.Null);
+            Assert.That(bakeTanHalfFovField, Is.Not.Null);
+
+            initializeShaderPropertiesMethod.Invoke(baker, null);
+            shadowBlurMaterialField.SetValue(baker, blurMaterial);
+            useBlurField.SetValue(baker, true);
+            bakeBlurField.SetValue(baker, 1f);
+            bakeBlurDepthField.SetValue(baker, 0f);
+            useCubemapShadowField.SetValue(baker, false);
+
+            bakeTanHalfFovField.SetValue(baker, 0.25f);
+            bakeResolutionField.SetValue(baker, 64);
+            Assert.That((bool)prepareShadowBlurMaterialMethod.Invoke(baker, null), Is.True);
+            float lowResolutionEffectiveRadius = blurMaterial.GetFloat("_BlurRadius") * blurMaterial.GetFloat("_InvResolution");
+            float narrowTanHalfFov = blurMaterial.GetFloat("_ShadowTanHalfFov");
+            float narrowAngleProjectedRadius = lowResolutionEffectiveRadius / narrowTanHalfFov;
+            float narrowAnglePhysicalRadius = narrowAngleProjectedRadius * narrowTanHalfFov;
+
+            bakeTanHalfFovField.SetValue(baker, 1f);
+            bakeResolutionField.SetValue(baker, 256);
+            Assert.That((bool)prepareShadowBlurMaterialMethod.Invoke(baker, null), Is.True);
+            float highResolutionEffectiveRadius = blurMaterial.GetFloat("_BlurRadius") * blurMaterial.GetFloat("_InvResolution");
+            float wideTanHalfFov = blurMaterial.GetFloat("_ShadowTanHalfFov");
+            float wideAngleProjectedRadius = highResolutionEffectiveRadius / wideTanHalfFov;
+            float wideAnglePhysicalRadius = wideAngleProjectedRadius * wideTanHalfFov;
+
+            Assert.That(blurMaterial.IsKeywordEnabled("VRCLV_RUNTIME_SHADOW_BLUR_DIRECT"), Is.True);
+            Assert.That(blurMaterial.GetFloat("_ShadowTanHalfFov"), Is.EqualTo(1f).Within(Epsilon));
+            Assert.That(lowResolutionEffectiveRadius, Is.EqualTo(highResolutionEffectiveRadius).Within(Epsilon));
+            Assert.That(narrowAngleProjectedRadius, Is.GreaterThan(wideAngleProjectedRadius));
+            Assert.That(narrowAnglePhysicalRadius, Is.EqualTo(wideAnglePhysicalRadius).Within(Epsilon));
+        }
+
+        // Verifies planar runtime Spot Light blur compensates projection scale so changing the cone angle keeps blur width stable.
+        [Test]
+        public void RuntimePlanarSpotBlurCompensatesSpotAngle() {
+            string shaderSource = ReadRuntimeShadowBlurShaderSource();
+            int radiusMethodStart = shaderSource.IndexOf("float RuntimeBlurRadius", System.StringComparison.Ordinal);
+            int stepMethodStart = shaderSource.IndexOf("float2 RuntimeBlurStep", System.StringComparison.Ordinal);
+            int stepMethodEnd = shaderSource.IndexOf("float4 BlurArrayDirect", System.StringComparison.Ordinal);
+            Assert.That(radiusMethodStart, Is.GreaterThanOrEqualTo(0));
+            Assert.That(stepMethodStart, Is.GreaterThan(radiusMethodStart));
+            Assert.That(stepMethodEnd, Is.GreaterThan(stepMethodStart));
+
+            string planarRuntimeBlurSource = shaderSource.Substring(radiusMethodStart, stepMethodEnd - radiusMethodStart);
+            Assert.That(planarRuntimeBlurSource, Does.Contain("rcp(max(_ShadowTanHalfFov"));
+            Assert.That(planarRuntimeBlurSource, Does.Contain("spotScale"));
+        }
+
         // Verifies runtime shadow baking reports metadata changes so manager globals can refresh after the first bake.
         [Test]
         public void RuntimeShadowBakerDetectsRealtimeShadowMetadataChanges() {
@@ -1467,6 +1565,7 @@ namespace VRCLightVolumes.Tests {
             baker.TargetPointLightVolume = point;
             baker.Realtime = true;
             AddRuntimeShadowCamera(baker);
+            point.FarClip = 12f;
 
             MethodInfo cacheMethod = typeof(PointLightShadowRuntimeBaker).GetMethod("CacheRuntimeReferences", _lifecycleMethodFlags);
             MethodInfo refreshSettingsMethod = typeof(PointLightShadowRuntimeBaker).GetMethod("RefreshBakeSettings", _lifecycleMethodFlags);

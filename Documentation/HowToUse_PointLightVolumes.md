@@ -8,6 +8,7 @@
 |[Regular Light Volumes](../Documentation/HowToUse_RegularLightVolumes.md)|
 |**Point Light Volumes**<br />• [Point Light Volumes Placement](#Point-Light-Volumes-Placement)<br />• [Light Projection](#Light-Projection)<br />• [Point Light Volume Component Description](#Point-Light-Volume-Component-Description)|
 |[Point Light Volume Shadows](../Documentation/HowToUse_Shadows.md)|
+|[Point Light Material Sources](../Documentation/HowToUse_PointLightMaterialSources.md)|
 |[Area Light Emission](../Documentation/HowToUse_AreaLightEmission.md)|
 |[Audio Link Integration](../Documentation/HowToUse_AudioLinkIntegration.md)|
 |[TV Screens Integration](../Documentation/HowToUse_TVScreensIntegration.md)|
@@ -94,6 +95,8 @@ If you want just to project a light cookie texture, you can use `Custom` project
 Point Light in `Custom` projection mode can project a cubemap instead of a regular cookie. So it's a perfect solution to make disco balls, lamps that projects stars or anything else you want.
 
 Area Lights do not expose the `Projection` dropdown. Assigning a `Cookie` source automatically enables textured Area Light Emission. Close to the light it keeps the rectangular texture detail, and with distance it blends through mip levels toward the average emitted color.
+
+If the projection source is a Material, see [Point Light Material Sources](../Documentation/HowToUse_PointLightMaterialSources.md) for the required shader contract, cubemap face layout and single-slice cookie behavior.
 
 ### Projection Texture Resolution
 

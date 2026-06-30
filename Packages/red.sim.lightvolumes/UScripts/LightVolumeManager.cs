@@ -156,9 +156,9 @@ namespace VRCLightVolumes {
         private int[] _pointLightShadowIDs = new int[0];
         private int[] _shadowSourceTypes = new int[0]; // Source types per point light: 0 = none, 1 = cubemap texture, 2 = cubemap material, 3 = single texture, 4 = single material
         [HideInInspector] public bool HasAutoShadowTextureUpdates = false;
-
-        // Dummy RT required by VRCGraphics material blits when a material generates pixels without a real input texture
-        private RenderTexture _dummyRT;
+#if UDONSHARP
+        private RenderTexture _dummyRT; // Small source texture used only for Udon destination-binding blits
+#endif
 
 #endregion
 
@@ -598,10 +598,12 @@ namespace VRCLightVolumes {
                 ReleaseRuntimeRenderTexture(ShadowTextures);
                 ShadowTextures = null;
             }
+#if UDONSHARP
             if (_dummyRT != null) {
                 ReleaseRuntimeRenderTexture(_dummyRT);
                 _dummyRT = null;
             }
+#endif
             DestroyCubemapFaceRuntimeMaterial();
         }
 #endif
@@ -1329,11 +1331,7 @@ namespace VRCLightVolumes {
             if (!EnsureCubemapFaceMaterial()) return;
             CubemapFaceMaterial.SetTexture(_cubemapSourceTexID, sourceTexture);
             CubemapFaceMaterial.SetInt(_cubemapFaceIndexID, Mathf.Clamp(sourceFace, 0, 5));
-            Texture blitSource = sourceTexture;
-#if UDONSHARP
-            blitSource = GetMaterialBlitInputTexture();
-#endif
-            BlitMaterialToSlice(blitSource, CubemapFaceMaterial, destination, targetSlice);
+            BlitMaterialToSlice(null, CubemapFaceMaterial, destination, targetSlice);
         }
 
         // Writes a six-face cubemap texture source into consecutive destination array slices
@@ -1369,32 +1367,25 @@ namespace VRCLightVolumes {
             _customRenderTextureInfo = new Vector4(destination.width, destination.height, infoDepth, infoSlice);
             sourceMaterial.SetVector("_CustomRenderTextureInfo", _customRenderTextureInfo);
 #if UDONSHARP
-            Texture blitSource = GetMaterialBlitInputTexture();
-            sourceMaterial.SetTexture(_cubemapMainTexID, blitSource);
+            Texture blitSource = sourceMaterial.GetTexture(_cubemapMainTexID);
 #else
             Texture blitSource = null;
 #endif
             BlitMaterialToSlice(blitSource, sourceMaterial, destination, targetSlice);
         }
 
-#if UDONSHARP
-        // Returns a stable dummy RT used only to bind the active destination for material-only Udon blits
-        private Texture GetMaterialBlitInputTexture() {
-            if (_dummyRT != null) return _dummyRT;
-            _dummyRT = new RenderTexture(1, 1, 0, RenderTextureFormat.ARGB32, RenderTextureReadWrite.Linear);
-            _dummyRT.dimension = TextureDimension.Tex2D;
-            _dummyRT.useMipMap = false;
-            _dummyRT.autoGenerateMips = false;
-            _dummyRT.Create();
-            return _dummyRT;
-        }
-#endif
-
         // Renders one material pass into a destination texture-array slice using the active runtime API
         private void BlitMaterialToSlice(Texture sourceTexture, Material material, RenderTexture destination, int targetSlice) {
 #if UDONSHARP
             // Udon VRCGraphics needs a separate destination-binding blit before rendering the material into the selected slice
-            VRCGraphics.Blit(sourceTexture, destination, 0, targetSlice);
+            if (_dummyRT == null) {
+                _dummyRT = new RenderTexture(1, 1, 0, RenderTextureFormat.ARGB32, RenderTextureReadWrite.Linear);
+                _dummyRT.dimension = TextureDimension.Tex2D;
+                _dummyRT.useMipMap = false;
+                _dummyRT.autoGenerateMips = false;
+                _dummyRT.Create();
+            }
+            VRCGraphics.Blit(_dummyRT, destination, 0, targetSlice);
             VRCGraphics.Blit(sourceTexture, material, 0, targetSlice);
 #else
             // Unity Graphics can bind the target slice directly, so the material pass can render in one blit

@@ -8,6 +8,7 @@
 |[Regular Light Volumes](../Documentation/HowToUse_RegularLightVolumes.md)|
 |[Point Light Volumes](../Documentation/HowToUse_PointLightVolumes.md)|
 |**Point Light Volume Shadows**<br />• [Shadow Types](#Shadow-Types)<br />• [Baked Shadows Setup](#Baked-Shadows-Setup)<br />• [Shadow Stability Tuning](#Shadow-Stability-Tuning)<br />• [Realtime Shadow Baker](#Realtime-Shadow-Baker)<br />• [Runtime Blur Modes](#Runtime-Blur-Modes)<br />• [Runtime Script Control](#Runtime-Script-Control)<br />• [Performance Notes](#Performance-Notes)<br />• [Shadow Parameters](#Shadow-Parameters)|
+|[Point Light Material Sources](../Documentation/HowToUse_PointLightMaterialSources.md)|
 |[Area Light Emission](../Documentation/HowToUse_AreaLightEmission.md)|
 |[Audio Link Integration](../Documentation/HowToUse_AudioLinkIntegration.md)|
 |[TV Screens Integration](../Documentation/HowToUse_TVScreensIntegration.md)|
@@ -43,6 +44,8 @@ This is the most expensive shadow mode. It renders one or more shadow cameras, e
 It's a highly advanced feature and not something you really need unless you know what you're doing! 
 The `Shadow Map` field can accept a Cubemap, Texture2DArray, RenderTexture, or Material. RenderTextures and Materials can be copied into the shared shadow texture array at runtime when `Auto Update Textures` is enabled in **Light Volume Setup**. In the editor, Point Light Volume automatically marks RenderTexture and Material shadow sources for auto-update during Udon sync.
 This mode is useful when another system already produces a shadow-like texture. If you only need static shadows, use editor baking instead.
+
+Material shadow sources must output VRC Light Volumes EVSM moments, not a regular visibility mask. See [Point Light Material Sources](../Documentation/HowToUse_PointLightMaterialSources.md) for the required channel layout, cubemap face order and single-slice projection rules.
 
 ## Baked Shadows Setup
 

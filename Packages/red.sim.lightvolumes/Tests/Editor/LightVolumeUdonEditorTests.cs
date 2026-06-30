@@ -11,6 +11,7 @@ namespace VRCLightVolumes.Tests {
         private const float Epsilon = 0.0001f;
         private const string CustomRenderTextureInfoProperty = "_CustomRenderTextureInfo";
         private const string RuntimeShadowBlurShaderPath = "Shaders/Internal/PointLightShadowRuntimeBlur.shader";
+        private const string LightVolumeManagerSourcePath = "UScripts/LightVolumeManager.cs";
 
         private static readonly int _lightVolumeInvLocalEdgeSmoothID = Shader.PropertyToID("_UdonLightVolumeInvLocalEdgeSmooth");
         private static readonly int _lightVolumeColorID = Shader.PropertyToID("_UdonLightVolumeColor");
@@ -175,6 +176,15 @@ namespace VRCLightVolumes.Tests {
             string shaderPath = File.Exists(projectPackagePath) ? projectPackagePath : packagePath;
             Assert.That(File.Exists(shaderPath), Is.True, shaderPath + " was not found");
             return File.ReadAllText(shaderPath);
+        }
+
+        // Reads the runtime manager source from either a Unity project root or this package directory.
+        private static string ReadLightVolumeManagerSource() {
+            string projectPackagePath = Path.Combine("Packages", "red.sim.lightvolumes", LightVolumeManagerSourcePath);
+            string packagePath = LightVolumeManagerSourcePath;
+            string sourcePath = File.Exists(projectPackagePath) ? projectPackagePath : packagePath;
+            Assert.That(File.Exists(sourcePath), Is.True, sourcePath + " was not found");
+            return File.ReadAllText(sourcePath);
         }
 
         // Verifies that empty light-volume and point-light families do not block each other.
@@ -1478,6 +1488,19 @@ namespace VRCLightVolumes.Tests {
 
             Assert.That(shaderSource, Does.Contain("#pragma multi_compile_local_fragment __ VRCLV_RUNTIME_SHADOW_BLUR_DIRECT"));
             Assert.That(shaderSource, Does.Contain("#pragma multi_compile_local_fragment __ VRCLV_RUNTIME_SHADOW_BLUR_SPHERICAL"));
+        }
+
+        // Verifies material-source blits use dummy only for destination binding and keep _MainTex as the generator source.
+        [Test]
+        public void MaterialSourceBlitPreservesMainTexInput() {
+            string managerSource = ReadLightVolumeManagerSource();
+
+            Assert.That(managerSource, Does.Contain("Texture blitSource = sourceMaterial.GetTexture(_cubemapMainTexID);"));
+            Assert.That(managerSource, Does.Contain("VRCGraphics.Blit(_dummyRT, destination, 0, targetSlice);"));
+            Assert.That(managerSource, Does.Contain("VRCGraphics.Blit(sourceTexture, material, 0, targetSlice);"));
+            Assert.That(managerSource, Does.Not.Contain("VRCGraphics.Blit(null, destination, 0, targetSlice);"));
+            Assert.That(managerSource, Does.Not.Contain("sourceMaterial.SetTexture(_cubemapMainTexID, blitSource);"));
+            Assert.That(managerSource, Does.Not.Contain("material.SetTexture(_cubemapMainTexID"));
         }
 
         // Verifies runtime blur radius is normalized by resolution before shader sampling.

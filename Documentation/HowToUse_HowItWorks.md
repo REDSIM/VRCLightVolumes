@@ -8,6 +8,7 @@
 | [Regular Light Volumes](../Documentation/HowToUse_RegularLightVolumes.md)|
 | [Point Light Volumes](../Documentation/HowToUse_PointLightVolumes.md)|
 | [Point Light Volume Shadows](../Documentation/HowToUse_Shadows.md)|
+| [Point Light Material Sources](../Documentation/HowToUse_PointLightMaterialSources.md)|
 | [Area Light Emission](../Documentation/HowToUse_AreaLightEmission.md)|
 | [Audio Link Integration](../Documentation/HowToUse_AudioLinkIntegration.md)|
 | [TV Screens Integration](../Documentation/HowToUse_TVScreensIntegration.md)|

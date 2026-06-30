@@ -8,6 +8,7 @@
 |[Regular Light Volumes](../Documentation/HowToUse_RegularLightVolumes.md)|
 |[Point Light Volumes](../Documentation/HowToUse_PointLightVolumes.md)|
 |[Point Light Volume Shadows](../Documentation/HowToUse_Shadows.md)|
+|[Point Light Material Sources](../Documentation/HowToUse_PointLightMaterialSources.md)|
 |**Area Light Emission**<br />&bull; [What It Does](#What-It-Does)<br />&bull; [Quick Setup](#Quick-Setup)<br />&bull; [Texture Sources](#Texture-Sources)<br />&bull; [Runtime Updates](#Runtime-Updates)<br />&bull; [Old Shader Fallback](#Old-Shader-Fallback)<br />&bull; [Performance Notes](#Performance-Notes)<br />&bull; [TVGI Legacy](#TVGI-Legacy)|
 |[Audio Link Integration](../Documentation/HowToUse_AudioLinkIntegration.md)|
 |[TV Screens Integration](../Documentation/HowToUse_TVScreensIntegration.md)|

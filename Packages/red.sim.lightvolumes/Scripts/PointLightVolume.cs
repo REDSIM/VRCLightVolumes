@@ -351,22 +351,17 @@ namespace VRCLightVolumes {
 
             } else {
 #endif
+#if UNITY_EDITOR
+                string serializedState = LVUtils.GetSerializedState(PointLightVolumeInstance);
+#endif
                 PointLightVolumeInstance.LightVolumeManager = LightVolumeSetup.LightVolumeManager;
 
-                PointLightVolumeInstance.IsDynamic = Dynamic;
-                PointLightVolumeInstance.Color = Color;
-                PointLightVolumeInstance.Intensity = Intensity;
-                PointLightVolumeInstance.ShadingStrength = Mathf.Clamp01(ShadingStrength);
-                PointLightVolumeInstance.SpotCookieAspect = Mathf.Max(Mathf.Abs(SpotCookieAspect), 0.001f);
-                PointLightVolumeInstance.IsRangeDirty = true;
-                PointLightVolumeInstance.ShadowMapID = GetShadowRuntimeID();
-                PointLightVolumeInstance.WorldSpaceShadows = UseWorldSpace;
-                PointLightVolumeInstance.Bias = Bias;
-                PointLightVolumeInstance.LayerMask = LayerMask.value;
-                PointLightVolumeInstance.NearClip = GetShadowNearClip();
-                PointLightVolumeInstance.FarClip = GetShadowFarClip();
-                PointLightVolumeInstance.Blur = Mathf.Max(Blur, 0);
-                PointLightVolumeInstance.ContactHardening = Mathf.Clamp01(ContactHardening);
+                PointLightVolumeInstance.SetDynamic(Dynamic);
+                PointLightVolumeInstance.SetColor(Color);
+                PointLightVolumeInstance.SetIntensity(Intensity);
+                PointLightVolumeInstance.SetShadingStrength(ShadingStrength);
+                PointLightVolumeInstance.SetSpotCookieAspect(SpotCookieAspect);
+                PointLightVolumeInstance.SetShadowSettings(GetShadowRuntimeID(), UseWorldSpace, LayerMask.value, GetShadowNearClip(), GetShadowFarClip(), Bias, Blur, ContactHardening);
                 if (syncTextureSources) SyncTextureSourcesToInstance();
 
                 bool hasProjectionSource = HasProjectionSource();
@@ -384,8 +379,7 @@ namespace VRCLightVolumes {
                 }
 
 #if UNITY_EDITOR
-                // Mark changes to ensure prefab modifications are recorded
-                LVUtils.MarkDirty(PointLightVolumeInstance);
+                LVUtils.MarkDirtyIfSerializedStateChanged(PointLightVolumeInstance, serializedState);
 #endif
 
 #if UDONSHARP

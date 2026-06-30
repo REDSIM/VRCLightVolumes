@@ -139,6 +139,61 @@ namespace VRCLightVolumes.Tests {
             Assert.That(instance.LightType, Is.EqualTo(2)); // 2: area
         }
 
+        // Verifies no-op LightVolume sync does not dirty the runtime Udon instance after scene load.
+        [Test]
+        public void LightVolumeNoOpSyncDoesNotDirtyRuntimeInstance() {
+            GameObject setupObject = CreateGameObject("No Op Light Volume Setup", true);
+            LightVolumeSetup setup = setupObject.AddComponent<LightVolumeSetup>();
+            setup.SetupDependencies();
+
+            GameObject lightObject = CreateGameObject("No Op Light Volume", true);
+            LightVolumeInstance instance = lightObject.AddComponent<LightVolumeInstance>();
+            LightVolume lightVolume = lightObject.AddComponent<LightVolume>();
+            lightVolume.LightVolumeSetup = setup;
+            lightVolume.LightVolumeInstance = instance;
+
+            lightVolume.SyncUdonScript();
+            EditorUtility.ClearDirty(instance);
+
+            lightVolume.SyncUdonScript();
+
+            Assert.That(EditorUtility.IsDirty(instance), Is.False);
+
+            lightVolume.Intensity = 2f;
+            lightVolume.SyncUdonScript();
+
+            Assert.That(EditorUtility.IsDirty(instance), Is.True);
+        }
+
+        // Verifies no-op PointLightVolume sync does not dirty the runtime Udon instance after scene load.
+        [Test]
+        public void PointLightVolumeNoOpSyncDoesNotDirtyRuntimeInstance() {
+            GameObject setupObject = CreateGameObject("No Op Point Light Setup", true);
+            LightVolumeSetup setup = setupObject.AddComponent<LightVolumeSetup>();
+            setup.SetupDependencies();
+
+            GameObject lightObject = CreateGameObject("No Op Point Light", true);
+            PointLightVolumeInstance instance = lightObject.AddComponent<PointLightVolumeInstance>();
+            PointLightVolume pointLight = lightObject.AddComponent<PointLightVolume>();
+            pointLight.LightVolumeSetup = setup;
+            pointLight.PointLightVolumeInstance = instance;
+
+            pointLight.SyncUdonScript();
+            instance.IsRangeDirty = false;
+            EditorUtility.ClearDirty(instance);
+
+            pointLight.SyncUdonScript();
+
+            Assert.That(EditorUtility.IsDirty(instance), Is.False);
+            Assert.That(instance.IsRangeDirty, Is.False);
+
+            pointLight.Intensity = 2f;
+            pointLight.SyncUdonScript();
+
+            Assert.That(EditorUtility.IsDirty(instance), Is.True);
+            Assert.That(instance.IsRangeDirty, Is.True);
+        }
+
         // Verifies migration re-sync rebuilds custom texture arrays from authoring PointLightVolume sources.
         [Test]
         public void MigrationAuthoringSyncRebuildsCustomTexturesFromPointSources() {
@@ -178,6 +233,42 @@ namespace VRCLightVolumes.Tests {
             Assert.That(manager.CustomTextures.width, Is.EqualTo(16));
             Assert.That(manager.CustomTextures.height, Is.EqualTo(16));
             Assert.That(GetManagerField<int>(manager, _customTexturesDepthField), Is.EqualTo(1));
+        }
+
+        // Verifies migration re-sync discovers inactive authoring Point Light Volumes missing from the setup list.
+        [Test]
+        public void MigrationAuthoringSyncDiscoversInactivePointLightVolumes() {
+            GameObject setupObject = CreateGameObject("Migration Inactive Point Setup", true);
+            LightVolumeSetup setup = setupObject.AddComponent<LightVolumeSetup>();
+            setup.SetupDependencies();
+            LightVolumeManager manager = setup.LightVolumeManager;
+            Assert.That(manager, Is.Not.Null);
+
+            GameObject lightObject = CreateGameObject("Migration Inactive Point Light", false);
+            PointLightVolumeInstance instance = lightObject.AddComponent<PointLightVolumeInstance>();
+            PointLightVolume pointLight = lightObject.AddComponent<PointLightVolume>();
+            pointLight.LightVolumeSetup = setup;
+            pointLight.PointLightVolumeInstance = instance;
+            pointLight.Type = PointLightVolume.LightType.SpotLight;
+            pointLight.Projection = PointLightVolume.LightProjection.Custom;
+            pointLight.Cookie = CreateTexture2D("Migration Inactive Cookie Source");
+
+            setup.PointLightVolumes.Clear();
+            manager.PointLightVolumeInstances = new PointLightVolumeInstance[0];
+            instance.CustomTexture = null;
+            instance.LightVolumeManager = null;
+
+            MethodInfo syncAuthoring = typeof(LightVolumeUdonComponentSanitizer).GetMethod("SyncAuthoringComponentsToMigratedRuntime", BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.That(syncAuthoring, Is.Not.Null);
+
+            syncAuthoring.Invoke(null, null);
+
+            Assert.That(setup.PointLightVolumes, Does.Contain(pointLight));
+            Assert.That(manager.PointLightVolumeInstances, Has.Member(instance));
+            Assert.That(instance.LightVolumeManager, Is.SameAs(manager));
+            Assert.That(instance.CustomTexture, Is.SameAs(pointLight.Cookie));
+            Assert.That(instance.ProjectionType, Is.EqualTo(1)); // 1: texture
+            Assert.That(instance.ProjectionMode, Is.EqualTo(2)); // 2: cookie/cubemap
         }
 
         // Verifies cubemap RenderTextures are unfolded as cubemaps instead of copied as a single 2D slice.

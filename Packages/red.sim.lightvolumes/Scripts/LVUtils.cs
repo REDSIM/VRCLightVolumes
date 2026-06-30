@@ -58,6 +58,24 @@ namespace VRCLightVolumes {
 #endif
         }
 
+        // Captures serialized editor state so no-op synchronization does not mark scenes dirty.
+        public static string GetSerializedState(Object obj) {
+#if UNITY_EDITOR
+            if (obj == null || EditorApplication.isPlayingOrWillChangePlaymode) return null;
+            return EditorJsonUtility.ToJson(obj);
+#else
+            return null;
+#endif
+        }
+
+        // Marks an object dirty only when its serialized editor state actually changed.
+        public static void MarkDirtyIfSerializedStateChanged(Object obj, string previousState) {
+#if UNITY_EDITOR
+            if (obj == null || EditorApplication.isPlayingOrWillChangePlaymode) return;
+            if (previousState == null || previousState != EditorJsonUtility.ToJson(obj)) MarkDirty(obj);
+#endif
+        }
+
         // Applies voxels to a 3D texture
         public static bool Apply3DTextureData(Texture3D texture, Color[] colors) {
             try {

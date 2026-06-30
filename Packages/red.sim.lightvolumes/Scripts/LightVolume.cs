@@ -456,6 +456,9 @@ namespace VRCLightVolumes {
                 _lightVolumeBehaviour.SendCustomEvent("__0_SetSmoothBlending");
             } else {
 #endif
+#if UNITY_EDITOR
+                string serializedState = LVUtils.GetSerializedState(LightVolumeInstance);
+#endif
                 LightVolumeInstance.LightVolumeManager = LightVolumeSetup.LightVolumeManager;
 
                 LightVolumeInstance.IsDynamic = Dynamic;
@@ -465,8 +468,7 @@ namespace VRCLightVolumes {
                 LightVolumeInstance.SetSmoothBlending(SmoothBlending);
 
 #if UNITY_EDITOR
-                // Mark changes to ensure prefab modifications are recorded
-                LVUtils.MarkDirty(LightVolumeInstance);
+                LVUtils.MarkDirtyIfSerializedStateChanged(LightVolumeInstance, serializedState);
 #endif
 
 #if UDONSHARP

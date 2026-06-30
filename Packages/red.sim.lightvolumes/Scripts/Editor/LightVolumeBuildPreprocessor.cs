@@ -45,6 +45,7 @@ namespace VRCLightVolumes {
         // Mirrors build-scene dependency preparation for editor play mode and clears temporary editor-only copies afterwards
         static void OnPlayModeStateChanged(PlayModeStateChange state) {
             if (state == PlayModeStateChange.ExitingEditMode) {
+                LightVolumeUdonComponentSanitizer.SanitizeLoadedScenes();
                 PrepareRuntimeDependenciesForOpenScenes();
             } else if (state == PlayModeStateChange.EnteredPlayMode) {
                 PrepareRuntimeDependenciesForOpenScenes();

@@ -469,6 +469,7 @@ namespace VRCLightVolumes {
                 LightVolumeSetup setup = setups[i];
                 if (!ShouldSanitizeComponent(setup)) continue;
                 setup.SetupDependencies();
+                setup.RefreshVolumesList();
                 SyncPointLightAuthoringComponents(setup);
                 setup.SyncUdonScript();
                 MarkObjectDirty(setup);

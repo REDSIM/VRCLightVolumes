@@ -11,7 +11,7 @@
 | [Area Light Emission](../Documentation/HowToUse_AreaLightEmission.md)|
 | [Audio Link Integration](../Documentation/HowToUse_AudioLinkIntegration.md)|
 | [TV Screens Integration](../Documentation/HowToUse_TVScreensIntegration.md)|
-| **How Light Volumes Work?**<br />• [Spherical Harmonics](#Spherical-Harmonics)<br />• [Light Data](#Light-Data)<br />• [Light Data Storage](#Light-Data-Storage)<br />• [Light Volumes Evaluating](#Light-Volumes-Evaluating)<br />• [Point Light Volumes](#Point-Light-Volumes)<br />• [Textured Area Light Emission](#Textured-Area-Light-Emission) |
+| **How Light Volumes Work?**<br />• [Spherical Harmonics](#Spherical-Harmonics)<br />• [Light Data](#Light-Data)<br />• [Light Data Storage](#Light-Data-Storage)<br />• [Light Volume Evaluation](#Light-Volume-Evaluation)<br />• [Specular Evaluation](#Specular-Evaluation)<br />• [Point Light Volumes](#Point-Light-Volumes)<br />• [Textured Area Light Emission](#Textured-Area-Light-Emission) |
 
 ## How Do Light Volumes Work?
 
@@ -72,6 +72,16 @@ FinalColor = L0 + dot(L1, WorldNormal);
 
 This is the fastest and simplest method of evaluating SH data. There are more advanced methods (e.g., Geomerics or ZH3), but they are more expensive.
 
+## Specular Evaluation
+
+The current `LightVolumes.cginc` has two specular paths.
+
+`LightVolumeSpecular()` and `LightVolumeSpecularDominant()` read already accumulated SH data. They are cheaper and can work with Light Volumes, Unity light probes, or any other L1 SH data, but they cannot know which individual Point Light Volume created the SH contribution.
+
+`LightVolumeSHSpecular()` samples SH and specular lighting together. Regular and additive voxel Light Volumes still use dominant SH specular, while Point Light Volumes are evaluated individually with their own direction, shadow mask, cookie/projection color, per-surface shading and source size. This lets large sources produce wider highlights and small sources produce sharper highlights.
+
+For performance, individual Point Light Volume speculars are only evaluated for visible Point Light Volumes up to `Additive Max Overdraw`. If a Point Light Volume is fully shadowed or contributes no light, its expensive specular BRDF work is skipped.
+
 ## Point Light Volumes
 
 Point Light Volumes also use SH L1 to describe lighting - but they don't store it in voxels. Instead, it's computed analytically in real time using a mathematical formula.
@@ -102,7 +112,7 @@ The `Saturate()` function clamps the value between 0 and 1. The final light colo
 
 In Light Volumes 3.0, Point Light Volumes can also apply per-surface shading and EVSM shadow maps before their SH contribution is added. Shadow maps are stored in a shared runtime texture array as warped depth moments. Point and Area lights usually use cubemap shadows, while Spot Lights can use a cheaper single projected shadow texture when the cone angle allows it.
 
-`Additive Max Overdraw` limits how many Point Light Volumes and additive Light Volumes can be accumulated for one pixel. This keeps the worst-case shader cost predictable when many dynamic lights overlap.
+`Additive Max Overdraw` limits how many Point Light Volumes and additive Light Volumes can be accumulated for one pixel. In modern `LightVolumeSHSpecular()` shaders, it also limits how many individual Point Light Volume speculars can be evaluated. This keeps the worst-case shader cost predictable when many dynamic lights overlap.
 
 ### Textured Area Light Emission
 

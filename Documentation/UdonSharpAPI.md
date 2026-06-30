@@ -50,18 +50,17 @@ Stores the Light Volume atlas, Point Light Volume texture arrays and references 
 | --- | --- |
 |`void NotifyLightVolumeChanged(LightVolumeInstance lightVolume, bool rebuildFinalData)` | Notifies the manager that a Light Volume instance changed. Instance methods call this automatically. Use `rebuildFinalData` when activation, ordering, additive state or atlas data requires a full rebuild. |
 |`void NotifyPointLightVolumeChanged(PointLightVolumeInstance pointLightVolume, bool rebuildFinalData, bool customTexturesChanged, bool shadowTexturesChanged)` | Notifies the manager that a Point Light Volume instance changed. Use the boolean flags to rebuild point light data, projection texture caches or shadow texture caches. |
-|`void InitializeLightVolume(LightVolumeInstance lightVolume)` | Registers a Light Volume instance at runtime. Called automatically by `LightVolumeInstance.Start()` / `OnEnable()` when `LightVolumeManager` is assigned. |
+|`void InitializeLightVolume(LightVolumeInstance lightVolume)` | Registers a Light Volume instance at runtime. Called automatically by `LightVolumeInstance.Start()` / `OnEnable()` when `LightVolumeManager` is assigned, and when the manager reference is assigned later. |
 |`void DeinitializeLightVolume(LightVolumeInstance lightVolume)` | Removes a Light Volume instance from the runtime registry without resizing the array. Called automatically on disable. |
-|`void InitializePointLightVolume(PointLightVolumeInstance pointLightVolume)` | Registers a Point Light Volume instance at runtime. Called automatically by `PointLightVolumeInstance.Start()` / `OnEnable()` when `LightVolumeManager` is assigned. |
+|`void InitializePointLightVolume(PointLightVolumeInstance pointLightVolume)` | Registers a Point Light Volume instance at runtime. Called automatically by `PointLightVolumeInstance.Start()` / `OnEnable()` when `LightVolumeManager` is assigned, and when the manager reference is assigned later. |
 |`void DeinitializePointLightVolume(PointLightVolumeInstance pointLightVolume, bool customTexturesChanged, bool shadowTexturesChanged)` | Removes a Point Light Volume instance from the runtime registry and optionally invalidates projection or shadow texture caches. Called automatically on disable. |
-|`void ReinitializeCustomTextures()` | Rebuilds the shared runtime texture array for Point Light Volume LUTs, cookies and cubemaps. Call this after changing projection sources manually. |
+|`void ReinitializeCustomTextures()` | Rebuilds the shared runtime texture array for Point Light Volume LUTs, cookies and cubemaps. Call this after changing projection sources manually. Sources are deduplicated by source object and auto-update mode, so the same source can have one static slice and one auto-updated slice if both modes are used. |
 |`void UpdateAutoCustomTextures()` | Updates only projection sources marked for per-frame refresh. Usually called automatically when `AutoUpdateTextures` is enabled. |
 |`void ReinitializeShadowTextures()` | Rebuilds the shared runtime texture array for Point Light Volume shadow maps. Call this after changing shadow sources manually. |
 |`void UpdateAutoShadowTextures()` | Updates only shadow sources marked for per-frame refresh. Usually called automatically when `AutoUpdateTextures` is enabled. |
 |`void UpdatePointLightShadowTextureSlice(PointLightVolumeInstance instance, int sourceSlice)` | Copies one shadow source slice into the shared shadow texture array. Runtime shadow bakers use this when they manage their own update loop. |
 |`int GetPointLightCustomID(PointLightVolumeInstance instance)` | Returns the resolved projection texture ID for a Point Light Volume instance, or `-1` if none is assigned. |
 |`void RequestUpdateVolumes()` | Schedules a Light Volume data update on the next delayed update tick. Prefer this over calling `UpdateVolumes()` repeatedly. |
-|`void UpdateProcess()` | Internal delayed Udon event that processes scheduled volume and texture updates. Usually don't call it manually. |
 |`void UpdateVolumes()` | Immediately rebuilds and uploads all Light Volume and Point Light Volume shader data. Useful when you intentionally manage updates manually instead of relying on delayed requests. |
 
 ## LightVolumeInstance
@@ -85,14 +84,12 @@ When changing a Light Volume from another Udon script, prefer the setter methods
 |`Vector3 RelativeRotationRow0` | Current volume rotation matrix row 0 relative to the rotation it was baked with. Mandatory for dynamic rotated volumes. |
 |`Vector3 RelativeRotationRow1` | Current volume rotation matrix row 1 relative to the rotation it was baked with. Mandatory for dynamic rotated volumes. |
 |`bool IsRotated` | True if there is any relative rotation. No relative rotation improves shader performance. |
-|`LightVolumeManager LightVolumeManager` | Reference to the Light Volume Manager. Needed for runtime registration and updates. |
+|`LightVolumeManager LightVolumeManager` | Reference to the Light Volume Manager. Needed for runtime registration and updates. Assigning it after `Start()` / `OnEnable()` also registers the instance automatically. |
 |`bool IsActive` | Internal active state used by the manager. It becomes false when the GameObject is inactive, intensity is zero, or color is black. |
 
 ### Public Methods
 | Public Method | Description |
 | --- | --- |
-|`void _onVarChange_Color()` | Internal Udon event used to detect direct color changes on the UdonBehaviour. Usually don't call it manually. |
-|`void _onVarChange_Intensity()` | Internal Udon event used to detect direct intensity changes on the UdonBehaviour. Usually don't call it manually. |
 |`void SetDynamic(bool isDynamic)` | Sets dynamic mode and rebuilds the manager volume list only when the value changes. |
 |`void SetAdditive(bool isAdditive)` | Sets additive mode and rebuilds the manager volume list only when the value changes. |
 |`void SetColor(Color color)` | Sets volume color, updates the internal change cache and notifies the manager only when the value changes. |
@@ -127,7 +124,7 @@ When changing a Point Light Volume from another Udon script, prefer the setter m
 |`float Height` | Area light height in meters. Affects textured Area Light emission and size-aware Area Light speculars in modern compatible shaders. |
 |`float SquaredRange` | Squared range after which the light is culled. Recalculated by the manager when `IsRangeDirty` is true. |
 |`float SquaredScale` | Average squared lossy scale of the light. `LightSourceSize` gets multiplied by it at the end. |
-|`LightVolumeManager LightVolumeManager` | Reference to the Light Volume Manager. Needed for runtime registration and updates. |
+|`LightVolumeManager LightVolumeManager` | Reference to the Light Volume Manager. Needed for runtime registration and updates. Assigning it after `Start()` / `OnEnable()` also registers the instance automatically. |
 |`bool IsActive` | Internal active state used by the manager. It becomes false when the GameObject is inactive, intensity is zero, or color is black. |
 |`Texture CustomTexture` | Texture source used by this light's active LUT, cookie or cubemap projection. |
 |`Material CustomTextureMaterial` | Material source used by this light's active LUT, cookie or cubemap projection. |
@@ -157,15 +154,12 @@ When changing a Point Light Volume from another Udon script, prefer the setter m
 ### Public Methods
 | Public Method | Description |
 | --- | --- |
-|`void _onVarChange_Color()` | Internal Udon event used to detect direct color changes on the UdonBehaviour. Usually don't call it manually. |
-|`void _onVarChange_Intensity()` | Internal Udon event used to detect direct intensity changes on the UdonBehaviour. Usually don't call it manually. |
-|`void _onVarChange_ShadingStrength()` | Internal Udon event used to detect direct shading strength changes on the UdonBehaviour. Usually don't call it manually. |
 |`void SetDynamic(bool isDynamic)` | Sets dynamic mode and rebuilds the manager light list only when the value changes. |
 |`void SetLightSourceSize(float size)` | Sets light source size, or range data for LUT mode, then marks the range dirty only when the stored size/range data changes. For non-LUT lights this also changes size-aware specular width in modern compatible shaders. |
 |`void SetLut()` | Sets this light into LUT projection mode and recalculates angle/rotation data. |
 |`void SetCustomTexture()` | Sets this light into custom cookie or cubemap projection mode using the current source fields. |
-|`void SetCustomTexture(Texture texture, bool isCubemap, bool autoUpdate)` | Assigns a texture projection source, sets projection metadata and optionally marks it for automatic runtime updates. |
-|`void SetCustomMaterial(Material material, bool autoUpdate)` | Assigns a material projection source and optionally marks it for automatic runtime updates. |
+|`void SetCustomTexture(Texture texture, bool isCubemap, bool autoUpdate)` | Assigns a texture projection source, sets projection metadata and optionally marks it for automatic runtime updates. The manager shares one runtime slice for matching source/update-mode pairs. |
+|`void SetCustomMaterial(Material material, bool autoUpdate)` | Assigns a material projection source and optionally marks it for automatic runtime updates. The manager shares one runtime slice for matching material/update-mode pairs. |
 |`void SetParametric()` | Sets this light into parametric projection mode if it is not already parametric. |
 |`void SetPointLight()` | Sets this light into Point Light type and updates position/rotation data only when needed. |
 |`void SetSpotLight(float angleDeg, float falloff)` | Sets this light into Spot Light type with angle and falloff, updating only changed shader data. |

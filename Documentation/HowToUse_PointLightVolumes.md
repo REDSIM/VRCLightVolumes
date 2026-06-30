@@ -45,6 +45,8 @@ The **more** point light volumes overlap, the **less** performance you'll have!
 
 `Light Source Size` is also important for specular highlights in modern compatible shaders. Larger sources produce wider, softer speculars and a smoother horizon fade. Smaller sources produce tighter and sharper highlights. If glossy surfaces look too sharp, too wide, or too bright near the light, tune `Light Source Size` before compensating with material smoothness.
 
+Only shaders using the current `LightVolumeSHSpecular()` path, or an equivalent ASE **Light Volume SH Specular** node, show individual source-size aware Point Light Volume speculars. Shaders that only use `LightVolumeSH()` plus `LightVolumeSpecular()` still receive Point Light Volume diffuse lighting, cookies and shadows through SH, but their specular is the cheaper SH approximation.
+
 Try not to make an insanely huge range for your lights. Use `Debug Range` flag in your Point Light Volume component to preview the region affected by your point light.
 
 If a static Point Light Volume should also affect avatars or props with no Light Volumes shader support, enable `Bake Into Probes` before baking. This bakes the point light contribution into regular Unity Light Probes. It is not needed for objects using shaders with VRC Light Volumes support.
@@ -103,6 +105,8 @@ When you assign a LUT, Cookie texture, Cubemap, Render Texture, or Material, the
 LUTs and Cookie textures share the same resolution, as they are packed into the same texture array. Cubemaps, however, require 6 slices per entry (one for each face), so each cubemap takes up six times more space than a LUT or Cookie. If your input textures have a different resolution, they will be automatically rescaled during packing. 
 
 Duplicated LUTs, Cubemaps, and Cookie textures are only uploaded to VRChat once and are reused by all lights that reference them. So don’t worry about using the same textures across multiple Point Light Volumes - it won’t increase the build size.
+
+At runtime, the shared projection texture array also deduplicates sources by both source object and auto-update mode. The same Texture, RenderTexture, Cubemap or Material with the same `autoUpdate` value shares a runtime slice between matching lights. If the same source is used with `autoUpdate = false` on one light and `autoUpdate = true` on another, the manager creates separate slices so the auto-updated copy does not overwrite the static copy.
 
 If you use a `RenderTexture` or a `Material` as the source, the shared texture array can be updated in runtime. This is controlled by `Auto Update Textures` in **Light Volume Setup**. Keep it disabled if all projection sources are static textures.
 

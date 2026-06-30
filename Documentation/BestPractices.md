@@ -4,7 +4,7 @@
 
 | Menu |
 | ----|
-| **Best Practices**<br />• [Regular Light Volumes Use Cases](#Regular-Light-Volumes-Use-Cases)<br />• [Point Light Volumes Use Cases](#Point-Light-Volumes-Use-Cases)<br />• [Area Light Emission](#Area-Light-Emission)<br />• [Point Light Volume Baked Realtime Shadows](#Point-Light-Volume-Baked-Realtime-Shadows)<br />• [Point Light Volume Realtime Shadows](#Point-Light-Volume-Realtime-Shadows)<br />• [Custom Render Textures Projections](#Custom-Render-Textures-Projections)<br />• [Naming Light Volumes](#Naming-Light-Volumes)<br />• [Volume Bounds Smoothing](#Volume-Bounds-Smoothing)<br />• [Culling Light Volumes](#Culling-Light-Volumes)<br />• [Moving Light Volumes](#Moving-Light-Volumes)<br />• [Additive Volumes](#Additive-Volumes)<br />• [Bakery Volume Rotation](#Bakery-Volume-Rotation)<br />• [Fixing Bakery Light Probes](#Fixing-Bakery-Light-Probes)<br />• [Spawning New Light Volumes In Runtime](#Spawning-New-Light-Volumes-In-Runtime) |
+| **Best Practices**<br />• [Regular Light Volumes Use Cases](#Regular-Light-Volumes-Use-Cases)<br />• [Point Light Volumes Use Cases](#Point-Light-Volumes-Use-Cases)<br />• [Shader Path Choices](#Shader-Path-Choices)<br />• [Area Light Emission](#Area-Light-Emission)<br />• [Point Light Volume Baked Realtime Shadows](#Point-Light-Volume-Baked-Realtime-Shadows)<br />• [Point Light Volume Realtime Shadows](#Point-Light-Volume-Realtime-Shadows)<br />• [Custom Render Textures Projections](#Custom-Render-Textures-Projections)<br />• [Naming Light Volumes](#Naming-Light-Volumes)<br />• [Volume Bounds Smoothing](#Volume-Bounds-Smoothing)<br />• [Culling Light Volumes](#Culling-Light-Volumes)<br />• [Moving Light Volumes](#Moving-Light-Volumes)<br />• [Additive Volumes](#Additive-Volumes)<br />• [Bakery Volume Rotation](#Bakery-Volume-Rotation)<br />• [Fixing Bakery Light Probes](#Fixing-Bakery-Light-Probes)<br />• [Spawning New Light Volumes In Runtime](#Spawning-New-Light-Volumes-In-Runtime)<br />• [Editor Workflow Notes](#Editor-Workflow-Notes) |
 
 ## Regular Light Volumes Use Cases
 
@@ -29,6 +29,14 @@
 - And much more!
 
 For glossy PBR materials, tune Point Light Volume source size intentionally. In modern compatible shaders, larger Point, Spot and Area Light sources create broader and softer specular highlights, while smaller sources create sharper highlights. Do not use `Light Source Size` only as a range control when the light is visible in reflections.
+
+## Shader Path Choices
+
+Use `LightVolumeSHSpecular()` or the ASE **Light Volume SH Specular** node on glossy PBR materials where individual Point Light Volume highlights are visible. This path gives Point Light Volumes their own source-size aware speculars, shadows, cookies and per-surface shading, but it is more expensive when many Point Light Volumes overlap.
+
+For matte, toon, particle, foliage or volumetric surfaces, prefer `LightVolumeSH()` plus your own evaluate/ramp, or `LightVolumeSH_L0()` when directionality is not important. If you only need a cheap glossy response from already accumulated SH data, use `LightVolumeSpecularDominant()` or `LightVolumeSpecular()` instead of the full SH+Specular path.
+
+Lower `Additive Max Overdraw` when overlap-heavy areas become expensive. It caps additive Light Volume accumulation, Point Light Volume diffuse contribution and individual Point Light Volume specular evaluation.
 
 ## Area Light Emission
 
@@ -84,6 +92,8 @@ With `Auto Update Textures` disabled in **Light Volume Manager**, you can triger
 
 Completely similar approach works with Point Light Volume Shadows as well.
 
+Runtime projection sources are shared by source object and auto-update mode. Several lights using the same Texture, RenderTexture, Cubemap or Material with the same `autoUpdate` value share one runtime texture-array entry. The same source used once with `autoUpdate = false` and once with `autoUpdate = true` gets separate entries, so an auto-updated copy cannot overwrite a static captured copy.
+
 ## Naming Light Volumes
 
 Ensure every Light Volume you bake has a unique game object name. The generated 3D textures inherit these names and can conflict. If you duplicate baked volumes or use prefab instances with the `Bake` flag disabled, you don’t need to rename them.
@@ -122,6 +132,14 @@ Bakery bakes L1 probes to work with "Geometrics SH Evaluation", which can cause 
 
 You can spawn and auto-register both Light Volumes and Point Light Volumes in runtime. To do that, first, setup your light volume in editor and configure it as you wish. Remove the `Light Volume` or the `Point Light Volume` authoring component from the prefab, leaving only the **Udon Sharp Instance script** there.
 
-Make sure the instance keeps a reference to the scene **Light Volume Manager**. On `Start()` or `OnEnable()`, the instance registers itself with the manager automatically. If you create or modify instances manually from another Udon script, you can use `InitializeLightVolume()` / `InitializePointLightVolume()` and `DeinitializeLightVolume()` / `DeinitializePointLightVolume()` in the **Light Volume Manager** when needed.
+Make sure the instance keeps a reference to the scene **Light Volume Manager**. On `Start()` or `OnEnable()`, the instance registers itself with the manager automatically. If the instance is spawned before the manager reference is assigned, assign `LightVolumeManager` later; the instance registers itself when that variable changes, without requiring an extra per-frame update. If you create or modify instances manually from another Udon script, you can use `InitializeLightVolume()` / `InitializePointLightVolume()` and `DeinitializeLightVolume()` / `DeinitializePointLightVolume()` in the **Light Volume Manager** when needed.
 
 If a spawned Point Light Volume uses a new cookie, cubemap, LUT, Material, RenderTexture, or shadow source, the manager may need to rebuild the shared texture arrays. You can use `ReinitializeCustomTextures()` or `ReinitializeShadowTextures()` to reinitialize it manually.
+
+When assigning projection sources at runtime with `SetCustomTexture()` or `SetCustomMaterial()`, pass `autoUpdate = true` only for sources that need per-frame refresh and keep **Auto Update Textures** enabled on the manager. Static sources should use `autoUpdate = false`. If you mix both modes on the same source object, the manager intentionally stores them in separate runtime slices.
+
+## Editor Workflow Notes
+
+Duplicating, deleting, undoing and redoing Light Volumes in the Unity Editor is supported. During Unity Undo processing, authoring components defer manager synchronization and texture reinitialization until Unity finishes the Undo operation, because Unity does not allow Transform access while `Undo.isProcessing` is true.
+
+If you write custom editor tooling around Light Volumes, avoid forcing `RefreshVolumesList()`, `SyncUdonScript()`, `ReinitializeCustomTextures()` or `ReinitializeShadowTextures()` from inside an active Undo operation. Let the setup defer the sync instead.

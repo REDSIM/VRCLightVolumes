@@ -29,6 +29,7 @@ There is a bunch of other cool assets you will get there!
 - Baked and runtime-updatable EVSM shadow maps for Point, Spot or Area lights, with automatic `Half`/`Float` precision by build target, seam-reducing spherical blur for baked shadows and optional runtime spherical blur
 - Texture, Render Texture and Material projection sources for Point Light Volumes
 - Textured Area Light emission for screens, signs and soft panels, with average-color fallback for older VRC Light Volumes shaders
+- Size-aware individual Point Light Volume speculars in current compatible shaders
 - Works with dynamic batching, which potentially increases performance
 - Works with Bakery or Unity Progressive lightmapper
 - Works with AudioLink and TV screens

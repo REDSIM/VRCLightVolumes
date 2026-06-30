@@ -20,14 +20,15 @@ There are few ASE nodes available for you for an easy integration. Look into `Pa
 
 | ASE Node | Description |
 | --- | --- |
-| Light Volume | Required to get the Spherical Harmonics components. Using the output values you get from it, you can calculate the speculars for your custom lighting setup. <br/> `AdditiveOnly` flag specifies if you need to only sample additive volumes and Point Light Volumes. Useful for static lightmapped meshes. `WorldPositionOffset` offsets only regular Light Volume sampling. `WorldNormal` provides the normalized surface direction for Point Light Volume shading when `PointLightShading` is greater than `0`. `PointLightShading` controls its strength and hardness; `0` disables it. |
-| Light Volume L0 | Required to get the L0 spherical harmonics component, or just the overall ambient color, with no directionality. This is much lighter than the LightVolume node, and recommended to use in places where there are no directionality needed. <br/> `AdditiveOnly` flag specifies if you need to only sample additive volumes and Point Light Volumes. Useful for static lightmapped meshes. `WorldPositionOffset` offsets only regular Light Volume sampling. `WorldNormal` provides the normalized surface direction for Point Light Volume shading when `PointLightShading` is greater than `0`. `PointLightShading` controls its strength and hardness; `0` disables it. |
+| Light Volume | Required to get the Spherical Harmonics components. Using the output values you get from it, you can calculate the speculars for your custom lighting setup. <br/> `AdditiveOnly` flag specifies if you need to only sample additive volumes and Point Light Volumes. Useful for static lightmapped meshes. `WorldPositionOffset` offsets voxel Light Volume sampling, but Point Light Volumes still use the real fragment position. `WorldNormal` provides the normalized surface direction for Point Light Volume shading when `PointLightShading` is greater than `0`. `PointLightShading` controls its strength and hardness; `0` disables it. |
+| Light Volume L0 | Required to get the L0 spherical harmonics component, or just the overall ambient color, with no directionality. This is much lighter than the LightVolume node, and recommended to use in places where there are no directionality needed. <br/> `AdditiveOnly` flag specifies if you need to only sample additive volumes and Point Light Volumes. Useful for static lightmapped meshes. `WorldPositionOffset` offsets voxel Light Volume sampling, but Point Light Volumes still use the real fragment position. `WorldNormal` provides the normalized surface direction for Point Light Volume shading when `PointLightShading` is greater than `0`. `PointLightShading` controls its strength and hardness; `0` disables it. |
 | Light Volume Evaluate | Calculates the final color you get from the light volume in some kind of a physically realistic way. But alternatively you can implement your own "Evaluate" function to make the result matching your toon shader, for example. <br/> You should usually multiply it by your "Albedo" and add to the final color, as an emission. |
 | Light Volume Specular | Calculates approximated speculars based on SH components. Can be used with Light Volumes or even with any other SH L1 values, like Unity default light probes. The result should be added to the final color, just like emission. You should NOT multiply this by albedo color! <br/> `Dominant Direction` flag specifies if you want to use a simpler and lighter way of generating speculars. Generates one color specular for the dominant light direction instead of three color speculars in a regular method. |
+| Light Volume SH Specular | Samples SH components and specular lighting in one node. This is the recommended PBR path when you want correct individual Point Light Volume speculars. Regular voxel Light Volumes still use dominant SH specular, while Point Light Volumes are accumulated individually with shadows, cookies, per-surface shading and source-size broadening. |
 | Is Light Volumes | Returns `0` if there are no light volumes support on the current scene, or `1` if light volumes system is provided. |
 | Light Volumes Version | Returns the light volumes version. `0` means that light volumes are not presented in the scene. `2`, `3` or any other values in future, shows the global light volumes version presented in the scene. |
 
-`Light Volume Specular SH` samples SH components and speculars in one node. This is the recommended PBR path when you want more correct individual speculars from Point Light Volumes. Regular Light Volumes still use dominant SH specular, while Point Light Volumes are accumulated individually with a GGX/Smith/Schlick specular BRDF. Point Light Volume source size is part of this calculation: larger sources create wider and softer highlights, while smaller sources create tighter highlights.
+`Light Volume SH Specular` is more expensive than the SH-only nodes in areas where several Point Light Volumes overlap, because the shader evaluates the Point Light Volume specular BRDF per visible light up to `Additive Max Overdraw`. Use it for glossy PBR surfaces where individual point light highlights matter. For matte, toon, particle or volumetric surfaces, use the SH-only or L0-only nodes when they are visually enough.
 
 ## Light Volume integration through shader code
 
@@ -64,13 +65,15 @@ Then evaluate the color with `LightVolumeEvaluate()` and **add** the resulting c
 
 ### 3. World Position Offset, Normals and Point Light Shading
 
-`worldPosOffset` is useful when you want to sample regular Light Volumes from a slightly different position, for example to reduce artifacts on custom vertex effects. This offset only affects regular voxel Light Volume sampling. Point Light Volumes still use the original `worldPos`, because their attenuation and shadows are based on the real fragment position.
+`worldPosOffset` is useful when you want to sample voxel Light Volumes from a slightly different position, for example to reduce artifacts on custom vertex effects. This offset affects regular and additive voxel Light Volume sampling. Point Light Volumes still use the original `worldPos`, because their attenuation and shadows are based on the real fragment position.
 
 `worldNormal` has a default value for SH-only functions and is required for specular functions. When `pointLightShading` is greater than `0`, `worldNormal` is used as-is and must already be valid and normalized. If you do not pass a real normal to SH-only functions, set `pointLightShading` to `0`. `worldNormal` always means the surface normal direction and should not be scaled to control Point Light Volume shading anymore.
 
 `viewDir` and any custom light direction values passed to lower-level functions must also be normalized before calling Light Volumes helpers.
 
 `pointLightShading` controls how strongly Point Light Volume contribution is shaped by `worldNormal`: `0` disables the per-surface Point Light shading, `1` is the default smooth front-to-back gradient, and values above `1` make the shading sharper. `worldNormal = 0` does not disable this path by itself. Negative values are not supported. The mask is source-size aware, so larger Point, Spot and Area Light Volumes fade more smoothly near the normal horizon. In `LightVolumeSHSpecular()`, the same size-aware mask also attenuates individual Point Light speculars smoothly.
+
+Point Light Volume shadows are already applied to the returned Point Light Volume `L0`/`L1` data. The public cginc API does not return a separate unshadowed Point Light Volume term.
 
 ### 4. Advanced Component Sampling for Stylized Shaders
 
@@ -82,7 +85,8 @@ Use these lower-level functions when you need separate control:
 | --- | --- |
 | `LV_LightVolumeRegularSH()` | Regular non-additive Light Volumes only. |
 | `LV_LightVolumeAdditiveSH()` | Additive Light Volumes only. |
-| `LV_PointLightVolumeSH()` | Point Light Volumes only, with Point Light Volume shadows already included. Pass a normalized `worldNormal` and `pointLightShading` to apply per-surface Point Light shading, or pass `0` for `pointLightShading` if your shader handles it itself. |
+| `LV_PointLightVolumeSH()` | Point Light Volumes only, with Point Light Volume shadows already included. Inputs come first: `worldPos`, normalized `worldNormal`, `pointLightShading`, then `inout` SH accumulators. |
+| `LV_PointLightVolumeSHSpecular()` | Point Light Volumes only, accumulating shadowed SH and individual specular into existing buffers. Inputs come first: `worldPos`, normalized `worldNormal`, normalized `viewDir`, `smoothness`, `f0`, `pointLightShading`, then `inout` SH/specular accumulators. |
 
 This is the same sampling order used by `LightVolumeSH()`, split into separate buffers:
 
@@ -97,7 +101,7 @@ if (_UdonLightVolumeEnabled == 0 || _UdonLightVolumeVersion < VRCLV_MIN_SUPPORTE
 } else {
     LV_LightVolumeRegularSH(worldPos + worldPosOffset, regularL0, regularL1r, regularL1g, regularL1b);
     LV_LightVolumeAdditiveSH(worldPos + worldPosOffset, additiveL0, additiveL1r, additiveL1g, additiveL1b);
-    LV_PointLightVolumeSH(worldPos, pointL0, pointL1r, pointL1g, pointL1b, worldNormal, pointLightShading);
+    LV_PointLightVolumeSH(worldPos, worldNormal, pointLightShading, pointL0, pointL1r, pointL1g, pointL1b);
 }
 
 float3 regularLight = LightVolumeEvaluate(surfaceNormal, regularL0, regularL1r, regularL1g, regularL1b);
@@ -133,6 +137,8 @@ For the new higher-quality path, use `LightVolumeSHSpecular()` instead of callin
 
 Point Light Volume size has a strong visible effect on this path. Larger `Light Source Size` values for Point and Spot Lights, and larger Width/Height values for Area Lights, produce broader and softer specular highlights. Smaller sources produce tighter highlights. Tune the light size intentionally for glossy materials instead of treating it only as a range or intensity control.
 
+This path is intentionally more expensive than `LightVolumeSpecular()` when multiple Point Light Volumes overlap, because the Point Light Volume BRDF is evaluated per light. Fully shadowed or black Point Light Volume contribution is skipped before the BRDF work, and `Additive Max Overdraw` still caps the number of Point Light Volumes processed per pixel.
+
 ```hlsl
 float3 L0, L1r, L1g, L1b, specular;
 float pointLightShading = 1;
@@ -164,7 +170,7 @@ void LightVolumeSH(float3 worldPos, out float3 L0, out float3 L1r, out float3 L1
 |`float3 worldPos` | World position of the current fragment.|
 |`out float3 L0` | Outputs ambient color of the current fragment.|
 |`out float3 L1r`<br/>`out float3 L1g`<br/>`out float3 L1b` | Outputs vectors that stores the Red, Green and Blue light directions and power, as a magnitude of these vectors.|
-|`float3 worldPosOffset` | Optional offset applied only to regular Light Volume sampling. Point Light Volumes still use `worldPos`.|
+|`float3 worldPosOffset` | Optional offset applied only to regular and additive voxel Light Volume sampling. Point Light Volumes still use `worldPos`.|
 |`float3 worldNormal` | Optional normalized world normal direction used by Point Light Volumes for per-surface shading. When `pointLightShading` is greater than `0`, this value must be valid and normalized.|
 |`float pointLightShading` | Optional non-negative Point Light Volume shading strength. `0` disables per-surface Point Light shading, `1` is the default smooth gradient, and values above `1` make it sharper.|
 
@@ -179,7 +185,7 @@ float3 LightVolumeSH_L0(float3 worldPos, float3 worldPosOffset = 0, float3 world
 | Function argument | Description |
 | --- | --- |
 |`float3 worldPos` | World position of the current fragment.|
-|`float3 worldPosOffset` | Optional offset applied only to regular Light Volume sampling.|
+|`float3 worldPosOffset` | Optional offset applied only to regular and additive voxel Light Volume sampling. Point Light Volumes still use `worldPos`.|
 |`float3 worldNormal` | Optional normalized world normal direction used by Point Light Volumes for per-surface shading. When `pointLightShading` is greater than `0`, this value must be valid and normalized.|
 |`float pointLightShading` | Optional non-negative Point Light Volume shading strength. `0` disables per-surface Point Light shading, `1` is the default smooth gradient, and values above `1` make it sharper.|
 
@@ -197,7 +203,7 @@ void LightVolumeAdditiveSH(float3 worldPos, out float3 L0, out float3 L1r, out f
 |`float3 worldPos` | World position of the current fragment.|
 |`out float3 L0` | Outputs ambient color of the current fragment.|
 |`out float3 L1r` <br/> `out float3 L1g` <br/> `out float3 L1b` | Outputs vectors that stores the Red, Green and Blue light directions and power, as a magnitude of these vectors.|
-|`float3 worldPosOffset` | Optional offset applied only to regular additive Light Volume sampling. Point Light Volumes still use `worldPos`.|
+|`float3 worldPosOffset` | Optional offset applied only to additive voxel Light Volume sampling. Point Light Volumes still use `worldPos`.|
 |`float3 worldNormal` | Optional normalized world normal direction used by Point Light Volumes for per-surface shading. When `pointLightShading` is greater than `0`, this value must be valid and normalized.|
 |`float pointLightShading` | Optional non-negative Point Light Volume shading strength. `0` disables per-surface Point Light shading, `1` is the default smooth gradient, and values above `1` make it sharper.|
 
@@ -214,7 +220,7 @@ float3 LightVolumeAdditiveSH_L0(float3 worldPos, float3 worldPosOffset = 0, floa
 | Function argument | Description |
 | --- | --- |
 |`float3 worldPos` | World position of the current fragment. |
-|`float3 worldPosOffset` | Optional offset applied only to regular additive Light Volume sampling.|
+|`float3 worldPosOffset` | Optional offset applied only to additive voxel Light Volume sampling. Point Light Volumes still use `worldPos`.|
 |`float3 worldNormal` | Optional normalized world normal direction used by Point Light Volumes for per-surface shading. When `pointLightShading` is greater than `0`, this value must be valid and normalized.|
 |`float pointLightShading` | Optional non-negative Point Light Volume shading strength. `0` disables per-surface Point Light shading, `1` is the default smooth gradient, and values above `1` make it sharper.|
 
@@ -223,6 +229,8 @@ float3 LightVolumeAdditiveSH_L0(float3 worldPos, float3 worldPosOffset = 0, floa
 Returns Spherical Harmonics components and specular lighting in one call. This is the recommended PBR path when you want more correct speculars from Point Light Volumes. Regular Light Volumes and light probes use dominant SH specular, while Point Light Volumes are accumulated individually with a GGX/Smith/Schlick specular BRDF.
 
 Individual Point Light Volume speculars use the light's physical source size. This makes large sources noticeably wider and softer in reflections, and makes small sources sharper.
+
+The `L0`/`L1` outputs include the same shadowed Point Light Volume diffuse contribution that `LightVolumeSH()` would return. The `specular` output contains dominant SH specular for regular/additive voxel Light Volumes plus individual shadowed Point Light Volume speculars.
 
 `LightVolumeSHSpecular()` falls back to Unity light probes if Light Volumes are not available, just like `LightVolumeSH()`.
 
@@ -241,7 +249,7 @@ void LightVolumeSHSpecular(float3 worldPos, out float3 L0, out float3 L1r, out f
 |`float metallic` | Final surface metalness.|
 |`float3 worldNormal` | Normalized world normal of the current fragment. Used for specular BRDF shading and as the direction for Point Light Volume per-surface shading.|
 |`float3 viewDir` | Normalized world space camera view direction.|
-|`float3 worldPosOffset` | Optional offset applied only to regular Light Volume sampling. Point Light Volumes still use `worldPos`.|
+|`float3 worldPosOffset` | Optional offset applied only to regular and additive voxel Light Volume sampling. Point Light Volumes still use `worldPos`.|
 |`float pointLightShading` | Optional non-negative Point Light Volume shading strength. `0` disables per-surface Point Light shading, `1` is the default smooth gradient, and values above `1` make it sharper. Individual speculars use the same size-aware mask and keep Point Light shadows/cookies.|
 
 You can also provide the surface's specular F0 directly.
@@ -255,6 +263,8 @@ void LightVolumeSHSpecular(float3 worldPos, out float3 L0, out float3 L1r, out f
 Returns additive Spherical Harmonics components and specular lighting in one call. Use this in lightmapped shaders where you only want additive Light Volumes and Point Light Volumes on top of baked lighting. Point Light Volume speculars use the same individual size-aware BRDF as `LightVolumeSHSpecular()`.
 
 This function returns zeroes if Light Volumes are not available in scene, just like `LightVolumeAdditiveSH()`.
+
+The `L0`/`L1` outputs include shadowed Point Light Volume diffuse contribution. The `specular` output contains dominant SH specular for additive voxel Light Volumes plus individual shadowed Point Light Volume speculars.
 
 ```hlsl
 void LightVolumeAdditiveSHSpecular(float3 worldPos, out float3 L0, out float3 L1r, out float3 L1g, out float3 L1b, out float3 specular, float3 albedo, float smoothness, float metallic, float3 worldNormal, float3 viewDir, float3 worldPosOffset = 0, float pointLightShading = 1)
@@ -271,7 +281,7 @@ void LightVolumeAdditiveSHSpecular(float3 worldPos, out float3 L0, out float3 L1
 |`float metallic` | Final surface metalness.|
 |`float3 worldNormal` | Normalized world normal of the current fragment. Used for specular BRDF shading and as the direction for Point Light Volume per-surface shading.|
 |`float3 viewDir` | Normalized world space camera view direction.|
-|`float3 worldPosOffset` | Optional offset applied only to additive Light Volume sampling. Point Light Volumes still use `worldPos`.|
+|`float3 worldPosOffset` | Optional offset applied only to additive voxel Light Volume sampling. Point Light Volumes still use `worldPos`.|
 |`float pointLightShading` | Optional non-negative Point Light Volume shading strength. `0` disables per-surface Point Light shading, `1` is the default smooth gradient, and values above `1` make it sharper. Individual speculars use the same size-aware mask and keep Point Light shadows/cookies.|
 
 You can also provide the surface's specular F0 directly.
@@ -298,7 +308,7 @@ float3 LightVolumeEvaluate(float3 worldNormal, float3 L0, float3 L1r, float3 L1g
 ### float3 LightVolumeSpecular()
 Calculates approximated speculars based on SH components. Can be used with Light Volumes or even with any other SH L1 values, like Unity default light probes. The result should be added to the final color, just like emission. You should NOT multiply this by albedo color!
 
-This helper only sees already-accumulated SH data, so it cannot use individual Point Light Volume source size. Use `LightVolumeSHSpecular()` when you need size-aware Point Light Volume speculars.
+This helper only sees already-accumulated SH data, so it cannot use individual Point Light Volume source size or evaluate each Point Light Volume separately. Use `LightVolumeSHSpecular()` when you need size-aware Point Light Volume speculars.
 
 Usually works much better for avatars, because can show several color speculars at the same time for each of R, G, B light directions. Slightly less performant than LightVolumeSpecularDominant()
 
@@ -334,7 +344,7 @@ float3 LightVolumeSpecular(float3 f0, float smoothness, float3 worldNormal, floa
 ### float3 LightVolumeSpecularDominant()
 Calculates approximated speculars based on SH components. Can be used with Light Volumes or even with any other SH L1 values, like Unity default light probes. The result should be added to the final color, just like emission. You should NOT multiply this by albedo color!
 
-This helper only sees already-accumulated SH data, so it cannot use individual Point Light Volume source size. Use `LightVolumeSHSpecular()` when you need size-aware Point Light Volume speculars.
+This helper only sees already-accumulated SH data, so it cannot use individual Point Light Volume source size or evaluate each Point Light Volume separately. Use `LightVolumeSHSpecular()` when you need size-aware Point Light Volume speculars.
 
 Usually works better for static PBR surfaces, because can show a one color specular for the dominant light direction. Slightly more performant than LightVolumeSpecular()
 

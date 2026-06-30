@@ -70,6 +70,8 @@ Changing the `Cookie` source, changing `Cookie Resolution`, or adding/removing a
 
 RenderTexture and Material sources are treated as animated sources. To refresh them at runtime, enable `Auto Update Textures` in **Light Volume Setup**. Keep it disabled when all projection sources are static.
 
+When assigning Area Light cookies from Udon with `SetCustomMaterial()` or `SetCustomTexture()`, the manager shares one runtime texture-array slice only for matching source/update-mode pairs. Reusing the same Material with `autoUpdate = false` on one light and `autoUpdate = true` on another uses two separate slices, which prevents the auto-updated copy from leaking into the static light.
+
 ## Old Shader Fallback
 
 Modern shaders that include the current VRC Light Volumes code sample the textured Area Light directly.

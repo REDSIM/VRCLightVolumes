@@ -679,7 +679,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 3859439054152126729, guid: 65271766caa0f64439c02e090bf0bf86, type: 3}
       propertyPath: m_IsActive
-      value: 1
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 6093600397715888964, guid: 65271766caa0f64439c02e090bf0bf86, type: 3}
       propertyPath: Color.b
@@ -1708,7 +1708,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 0
+  m_IsActive: 1
 --- !u!114 &1331001684
 MonoBehaviour:
   m_ObjectHideFlags: 2
@@ -1759,11 +1759,11 @@ MonoBehaviour:
   IsDynamic: 0
   LightType: 0
   Color: {r: 1, g: 0.5023018, b: 0, a: 1}
-  Intensity: 100
+  Intensity: 50
   ShadingStrength: 1
   Position: {x: 0, y: 1.125, z: -18.25}
-  LightSourceSize: 0.5
-  InverseSquaredRange: 4
+  LightSourceSize: 1
+  InverseSquaredRange: 1
   Width: 1
   Direction: {x: 0, y: 0, z: 1}
   Rotation: {x: 0, y: 0, z: 0, w: 1}
@@ -1773,19 +1773,19 @@ MonoBehaviour:
   OuterAngleTan: 0
   SpotCookieAspect: 1
   Height: 1
-  SquaredRange: 51.28132
+  SquaredRange: 102.54263
   SquaredScale: 0.040000003
   LightVolumeManager: {fileID: 446951794}
-  IsActive: 0
+  IsActive: 1
   CustomTexture: {fileID: 0}
   CustomTextureMaterial: {fileID: 0}
   ProjectionType: 0
   ProjectionMode: 0
   AutoUpdateCustomTexture: 0
-  ShadowMapTexture: {fileID: 8900000, guid: 91cb1b0f01c7d8f449bbd26d4a3e09c1, type: 2}
+  ShadowMapTexture: {fileID: 0}
   ShadowMapMaterial: {fileID: 0}
   AutoUpdateShadowMap: 0
-  ShadowMapID: 0
+  ShadowMapID: -1
   WorldSpaceShadows: 0
   ShadowBakePosition: {x: 0, y: 1.125, z: -18.25}
   ShadowBakeRotation: {x: -0, y: -0, z: -0, w: 1}
@@ -1797,7 +1797,7 @@ MonoBehaviour:
   ContactHardening: 0.222
   CustomTextureIsCubemap: 0
   CustomTextureHasDepthSlices: 0
-  ShadowMapTextureIsCubemap: 1
+  ShadowMapTextureIsCubemap: 0
   ShadowMapTextureHasDepthSlices: 0
   ShadowMapUsesCubemap: 1
   IsRangeDirty: 0
@@ -1816,10 +1816,10 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   Dynamic: 0
   Type: 0
-  LightSourceSize: 0.5
+  LightSourceSize: 1
   Range: 10
   Color: {r: 1, g: 0.5023018, b: 0, a: 1}
-  Intensity: 100
+  Intensity: 50
   ShadingStrength: 1
   Projection: 0
   Angle: 60
@@ -1829,8 +1829,8 @@ MonoBehaviour:
   SpotCookieAspect: 1
   Cubemap: {fileID: 0}
   BakeIntoProbes: 0
-  DebugRange: 1
-  Shadows: 1
+  DebugRange: 0
+  Shadows: 0
   RebakeShadows: 1
   LayerMask:
     serializedVersion: 2
@@ -1842,7 +1842,7 @@ MonoBehaviour:
   ContactHardening: 0.222
   UseWorldSpace: 0
   ForceCubemapShadows: 0
-  ShadowMap: {fileID: 8900000, guid: 91cb1b0f01c7d8f449bbd26d4a3e09c1, type: 2}
+  ShadowMap: {fileID: 0}
   PointLightVolumeInstance: {fileID: 1331001685}
   LightVolumeSetup: {fileID: 446951793}
 --- !u!4 &1331001687
@@ -1987,7 +1987,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 2129285262713602144, guid: 39efc0387abc72a4fbe5aa958ca92df1, type: 3}
       propertyPath: m_IsActive
-      value: 0
+      value: 1
       objectReference: {fileID: 0}
     - target: {fileID: 2618398258993937561, guid: 39efc0387abc72a4fbe5aa958ca92df1, type: 3}
       propertyPath: m_IsActive

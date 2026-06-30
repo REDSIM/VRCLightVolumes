@@ -82,7 +82,7 @@ Material:
     - _DominantDirSpeculars: 1
     - _DstBlend: 0
     - _GlossMapScale: 1
-    - _Glossiness: 0
+    - _Glossiness: 0.559
     - _GlossyReflections: 1
     - _Keyword0: 0
     - _LightVolumes: 1

@@ -1225,10 +1225,6 @@ MonoBehaviour:
     ID: 66
     SerializedTypeNames:
     - VRC.Udon.UdonBehaviour
-  - gameObject: {fileID: 0}
-    ID: 67
-    SerializedTypeNames:
-    - VRC.Udon.UdonBehaviour
   portraitCameraPositionOffset: {x: 0, y: 0, z: 0}
   portraitCameraRotationOffset: {x: 0, y: 1, z: 0, w: -0.00000004371139}
   PlayerPersistence: []
@@ -4487,7 +4483,7 @@ MonoBehaviour:
   IsAdditive: 0
   Color: {r: 1, g: 1, b: 1, a: 1}
   Intensity: 1
-  InvLocalEdgeSmoothing: {x: 10.385043, y: 6.4315343, z: 16.484072, w: 0}
+  InvLocalEdgeSmoothing: {x: 19.342142, y: 11.978732, z: 30.701584, w: 0}
   BoundsUvwMin0: {x: 0.015625, y: 0.023809524, z: 0.002074689, w: 0.96875}
   BoundsUvwMin1: {x: 0.015625, y: 0.023809524, z: 0.20954357, w: 0.90476185}
   BoundsUvwMin2: {x: 0.015625, y: 0.023809524, z: 0.41701245, w: 0.2033195}
@@ -7450,7 +7446,7 @@ MonoBehaviour:
   FixLightProbesL1: 1
   DownscaleVolumes: 0
   LightProbesBlending: 1
-  SharpBounds: 0
+  SharpBounds: 1
   AutoUpdateVolumes: 1
   AutoUpdateTextures: 1
   AdditiveMaxOverdraw: 8
@@ -7516,7 +7512,7 @@ MonoBehaviour:
   ShadowBleedReduction: 0.2
   ShadowMinVariance: 1
   LightProbesBlending: 1
-  SharpBounds: 0
+  SharpBounds: 1
   AutoUpdateVolumes: 1
   AutoUpdateTextures: 1
   AdditiveMaxOverdraw: 8
@@ -22497,7 +22493,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 2073672221931085055, guid: 9c680b0b714cb1d498b0e04ff9f53f3b, type: 3}
       propertyPath: ShadowMapID
-      value: 0
+      value: -1
       objectReference: {fileID: 0}
     - target: {fileID: 2073672221931085055, guid: 9c680b0b714cb1d498b0e04ff9f53f3b, type: 3}
       propertyPath: _position.y
@@ -22554,7 +22550,7 @@ PrefabInstance:
     - target: {fileID: 2073672221931085055, guid: 9c680b0b714cb1d498b0e04ff9f53f3b, type: 3}
       propertyPath: ShadowMapTexture
       value: 
-      objectReference: {fileID: 8900000, guid: d735dad0d28d4a5428044fd9108fd69d, type: 2}
+      objectReference: {fileID: 0}
     - target: {fileID: 2073672221931085055, guid: 9c680b0b714cb1d498b0e04ff9f53f3b, type: 3}
       propertyPath: _lightSourceSize
       value: 0.5
@@ -22597,7 +22593,7 @@ PrefabInstance:
       objectReference: {fileID: 2073672221931085055, guid: 9c680b0b714cb1d498b0e04ff9f53f3b, type: 3}
     - target: {fileID: 2073672221931085055, guid: 9c680b0b714cb1d498b0e04ff9f53f3b, type: 3}
       propertyPath: ShadowMapTextureIsCubemap
-      value: 1
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 2073672221931085055, guid: 9c680b0b714cb1d498b0e04ff9f53f3b, type: 3}
       propertyPath: ShadowMapTextureHasDepthSlices

@@ -2,7 +2,7 @@
   "name": "red.sim.lightvolumes",
   "displayName": "VRC Light Volumes",
   "description": "Nextgen voxel based light probes replacement and analytic lighting solution for VRChat",
-  "version": "3.0.0-dev.3",
+  "version": "3.0.0-dev.4",
   "unity": "2022.3",
   "author": {
     "name": "RED_SIM",

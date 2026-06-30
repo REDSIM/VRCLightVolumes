@@ -143,7 +143,7 @@ When changing a Point Light Volume from another Udon script, prefer the setter m
 |`int LayerMask` | Layers that can cast shadows when using a runtime shadow baker. |
 |`float NearClip` | Near clip plane used by the shadow bake camera. |
 |`float Bias` | World-space bias in meters applied while baking this light's shadow map. Larger values reduce self-shadow artifacts but can detach contact edges. |
-|`float FarClip` | Far clip distance used when the EVSM shadow map was baked. `0` falls back to this light's current culling range. |
+|`float FarClip` | Far clip distance used when the EVSM shadow map is baked. `0` recalculates it from this light's current culling range and is usually the recommended default. Use a manual value only to clip distant shadow casters or reduce the shadow depth range for a known bounded area. |
 |`float Blur` | Shadow blur radius applied after baking, normalized to 128x128 shadow resolution. Editor baking uses spherical shadow-space blur to reduce visible cubemap and Spot Light projection seams. Runtime baking uses `Planar Blur` unless `PointLightShadowRuntimeBaker.SphericalBlur` is enabled. `0` keeps the baked shadow map unblurred. |
 |`float ContactHardening` | Hardens shadows near contact areas. Can produce artifacts, so use it carefully. More performant when set to `0` in runtime shadow mode. Runtime baker spherical mode also applies to contact hardening samples. |
 |`bool ShadowMapTextureIsCubemap` | Internal metadata. True when `ShadowMapTexture` is a real cubemap source. |
@@ -169,7 +169,7 @@ When changing a Point Light Volume from another Udon script, prefer the setter m
 |`void SetColor(Color color)` | Sets light source color, updates the internal change cache and marks range dirty only when the value changes. |
 |`void SetIntensity(float intensity)` | Sets light source intensity, updates the internal change cache and marks range dirty only when the value changes. |
 |`void SetShadingStrength(float shadingStrength)` | Sets per-surface Point Light Volume shading and shadow strength in the `0..1` range, updating the internal change cache only when the value changes. |
-|`void SetShadowSettings(float shadowMapID, bool worldSpaceShadows, int layerMask, float nearClip, float bias, float blur, float contactHardening)` | Sets shadow ID, shadow projection mode and runtime bake settings in one call. Notifies the manager only when shader-facing shadow data changes; layer mask, bias, blur and contact hardening changes are stored for runtime bakers without forcing unrelated rebuilds. |
+|`void SetShadowSettings(float shadowMapID, bool worldSpaceShadows, int layerMask, float nearClip, float farClip, float bias, float blur, float contactHardening)` | Sets shadow ID, shadow projection mode and runtime bake settings in one call. `farClip = 0` keeps the automatic culling-range based far clip. Notifies the manager only when shader-facing shadow data changes; layer mask, bias, blur and contact hardening changes are stored for runtime bakers without forcing unrelated rebuilds. |
 |`void UpdateTransform()` | Updates position, rotation and scale data only when transform values changed. |
 |`void UpdatePosition()` | Forces position data update and notifies the manager. |
 |`void UpdateRotation()` | Forces rotation or direction data update and notifies the manager. |

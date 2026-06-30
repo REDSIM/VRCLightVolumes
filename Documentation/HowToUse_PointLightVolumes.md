@@ -148,6 +148,7 @@ For shadow setup, baked shadows, the Realtime Shadow Baker and runtime script co
 |`Layer Mask` | Layers that can cast shadows during shadow baking.|
 |`Object Mask` | Optional object list. If empty, all objects on the selected layers can cast shadows. If not empty, only children of the listed objects are rendered during the bake.|
 |`Near Plane` | Near clip plane used by the shadow bake camera. Shadow depth is normalized between `Near Plane` and `Far Clip`, so raising it can improve precision but can also clip nearby occluders.|
+|`Far Clip Plane` | Far clip plane used by the shadow bake camera. `0` uses the light's calculated culling range, which is usually the correct default. Set a manual value only when you intentionally want to clip distant shadow casters or reduce the shadow depth range for a bounded area.|
 |`Bias` | World-space bias in meters used while baking shadows. Larger values reduce self-shadow artifacts but can detach contact edges.|
 |`Blur` | Shadow blur radius applied after baking, normalized to 128x128 shadow resolution. Editor baking uses spherical shadow-space blur to reduce visible cubemap and Spot Light projection seams. Runtime baking uses `Planar Blur` unless `Spherical Blur` is enabled on the runtime baker. `0` keeps shadows unblurred.|
 |`Contact Hardening` | Hardens shadows near contact areas. Can produce artifacts, so use it carefully. More performant when set to `0` in runtime shadow mode. Runtime baker `Spherical Blur` also applies to contact hardening samples.|

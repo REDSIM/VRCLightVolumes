@@ -54,6 +54,7 @@ This mode is useful when another system already produces a shadow-like texture. 
 Optional:
 Configure `Object Mask` if needed. If not empty, only children of the listed objects are rendered during the bake.
 Increase `Near Plane` value if you want to clip the meshes near the light source.
+Keep `Far Clip Plane` at `0` in most cases. `0` automatically uses the current calculated culling range of the light, which is usually the correct distance and avoids clipping valid shadow casters. Set a manual value only when you intentionally want to limit how far the shadow bake camera can see.
 Configure `Bias` if you have visible self-shadow artifacts.
 Use `Contact Hardening` if you want to increase shadow sharpness near the shadow casters. However it can cause visible artefacts, so use it carefully!
 `Use World Space` keeps the baked shadow projection fixed in world space instead of moving it with the light. This is useful for a light that changes color or intensity but should keep shadows attached to the room. It is less optimized than local-space shadows.
@@ -76,7 +77,7 @@ Practical workflow:
 4. If Half shadows still have noisy bright rims, raise `Shadow Min Variance` slightly.
 5. If the penumbra becomes too thin after bleed reduction or variance changes, increase the affected light's `Blur`.
 
-`Near Plane` also affects precision. Shadow depth is normalized between each light's `Near Plane` and `Far Clip`, so moving `Near Plane` farther from the light can improve usable depth precision. Do not push it past real shadow casters, or those casters will be clipped during baking. Changing `Near Plane`, `Far Clip`, `Bias`, `Blur` or `Contact Hardening` requires rebaking the affected shadow.
+`Near Plane` and `Far Clip Plane` also affect precision. Shadow depth is normalized between them, so moving `Near Plane` farther from the light or manually reducing `Far Clip Plane` can improve usable depth precision. Do not push `Near Plane` past real shadow casters, and do not pull `Far Clip Plane` closer than objects that should cast shadows. For most lights, leave `Far Clip Plane` at `0`; the system will recalculate it from the light's current culling range. Changing `Near Plane`, `Far Clip Plane`, `Bias`, `Blur` or `Contact Hardening` requires rebaking the affected shadow.
 
 ## Realtime Shadow Baker
 
@@ -99,7 +100,7 @@ Use the extra `Point Light Shadow Runtime Baker` component when a light needs to
 > [!IMPORTANT]
 > Realtime shadows will only be visible in **Play Mode** and in **VRChat**. Scene view realtime shadows are not supported yet!
 
-The baker uses the target Point Light Volume shadow settings, including `Layer Mask`, `Near Plane`, `Bias`, `Blur`, `Contact Hardening` and the light culling range. Configure those on the target light before relying on runtime baking.
+The baker uses the target Point Light Volume shadow settings, including `Layer Mask`, `Near Plane`, `Far Clip Plane`, `Bias`, `Blur`, `Contact Hardening` and the light culling range. Configure those on the target light before relying on runtime baking. `Far Clip Plane = 0` is also the normal default for runtime baking; it recalculates the far clip from the light's current culling range before rendering.
 **Blur** value `0` completely turns off the blur improving the performance on GPU side, but makes the quality worse, so it's not recommended. 
 **Contact Hardening** value `0` completely turns off the contact hardening effect improving the performance on GPU side. It's recommended to keep it `0` in most scenarios, because it can cause artefacts.
 When `Spherical Blur` is enabled, runtime `Blur` and `Contact Hardening` both sample in spherical shadow space instead of planar texture space.
@@ -173,6 +174,7 @@ For realtime shadows:
 |`Layer Mask` | Layers that can cast shadows during editor or runtime shadow baking.|
 |`Object Mask` | Optional object list. If empty, all objects on the selected layers can cast shadows. If not empty, only children of the listed objects are rendered during the bake.|
 |`Near Plane` | Near clip plane used by the shadow bake camera. Shadow depth is normalized between `Near Plane` and `Far Clip`, so higher values can improve precision but can clip nearby occluders.|
+|`Far Clip Plane` | Far clip plane used by the shadow bake camera. `0` recalculates it from the light's current culling range and is usually the recommended default. Set it manually only to clip distant shadow casters, reduce wasted depth range, or stabilize precision for a known bounded shadow area. Too small values clip valid shadow casters.|
 |`Bias` | World-space bias in meters used while baking shadows. Larger values reduce self-shadow artifacts but can detach contact edges.|
 |`Blur` | Shadow blur radius applied after baking, normalized to 128x128 shadow resolution. Editor baking uses spherical shadow-space blur to reduce visible cubemap and Spot Light projection seams. Runtime baking uses `Planar Blur` unless `Spherical Blur` is enabled. `0` keeps shadows unblurred.|
 |`Contact Hardening` | Hardens shadows near contact areas. It can produce artifacts and is more expensive in runtime shadow mode. When `Spherical Blur` is enabled on the runtime baker, contact hardening samples use the same spherical shadow-space kernel.|

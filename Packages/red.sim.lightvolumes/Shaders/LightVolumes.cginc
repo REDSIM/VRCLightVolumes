@@ -153,6 +153,10 @@ float LV_Smoothstep01(float x) {
     return x * x * (3 - 2 * x);
 }
 
+float2 LV_Smoothstep01(float2 x) {
+    return x * x * (3 - 2 * x);
+}
+
 // Approximate exp for EVSM range.
 float LV_FastExp(float x) {
     x *= 0.25f;
@@ -205,6 +209,12 @@ float LV_FastAtanPositive(float x) {
 float LV_DistributionGGX(float NoH, float roughness) {
     float a2 = roughness * roughness;
     float f = (a2 - 1) * (NoH * NoH) + 1;
+    return a2 * LV_INV_PI * rcp(f * f);
+}
+
+float3 LV_DistributionGGX(float3 NoH, float roughness) {
+    float a2 = roughness * roughness;
+    float3 f = (a2 - 1) * (NoH * NoH) + 1;
     return a2 * LV_INV_PI * rcp(f * f);
 }
 
@@ -269,26 +279,10 @@ float4 LV_SampleShadowMapArrayFace(uint id, uint face, float2 uv) {
     return LV_SAMPLE_SHADOW(float3(uv, id * 6 + face));
 }
 
-// Remaps visibility to suppress EVSM-style light bleeding.
-float LV_ReduceLightBleeding(float visibility, float amount) {
-    float edge = min(saturate(amount), 0.999f);
-    float t = saturate((visibility - edge) * rcp(1.0f - edge));
-    return LV_Smoothstep01(t);
-}
-
 // Applies exponential warp to normalized shadow depth.
 float2 LV_EVSMWarpDepth(float depth) {
     depth = depth * 2.0f - 1.0f;
     return float2(LV_FastExp(LV_EVSM_POSITIVE_EXPONENT * depth), -LV_FastExp(-LV_EVSM_NEGATIVE_EXPONENT * depth));
-}
-
-// Evaluates the one-tailed Chebyshev upper bound used by EVSM.
-float LV_EVSMChebyshevUpperBound(float2 moments, float mean, float minVariance, float bleedReduction) {
-    float variance = max(moments.y - moments.x * moments.x, minVariance);
-    float d = mean - moments.x;
-    float pMax = variance * rcp(variance + d * d);
-    pMax = LV_ReduceLightBleeding(pMax, bleedReduction);
-    return mean <= moments.x ? 1.0f : pMax;
 }
 
 // Evaluates EVSM filtered visibility from sampled shadow moments.
@@ -297,7 +291,17 @@ float LV_ShadowEVSM(float4 moments, float distanceToShadowCenter, float nearClip
     float2 warpedDepth = LV_EVSMWarpDepth(normalizedDepth);
     float minVariance = max(_UdonPointLightVolumeShadowMinVariance, 0.0f);
     float bleedReduction = saturate(_UdonPointLightVolumeShadowBleedReduction);
-    return min(LV_EVSMChebyshevUpperBound(moments.xz, warpedDepth.x, minVariance, bleedReduction), LV_EVSMChebyshevUpperBound(moments.yw, warpedDepth.y, minVariance, bleedReduction));
+
+    // Evaluate both positive and negative EVSM Chebyshev bounds together, including light bleeding reduction.
+    float2 momentMean = moments.xy;
+    float2 momentSq = moments.zw;
+    float2 variance = max(momentSq - momentMean * momentMean, minVariance);
+    float2 d = warpedDepth - momentMean;
+    float2 pMax = variance * rcp(variance + d * d);
+    float edge = min(bleedReduction, 0.999f);
+    float2 visibility = LV_Smoothstep01(saturate((pMax - edge) * rcp(1.0f - edge)));
+    visibility = lerp(visibility, 1.0f, step(warpedDepth, momentMean));
+    return min(visibility.x, visibility.y);
 }
 
 // Samples the per-light shadow map and returns attenuation
@@ -744,10 +748,17 @@ float3 LV_SpecularBRDFDirection(float3 f0, float roughness, float roughnessSq, f
 float3 LV_LightVolumeSpecular(float3 f0, float smoothness, float3 worldNormal, float3 viewDir, float3 L0, float3 L1r, float3 L1g, float3 L1b) {
     float roughness = 1 - smoothness * 0.9;
     float roughExp = roughness * roughness;
-    float rSpec = LV_DistributionGGX(saturate(dot(worldNormal, normalize(LV_NormalizeSafe(L1r) + viewDir))), roughExp);
-    float gSpec = LV_DistributionGGX(saturate(dot(worldNormal, normalize(LV_NormalizeSafe(L1g) + viewDir))), roughExp);
-    float bSpec = LV_DistributionGGX(saturate(dot(worldNormal, normalize(LV_NormalizeSafe(L1b) + viewDir))), roughExp);
-    float3 specs = (rSpec + gSpec + bSpec) * f0;
+    float3 l1rNormal = LV_NormalizeSafe(L1r);
+    float3 l1gNormal = LV_NormalizeSafe(L1g);
+    float3 l1bNormal = LV_NormalizeSafe(L1b);
+
+    // Algebraic form of dot(N, normalize(L + V)) for the three SH dominant directions.
+    float NoV = dot(worldNormal, viewDir);
+    float3 NoL = float3(dot(worldNormal, l1rNormal), dot(worldNormal, l1gNormal), dot(worldNormal, l1bNormal));
+    float3 LoV = float3(dot(l1rNormal, viewDir), dot(l1gNormal, viewDir), dot(l1bNormal, viewDir));
+    float3 NoH = saturate((NoL + NoV) * rsqrt(max(2.0 + 2.0 * LoV, 1e-6)));
+    float3 channelSpecs = LV_DistributionGGX(NoH, roughExp);
+    float3 specs = (channelSpecs.x + channelSpecs.y + channelSpecs.z) * f0;
     float3 coloredSpecs = specs * max(float3(dot(reflect(-L1r, worldNormal), viewDir), dot(reflect(-L1g, worldNormal), viewDir), dot(reflect(-L1b, worldNormal), viewDir)), 0);
     return max(lerp(coloredSpecs + specs * L0, coloredSpecs * 3, smoothness) * 0.5, 0.0);
 }

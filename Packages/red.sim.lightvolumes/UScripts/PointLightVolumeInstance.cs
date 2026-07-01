@@ -66,6 +66,10 @@ namespace VRCLightVolumes {
         public float SquaredScale = 1f;
         [Tooltip("Reference to the Light Volume Manager. Needed for runtime initialization.")]
         public LightVolumeManager LightVolumeManager;
+        [Tooltip("Internal stable manager registry tie-breaker used when this point light volume is enabled at runtime. Use SetWeight(float weight) to change priority.")]
+        [HideInInspector] public int RegistryOrder = 2147483647;
+        [Tooltip("Manager registry sort weight. Higher weights are uploaded to shaders first.")]
+        [HideInInspector] public float RegistryWeight = 0f;
         [HideInInspector] public bool IsActive = true;
 
         [Header("Projection Source")]
@@ -256,6 +260,14 @@ namespace VRCLightVolumes {
             if (IsDynamic == isDynamic) return;
             IsDynamic = isDynamic;
             NotifyManager(true, false, false);
+        }
+
+        // Sets runtime registry weight and reorders this point light volume in the manager registry
+        public void SetWeight(float weight) {
+            if (RegistryWeight == weight) return;
+            RegistryWeight = weight;
+            if (LightVolumeManager == null) return;
+            LightVolumeManager.ReorderPointLightVolume(this);
         }
 
         // Sets light source size or range data for LUT mode

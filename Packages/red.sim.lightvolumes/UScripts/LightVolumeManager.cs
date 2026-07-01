@@ -32,6 +32,7 @@ namespace VRCLightVolumes {
         private const float Version = 3; // Current VRC Light Volumes shader feature version
         private const int MaxLightVolumeCount = 32;
         private const int MaxPointLightCount = 128;
+        private const int DefaultRegistryOrder = 2147483647;
         private const int MaxLightVolumeRotationVectors = MaxLightVolumeCount * 2;
         private const int MaxLightVolumeUvwScaleVectors = MaxLightVolumeCount * 3;
         private const int MaxLightVolumeLegacyUvwVectors = MaxLightVolumeCount * 6;
@@ -210,7 +211,8 @@ namespace VRCLightVolumes {
         private Matrix4x4[] _dynamicLightVolumeMatrices = new Matrix4x4[MaxLightVolumeCount];
         private Matrix4x4[] _dynamicPointLightVolumeMatrices = new Matrix4x4[MaxPointLightCount];
 
-        // Active registry index buffer for compact shader uploads
+        // Active registry index buffers for compact shader uploads
+        private int[] _selectedLightVolumeIDs = new int[MaxLightVolumeCount];
         private int[] _enabledIDs = new int[MaxLightVolumeCount];
 
         // Public API for other UdonSharp scripts
@@ -616,25 +618,62 @@ namespace VRCLightVolumes {
         public void InitializeLightVolume(LightVolumeInstance lightVolume) {
             if (lightVolume == null) return;
             int count = LightVolumeInstances.Length;
+            int existingIndex = -1;
+            int nextRegistryOrder = -1;
+            for (int i = 0; i < count; i++) {
+                LightVolumeInstance existingLightVolume = LightVolumeInstances[i];
+                if (existingLightVolume == null) continue;
+                if (existingLightVolume.RegistryOrder == DefaultRegistryOrder) existingLightVolume.RegistryOrder = i;
+                if (existingLightVolume.RegistryOrder > nextRegistryOrder) nextRegistryOrder = existingLightVolume.RegistryOrder;
+                if (existingLightVolume == lightVolume) existingIndex = i;
+            }
+            if (lightVolume.RegistryOrder == DefaultRegistryOrder) lightVolume.RegistryOrder = nextRegistryOrder + 1;
+
             // Reuse an existing slot so repeated OnEnable calls do not duplicate the same volume
-            int existingIndex = Array.IndexOf((Array)LightVolumeInstances, lightVolume, 0, count);
             if (existingIndex >= 0) {
                 lightVolume.LightVolumeManager = this;
                 RequestUpdateVolumes();
                 return;
             }
-            // Fill the first stale/null slot before growing the registry array
-            int emptyIndex = Array.IndexOf((Array)LightVolumeInstances, null, 0, count);
-            if (emptyIndex >= 0) {
-                LightVolumeInstances[emptyIndex] = lightVolume;
+            // Insert by weight first and stable registry order second so enable/disable history does not change shader priority
+            float targetWeight = lightVolume.RegistryWeight;
+            int targetOrder = lightVolume.RegistryOrder;
+            int firstEmptyIndex = -1;
+            int lastFilledIndex = -1;
+            int insertIndex = count;
+            for (int i = 0; i < count; i++) {
+                LightVolumeInstance existingLightVolume = LightVolumeInstances[i];
+                if (existingLightVolume == null) {
+                    if (firstEmptyIndex < 0) firstEmptyIndex = i;
+                    continue;
+                }
+                lastFilledIndex = i;
+                if (insertIndex == count && (existingLightVolume.RegistryWeight < targetWeight || existingLightVolume.RegistryWeight == targetWeight && existingLightVolume.RegistryOrder > targetOrder)) insertIndex = i;
+            }
+            if (firstEmptyIndex >= 0) {
+                if (insertIndex == count) {
+                    if (firstEmptyIndex < lastFilledIndex) {
+                        for (int i = firstEmptyIndex; i < lastFilledIndex; i++) LightVolumeInstances[i] = LightVolumeInstances[i + 1];
+                        LightVolumeInstances[lastFilledIndex] = lightVolume;
+                    } else {
+                        LightVolumeInstances[firstEmptyIndex] = lightVolume;
+                    }
+                } else if (firstEmptyIndex < insertIndex) {
+                    for (int i = firstEmptyIndex; i < insertIndex - 1; i++) LightVolumeInstances[i] = LightVolumeInstances[i + 1];
+                    LightVolumeInstances[insertIndex - 1] = lightVolume;
+                } else {
+                    for (int i = firstEmptyIndex; i > insertIndex; i--) LightVolumeInstances[i] = LightVolumeInstances[i - 1];
+                    LightVolumeInstances[insertIndex] = lightVolume;
+                }
                 lightVolume.LightVolumeManager = this;
                 RequestUpdateVolumes();
                 return;
             }
-            // No empty slot exists, so grow the registry array
+            // No empty slot exists, so grow the registry array and insert by weight and stable order
             LightVolumeInstance[] targetArray = new LightVolumeInstance[count + 1];
-            Array.Copy(LightVolumeInstances, targetArray, count);
-            targetArray[count] = lightVolume;
+            for (int i = 0; i < insertIndex; i++) targetArray[i] = LightVolumeInstances[i];
+            targetArray[insertIndex] = lightVolume;
+            for (int i = insertIndex; i < count; i++) targetArray[i + 1] = LightVolumeInstances[i];
             lightVolume.LightVolumeManager = this;
             LightVolumeInstances = targetArray;
             RequestUpdateVolumes();
@@ -643,6 +682,7 @@ namespace VRCLightVolumes {
         // Deinitializes a Light Volume by removing its registry reference without resizing the array
         public void DeinitializeLightVolume(LightVolumeInstance lightVolume) {
             if (lightVolume == null) return;
+            if (!enabled || !gameObject.activeInHierarchy) return;
             int count = LightVolumeInstances.Length;
             int index = Array.IndexOf((Array)LightVolumeInstances, lightVolume, 0, count);
             if (index < 0) return;
@@ -650,14 +690,37 @@ namespace VRCLightVolumes {
             RequestUpdateVolumes();
         }
 
+        // Repositions a registered Light Volume after its runtime sort weight changes
+        public void ReorderLightVolume(LightVolumeInstance lightVolume) {
+            if (lightVolume == null) return;
+            int count = LightVolumeInstances.Length;
+            int index = Array.IndexOf((Array)LightVolumeInstances, lightVolume, 0, count);
+            if (index < 0) {
+                if (lightVolume.IsActive) InitializeLightVolume(lightVolume);
+                return;
+            }
+            LightVolumeInstances[index] = null;
+            InitializeLightVolume(lightVolume);
+        }
+
         // Initializes a Point Light Volume by adding it to the point light volume registry
         public void InitializePointLightVolume(PointLightVolumeInstance pointLightVolume) {
             if (pointLightVolume == null) return;
             int count = PointLightVolumeInstances.Length;
             bool invalidateCustomTextures = _customTexturesInitialized && pointLightVolume.IsActive && (pointLightVolume.CustomTexture != null || pointLightVolume.CustomTextureMaterial != null);
-            bool invalidateShadowTextures = _shadowTexturesInitialized && pointLightVolume.IsActive && pointLightVolume.ShadowMapID >= 0;
+            bool invalidateShadowTextures = _shadowTexturesInitialized && pointLightVolume.IsActive && (pointLightVolume.ShadowMapTexture != null || pointLightVolume.ShadowMapMaterial != null || pointLightVolume.ShadowMapID >= 0);
+            int existingIndex = -1;
+            int nextRegistryOrder = -1;
+            for (int i = 0; i < count; i++) {
+                PointLightVolumeInstance existingPointLightVolume = PointLightVolumeInstances[i];
+                if (existingPointLightVolume == null) continue;
+                if (existingPointLightVolume.RegistryOrder == DefaultRegistryOrder) existingPointLightVolume.RegistryOrder = i;
+                if (existingPointLightVolume.RegistryOrder > nextRegistryOrder) nextRegistryOrder = existingPointLightVolume.RegistryOrder;
+                if (existingPointLightVolume == pointLightVolume) existingIndex = i;
+            }
+            if (pointLightVolume.RegistryOrder == DefaultRegistryOrder) pointLightVolume.RegistryOrder = nextRegistryOrder + 1;
+
             // Reuse an existing slot so repeated OnEnable calls do not duplicate the same point light
-            int existingIndex = Array.IndexOf((Array)PointLightVolumeInstances, pointLightVolume, 0, count);
             if (existingIndex >= 0) {
                 pointLightVolume.LightVolumeManager = this;
                 if (invalidateCustomTextures) _customTexturesInitialized = false;
@@ -665,22 +728,61 @@ namespace VRCLightVolumes {
                 RequestUpdateVolumes();
                 return;
             }
-            // Fill the first stale/null slot before growing the registry array
-            int emptyIndex = Array.IndexOf((Array)PointLightVolumeInstances, null, 0, count);
-            if (emptyIndex >= 0) {
-                PointLightVolumeInstances[emptyIndex] = pointLightVolume;
+            // Insert by weight first and stable registry order second so enable/disable history does not change shader priority
+            float targetWeight = pointLightVolume.RegistryWeight;
+            int targetOrder = pointLightVolume.RegistryOrder;
+            int firstEmptyIndex = -1;
+            int lastFilledIndex = -1;
+            int insertIndex = count;
+            bool registryIndicesChanged = false;
+            for (int i = 0; i < count; i++) {
+                PointLightVolumeInstance existingPointLightVolume = PointLightVolumeInstances[i];
+                if (existingPointLightVolume == null) {
+                    if (firstEmptyIndex < 0) firstEmptyIndex = i;
+                    continue;
+                }
+                lastFilledIndex = i;
+                if (insertIndex == count && (existingPointLightVolume.RegistryWeight < targetWeight || existingPointLightVolume.RegistryWeight == targetWeight && existingPointLightVolume.RegistryOrder > targetOrder)) insertIndex = i;
+            }
+            if (firstEmptyIndex >= 0) {
+                if (insertIndex == count) {
+                    if (firstEmptyIndex < lastFilledIndex) {
+                        registryIndicesChanged = true;
+                        for (int i = firstEmptyIndex; i < lastFilledIndex; i++) PointLightVolumeInstances[i] = PointLightVolumeInstances[i + 1];
+                        PointLightVolumeInstances[lastFilledIndex] = pointLightVolume;
+                    } else {
+                        PointLightVolumeInstances[firstEmptyIndex] = pointLightVolume;
+                    }
+                } else if (firstEmptyIndex < insertIndex) {
+                    if (firstEmptyIndex < insertIndex - 1) registryIndicesChanged = true;
+                    for (int i = firstEmptyIndex; i < insertIndex - 1; i++) PointLightVolumeInstances[i] = PointLightVolumeInstances[i + 1];
+                    PointLightVolumeInstances[insertIndex - 1] = pointLightVolume;
+                } else {
+                    registryIndicesChanged = true;
+                    for (int i = firstEmptyIndex; i > insertIndex; i--) PointLightVolumeInstances[i] = PointLightVolumeInstances[i - 1];
+                    PointLightVolumeInstances[insertIndex] = pointLightVolume;
+                }
                 pointLightVolume.LightVolumeManager = this;
+                if (registryIndicesChanged) {
+                    if (_customTextureArrayDepth > 0) invalidateCustomTextures = true;
+                    if (_shadowTextureArrayDepth > 0) invalidateShadowTextures = true;
+                }
                 if (invalidateCustomTextures) _customTexturesInitialized = false;
                 if (invalidateShadowTextures) _shadowTexturesInitialized = false;
                 RequestUpdateVolumes();
                 return;
             }
-            // No empty slot exists, so grow the registry array
+            // No empty slot exists, so grow the registry array and insert by weight and stable order
             PointLightVolumeInstance[] targetArray = new PointLightVolumeInstance[count + 1];
-            Array.Copy(PointLightVolumeInstances, targetArray, count);
-            targetArray[count] = pointLightVolume;
+            for (int i = 0; i < insertIndex; i++) targetArray[i] = PointLightVolumeInstances[i];
+            targetArray[insertIndex] = pointLightVolume;
+            for (int i = insertIndex; i < count; i++) targetArray[i + 1] = PointLightVolumeInstances[i];
             pointLightVolume.LightVolumeManager = this;
             PointLightVolumeInstances = targetArray;
+            if (insertIndex < count) {
+                if (_customTextureArrayDepth > 0) invalidateCustomTextures = true;
+                if (_shadowTextureArrayDepth > 0) invalidateShadowTextures = true;
+            }
             if (invalidateCustomTextures) _customTexturesInitialized = false;
             if (invalidateShadowTextures) _shadowTexturesInitialized = false;
             RequestUpdateVolumes();
@@ -689,6 +791,7 @@ namespace VRCLightVolumes {
         // Deinitializes a Point Light Volume by removing its registry reference without resizing the array
         public void DeinitializePointLightVolume(PointLightVolumeInstance pointLightVolume, bool customTexturesChanged, bool shadowTexturesChanged) {
             if (pointLightVolume == null) return;
+            if (!enabled || !gameObject.activeInHierarchy) return;
             int count = PointLightVolumeInstances.Length;
             int index = Array.IndexOf((Array)PointLightVolumeInstances, pointLightVolume, 0, count);
             if (index < 0) return;
@@ -696,6 +799,21 @@ namespace VRCLightVolumes {
             if (customTexturesChanged) _customTexturesInitialized = false;
             if (shadowTexturesChanged) _shadowTexturesInitialized = false;
             RequestUpdateVolumes();
+        }
+
+        // Repositions a registered Point Light Volume after its runtime sort weight changes
+        public void ReorderPointLightVolume(PointLightVolumeInstance pointLightVolume) {
+            if (pointLightVolume == null) return;
+            int count = PointLightVolumeInstances.Length;
+            int index = Array.IndexOf((Array)PointLightVolumeInstances, pointLightVolume, 0, count);
+            if (index < 0) {
+                if (pointLightVolume.IsActive) InitializePointLightVolume(pointLightVolume);
+                return;
+            }
+            PointLightVolumeInstances[index] = null;
+            if (_customTextureArrayDepth > 0) _customTexturesInitialized = false;
+            if (_shadowTextureArrayDepth > 0) _shadowTexturesInitialized = false;
+            InitializePointLightVolume(pointLightVolume);
         }
 
 #endregion
@@ -1367,7 +1485,7 @@ namespace VRCLightVolumes {
             _customRenderTextureInfo = new Vector4(destination.width, destination.height, infoDepth, infoSlice);
             sourceMaterial.SetVector("_CustomRenderTextureInfo", _customRenderTextureInfo);
 #if UDONSHARP
-            Texture blitSource = sourceMaterial.GetTexture(_cubemapMainTexID);
+            Texture blitSource = sourceMaterial.HasTexture(_cubemapMainTexID) ? sourceMaterial.GetTexture(_cubemapMainTexID) : null;
 #else
             Texture blitSource = null;
 #endif
@@ -1377,6 +1495,9 @@ namespace VRCLightVolumes {
         // Renders one material pass into a destination texture-array slice using the active runtime API
         private void BlitMaterialToSlice(Texture sourceTexture, Material material, RenderTexture destination, int targetSlice) {
 #if UDONSHARP
+#if !COMPILER_UDONSHARP
+            RenderTexture previousRenderTexture = RenderTexture.active;
+#endif
             // Udon VRCGraphics needs a separate destination-binding blit before rendering the material into the selected slice
             if (_dummyRT == null) {
                 _dummyRT = new RenderTexture(1, 1, 0, RenderTextureFormat.ARGB32, RenderTextureReadWrite.Linear);
@@ -1387,6 +1508,9 @@ namespace VRCLightVolumes {
             }
             VRCGraphics.Blit(_dummyRT, destination, 0, targetSlice);
             VRCGraphics.Blit(sourceTexture, material, 0, targetSlice);
+#if !COMPILER_UDONSHARP
+            RenderTexture.active = previousRenderTexture;
+#endif
 #else
             // Unity Graphics can bind the target slice directly, so the material pass can render in one blit
             RenderTexture previousRenderTexture = RenderTexture.active;
@@ -1806,30 +1930,43 @@ namespace VRCLightVolumes {
             _dynamicLightVolumeCount = 0;
             if (isAtlas) {
                 int lightVolumeRegistryCount = LightVolumeInstances.Length;
-                for (int i = 0; i < lightVolumeRegistryCount && _enabledCount < MaxLightVolumeCount; i++) {
+                int selectedLightVolumeCount = 0;
+                for (int i = 0; i < lightVolumeRegistryCount && selectedLightVolumeCount < MaxLightVolumeCount; i++) {
                     LightVolumeInstance instance = LightVolumeInstances[i];
                     if (instance == null) continue;
                     instance.LightVolumeManager = this;
                     if (!instance.IsActive) continue;
-                    if (instance.IsDynamic) {
-                        Transform instanceTransform = instance.transform;
-                        Matrix4x4 localToWorldMatrix = instanceTransform.localToWorldMatrix;
-                        UpdateLightVolumeTransformData(instance, localToWorldMatrix);
-                        if (_dynamicLightVolumeCount < MaxLightVolumeCount) {
-                            _dynamicLightVolumeInstances[_dynamicLightVolumeCount] = instance;
-                            _dynamicLightVolumeTransforms[_dynamicLightVolumeCount] = instanceTransform;
-                            _dynamicLightVolumeShaderIndices[_dynamicLightVolumeCount] = _enabledCount;
-                            _dynamicLightVolumeMatrices[_dynamicLightVolumeCount] = localToWorldMatrix;
-                            _dynamicLightVolumeCount++;
+                    _selectedLightVolumeIDs[selectedLightVolumeCount] = i;
+                    selectedLightVolumeCount++;
+                }
+                for (int additivePass = 0; additivePass < 2 && _enabledCount < selectedLightVolumeCount; additivePass++) {
+                    bool isAdditivePass = additivePass == 0;
+                    for (int i = 0; i < selectedLightVolumeCount; i++) {
+                        int registryIndex = _selectedLightVolumeIDs[i];
+                        LightVolumeInstance instance = LightVolumeInstances[registryIndex];
+                        if (instance == null) continue;
+                        instance.LightVolumeManager = this;
+                        if (!instance.IsActive || instance.IsAdditive != isAdditivePass) continue;
+                        if (instance.IsDynamic) {
+                            Transform instanceTransform = instance.transform;
+                            Matrix4x4 localToWorldMatrix = instanceTransform.localToWorldMatrix;
+                            UpdateLightVolumeTransformData(instance, localToWorldMatrix);
+                            if (_dynamicLightVolumeCount < MaxLightVolumeCount) {
+                                _dynamicLightVolumeInstances[_dynamicLightVolumeCount] = instance;
+                                _dynamicLightVolumeTransforms[_dynamicLightVolumeCount] = instanceTransform;
+                                _dynamicLightVolumeShaderIndices[_dynamicLightVolumeCount] = _enabledCount;
+                                _dynamicLightVolumeMatrices[_dynamicLightVolumeCount] = localToWorldMatrix;
+                                _dynamicLightVolumeCount++;
+                            }
                         }
-                    }
 #if !COMPILER_UDONSHARP
-                    else if (!Application.isPlaying) UpdateLightVolumeTransformData(instance, instance.transform.localToWorldMatrix);
+                        else if (!Application.isPlaying) UpdateLightVolumeTransformData(instance, instance.transform.localToWorldMatrix);
 #endif
-                    _enabledIDs[_enabledCount] = i;
-                    if (instance.IsAdditive) _additiveCount++;
-                    WriteLightVolumeShaderData(_enabledCount, instance);
-                    _enabledCount++;
+                        _enabledIDs[_enabledCount] = registryIndex;
+                        if (isAdditivePass) _additiveCount++;
+                        WriteLightVolumeShaderData(_enabledCount, instance);
+                        _enabledCount++;
+                    }
                 }
             }
             _lightVolumeArraysDirty = false;

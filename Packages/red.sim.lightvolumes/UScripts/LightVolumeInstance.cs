@@ -48,6 +48,10 @@ namespace VRCLightVolumes {
         [Header("Runtime State")]
         [Tooltip("Reference to the Light Volume Manager. Needed for runtime initialization.")]
         public LightVolumeManager LightVolumeManager;
+        [Tooltip("Internal stable manager registry tie-breaker used when this volume is enabled at runtime. Use SetWeight(float weight) to change priority.")]
+        [HideInInspector] public int RegistryOrder = 2147483647;
+        [Tooltip("Manager registry sort weight. Higher weights are uploaded to shaders first.")]
+        [HideInInspector] public float RegistryWeight = 0f;
         [HideInInspector] public bool IsActive = true;
 
         private Color _old_Color = Color.white;
@@ -155,6 +159,14 @@ namespace VRCLightVolumes {
             Intensity = intensity;
             _old_Intensity = intensity;
             NotifyManager(false);
+        }
+
+        // Sets runtime registry weight and reorders this volume in the manager registry
+        public void SetWeight(float weight) {
+            if (RegistryWeight == weight) return;
+            RegistryWeight = weight;
+            if (LightVolumeManager == null) return;
+            LightVolumeManager.ReorderLightVolume(this);
         }
 
         // Calculates and sets invLocalEdgeBlending

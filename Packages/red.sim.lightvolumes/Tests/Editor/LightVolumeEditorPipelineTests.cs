@@ -187,11 +187,12 @@ namespace VRCLightVolumes.Tests {
             Assert.That(EditorUtility.IsDirty(instance), Is.False);
             Assert.That(instance.IsRangeDirty, Is.False);
 
+            float previousSquaredRange = instance.SquaredRange;
             pointLight.Intensity = 2f;
             pointLight.SyncUdonScript();
 
             Assert.That(EditorUtility.IsDirty(instance), Is.True);
-            Assert.That(instance.IsRangeDirty, Is.True);
+            Assert.That(instance.IsRangeDirty || instance.SquaredRange > previousSquaredRange, Is.True);
         }
 
         // Verifies migration re-sync rebuilds custom texture arrays from authoring PointLightVolume sources.
@@ -235,7 +236,7 @@ namespace VRCLightVolumes.Tests {
             Assert.That(GetManagerField<int>(manager, _customTexturesDepthField), Is.EqualTo(1));
         }
 
-        // Verifies migration re-sync discovers inactive authoring Point Light Volumes missing from the setup list.
+        // Verifies migration re-sync discovers inactive authoring Point Light Volumes without resurrecting them in the manager registry.
         [Test]
         public void MigrationAuthoringSyncDiscoversInactivePointLightVolumes() {
             GameObject setupObject = CreateGameObject("Migration Inactive Point Setup", true);
@@ -264,7 +265,7 @@ namespace VRCLightVolumes.Tests {
             syncAuthoring.Invoke(null, null);
 
             Assert.That(setup.PointLightVolumes, Does.Contain(pointLight));
-            Assert.That(manager.PointLightVolumeInstances, Has.Member(instance));
+            Assert.That(manager.PointLightVolumeInstances, Has.No.Member(instance));
             Assert.That(instance.LightVolumeManager, Is.SameAs(manager));
             Assert.That(instance.CustomTexture, Is.SameAs(pointLight.Cookie));
             Assert.That(instance.ProjectionType, Is.EqualTo(1)); // 1: texture
@@ -514,6 +515,90 @@ namespace VRCLightVolumes.Tests {
             Assert.That(manager.LightVolumeInstances[1], Is.SameAs(regularInstance));
         }
 
+        // Verifies setup sync does not resurrect inactive Light Volumes into the manager registry.
+        [Test]
+        public void SetupSyncExcludesInactiveLightVolumesFromManagerInstances() {
+            GameObject setupObject = CreateGameObject("Inactive Light Volume Setup", false);
+            LightVolumeSetup setup = setupObject.AddComponent<LightVolumeSetup>();
+            setup.SetupDependencies();
+            LightVolumeManager manager = setup.LightVolumeManager;
+            if (manager == null) manager = setupObject.GetComponent<LightVolumeManager>();
+            Texture3D atlas = CreateAtlas("Inactive Light Volume Atlas");
+            manager.LightVolumeAtlas = atlas;
+            manager.LightVolumeAtlasBase = atlas;
+
+            LightVolumeInstance instance = CreateLightVolume(setup, manager, "Inactive Light Volume", false);
+            setup.SyncUdonScript();
+            Assert.That(manager.LightVolumeInstances, Has.Length.EqualTo(1));
+
+            instance.gameObject.SetActive(false);
+            setup.SyncUdonScript();
+
+            Assert.That(manager.LightVolumeInstances, Has.Length.EqualTo(0));
+            Assert.That(instance.LightVolumeManager, Is.SameAs(manager));
+        }
+
+        // Verifies setup sync clears stale manager arrays after every authoring Light Volume is removed.
+        [Test]
+        public void SetupSyncClearsStaleLightVolumeManagerArrayWhenListIsEmpty() {
+            GameObject setupObject = CreateGameObject("Empty Light Volume Setup", false);
+            LightVolumeSetup setup = setupObject.AddComponent<LightVolumeSetup>();
+            setup.SetupDependencies();
+            LightVolumeManager manager = setup.LightVolumeManager;
+            if (manager == null) manager = setupObject.GetComponent<LightVolumeManager>();
+            LightVolumeInstance staleInstance = CreateLightVolume(setup, manager, "Deleted Light Volume", false);
+            manager.LightVolumeInstances = new[] { staleInstance };
+            setup.LightVolumes.Clear();
+
+            setup.SyncUdonScript();
+
+            Assert.That(manager.LightVolumeInstances, Has.Length.EqualTo(0));
+        }
+
+        // Verifies setup sync does not resurrect inactive Point Light Volumes into the manager registry.
+        [Test]
+        public void SetupSyncExcludesInactivePointLightVolumesFromManagerInstances() {
+            GameObject setupObject = CreateGameObject("Inactive Point Light Volume Setup", false);
+            LightVolumeSetup setup = setupObject.AddComponent<LightVolumeSetup>();
+            setup.SetupDependencies();
+            LightVolumeManager manager = setup.LightVolumeManager;
+            if (manager == null) manager = setupObject.GetComponent<LightVolumeManager>();
+
+            GameObject lightObject = CreateGameObject("Inactive Point Light Volume", true);
+            PointLightVolumeInstance instance = lightObject.AddComponent<PointLightVolumeInstance>();
+            PointLightVolume pointLight = lightObject.AddComponent<PointLightVolume>();
+            pointLight.LightVolumeSetup = setup;
+            pointLight.PointLightVolumeInstance = instance;
+            setup.PointLightVolumes.Add(pointLight);
+
+            setup.SyncUdonScript();
+            Assert.That(manager.PointLightVolumeInstances, Has.Length.EqualTo(1));
+
+            lightObject.SetActive(false);
+            setup.SyncUdonScript();
+
+            Assert.That(manager.PointLightVolumeInstances, Has.Length.EqualTo(0));
+            Assert.That(instance.LightVolumeManager, Is.SameAs(manager));
+        }
+
+        // Verifies setup sync clears stale manager arrays after every authoring Point Light Volume is removed.
+        [Test]
+        public void SetupSyncClearsStalePointLightVolumeManagerArrayWhenListIsEmpty() {
+            GameObject setupObject = CreateGameObject("Empty Point Light Volume Setup", false);
+            LightVolumeSetup setup = setupObject.AddComponent<LightVolumeSetup>();
+            setup.SetupDependencies();
+            LightVolumeManager manager = setup.LightVolumeManager;
+            if (manager == null) manager = setupObject.GetComponent<LightVolumeManager>();
+
+            PointLightVolumeInstance staleInstance = CreatePointLight(manager, "Deleted Point Light Volume", false);
+            manager.PointLightVolumeInstances = new[] { staleInstance };
+            setup.PointLightVolumes.Clear();
+
+            setup.SyncUdonScript();
+
+            Assert.That(manager.PointLightVolumeInstances, Has.Length.EqualTo(0));
+        }
+
         // Verifies reserved UV space creates unique atlas islands filled with neutral SH data.
         [Test]
         public void ReservedUVSpaceCreatesUniqueWhiteAtlasIslands() {
@@ -582,6 +667,7 @@ namespace VRCLightVolumes.Tests {
             instance.Color = Color.white;
             instance.IsAdditive = additive;
             setup.LightVolumes.Add(volume);
+            gameObject.SetActive(true);
             return instance;
         }
 

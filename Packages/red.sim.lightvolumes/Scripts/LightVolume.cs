@@ -443,6 +443,7 @@ namespace VRCLightVolumes {
             }
 #endif
             SetupDependencies();
+            if (LightVolumeSetup != null && LightVolumeSetup.LightVolumeManager == null) LightVolumeSetup.SetupDependencies();
 #if UDONSHARP
             if (Application.isPlaying) {
                 // To sync variables in play mode, write directly to the UdonBehaviour
@@ -495,6 +496,7 @@ namespace VRCLightVolumes {
                 return;
             }
             SetupDependencies();
+            if (LightVolumeSetup != null && LightVolumeSetup.LightVolumeManager == null) LightVolumeSetup.SetupDependencies();
 #if UDONSHARP
             if (Application.isPlaying) {
                 SyncUdonScript();
@@ -558,7 +560,10 @@ namespace VRCLightVolumes {
                 _prevPos = transform.position;
                 _prevRot = transform.rotation;
                 _prevScl = transform.localScale;
-                if (!Application.isPlaying) LightVolumeSetup.SyncUdonScript();
+                if (!Application.isPlaying) {
+                    SyncUdonScript();
+                    if (LightVolumeSetup != null && LightVolumeSetup.LightVolumeManager != null) LightVolumeSetup.LightVolumeManager.UpdateVolumes();
+                }
             }
 
             if (_isValidated) {

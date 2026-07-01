@@ -307,6 +307,7 @@ namespace VRCLightVolumes {
             }
 #endif
             SetupDependencies();
+            if (LightVolumeSetup != null && LightVolumeSetup.LightVolumeManager == null) LightVolumeSetup.SetupDependencies();
 #if UDONSHARP
             if (Application.isPlaying) {
                 // To sync variables in play-mode, we need to do it directly to the UdonBehaviour
@@ -443,6 +444,7 @@ namespace VRCLightVolumes {
             }
 #endif
             SetupDependencies();
+            if (LightVolumeSetup != null && LightVolumeSetup.LightVolumeManager == null) LightVolumeSetup.SetupDependencies();
 #if UDONSHARP
             if (Application.isPlaying) {
                 SyncUdonScript(customTexturesChanged || shadowTexturesChanged);

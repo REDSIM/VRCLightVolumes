@@ -11,6 +11,7 @@ using VRC.Udon;
 #if UNITY_EDITOR
 using Unity.EditorCoroutines.Editor;
 using System.IO;
+using UnityEditor.Build;
 using UnityEditor.SceneManagement;
 using UnityEngine.SceneManagement;
 using System.Linq;
@@ -142,10 +143,23 @@ namespace VRCLightVolumes {
 
             if(DontSync) return;
 
+            int setupCount = 0;
+            var setups = FindObjectsOfType<LightVolumeSetup>(true);
+            for (int i = 0; i < setups.Length; i++) {
+                if (setups[i] == null || setups[i].CompareTag("EditorOnly")) continue;
+                setupCount++;
+            }
+            bool canAdoptUnassignedVolumes = setupCount <= 1;
+
             // Searching for all light volumes in scene
             var volumes = FindObjectsOfType<LightVolume>(true);
             for (int i = 0; i < volumes.Length; i++) {
                 if (volumes[i].CompareTag("EditorOnly")) continue;
+                if (volumes[i].LightVolumeSetup == null) {
+                    if (!canAdoptUnassignedVolumes) continue;
+                    volumes[i].LightVolumeSetup = this;
+                }
+                if (volumes[i].LightVolumeSetup != this) continue;
                 if (!LightVolumes.Contains(volumes[i])) {
                     LightVolumes.Add(volumes[i]);
                     LightVolumesWeights.Add(0.0f);
@@ -153,7 +167,7 @@ namespace VRCLightVolumes {
             }
             // Removing volumes that no more exists
             for (int i = 0; i < LightVolumes.Count; i++) {
-                if (LightVolumes[i] == null || LightVolumes[i].CompareTag("EditorOnly")) {
+                if (LightVolumes[i] == null || LightVolumes[i].CompareTag("EditorOnly") || LightVolumes[i].LightVolumeSetup != this) {
                     LightVolumes.RemoveAt(i);
                     LightVolumesWeights.RemoveAt(i);
                     i--;
@@ -164,13 +178,18 @@ namespace VRCLightVolumes {
             var pointVolumes = FindObjectsOfType<PointLightVolume>(true);
             for (int i = 0; i < pointVolumes.Length; i++) {
                 if (pointVolumes[i].CompareTag("EditorOnly")) continue;
+                if (pointVolumes[i].LightVolumeSetup == null) {
+                    if (!canAdoptUnassignedVolumes) continue;
+                    pointVolumes[i].LightVolumeSetup = this;
+                }
+                if (pointVolumes[i].LightVolumeSetup != this) continue;
                 if (!PointLightVolumes.Contains(pointVolumes[i])) {
                     PointLightVolumes.Add(pointVolumes[i]);
                 }
             }
             // Removing point light volumes that no more exists
             for (int i = 0; i < PointLightVolumes.Count; i++) {
-                if (PointLightVolumes[i] == null || PointLightVolumes[i].CompareTag("EditorOnly")) {
+                if (PointLightVolumes[i] == null || PointLightVolumes[i].CompareTag("EditorOnly") || PointLightVolumes[i].LightVolumeSetup != this) {
                     PointLightVolumes.RemoveAt(i);
                     i--;
                 }
@@ -188,7 +207,6 @@ namespace VRCLightVolumes {
         private static readonly System.Reflection.FieldInfo _bakeryVolumeGroupField = typeof(ftBuildGraphics).GetField("volumeLMGroup", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic);
 #endif
         private bool _subscribedToUnityLightmapper = false;
-        private bool _subscribedToBuildTargetChanged = false;
         private bool _unityLightProbePostProcessApplied = false;
 
         private void OnSelectionChanged() {
@@ -253,7 +271,17 @@ namespace VRCLightVolumes {
         private void OnActiveBuildTargetChanged() {
             if (!ApplyAutomaticShadowTextureFormat()) return;
             RebuildShadowsAfterTextureFormatChange();
-            SyncUdonScript();
+            if (CanSyncFromLifecycle()) SyncUdonScript();
+        }
+
+        // Applies build-target dependent settings to every active setup in loaded scenes.
+        internal static void HandleActiveBuildTargetChanged() {
+            LightVolumeSetup[] setups = UnityEngine.Object.FindObjectsByType<LightVolumeSetup>(FindObjectsInactive.Exclude, FindObjectsSortMode.None);
+            for (int i = 0; i < setups.Length; i++) {
+                LightVolumeSetup setup = setups[i];
+                if (setup == null || !setup.isActiveAndEnabled) continue;
+                setup.OnActiveBuildTargetChanged();
+            }
         }
 
         // Rebuilds manager-owned cookie source caches and the runtime RenderTexture texture array
@@ -367,10 +395,6 @@ namespace VRCLightVolumes {
             Selection.selectionChanged += OnSelectionChanged;
 #if UNITY_EDITOR
             bool shadowTextureFormatChanged = ApplyAutomaticShadowTextureFormat();
-            if (!_subscribedToBuildTargetChanged) {
-                EditorUserBuildSettings.activeBuildTargetChanged += OnActiveBuildTargetChanged;
-                _subscribedToBuildTargetChanged = true;
-            }
             _resolutionPrev = CookieResolution;
             _shadowResolutionPrev = ShadowResolution;
             _shadowTextureFormatPrev = ShadowTextureFormat;
@@ -397,24 +421,26 @@ namespace VRCLightVolumes {
             }
 
             Selection.selectionChanged -= OnSelectionChanged;
-#if UNITY_EDITOR
-            if (_subscribedToBuildTargetChanged) {
-                EditorUserBuildSettings.activeBuildTargetChanged -= OnActiveBuildTargetChanged;
-                _subscribedToBuildTargetChanged = false;
-            }
-#endif
-            SyncUdonScript();
+            if (CanSyncFromLifecycle()) SyncUdonScript();
         }
 
         private void Awake() {
-            SyncUdonScript();
+            if (CanSyncFromLifecycle()) SyncUdonScript();
         }
 
         private void OnValidate() {
 #if UNITY_EDITOR
             ApplyAutomaticShadowTextureFormat();
 #endif
-            SyncUdonScript();
+            if (CanSyncFromLifecycle()) SyncUdonScript();
+        }
+
+        // Avoids adding manager components from Unity lifecycle validation callbacks.
+        private bool CanSyncFromLifecycle() {
+#if UNITY_EDITOR
+            if (!Application.isPlaying && LightVolumeManager == null && !TryGetComponent(out LightVolumeManager)) return false;
+#endif
+            return true;
         }
 
 #if BAKERY_INCLUDED
@@ -1123,24 +1149,21 @@ namespace VRCLightVolumes {
 #endif
                 SyncBaseTextureMetadataToUdon();
 
-                if (LightVolumes.Count != 0) {
-                    SyncLightVolumeRuntimeInstances();
-                    var instances = GetLightVolumeInstances();
-                    UdonBehaviour[] lightVolumeInstances = new UdonBehaviour[instances.Length];
-                    for (int i = 0; i < instances.Length; i++) {
-                        lightVolumeInstances[i] = instances[i].GetComponent<UdonBehaviour>();
-                    }
-                    _lightVolumeManagerBehaviour.SetProgramVariable("LightVolumeInstances", lightVolumeInstances);
+                SyncLightVolumeRuntimeInstances();
+                var instances = GetLightVolumeInstances();
+                UdonBehaviour[] lightVolumeInstances = new UdonBehaviour[instances.Length];
+                for (int i = 0; i < instances.Length; i++) {
+                    lightVolumeInstances[i] = instances[i].GetComponent<UdonBehaviour>();
                 }
+                _lightVolumeManagerBehaviour.SetProgramVariable("LightVolumeInstances", lightVolumeInstances);
 
-                if (PointLightVolumes.Count != 0) {
-                    var instances = GetPointLightVolumeInstances();
-                    UdonBehaviour[] pointLightVolumeInstances = new UdonBehaviour[instances.Length];
-                    for (int i = 0; i < instances.Length; i++) {
-                        pointLightVolumeInstances[i] = instances[i].GetComponent<UdonBehaviour>();
-                    }
-                    _lightVolumeManagerBehaviour.SetProgramVariable("PointLightVolumeInstances", pointLightVolumeInstances);
+                SyncPointLightVolumeRuntimeInstances();
+                var pointInstances = GetPointLightVolumeInstances();
+                UdonBehaviour[] pointLightVolumeInstances = new UdonBehaviour[pointInstances.Length];
+                for (int i = 0; i < pointInstances.Length; i++) {
+                    pointLightVolumeInstances[i] = pointInstances[i].GetComponent<UdonBehaviour>();
                 }
+                _lightVolumeManagerBehaviour.SetProgramVariable("PointLightVolumeInstances", pointLightVolumeInstances);
                 // General setup changes are applied by the manager on the next scheduled Udon update frame
                 _lightVolumeManagerBehaviour.SendCustomEvent("RequestUpdateVolumes");
 
@@ -1165,14 +1188,11 @@ namespace VRCLightVolumes {
                 RefreshAtlasOutput();
 #endif
 
-                if (LightVolumes.Count != 0) {
-                    SyncLightVolumeRuntimeInstances();
-                    LightVolumeManager.LightVolumeInstances = GetLightVolumeInstances();
-                }
+                SyncLightVolumeRuntimeInstances();
+                LightVolumeManager.LightVolumeInstances = GetLightVolumeInstances();
 
-                if (PointLightVolumes.Count != 0) {
-                    LightVolumeManager.PointLightVolumeInstances = GetPointLightVolumeInstances();
-                }
+                SyncPointLightVolumeRuntimeInstances();
+                LightVolumeManager.PointLightVolumeInstances = GetPointLightVolumeInstances();
 
                 LightVolumeManager.ReinitializeCustomTextures();
                 LightVolumeManager.ReinitializeShadowTextures();
@@ -1232,6 +1252,16 @@ namespace VRCLightVolumes {
             }
         }
 
+        // Synchronizes authoring Point Light Volume fields before setup uploads runtime instances.
+        private void SyncPointLightVolumeRuntimeInstances() {
+            int count = PointLightVolumes.Count;
+            for (int i = 0; i < count; i++) {
+                PointLightVolume pointLightVolume = PointLightVolumes[i];
+                if (pointLightVolume == null) continue;
+                pointLightVolume.SyncUdonScript();
+            }
+        }
+
         // Builds sorted Light Volume runtime instances from the current authoring list.
         private LightVolumeInstance[] GetLightVolumeInstances() {
             int count = LightVolumes.Count;
@@ -1254,8 +1284,34 @@ namespace VRCLightVolumes {
                 sortedCount++;
             }
 
-            LightVolumeInstance[] volumes = new LightVolumeInstance[sortedCount];
-            for (int i = 0; i < sortedCount; i++) volumes[i] = sortedData[i].LightVolumeInstance;
+            LightVolumeInstance[] sortedVolumes = new LightVolumeInstance[sortedCount];
+            int activeCount = 0;
+            for (int i = 0; i < sortedCount; i++) {
+                LightVolumeInstance instance = sortedData[i].LightVolumeInstance;
+                float weight = sortedData[i].Weight;
+                if (instance.RegistryOrder != i || instance.RegistryWeight != weight) {
+                    instance.RegistryOrder = i;
+                    instance.RegistryWeight = weight;
+#if UDONSHARP
+                    if (Application.isPlaying) {
+                        UdonBehaviour behaviour = instance.GetComponent<UdonBehaviour>();
+                        if (behaviour != null) {
+                            behaviour.SetProgramVariable("RegistryOrder", i);
+                            behaviour.SetProgramVariable("RegistryWeight", weight);
+                        }
+                    }
+#endif
+#if UNITY_EDITOR
+                    LVUtils.MarkDirty(instance);
+#endif
+                }
+                if (!instance.gameObject.activeInHierarchy) continue;
+                sortedVolumes[activeCount] = instance;
+                activeCount++;
+            }
+
+            LightVolumeInstance[] volumes = new LightVolumeInstance[activeCount];
+            for (int i = 0; i < activeCount; i++) volumes[i] = sortedVolumes[i];
             return volumes;
         }
 
@@ -1264,8 +1320,26 @@ namespace VRCLightVolumes {
             List<PointLightVolumeInstance> list = new List<PointLightVolumeInstance>();
             int count = PointLightVolumes.Count;
             for (int i = 0; i < count; i++) {
-                if(PointLightVolumes[i] == null || PointLightVolumes[i].PointLightVolumeInstance == null) continue;
-                list.Add(PointLightVolumes[i].PointLightVolumeInstance);
+                if (PointLightVolumes[i] == null || PointLightVolumes[i].PointLightVolumeInstance == null) continue;
+                PointLightVolumeInstance instance = PointLightVolumes[i].PointLightVolumeInstance;
+                if (instance.RegistryOrder != i || instance.RegistryWeight != 0f) {
+                    instance.RegistryOrder = i;
+                    instance.RegistryWeight = 0f;
+#if UDONSHARP
+                    if (Application.isPlaying) {
+                        UdonBehaviour behaviour = instance.GetComponent<UdonBehaviour>();
+                        if (behaviour != null) {
+                            behaviour.SetProgramVariable("RegistryOrder", i);
+                            behaviour.SetProgramVariable("RegistryWeight", 0f);
+                        }
+                    }
+#endif
+#if UNITY_EDITOR
+                    LVUtils.MarkDirty(instance);
+#endif
+                }
+                if (!PointLightVolumes[i].gameObject.activeInHierarchy) continue;
+                list.Add(instance);
             }
             return list.ToArray();
         }
@@ -1522,4 +1596,15 @@ namespace VRCLightVolumes {
         }
 
     }
+
+#if UNITY_EDITOR
+    internal class LightVolumeSetupBuildTargetChanged : IActiveBuildTargetChanged {
+        public int callbackOrder => 0;
+
+        // Receives Unity build target changes without using the obsolete EditorUserBuildSettings event.
+        public void OnActiveBuildTargetChanged(BuildTarget previousTarget, BuildTarget newTarget) {
+            LightVolumeSetup.HandleActiveBuildTargetChanged();
+        }
+    }
+#endif
 }

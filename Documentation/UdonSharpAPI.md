@@ -85,6 +85,8 @@ When changing a Light Volume from another Udon script, prefer the setter methods
 |`Vector3 RelativeRotationRow1` | Current volume rotation matrix row 1 relative to the rotation it was baked with. Mandatory for dynamic rotated volumes. |
 |`bool IsRotated` | True if there is any relative rotation. No relative rotation improves shader performance. |
 |`LightVolumeManager LightVolumeManager` | Reference to the Light Volume Manager. Needed for runtime registration and updates. Assigning it after `Start()` / `OnEnable()` also registers the instance automatically. |
+|`int RegistryOrder` | Current stable manager registry tie-breaker used when `RegistryWeight` values are equal. It is assigned automatically by the manager; read it for diagnostics or custom integrations, but do not set it manually. |
+|`float RegistryWeight` | Current manager registry sort weight. Higher weights are selected first when active volumes exceed the shader limit. Read this field to get the current weight; use `SetWeight(float weight)` to change it so the manager can reorder the registry. |
 |`bool IsActive` | Internal active state used by the manager. It becomes false when the GameObject is inactive, intensity is zero, or color is black. |
 
 ### Public Methods
@@ -92,6 +94,7 @@ When changing a Light Volume from another Udon script, prefer the setter methods
 | --- | --- |
 |`void SetDynamic(bool isDynamic)` | Sets dynamic mode and rebuilds the manager volume list only when the value changes. |
 |`void SetAdditive(bool isAdditive)` | Sets additive mode and rebuilds the manager volume list only when the value changes. |
+|`void SetWeight(float weight)` | Sets runtime registry priority and reorders this volume in the manager registry only when the value changes. Higher weights are selected first before the 32-volume shader limit; equal weights keep stable registration order. Additive volumes are still compacted before regular volumes in the final shader upload. |
 |`void SetColor(Color color)` | Sets volume color, updates the internal change cache and notifies the manager only when the value changes. |
 |`void SetIntensity(float intensity)` | Sets volume intensity, updates the internal change cache and notifies the manager only when the value changes. |
 |`void SetSmoothBlending(float radius)` | Calculates `InvLocalEdgeSmoothing` from the current lossy scale and radius. Notifies the manager only when the resulting smoothing data changes. |
@@ -125,6 +128,8 @@ When changing a Point Light Volume from another Udon script, prefer the setter m
 |`float SquaredRange` | Squared range after which the light is culled. Recalculated by the manager when `IsRangeDirty` is true. |
 |`float SquaredScale` | Average squared lossy scale of the light. `LightSourceSize` gets multiplied by it at the end. |
 |`LightVolumeManager LightVolumeManager` | Reference to the Light Volume Manager. Needed for runtime registration and updates. Assigning it after `Start()` / `OnEnable()` also registers the instance automatically. |
+|`int RegistryOrder` | Current stable manager registry tie-breaker used when `RegistryWeight` values are equal. It is assigned automatically by the manager; read it for diagnostics or custom integrations, but do not set it manually. |
+|`float RegistryWeight` | Current manager registry sort weight. Higher weights are selected first when active point lights exceed the shader limit. Read this field to get the current weight; use `SetWeight(float weight)` to change it so the manager can reorder the registry. |
 |`bool IsActive` | Internal active state used by the manager. It becomes false when the GameObject is inactive, intensity is zero, or color is black. |
 |`Texture CustomTexture` | Texture source used by this light's active LUT, cookie or cubemap projection. |
 |`Material CustomTextureMaterial` | Material source used by this light's active LUT, cookie or cubemap projection. |
@@ -155,6 +160,7 @@ When changing a Point Light Volume from another Udon script, prefer the setter m
 | Public Method | Description |
 | --- | --- |
 |`void SetDynamic(bool isDynamic)` | Sets dynamic mode and rebuilds the manager light list only when the value changes. |
+|`void SetWeight(float weight)` | Sets runtime registry priority and reorders this point light volume in the manager registry only when the value changes. Higher weights are selected first before the 128-point-light shader limit; equal weights keep stable registration order. |
 |`void SetLightSourceSize(float size)` | Sets light source size, or range data for LUT mode, then marks the range dirty only when the stored size/range data changes. For non-LUT lights this also changes size-aware specular width in modern compatible shaders. |
 |`void SetLut()` | Sets this light into LUT projection mode and recalculates angle/rotation data. |
 |`void SetCustomTexture()` | Sets this light into custom cookie or cubemap projection mode using the current source fields. |

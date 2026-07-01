@@ -309,6 +309,250 @@ namespace VRCLightVolumes.Tests {
             AssertGlobalFloat(_pointLightCountID, 0);
         }
 
+        // Verifies disabling the manager object does not let child volume OnDisable callbacks mutate registries.
+        [Test]
+        public void ManagerObjectDisableKeepsRegisteredVolumes() {
+            LightVolumeManager manager = CreateManager("Inactive Manager Registry Owner", true);
+            LightVolumeInstance regular = CreateLightVolume(manager, "Manager Child Regular Volume", true);
+            LightVolumeInstance additive = CreateLightVolume(manager, "Manager Child Additive Volume", true);
+            PointLightVolumeInstance point = CreatePointLight(manager, "Manager Child Point Volume", true);
+            additive.IsAdditive = true;
+            regular.transform.SetParent(manager.transform);
+            additive.transform.SetParent(manager.transform);
+            point.transform.SetParent(manager.transform);
+
+            manager.UpdateVolumes();
+            Assert.That(ContainsLightVolume(manager.LightVolumeInstances, regular), Is.True);
+            Assert.That(ContainsLightVolume(manager.LightVolumeInstances, additive), Is.True);
+            Assert.That(ContainsPointLightVolume(manager.PointLightVolumeInstances, point), Is.True);
+
+            manager.gameObject.SetActive(false);
+
+            Assert.That(ContainsLightVolume(manager.LightVolumeInstances, regular), Is.True);
+            Assert.That(ContainsLightVolume(manager.LightVolumeInstances, additive), Is.True);
+            Assert.That(ContainsPointLightVolume(manager.PointLightVolumeInstances, point), Is.True);
+
+            manager.gameObject.SetActive(true);
+            manager.UpdateVolumes();
+
+            Assert.That(CountLightVolumeReferences(manager.LightVolumeInstances, regular), Is.EqualTo(1));
+            Assert.That(CountLightVolumeReferences(manager.LightVolumeInstances, additive), Is.EqualTo(1));
+            Assert.That(CountPointLightVolumeReferences(manager.PointLightVolumeInstances, point), Is.EqualTo(1));
+            AssertGlobalFloat(_lightVolumeCountID, 2);
+            AssertGlobalFloat(_pointLightCountID, 1);
+        }
+
+        // Verifies runtime Light Volume registration preserves stable setup order instead of filling the first null slot.
+        [Test]
+        public void RuntimeLightVolumeRegistrationPreservesRegistryOrderAcrossDisableEnable() {
+            LightVolumeManager manager = CreateManager("Stable Runtime Light Volume Order Manager", true);
+            LightVolumeInstance first = CreateLightVolume(manager, "Stable First Volume", true);
+            LightVolumeInstance second = CreateLightVolume(manager, "Stable Second Volume", true);
+            LightVolumeInstance late = CreateUnregisteredLightVolume(manager, "Stable Late Volume");
+            first.RegistryOrder = 0;
+            second.RegistryOrder = 1;
+            late.RegistryOrder = 2;
+
+            manager.DeinitializeLightVolume(first);
+            manager.InitializeLightVolume(late);
+
+            Assert.That(manager.LightVolumeInstances, Has.Length.EqualTo(2));
+            Assert.That(manager.LightVolumeInstances[0], Is.SameAs(second));
+            Assert.That(manager.LightVolumeInstances[1], Is.SameAs(late));
+
+            manager.InitializeLightVolume(first);
+
+            Assert.That(manager.LightVolumeInstances, Has.Length.EqualTo(3));
+            Assert.That(manager.LightVolumeInstances[0], Is.SameAs(first));
+            Assert.That(manager.LightVolumeInstances[1], Is.SameAs(second));
+            Assert.That(manager.LightVolumeInstances[2], Is.SameAs(late));
+        }
+
+        // Verifies runtime Point Light Volume registration preserves stable setup order instead of filling the first null slot.
+        [Test]
+        public void RuntimePointLightVolumeRegistrationPreservesRegistryOrderAcrossDisableEnable() {
+            LightVolumeManager manager = CreateManager("Stable Runtime Point Light Volume Order Manager", false);
+            PointLightVolumeInstance first = CreatePointLight(manager, "Stable First Point", true);
+            PointLightVolumeInstance second = CreatePointLight(manager, "Stable Second Point", true);
+            PointLightVolumeInstance late = CreateUnregisteredPointLight(manager, "Stable Late Point");
+            first.RegistryOrder = 0;
+            second.RegistryOrder = 1;
+            late.RegistryOrder = 2;
+
+            manager.DeinitializePointLightVolume(first, false, false);
+            manager.InitializePointLightVolume(late);
+
+            Assert.That(manager.PointLightVolumeInstances, Has.Length.EqualTo(2));
+            Assert.That(manager.PointLightVolumeInstances[0], Is.SameAs(second));
+            Assert.That(manager.PointLightVolumeInstances[1], Is.SameAs(late));
+
+            manager.InitializePointLightVolume(first);
+
+            Assert.That(manager.PointLightVolumeInstances, Has.Length.EqualTo(3));
+            Assert.That(manager.PointLightVolumeInstances[0], Is.SameAs(first));
+            Assert.That(manager.PointLightVolumeInstances[1], Is.SameAs(second));
+            Assert.That(manager.PointLightVolumeInstances[2], Is.SameAs(late));
+        }
+
+        // Verifies only the highest-weight active Light Volumes are uploaded when the registry exceeds shader capacity.
+        [Test]
+        public void UpdateVolumesUploadsHighestWeightedLightVolumesWithinShaderLimit() {
+            LightVolumeManager manager = CreateManager("Weighted Light Volume Limit Manager", true);
+            LightVolumeInstance[] volumes = new LightVolumeInstance[35];
+            for (int i = 0; i < volumes.Length; i++) {
+                LightVolumeInstance volume = CreateUnregisteredLightVolume(manager, "Weighted Light Volume " + i);
+                volume.RegistryWeight = i;
+                volume.RegistryOrder = i;
+                ConfigureLightVolume(volume, new Color((i + 1) / 64f, 0.1f, 0.2f, 1), 1, false, 0.1f);
+                manager.InitializeLightVolume(volume);
+                volumes[i] = volume;
+            }
+
+            manager.UpdateVolumes();
+
+            AssertGlobalFloat(_lightVolumeCountID, 32);
+            Vector4[] colors = Shader.GetGlobalVectorArray(_lightVolumeColorID);
+            AssertVectorClose(ExpectedLightVolumeColor(volumes[34]), colors[0]);
+            AssertVectorClose(ExpectedLightVolumeColor(volumes[3]), colors[31]);
+
+            manager.DeinitializeLightVolume(volumes[34]);
+            manager.UpdateVolumes();
+
+            colors = Shader.GetGlobalVectorArray(_lightVolumeColorID);
+            AssertGlobalFloat(_lightVolumeCountID, 32);
+            AssertVectorClose(ExpectedLightVolumeColor(volumes[33]), colors[0]);
+            AssertVectorClose(ExpectedLightVolumeColor(volumes[2]), colors[31]);
+
+            manager.InitializeLightVolume(volumes[34]);
+            manager.UpdateVolumes();
+
+            colors = Shader.GetGlobalVectorArray(_lightVolumeColorID);
+            AssertGlobalFloat(_lightVolumeCountID, 32);
+            AssertVectorClose(ExpectedLightVolumeColor(volumes[34]), colors[0]);
+            AssertVectorClose(ExpectedLightVolumeColor(volumes[3]), colors[31]);
+        }
+
+        // Verifies the shader cap is applied by weight before additive volumes are compacted into the prefix.
+        [Test]
+        public void UpdateVolumesAppliesLightVolumeLimitBeforeAdditiveCompaction() {
+            LightVolumeManager manager = CreateManager("Weighted Additive Limit Manager", true);
+            LightVolumeInstance additive = CreateUnregisteredLightVolume(manager, "Low Weight Additive Volume");
+            additive.RegistryWeight = 0f;
+            additive.RegistryOrder = 0;
+            ConfigureLightVolume(additive, new Color(1f, 0.2f, 0.05f, 1), 1, true, 0.1f);
+            manager.InitializeLightVolume(additive);
+
+            LightVolumeInstance[] regulars = new LightVolumeInstance[32];
+            for (int i = 0; i < regulars.Length; i++) {
+                LightVolumeInstance regular = CreateUnregisteredLightVolume(manager, "Higher Weight Regular Volume " + i);
+                regular.RegistryWeight = i + 1;
+                regular.RegistryOrder = i + 1;
+                ConfigureLightVolume(regular, new Color((i + 1) / 64f, 0.3f, 0.15f, 1), 1, false, 0.2f);
+                manager.InitializeLightVolume(regular);
+                regulars[i] = regular;
+            }
+
+            manager.UpdateVolumes();
+
+            AssertGlobalFloat(_lightVolumeCountID, 32);
+            AssertGlobalFloat(_lightVolumeAdditiveCountID, 0);
+            Vector4[] colors = Shader.GetGlobalVectorArray(_lightVolumeColorID);
+            AssertVectorClose(ExpectedLightVolumeColor(regulars[31]), colors[0]);
+            AssertVectorClose(ExpectedLightVolumeColor(regulars[0]), colors[31]);
+        }
+
+        // Verifies only the highest-weight active Point Light Volumes are uploaded when the registry exceeds shader capacity.
+        [Test]
+        public void UpdateVolumesUploadsHighestWeightedPointLightVolumesWithinShaderLimit() {
+            LightVolumeManager manager = CreateManager("Weighted Point Light Volume Limit Manager", false);
+            PointLightVolumeInstance[] points = new PointLightVolumeInstance[130];
+            for (int i = 0; i < points.Length; i++) {
+                PointLightVolumeInstance point = CreateUnregisteredPointLight(manager, "Weighted Point Light Volume " + i);
+                point.RegistryWeight = i;
+                point.RegistryOrder = i;
+                point.Color = new Color((i + 1) / 160f, 0.2f, 0.1f, 1);
+                manager.InitializePointLightVolume(point);
+                points[i] = point;
+            }
+
+            manager.UpdateVolumes();
+
+            AssertGlobalFloat(_pointLightCountID, 128);
+            Vector4[] colors = Shader.GetGlobalVectorArray(_pointLightColorID);
+            AssertVectorClose(ExpectedPointLightColor(points[129]), colors[0]);
+            AssertVectorClose(ExpectedPointLightColor(points[2]), colors[127]);
+
+            manager.DeinitializePointLightVolume(points[129], false, false);
+            manager.UpdateVolumes();
+
+            colors = Shader.GetGlobalVectorArray(_pointLightColorID);
+            AssertGlobalFloat(_pointLightCountID, 128);
+            AssertVectorClose(ExpectedPointLightColor(points[128]), colors[0]);
+            AssertVectorClose(ExpectedPointLightColor(points[1]), colors[127]);
+
+            manager.InitializePointLightVolume(points[129]);
+            manager.UpdateVolumes();
+
+            colors = Shader.GetGlobalVectorArray(_pointLightColorID);
+            AssertGlobalFloat(_pointLightCountID, 128);
+            AssertVectorClose(ExpectedPointLightColor(points[129]), colors[0]);
+            AssertVectorClose(ExpectedPointLightColor(points[2]), colors[127]);
+        }
+
+        // Verifies SetWeight reorders registered Light Volumes and affects the next shader upload.
+        [Test]
+        public void SetWeightReordersRegisteredLightVolumesAndShaderUpload() {
+            LightVolumeManager manager = CreateManager("Set Weight Light Volume Manager", true);
+            LightVolumeInstance first = CreateLightVolume(manager, "Set Weight First Volume", true);
+            LightVolumeInstance second = CreateLightVolume(manager, "Set Weight Second Volume", true);
+            ConfigureLightVolume(first, new Color(0.2f, 0.4f, 0.8f, 1), 1, false, 0.1f);
+            ConfigureLightVolume(second, new Color(1f, 0.25f, 0.1f, 1), 1, false, 0.2f);
+
+            second.SetWeight(10f);
+
+            Assert.That(second.RegistryWeight, Is.EqualTo(10f).Within(Epsilon));
+            Assert.That(manager.LightVolumeInstances[0], Is.SameAs(second));
+            Assert.That(manager.LightVolumeInstances[1], Is.SameAs(first));
+
+            first.SetWeight(20f);
+            manager.UpdateVolumes();
+
+            Assert.That(first.RegistryWeight, Is.EqualTo(20f).Within(Epsilon));
+            Assert.That(manager.LightVolumeInstances[0], Is.SameAs(first));
+            Assert.That(manager.LightVolumeInstances[1], Is.SameAs(second));
+            Vector4[] colors = Shader.GetGlobalVectorArray(_lightVolumeColorID);
+            AssertVectorClose(ExpectedLightVolumeColor(first), colors[0]);
+            AssertVectorClose(ExpectedLightVolumeColor(second), colors[1]);
+        }
+
+        // Verifies SetWeight reorders registered Point Light Volumes and refreshes registry-indexed texture IDs.
+        [Test]
+        public void SetWeightReordersRegisteredPointLightVolumesAndRefreshesTextureIds() {
+            LightVolumeManager manager = CreateManager("Set Weight Point Light Volume Manager", false);
+            manager.CustomTexturesWidth = 4;
+            manager.CustomTexturesHeight = 4;
+            PointLightVolumeInstance cookie = CreatePointLight(manager, "Set Weight Cookie Point", true);
+            PointLightVolumeInstance plain = CreatePointLight(manager, "Set Weight Plain Point", true);
+            cookie.Color = new Color(0.2f, 0.4f, 0.8f, 1);
+            plain.Color = new Color(1f, 0.25f, 0.1f, 1);
+            cookie.CustomTexture = CreateTexture2D("Set Weight Cookie Source");
+            cookie.ProjectionType = 1; // 1: texture
+            cookie.SetLut();
+            manager.ReinitializeCustomTextures();
+
+            plain.SetWeight(10f);
+            manager.UpdateVolumes();
+
+            Assert.That(plain.RegistryWeight, Is.EqualTo(10f).Within(Epsilon));
+            Assert.That(manager.PointLightVolumeInstances[0], Is.SameAs(plain));
+            Assert.That(manager.PointLightVolumeInstances[1], Is.SameAs(cookie));
+            Vector4[] colors = Shader.GetGlobalVectorArray(_pointLightColorID);
+            AssertVectorClose(ExpectedPointLightColor(plain), colors[0]);
+            AssertVectorClose(ExpectedPointLightColor(cookie), colors[1]);
+            AssertPointCustomData(0, plain, 0, 0);
+            AssertPointCustomData(1, cookie, 1, 0);
+        }
+
         // Verifies active runtime-spawned regular volumes self-register when their manager reference is assigned later.
         [Test]
         public void LateManagerAssignmentInitializesActiveLightVolumeWithoutUpdatePolling() {
@@ -474,6 +718,31 @@ namespace VRCLightVolumes.Tests {
             AssertVectorClose(ExpectedLightVolumeColor(first), Shader.GetGlobalVectorArray(_lightVolumeColorID)[0]);
             AssertVectorClose(new Vector4(expectedSmooth.x, expectedSmooth.y, expectedSmooth.z, 0), Shader.GetGlobalVectorArray(_lightVolumeInvLocalEdgeSmoothID)[0]);
             AssertMatrixClose(Matrix4x4.TRS(first.transform.position, first.transform.rotation, first.transform.lossyScale).inverse, Shader.GetGlobalMatrixArray(_lightVolumeInvWorldMatrixID)[0]);
+        }
+
+        // Verifies additive volumes are compacted into leading shader slots even when serialized registry order is stale.
+        [Test]
+        public void AdditiveVolumesOccupyLeadingShaderSlotsWhenRegistryOrderIsStale() {
+            LightVolumeManager manager = CreateManager("Stale Additive Order Manager", true);
+            LightVolumeInstance regular = CreateLightVolume(manager, "Regular Ordered First", true);
+            LightVolumeInstance additive = CreateLightVolume(manager, "Additive Ordered Second", true);
+            ConfigureLightVolume(regular, new Color(0.1f, 0.4f, 0.8f, 1), 1, false, 0.15f);
+            ConfigureLightVolume(additive, new Color(1, 0.2f, 0.05f, 1), 2, true, 0.55f);
+            regular.transform.position = new Vector3(-2, 1, 3);
+            regular.transform.localScale = new Vector3(1, 2, 3);
+            additive.transform.position = new Vector3(4, 5, 6);
+            additive.transform.rotation = Quaternion.Euler(0, 45, 0);
+            additive.transform.localScale = new Vector3(2, 3, 4);
+            manager.LightVolumeInstances = new[] { regular, additive };
+
+            manager.UpdateVolumes();
+
+            AssertGlobalFloat(_lightVolumeCountID, 2);
+            AssertGlobalFloat(_lightVolumeAdditiveCountID, 1);
+            AssertVectorClose(ExpectedLightVolumeColor(additive), Shader.GetGlobalVectorArray(_lightVolumeColorID)[0]);
+            AssertVectorClose(ExpectedLightVolumeColor(regular), Shader.GetGlobalVectorArray(_lightVolumeColorID)[1]);
+            AssertVectorClose(additive.BoundsUvwMin0, Shader.GetGlobalVectorArray(_lightVolumeUvwScaleID)[0]);
+            AssertMatrixClose(Matrix4x4.TRS(additive.transform.position, additive.transform.rotation, additive.transform.lossyScale).inverse, Shader.GetGlobalMatrixArray(_lightVolumeInvWorldMatrixID)[0]);
         }
 
         // Verifies dynamic regular and point light transforms are pushed into shader globals after movement.
@@ -1495,7 +1764,8 @@ namespace VRCLightVolumes.Tests {
         public void MaterialSourceBlitPreservesMainTexInput() {
             string managerSource = ReadLightVolumeManagerSource();
 
-            Assert.That(managerSource, Does.Contain("Texture blitSource = sourceMaterial.GetTexture(_cubemapMainTexID);"));
+            Assert.That(managerSource, Does.Contain("sourceMaterial.HasTexture(_cubemapMainTexID)"));
+            Assert.That(managerSource, Does.Contain("sourceMaterial.GetTexture(_cubemapMainTexID)"));
             Assert.That(managerSource, Does.Contain("VRCGraphics.Blit(_dummyRT, destination, 0, targetSlice);"));
             Assert.That(managerSource, Does.Contain("VRCGraphics.Blit(sourceTexture, material, 0, targetSlice);"));
             Assert.That(managerSource, Does.Not.Contain("VRCGraphics.Blit(null, destination, 0, targetSlice);"));

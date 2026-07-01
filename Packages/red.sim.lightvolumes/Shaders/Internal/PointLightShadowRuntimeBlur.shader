@@ -36,12 +36,9 @@ Shader "Hidden/VRCLV/PointLightShadowRuntimeBlur" {
             #define VRCLV_EVSM_NEGATIVE_EXPONENT 5.0f
         #endif
 
-        // Approximate exp for blur weights and EVSM-related ranges.
-        float VRCLV_FastExp(float x) {
-            x *= 0.25f;
-            float y = 1.0f + x * (1.0f + x * (0.5f + x * (0.16666667f + x * (0.04166667f + x * (0.00833333f + x * 0.00138889f)))));
-            y *= y;
-            return y * y;
+        // Exact exponential through exp2. Kept as a helper so blur weights and EVSM tools use the same exp path.
+        float VRCLV_Exp(float x) {
+            return exp2(x * 1.4426950408889634f);
         }
 
         // Approximate natural log for positive values using frexp and a quadratic log2 mantissa fit.
@@ -173,7 +170,7 @@ Shader "Hidden/VRCLV/PointLightShadowRuntimeBlur" {
         };
 
         float GaussianWeight(float normalizedDistance) {
-            return VRCLV_FastExp(-2.0f * normalizedDistance * normalizedDistance);
+            return VRCLV_Exp(-2.0f * normalizedDistance * normalizedDistance);
         }
 
         bool KernelFitsFace(float2 uv, float2 absExtent) {
@@ -401,7 +398,7 @@ Shader "Hidden/VRCLV/PointLightShadowRuntimeBlur" {
                 VRCLV_BLUR_LOOP for (int sampleIndex = 0; sampleIndex < VRCLV_SPHERICAL_BLUR_SAMPLE_COUNT; sampleIndex++) {
                     float radiusSq;
                     float2 diskOffset = DiskKernelSampleOffset(sampleIndex, VRCLV_SPHERICAL_BLUR_INV_SAMPLE_COUNT, radiusSq);
-                    float weight = VRCLV_FastExp(-2.0f * radiusSq);
+                    float weight = VRCLV_Exp(-2.0f * radiusSq);
                     color += SampleSourceSpherical(uv, diskOffset * blurRadius) * weight;
                     weightSum += weight;
                 }

@@ -157,13 +157,6 @@ inline float2 LV_Smoothstep01(float2 x) {
     return x * x * (3 - 2 * x);
 }
 
-inline float2 LV_FastExp(float2 x) {
-    x *= 0.25f;
-    float2 y = 1.0f + x * (1.0f + x * (0.5f + x * (0.16666667f + x * (0.04166667f + x * (0.00833333f + x * 0.00138889f)))));
-    y *= y;
-    return y * y;
-}
-
 // Approximate log2 using frexp exponent extraction and a quadratic mantissa fit. Max error is below 0.008 log2 units.
 inline float LV_FastLog2Positive(float x) {
     float exponent = 0;
@@ -273,7 +266,7 @@ inline float LV_ShadowEVSM(float4 moments, float distanceToShadowCenter, float n
     float normalizedDepth = saturate((distanceToShadowCenter - nearClip) * rcp(max(farClip - nearClip, 0.0001f)));
     float shadowDepth = normalizedDepth * 2.0f - 1.0f;
     float2 evsmExponents = float2(LV_EVSM_POSITIVE_EXPONENT, LV_EVSM_NEGATIVE_EXPONENT);
-    float2 warpedDepth = LV_FastExp(evsmExponents * float2(shadowDepth, -shadowDepth)) * float2(1.0f, -1.0f);
+    float2 warpedDepth = exp2(evsmExponents * float2(shadowDepth, -shadowDepth) * 1.4426950408889634f) * float2(1.0f, -1.0f);
     float varianceBias = max(_UdonPointLightVolumeShadowMinVariance, 0.0f) * 0.01f;
     float bleedReduction = saturate(_UdonPointLightVolumeShadowBleedReduction);
 

@@ -28,12 +28,9 @@ Shader "Hidden/VRCLV/PointLightShadowDepthEncode" {
             #define VRCLV_EVSM_POSITIVE_EXPONENT 5.54f
             #define VRCLV_EVSM_NEGATIVE_EXPONENT 5.0f
 
-            // Approximate exp for EVSM range. Keep this in sync with LightVolumes.cginc.
-            float VRCLV_FastExp(float x) {
-                x *= 0.25f;
-                float y = 1.0f + x * (1.0f + x * (0.5f + x * (0.16666667f + x * (0.04166667f + x * (0.00833333f + x * 0.00138889f)))));
-                y *= y;
-                return y * y;
+            // EVSM exponential warp. Keep this in sync with LightVolumes.cginc.
+            float VRCLV_Exp(float x) {
+                return exp2(x * 1.4426950408889634f);
             }
 
             struct appdata {
@@ -66,8 +63,8 @@ Shader "Hidden/VRCLV/PointLightShadowDepthEncode" {
             // Encodes normalized depth as EVSM positive and negative warped moments.
             float4 EncodeEVSMDepth01(float depth) {
                 depth = saturate(depth) * 2.0f - 1.0f;
-                float pos = VRCLV_FastExp(VRCLV_EVSM_POSITIVE_EXPONENT * depth);
-                float neg = -VRCLV_FastExp(-VRCLV_EVSM_NEGATIVE_EXPONENT * depth);
+                float pos = VRCLV_Exp(VRCLV_EVSM_POSITIVE_EXPONENT * depth);
+                float neg = -VRCLV_Exp(-VRCLV_EVSM_NEGATIVE_EXPONENT * depth);
                 return float4(pos, neg, pos * pos, neg * neg);
             }
 

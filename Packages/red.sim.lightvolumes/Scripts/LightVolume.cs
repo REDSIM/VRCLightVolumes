@@ -443,7 +443,9 @@ namespace VRCLightVolumes {
             }
 #endif
             SetupDependencies();
+#if UNITY_EDITOR
             if (LightVolumeSetup != null && LightVolumeSetup.LightVolumeManager == null) LightVolumeSetup.SetupDependencies();
+#endif
 #if UDONSHARP
             if (Application.isPlaying) {
                 // To sync variables in play mode, write directly to the UdonBehaviour

@@ -63,7 +63,7 @@ namespace VRCLightVolumes {
         public int ShadowTextureFormat = 1;
         [Tooltip("EVSM light bleed reduction applied by the shadow receiver shader. 0 disables reduction, 1 is strongest.")]
         public float ShadowBleedReduction = 0.2f;
-        [Tooltip("Raw minimum EVSM variance used by the shadow receiver shader. Authoring setup stores this as a 0..1 logarithmic slider.")]
+        [Tooltip("EVSM variance bias used by the shadow receiver shader. Authoring setup stores this as a 0..1 logarithmic slider.")]
         public float ShadowMinVariance = 1.0f;
 
         [Header("Visuals")]

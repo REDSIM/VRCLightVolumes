@@ -65,7 +65,7 @@ uniform float _UdonPointLightVolumeShadowCount;
 
 // EVSM light bleed reduction amount. 0 disables reduction, 1 is strongest.
 uniform float _UdonPointLightVolumeShadowBleedReduction;
-// EVSM minimum variance clamp.
+// EVSM variance bias. Converted to warped-depth minimum variance in the receiver shader.
 uniform float _UdonPointLightVolumeShadowMinVariance;
 
 // For point light: XYZ = Position, W = Inverse squared range
@@ -289,12 +289,14 @@ float2 LV_EVSMWarpDepth(float depth) {
 float LV_ShadowEVSM(float4 moments, float distanceToShadowCenter, float nearClip, float farClip) {
     float normalizedDepth = saturate((distanceToShadowCenter - nearClip) * rcp(max(farClip - nearClip, 0.0001f)));
     float2 warpedDepth = LV_EVSMWarpDepth(normalizedDepth);
-    float minVariance = max(_UdonPointLightVolumeShadowMinVariance, 0.0f);
+    float varianceBias = max(_UdonPointLightVolumeShadowMinVariance, 0.0f) * 0.01f;
     float bleedReduction = saturate(_UdonPointLightVolumeShadowBleedReduction);
 
     // Evaluate both positive and negative EVSM Chebyshev bounds together, including light bleeding reduction.
     float2 momentMean = moments.xy;
     float2 momentSq = moments.zw;
+    float2 depthScale = varianceBias * float2(LV_EVSM_POSITIVE_EXPONENT, LV_EVSM_NEGATIVE_EXPONENT) * warpedDepth;
+    float2 minVariance = depthScale * depthScale;
     float2 variance = max(momentSq - momentMean * momentMean, minVariance);
     float2 d = warpedDepth - momentMean;
     float2 pMax = variance * rcp(variance + d * d);

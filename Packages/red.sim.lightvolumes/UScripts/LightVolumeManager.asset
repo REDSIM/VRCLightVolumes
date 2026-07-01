@@ -646,8 +646,8 @@ MonoBehaviour:
       Data: 37|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Raw minimum EVSM variance used by the shadow receiver shader. Authoring
-        setup stores this as a 0..1 logarithmic slider.
+      Data: EVSM variance bias used by the shadow receiver shader. Authoring setup
+        stores this as a 0..1 logarithmic slider.
     - Name: 
       Entry: 8
       Data: 

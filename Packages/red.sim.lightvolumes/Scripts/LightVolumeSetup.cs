@@ -40,8 +40,10 @@ namespace VRCLightVolumes {
         public ShadowTexturePrecision ShadowTextureFormat = ShadowTexturePrecision.Float;
         [Tooltip("Reduces EVSM light bleeding at the cost of shadow penumbra collapse. Increase per-light Blur to compensate if shadows become too thin.")]
         [Range(0f, 1f)] public float ShadowBleedReduction = 0.2f;
-        [Tooltip("Logarithmic EVSM minimum variance slider. 0 = 0.0001, 1 = 1.0. Higher values reduce Half precision edge noise on Quest and Mobile, but can detach contact shadows.")]
-        [Range(0f, 1f)] public float ShadowMinVariance = 1f;
+        [Tooltip("Logarithmic EVSM variance bias slider used for PC builds. The receiver shader scales this by warped depth, matching the EVSM derivative. Higher values reduce edge noise, but can detach contact shadows.")]
+        [Range(0f, 1f)] public float ShadowMinVariance = 0f;
+        [Tooltip("Logarithmic EVSM variance bias slider used for Android and iOS builds. Higher values reduce Half precision edge noise on Quest and Mobile, but can detach contact shadows.")]
+        [Range(0f, 1f)] public float ShadowMinVarianceMobile = 1f;
 
         [Header("Baking")]
         [Tooltip("Bakery usually gives better results and works faster.")]
@@ -224,8 +226,7 @@ namespace VRCLightVolumes {
 
         // Returns the shadow texture precision required by the active Unity build target.
         private static ShadowTexturePrecision GetAutomaticShadowTextureFormat() {
-            BuildTarget activeBuildTarget = EditorUserBuildSettings.activeBuildTarget;
-            return activeBuildTarget == BuildTarget.Android || activeBuildTarget == BuildTarget.iOS ? ShadowTexturePrecision.Half : ShadowTexturePrecision.Float;
+            return IsMobileBuildTarget() ? ShadowTexturePrecision.Half : ShadowTexturePrecision.Float;
         }
 
         // Updates the hidden serialized shadow texture format from the active build target.
@@ -1003,9 +1004,24 @@ namespace VRCLightVolumes {
 
 #endif
 
-        // Converts the normalized inspector slider into the raw EVSM variance value used by shaders.
+        // Converts the active build target's normalized inspector slider into the raw EVSM variance value used by shaders.
         public float GetShadowMinVarianceValue() {
-            return ShadowMinVarianceValueMin * Mathf.Pow(ShadowMinVarianceValueMax / ShadowMinVarianceValueMin, Mathf.Clamp01(ShadowMinVariance));
+            return GetShadowMinVarianceValue(IsMobileBuildTarget() ? ShadowMinVarianceMobile : ShadowMinVariance);
+        }
+
+        // Converts a normalized inspector slider into the raw EVSM variance value used by shaders.
+        private static float GetShadowMinVarianceValue(float shadowMinVariance) {
+            return ShadowMinVarianceValueMin * Mathf.Pow(ShadowMinVarianceValueMax / ShadowMinVarianceValueMin, Mathf.Clamp01(shadowMinVariance));
+        }
+
+        // Returns true when the active runtime or editor build target should use mobile shadow settings.
+        public static bool IsMobileBuildTarget() {
+#if UNITY_EDITOR
+            BuildTarget activeBuildTarget = EditorUserBuildSettings.activeBuildTarget;
+            return activeBuildTarget == BuildTarget.Android || activeBuildTarget == BuildTarget.iOS;
+#else
+            return Application.platform == RuntimePlatform.Android || Application.platform == RuntimePlatform.IPhonePlayer;
+#endif
         }
 
         // Returns the effective shadow texture precision used by the current build target.

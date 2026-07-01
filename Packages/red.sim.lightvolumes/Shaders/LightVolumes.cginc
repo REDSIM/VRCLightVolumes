@@ -149,24 +149,23 @@ uniform SamplerState sampler_UdonPointLightVolumeShadowTexture;
 #define LV_EVSM_NEGATIVE_EXPONENT 5.0f
 
 // Smoothstep to 0, 1 but cheaper
-float LV_Smoothstep01(float x) {
+inline float LV_Smoothstep01(float x) {
     return x * x * (3 - 2 * x);
 }
 
-float2 LV_Smoothstep01(float2 x) {
+inline float2 LV_Smoothstep01(float2 x) {
     return x * x * (3 - 2 * x);
 }
 
-// Approximate exp for EVSM range.
-float LV_FastExp(float x) {
+inline float2 LV_FastExp(float2 x) {
     x *= 0.25f;
-    float y = 1.0f + x * (1.0f + x * (0.5f + x * (0.16666667f + x * (0.04166667f + x * (0.00833333f + x * 0.00138889f)))));
+    float2 y = 1.0f + x * (1.0f + x * (0.5f + x * (0.16666667f + x * (0.04166667f + x * (0.00833333f + x * 0.00138889f)))));
     y *= y;
     return y * y;
 }
 
 // Approximate log2 using frexp exponent extraction and a quadratic mantissa fit. Max error is below 0.008 log2 units.
-float LV_FastLog2Positive(float x) {
+inline float LV_FastLog2Positive(float x) {
     float exponent = 0;
     float mantissa = frexp(max(x, 1.0), exponent);
     float y = mantissa + mantissa - 1.0;
@@ -174,13 +173,13 @@ float LV_FastLog2Positive(float x) {
 }
 
 // Rotates vector by Quaternion
-float3 LV_MultiplyVectorByQuaternion(float3 v, float4 q) {
+inline float3 LV_MultiplyVectorByQuaternion(float3 v, float4 q) {
     float3 t = 2 * cross(q.xyz, v);
     return v + q.w * t + cross(q.xyz, t);
 }
 
 // Builds orthonormal axes from a normalized quaternion
-void LV_QuaternionAxes(float4 q, out float3 xAxis, out float3 yAxis, out float3 zAxis) {
+inline void LV_QuaternionAxes(float4 q, out float3 xAxis, out float3 yAxis, out float3 zAxis) {
     float x2 = q.x + q.x, y2 = q.y + q.y, z2 = q.z + q.z;
     float xx = q.x * x2, yy = q.y * y2, zz = q.z * z2;
     float xy = q.x * y2, xz = q.x * z2, yz = q.y * z2;
@@ -191,12 +190,12 @@ void LV_QuaternionAxes(float4 q, out float3 xAxis, out float3 yAxis, out float3 
 }
 
 // Rotates vector by Matrix 3x3 with precomputed third axis
-float3 LV_MultiplyVectorByMatrix3x3(float3 v, float3 r0, float3 r1, float3 r2) {
+inline float3 LV_MultiplyVectorByMatrix3x3(float3 v, float3 r0, float3 r1, float3 r2) {
     return float3(dot(v, r0), dot(v, r1), dot(v, r2));
 }
 
 // Fast approximate arctangent for positive values. Max error is small enough for area light attenuation
-float LV_FastAtanPositive(float x) {
+inline float LV_FastAtanPositive(float x) {
     if (x <= 1) { // atan small
         return x * rcp(1 + 0.280872 * x * x);
     } else { // atan large
@@ -206,25 +205,25 @@ float LV_FastAtanPositive(float x) {
 }
 
 // Forms specular based on roughness
-float LV_DistributionGGX(float NoH, float roughness) {
+inline float LV_DistributionGGX(float NoH, float roughness) {
     float a2 = roughness * roughness;
     float f = (a2 - 1) * (NoH * NoH) + 1;
     return a2 * LV_INV_PI * rcp(f * f);
 }
 
-float3 LV_DistributionGGX(float3 NoH, float roughness) {
+inline float3 LV_DistributionGGX(float3 NoH, float roughness) {
     float a2 = roughness * roughness;
     float3 f = (a2 - 1) * (NoH * NoH) + 1;
     return a2 * LV_INV_PI * rcp(f * f);
 }
 
 // Calculates fast correlated Smith visibility for GGX speculars.
-float LV_VisibilitySmithGGXCorrelatedFast(float roughness, float NoV, float NoL) {
+inline float LV_VisibilitySmithGGXCorrelatedFast(float roughness, float NoV, float NoL) {
     return 0.5 * rcp(lerp(2.0 * NoL * NoV, NoL + NoV, roughness));
 }
 
 // Calculates Schlick Fresnel with f90 fixed to 1.
-float3 LV_FresnelSchlick(float3 f0, float LoH) {
+inline float3 LV_FresnelSchlick(float3 f0, float LoH) {
     float f = 1.0 - LoH;
     float f2 = f * f;
     f = f2 * f2 * f;
@@ -232,34 +231,29 @@ float3 LV_FresnelSchlick(float3 f0, float LoH) {
 }
 
 // Normalizes a vector while avoiding undefined zero-length results.
-float3 LV_NormalizeSafe(float3 v) {
+inline float3 LV_NormalizeSafe(float3 v) {
     return v * rsqrt(max(dot(v, v), 1e-6));
 }
 
 // Checks if local UVW point is in bounds from -0.5 to +0.5
-bool LV_PointLocalAABB(float3 localUVW) {
+inline bool LV_PointLocalAABB(float3 localUVW) {
     return all(abs(localUVW) <= 0.5);
 }
 
 // Calculates local UVW using volume ID
-float3 LV_LocalFromVolume(uint volumeID, float3 worldPos) {
+inline float3 LV_LocalFromVolume(uint volumeID, float3 worldPos) {
     return mul(_UdonLightVolumeInvWorldMatrix[volumeID], float4(worldPos, 1)).xyz;
 }
 
-// Linear single SH L1 channel evaluation
-float LV_EvaluateSH(float L0, float3 L1, float3 n) {
-    return L0 + dot(L1, n);
-}
-
 // Projects a cubemap direction into face index and face UV. (xy: uv, z: face)
-float3 LV_CubemapUvFace(float3 dir) {
+inline float3 LV_CubemapUvFace(float3 dir) {
     float2 uv;
     float face;
     float3 absDir = abs(dir);
-    [branch] if (absDir.x >= absDir.y && absDir.x >= absDir.z) {
+    [flatten] if (absDir.x >= absDir.y && absDir.x >= absDir.z) {
         face = dir.x > 0 ? 0 : 1;
         uv = float2((dir.x > 0 ? -dir.z : dir.z), -dir.y) * rcp(absDir.x);
-    } else [branch] if (absDir.y >= absDir.z) {
+    } else [flatten] if (absDir.y >= absDir.z) {
         face = dir.y > 0 ? 2 : 3;
         uv = float2(dir.x, (dir.y > 0 ? dir.z : -dir.z)) * rcp(absDir.y);
     } else {
@@ -270,96 +264,84 @@ float3 LV_CubemapUvFace(float3 dir) {
 }
 
 // Samples a cubemap from _UdonPointLightVolumeTexture array
-float4 LV_SampleCubemapArray(uint id, float3 dir) {
+inline float4 LV_SampleCubemapArray(uint id, float3 dir) {
     return LV_SAMPLE_POINT(LV_CubemapUvFace(dir) + float3(0, 0, id * 6));
 }
 
-// Samples a shadow map array face using face UV
-float4 LV_SampleShadowMapArrayFace(uint id, uint face, float2 uv) {
-    return LV_SAMPLE_SHADOW(float3(uv, id * 6 + face));
-}
-
-// Applies exponential warp to normalized shadow depth.
-float2 LV_EVSMWarpDepth(float depth) {
-    depth = depth * 2.0f - 1.0f;
-    return float2(LV_FastExp(LV_EVSM_POSITIVE_EXPONENT * depth), -LV_FastExp(-LV_EVSM_NEGATIVE_EXPONENT * depth));
-}
-
 // Evaluates EVSM filtered visibility from sampled shadow moments.
-float LV_ShadowEVSM(float4 moments, float distanceToShadowCenter, float nearClip, float farClip) {
+inline float LV_ShadowEVSM(float4 moments, float distanceToShadowCenter, float nearClip, float farClip) {
     float normalizedDepth = saturate((distanceToShadowCenter - nearClip) * rcp(max(farClip - nearClip, 0.0001f)));
-    float2 warpedDepth = LV_EVSMWarpDepth(normalizedDepth);
+    float shadowDepth = normalizedDepth * 2.0f - 1.0f;
+    float2 evsmExponents = float2(LV_EVSM_POSITIVE_EXPONENT, LV_EVSM_NEGATIVE_EXPONENT);
+    float2 warpedDepth = LV_FastExp(evsmExponents * float2(shadowDepth, -shadowDepth)) * float2(1.0f, -1.0f);
     float varianceBias = max(_UdonPointLightVolumeShadowMinVariance, 0.0f) * 0.01f;
     float bleedReduction = saturate(_UdonPointLightVolumeShadowBleedReduction);
 
     // Evaluate both positive and negative EVSM Chebyshev bounds together, including light bleeding reduction.
     float2 momentMean = moments.xy;
     float2 momentSq = moments.zw;
-    float2 depthScale = varianceBias * float2(LV_EVSM_POSITIVE_EXPONENT, LV_EVSM_NEGATIVE_EXPONENT) * warpedDepth;
+    float2 depthScale = varianceBias * evsmExponents * warpedDepth;
     float2 minVariance = depthScale * depthScale;
     float2 variance = max(momentSq - momentMean * momentMean, minVariance);
     float2 d = warpedDepth - momentMean;
     float2 pMax = variance * rcp(variance + d * d);
     float edge = min(bleedReduction, 0.999f);
-    float2 visibility = LV_Smoothstep01(saturate((pMax - edge) * rcp(1.0f - edge)));
+    float invEdge = rcp(1.0f - edge);
+    float2 visibility = LV_Smoothstep01(saturate((pMax - edge) * invEdge));
     visibility = lerp(visibility, 1.0f, step(warpedDepth, momentMean));
     return min(visibility.x, visibility.y);
 }
 
 // Samples the per-light shadow map and returns attenuation
-float LV_PointLightShadow(uint id, float3 worldPos, float3 lightDir, float sqDistanceToLight, float invDistanceToLight, float shadowNearClip, float shadowFarClip, float shadowIdData, uint shadowId) {
+inline float LV_PointLightShadow(uint id, float3 worldPos, float3 lightDir, float sqDistanceToLight, float invDistanceToLight, float shadowNearClip, float shadowFarClip, float shadowIdData, uint shadowId) {
     uint shadowCubeCount = (uint)_UdonPointLightVolumeShadowCubeCount;
+    float4 shadowReprojectionData = _UdonPointLightVolumeShadowReprojectionData[id];
+    float4 shadowRotationData = _UdonPointLightVolumeShadowRotationData[id];
+    bool isSingleShadow = shadowId >= shadowCubeCount;
+    float shadowDirSign = isSingleShadow ? -1.0f : 1.0f;
+    float lightDistance = sqDistanceToLight * invDistanceToLight;
+    float3 sampleDir = isSingleShadow ? 0.0f : lightDir;
+    float distanceToShadowCenter = isSingleShadow ? 0.0f : lightDistance;
+
+    [branch] if (shadowIdData < 0) { // Local-space shadow
+        distanceToShadowCenter = lightDistance;
+        sampleDir = LV_MultiplyVectorByQuaternion(lightDir * shadowDirSign, shadowRotationData);
+    } else { // World-space shadow
+        float3 bakeDir = (shadowReprojectionData.xyz - worldPos) * shadowDirSign;
+        float bakeSqLen = dot(bakeDir, bakeDir);
+        [branch] if (bakeSqLen > 0.0001) { // Ignore degenerate vectors before normalizing baked direction
+            float invBakeLen = rsqrt(bakeSqLen);
+            distanceToShadowCenter = bakeSqLen * invBakeLen;
+            sampleDir = LV_MultiplyVectorByQuaternion(bakeDir * invBakeLen, shadowRotationData);
+        }
+    }
+
     float attenuation = 1;
-    [branch] if (shadowId >= shadowCubeCount) { // Single slice shadows
-
-        float4 shadowReprojectionData = _UdonPointLightVolumeShadowReprojectionData[id];
-        float3 localDir = 0;
-        float distanceToShadowCenter = 0;
-
-        [branch] if (shadowIdData < 0) { // Local-space shadow
-            distanceToShadowCenter = sqDistanceToLight * invDistanceToLight;
-            localDir = LV_MultiplyVectorByQuaternion(-lightDir, _UdonPointLightVolumeShadowRotationData[id]);
-        } else { // World-space shadow
-            float3 bakeOffset = worldPos - shadowReprojectionData.xyz;
-            float bakeSqLen = dot(bakeOffset, bakeOffset);
-            [branch] if (bakeSqLen > 0.0001) { // Ignore degenerate vectors before normalizing baked direction
-                float invBakeLen = rsqrt(bakeSqLen);
-                distanceToShadowCenter = bakeSqLen * invBakeLen;
-                localDir = LV_MultiplyVectorByQuaternion(bakeOffset * invBakeLen, _UdonPointLightVolumeShadowRotationData[id]);
-            }
-        }
-        [branch] if (localDir.z > 0) { // Only sample receivers in front of the baked spot shadow camera
-            float2 uv = localDir.xy * rcp(localDir.z * max(shadowReprojectionData.w, 0.0001f));
+    float3 shadowUVW = 0;
+    bool hasShadowSample = false;
+    [branch] if (isSingleShadow) { // Single slice shadows
+        [branch] if (sampleDir.z > 0) { // Only sample receivers in front of the baked spot shadow camera
+            float2 uv = sampleDir.xy * rcp(sampleDir.z * max(shadowReprojectionData.w, 0.0001f));
             [branch] if (max(abs(uv.x), abs(uv.y)) <= 1) { // Only sample inside the projected single shadow texture
-                attenuation = LV_ShadowEVSM(LV_SAMPLE_SHADOW(float3(uv * 0.5 + 0.5, shadowId + shadowCubeCount * 5)), distanceToShadowCenter, shadowNearClip, shadowFarClip);
+                shadowUVW = float3(uv * 0.5 + 0.5, shadowId + shadowCubeCount * 5);
+                hasShadowSample = true;
             }
         }
-
     } else { // Cubemap shadows
-        float3 sampleDir = lightDir;
-        float distanceToShadowCenter = sqDistanceToLight * invDistanceToLight;
-
-        [branch] if (shadowIdData < 0) { // Local-space shadows
-            sampleDir = LV_MultiplyVectorByQuaternion(lightDir, _UdonPointLightVolumeShadowRotationData[id]);
-        } else { // World-space shadows
-            float3 bakeDir = _UdonPointLightVolumeShadowReprojectionData[id].xyz - worldPos;
-            float bakeSqLen = dot(bakeDir, bakeDir);
-            [branch] if (bakeSqLen > 0.0001) { // Ignore degenerate vectors before normalizing baked cubemap direction
-                float invBakeLen = rsqrt(bakeSqLen);
-                sampleDir = LV_MultiplyVectorByQuaternion(bakeDir * invBakeLen, _UdonPointLightVolumeShadowRotationData[id]);
-                distanceToShadowCenter = bakeSqLen * invBakeLen;
-            }
-        }
         float3 uvFace = LV_CubemapUvFace(sampleDir);
-        attenuation = LV_ShadowEVSM(LV_SampleShadowMapArrayFace(shadowId, (uint)uvFace.z, uvFace.xy), distanceToShadowCenter, shadowNearClip, shadowFarClip);
+        shadowUVW = float3(uvFace.xy, shadowId * 6 + (uint)uvFace.z);
+        hasShadowSample = true;
+    }
 
+    [branch] if (hasShadowSample) {
+        attenuation = LV_ShadowEVSM(LV_SAMPLE_SHADOW(shadowUVW), distanceToShadowCenter, shadowNearClip, shadowFarClip);
     }
     return attenuation;
 }
 
 // Projects a front-facing quad light into L1 SH using a cheap solid-angle approximation.
 // Caller must cull localPos.z <= 0 before calling.
-float4 LV_ProjectFastQuadLightIrradianceSH(float3 lightToWorldPos, float3 localPos, float3 xAxis, float3 yAxis, float2 size, out float3 pointLightShadingDir) {
+inline float4 LV_ProjectFastQuadLightIrradianceSH(float3 lightToWorldPos, float3 localPos, float3 xAxis, float3 yAxis, float2 size, out float3 pointLightShadingDir) {
     float2 halfSize = size * 0.5;
     float area = max(size.x * size.y, 1e-6);
     float extentSq = max(dot(halfSize, halfSize), 1e-6);
@@ -387,25 +369,25 @@ float4 LV_ProjectFastQuadLightIrradianceSH(float3 lightToWorldPos, float3 localP
 }
 
 // Calculates point light attenuation.
-float3 LV_PointLightAttenuation(float sqdist, float sqlightSize, float3 color, float sqMaxDist) {
+inline float3 LV_PointLightAttenuation(float sqdist, float sqlightSize, float3 color, float sqMaxDist) {
     float mask = saturate(1 - sqdist * rcp(sqMaxDist));
     return mask * mask * color * sqlightSize * rcp(sqdist + sqlightSize);
 }
 
 // Calculates point light solid angle coefficient
-float LV_PointLightSolidAngle(float sqdist, float sqlightSize) {
+inline float LV_PointLightSolidAngle(float sqdist, float sqlightSize) {
     return saturate(sqrt(sqdist * rcp(sqlightSize + sqdist)));
 }
 
 // Calculates Point Light shading using a pre-scaled surface normal, precomputed bias, and finite source size.
-float LV_PointLightShading(float3 pointLightShadingNormal, float pointLightShadingScale, float pointLightShadingBias, float3 lightDirNormal, float lightSpreadSq) {
+inline float LV_PointLightShading(float3 pointLightShadingNormal, float pointLightShadingScale, float pointLightShadingBias, float3 lightDirNormal, float lightSpreadSq) {
     float lightSpread = saturate(sqrt(lightSpreadSq));
     float ramp = (dot(pointLightShadingNormal, lightDirNormal) + pointLightShadingScale * lightSpread) * rcp(1.0 + lightSpread) + pointLightShadingBias;
     return LV_Smoothstep01(saturate(ramp));
 }
 
 // Resolves spot cookie UV and culls fragments outside the projected cookie before expensive shadow work.
-float2 LV_SphereSpotLightCookieUv(float3 lightDir, float4 lightRot, float tanAngle) {
+inline float2 LV_SphereSpotLightCookieUv(float3 lightDir, float4 lightRot, float tanAngle) {
     float3 localDir = LV_MultiplyVectorByQuaternion(-lightDir, lightRot);
     if (localDir.z <= 0) return 2; // Just to cull later
     else return localDir.xy * rcp(localDir.z * tanAngle);
@@ -415,7 +397,7 @@ float2 LV_SphereSpotLightCookieUv(float3 lightDir, float4 lightRot, float tanAng
 // Based on textured LTC prefiltering and filtered importance sampling:
 // https://eheitzresearch.wordpress.com/415-2/
 // https://developer.nvidia.com/gpugems/gpugems3/part-iii-rendering/chapter-20-gpu-based-importance-sampling
-float4 LV_AreaLightCookie(float3 localPos, float2 size, uint textureId) {
+inline float4 LV_AreaLightCookie(float3 localPos, float2 size, uint textureId) {
     float2 safeSize = max(size, float2(0.0001, 0.0001));
     float2 halfSize = safeSize * 0.5;
     float2 closestXY = clamp(localPos.xy, -halfSize, halfSize);
@@ -457,21 +439,21 @@ float4 LV_AreaLightCookie(float3 localPos, float2 size, uint textureId) {
 
 // Resolves point-light normal shading and baked shadows. lightDir samples shadows, normalMaskLightDir attenuates by surface normal.
 // Returns true when the light remains visible enough to consume one overdraw slot.
-bool LV_PointLightVolumeShadowMask(uint id, float shadowIdData, float shadowFarClip, float3 worldPos, float3 lightDir, float3 normalMaskLightDir, float distSq, float invDist, float sourceSpreadSq, float3 pointLightShadingNormal, float pointLightShadingScale, float pointLightShadingBias, out float shadow) {
+inline bool LV_PointLightVolumeShadowMask(uint id, float shadowIdData, float shadowFarClip, float3 worldPos, float3 lightDir, float3 normalMaskLightDir, float distSq, float invDist, float sourceSpreadSq, float3 pointLightShadingNormal, float pointLightShadingScale, float pointLightShadingBias, out float shadow) {
     shadow = 1;
     bool shadowVisible = true;
-    [branch] if (shadowIdData == 0) { // No baked shadow and full-strength normal shading
-        [branch] if (pointLightShadingBias >= 0) { // Apply full-strength surface-normal shading when configured
+    [flatten] if (shadowIdData == 0) { // No baked shadow and full-strength normal shading
+        [flatten] if (pointLightShadingBias >= 0) { // Apply full-strength surface-normal shading when configured
             shadow = LV_PointLightShading(pointLightShadingNormal, pointLightShadingScale, pointLightShadingBias, normalMaskLightDir, sourceSpreadSq);
             shadowVisible = shadow > 0;
         }
     } else { // Optional normal shading strength and optional baked shadow map
         float shadowIdAbs = abs(shadowIdData);
-        [branch] if (shadowIdAbs < 10000) { // Abs >= 10000 disables both normal shading and baked shadow sampling
+        [flatten] if (shadowIdAbs < 10000) { // Abs >= 10000 disables both normal shading and baked shadow sampling
             float shadingStrength = 1 - frac(shadowIdAbs);
             float normalAttenuation = 1;
 
-            [branch] if (pointLightShadingBias >= 0) { // Apply surface-normal shading before strength blending
+            [flatten] if (pointLightShadingBias >= 0) { // Apply surface-normal shading before strength blending
                 normalAttenuation = LV_PointLightShading(pointLightShadingNormal, pointLightShadingScale, pointLightShadingBias, normalMaskLightDir, sourceSpreadSq);
                 shadowVisible = normalAttenuation > 0 || shadingStrength < 1;
             }

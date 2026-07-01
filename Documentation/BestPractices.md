@@ -4,7 +4,7 @@
 
 | Menu |
 | ----|
-| **Best Practices**<br />• [Regular Light Volumes Use Cases](#Regular-Light-Volumes-Use-Cases)<br />• [Point Light Volumes Use Cases](#Point-Light-Volumes-Use-Cases)<br />• [Shader Path Choices](#Shader-Path-Choices)<br />• [Area Light Emission](#Area-Light-Emission)<br />• [Point Light Volume Baked Realtime Shadows](#Point-Light-Volume-Baked-Realtime-Shadows)<br />• [Point Light Volume Realtime Shadows](#Point-Light-Volume-Realtime-Shadows)<br />• [Custom Render Textures Projections](#Custom-Render-Textures-Projections)<br />• [Naming Light Volumes](#Naming-Light-Volumes)<br />• [Volume Bounds Smoothing](#Volume-Bounds-Smoothing)<br />• [Culling Light Volumes](#Culling-Light-Volumes)<br />• [Moving Light Volumes](#Moving-Light-Volumes)<br />• [Additive Volumes](#Additive-Volumes)<br />• [Bakery Volume Rotation](#Bakery-Volume-Rotation)<br />• [Fixing Bakery Light Probes](#Fixing-Bakery-Light-Probes)<br />• [Spawning New Light Volumes In Runtime](#Spawning-New-Light-Volumes-In-Runtime)<br />• [Editor Workflow Notes](#Editor-Workflow-Notes) |
+| **Best Practices**<br />• [Regular Light Volumes Use Cases](#Regular-Light-Volumes-Use-Cases)<br />• [Point Light Volumes Use Cases](#Point-Light-Volumes-Use-Cases)<br />• [Shader Path Choices](#Shader-Path-Choices)<br />• [Area Light Emission](#Area-Light-Emission)<br />• [Point Light Volume Baked Realtime Shadows](#Point-Light-Volume-Baked-Realtime-Shadows)<br />• [Quest And Mobile Shadow Artifacts](#Quest-And-Mobile-Shadow-Artifacts)<br />• [Point Light Volume Realtime Shadows](#Point-Light-Volume-Realtime-Shadows)<br />• [Custom Render Textures Projections](#Custom-Render-Textures-Projections)<br />• [Naming Light Volumes](#Naming-Light-Volumes)<br />• [Volume Bounds Smoothing](#Volume-Bounds-Smoothing)<br />• [Culling Light Volumes](#Culling-Light-Volumes)<br />• [Moving Light Volumes](#Moving-Light-Volumes)<br />• [Additive Volumes](#Additive-Volumes)<br />• [Bakery Volume Rotation](#Bakery-Volume-Rotation)<br />• [Fixing Bakery Light Probes](#Fixing-Bakery-Light-Probes)<br />• [Spawning New Light Volumes In Runtime](#Spawning-New-Light-Volumes-In-Runtime)<br />• [Editor Workflow Notes](#Editor-Workflow-Notes) |
 
 ## Regular Light Volumes Use Cases
 
@@ -65,9 +65,17 @@ For Spot Lights below 180 degrees, prefer the default single projected shadow te
 
 Keep `Shadow Resolution` as low as acceptable. Shadow precision is selected automatically from the active build target: Android/Quest/iOS uses `Half`, while PC uses `Float`. Increase `Bias` only enough to hide self-shadow artifacts, because large bias detaches contact shadows.
 
-If `Half` shadows show noisy bright rims or light leaking on Quest, tune the global EVSM controls in **Light Volume Setup** instead of relying on `Bias`: raise `Shadow Bleed Reduction` first, then adjust `Shadow Min Variance` if needed, and compensate lost penumbra with a little more per-light `Blur`.
+If `Half` shadows show noisy or glitchy bright artifacts on Quest, tune the global EVSM controls in **Light Volume Setup** instead of relying on `Bias`. These artifacts usually appear on shadow edges, in mesh corners, and near the first contact area where the shadow starts next to the occluder. Raise the Android/Quest/iOS `Shadow Min Variance` first, then increase `Shadow Bleed Reduction` if bright edge artifacts remain, and compensate lost penumbra with a little more per-light `Blur`.
 
 See [Point Light Volume Shadows](../Documentation/HowToUse_Shadows.md) for the full setup workflow. 
+
+## Quest And Mobile Shadow Artifacts
+
+Android/Quest/iOS uses `Half` precision EVSM shadow textures, while PC uses `Float`. The main mobile artifact is usually not classic light leaking, but noisy or glitchy bright pixels on shadow edges, in mesh corners, and at the beginning of the shadow near the occluder. Because of that, **Light Volume Setup** stores `Shadow Min Variance` separately for PC and Android/Quest/iOS and shows only the value for the active Unity build target. Tune the mobile value while the project is switched to Android or iOS; tune the PC value while the project is switched to a desktop target.
+
+For Quest and Mobile shadow edge noise, corner glitches or contact-start artifacts, start from `Shadow Min Variance = 1` on the Android/Quest/iOS setting. This is often the correct value for Half precision. Then increase `Shadow Bleed Reduction` if bright speckles or small halo artifacts remain; `0.2..0.4` is usually a reasonable Quest range.
+
+Do not fix these artifacts mostly with `Bias`. Bias is for self-shadow acne, and large values quickly detach contact shadows. If stronger variance or bleed reduction makes the shadow too thin, add a little more per-light `Blur` instead.
 
 ## Point Light Volume Realtime Shadows
 

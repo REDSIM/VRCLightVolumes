@@ -67,18 +67,20 @@ Changing the active Unity build target forces shadow rebaking for lights marked 
 
 ## Shadow Stability Tuning
 
-EVSM shadows are cheap and filter well, but they can show light bleeding or noisy bright edges, especially with `Half` precision on Quest and Mobile. The global correction controls are in **Light Volume Setup** and affect all Point Light Volume shadows:
+EVSM shadows are cheap and filter well, but `Half` precision on Quest and Mobile can show noisy or glitchy bright artifacts. These artifacts usually appear on shadow edges, in mesh corners, and near the first contact area where the shadow starts next to the occluder. The global correction controls are in **Light Volume Setup** and affect all Point Light Volume shadows:
 
-- `Shadow Bleed Reduction` suppresses EVSM light bleeding by remapping shadow visibility. Increase it when shadow edges leak too much light or Half precision shows bright edge noise. Higher values can collapse soft penumbra and visually eat the shadow, so compensate with a little more per-light `Blur` when needed.
-- `Shadow Min Variance` clamps the minimum EVSM variance used by the receiver shader. The Setup inspector exposes it as a human-readable `0..1` slider, mapped logarithmically to the raw shader range `0.0001..1.0`. Higher values reduce Half precision edge noise but can detach contact shadows and reduce contact darkness, so use the smallest value that fixes the artifact.
+- `Shadow Min Variance` clamps the minimum EVSM variance used by the receiver shader. The Setup inspector exposes it as a human-readable `0..1` slider, mapped logarithmically to the raw shader range `0.0001..1.0`. This value is stored separately for PC and Android/Quest/iOS. PC usually needs a much lower value because it uses `Float` shadow textures, while Quest and Mobile often need a higher value because they use `Half`. Higher values reduce Half precision edge, corner and contact-start noise, but can detach contact shadows and reduce contact darkness, so use the smallest value that fixes the artifact on the target platform.
+- `Shadow Bleed Reduction` remaps shadow visibility and helps suppress remaining bright edge artifacts after variance tuning. It also reduces classic EVSM light bleeding, but higher values can collapse soft penumbra and visually eat the shadow, so compensate with a little more per-light `Blur` when needed.
 
 Practical workflow:
 
-1. Switch the Unity build target to Android/Quest/iOS or PC first, so **Light Volume Setup** can select the matching shadow precision and rebake if needed.
-2. Keep per-light `Bias` only high enough to hide self-shadow acne. Bias is not the right tool for EVSM light bleeding and can detach contact shadows quickly.
-3. Raise `Shadow Bleed Reduction` gradually until obvious leaking disappears.
-4. If Half shadows still have noisy bright rims, raise `Shadow Min Variance` slightly.
+1. Switch the Unity build target to Android/Quest/iOS or PC first, so **Light Volume Setup** can show the matching `Shadow Min Variance`, select the matching shadow precision and rebake if needed.
+2. Keep per-light `Bias` only high enough to hide self-shadow acne. Bias is not the right tool for Half precision edge and corner artifacts, and it can detach contact shadows quickly.
+3. On Quest and Mobile, raise the Android/Quest/iOS `Shadow Min Variance` first. A value of `1` is a normal starting point for Quest.
+4. If bright edge speckles, corner glitches or small halo artifacts remain, raise `Shadow Bleed Reduction` gradually.
 5. If the penumbra becomes too thin after bleed reduction or variance changes, increase the affected light's `Blur`.
+
+For Quest and Mobile, a practical baseline is `Shadow Min Variance = 1` and `Shadow Bleed Reduction` around `0.2..0.4`. PC has a separate `Shadow Min Variance` value, so you can keep the PC value low for cleaner contact shadows while using a stronger mobile value to hide Half precision edge, corner and contact-start artifacts.
 
 `Near Plane` and `Far Clip Plane` also affect precision. Shadow depth is normalized between them, so moving `Near Plane` farther from the light or manually reducing `Far Clip Plane` can improve usable depth precision. Do not push `Near Plane` past real shadow casters, and do not pull `Far Clip Plane` closer than objects that should cast shadows. For most lights, leave `Far Clip Plane` at `0`; the system will recalculate it from the light's current culling range. Changing `Near Plane`, `Far Clip Plane`, `Bias`, `Blur` or `Contact Hardening` requires rebaking the affected shadow.
 
@@ -186,8 +188,8 @@ For realtime shadows:
 |`Rebake Shadows` | Includes this light when pressing `Bake Shadows` in **Light Volume Setup**.|
 |`Shadow Resolution` | Resolution used by the shared shadow texture array. For cubemap shadows this value is per face.|
 |`Shadow Format` | Read-only precision selected automatically by the active build target. Android/Quest/iOS uses `Half`; PC uses `Float`.|
-|`Shadow Bleed Reduction` | Global EVSM light bleeding correction. Higher values reduce leaking and some Half edge noise, but can collapse soft penumbra.|
-|`Shadow Min Variance` | Global minimum EVSM variance clamp. In **Light Volume Setup** this is a `0..1` logarithmic slider over the raw `0.0001..1.0` range. Higher values reduce Half precision edge noise but can detach contact shadows.|
+|`Shadow Bleed Reduction` | Global EVSM visibility remap. Higher values reduce classic EVSM light bleeding and can suppress remaining bright edge artifacts after variance tuning, but can collapse soft penumbra.|
+|`Shadow Min Variance` | Global minimum EVSM variance clamp. In **Light Volume Setup** this is a `0..1` logarithmic slider over the raw `0.0001..1.0` range. The PC and Android/Quest/iOS values are stored separately, and the inspector shows the value for the active Unity build target. Higher values reduce Half precision edge, corner and contact-start artifacts but can detach contact shadows.|
 |`Bake On Enable` | Realtime Shadow Baker option. Runs one distributed bake cycle when the baker becomes active.|
 |`Realtime` | Realtime Shadow Baker option. Continuously updates shadow slices through a delayed Udon event loop.|
 |`Realtime Faces Per Frame` | Realtime Shadow Baker option. Number of cubemap faces updated per bake tick. Single-slice Spot Light shadows ignore this and update one slice.|

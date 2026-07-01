@@ -21,7 +21,7 @@ Stores the Light Volume atlas, Point Light Volume texture arrays and references 
 |`int ShadowTexturesHeight` | Height of each runtime shadow map slice. |
 |`int ShadowTextureFormat` | Precision used for EVSM shadow maps and the runtime shadow texture array. `0` = `ARGBHalf`, `1` = `ARGBFloat`. The authoring Setup component assigns this automatically from the active build target. |
 |`float ShadowBleedReduction` | Global EVSM light bleeding correction. `0` disables it, `1` is strongest. Higher values can collapse soft penumbra. |
-|`float ShadowMinVariance` | Raw global minimum EVSM variance used by the receiver shader. The authoring Setup component stores a `0..1` logarithmic slider, but the Udon manager stores the raw value. |
+|`float ShadowMinVariance` | Raw global minimum EVSM variance used by the receiver shader. The authoring Setup component stores separate PC and Android/Quest/iOS `0..1` logarithmic sliders, but the Udon manager stores only the resolved raw value for the active build target. |
 |`bool LightProbesBlending` | When enabled, areas outside Light Volumes fall back to Unity Light Probes. Otherwise, the Light Volume with the smallest weight is used as fallback. It also improves performance. |
 |`bool SharpBounds` | Disables smooth blending with areas outside Light Volumes. Use it if your entire scene's play area is covered by Light Volumes. It also improves performance. |
 |`bool AutoUpdateVolumes` | Automatically updates transform data for volumes marked `IsDynamic`. Enabling/disabling, `Color` and `Intensity` changes update without this option. |

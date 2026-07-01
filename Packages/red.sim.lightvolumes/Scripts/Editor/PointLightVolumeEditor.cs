@@ -41,6 +41,7 @@ namespace VRCLightVolumes {
             hiddenFields.Add("ObjectMask");
             hiddenFields.Add("NearPlane");
             hiddenFields.Add("FarPlane");
+            hiddenFields.Add("DebugClipPlanes");
             hiddenFields.Add("Blur");
             hiddenFields.Add("ContactHardening");
             hiddenFields.Add("UseWorldSpace");
@@ -99,6 +100,7 @@ namespace VRCLightVolumes {
                 EditorGUILayout.PropertyField(serializedObject.FindProperty("ObjectMask"));
                 EditorGUILayout.PropertyField(serializedObject.FindProperty("NearPlane"));
                 EditorGUILayout.PropertyField(serializedObject.FindProperty("FarPlane"));
+                EditorGUILayout.PropertyField(serializedObject.FindProperty("DebugClipPlanes"));
                 EditorGUILayout.PropertyField(serializedObject.FindProperty("Bias"));
                 EditorGUILayout.PropertyField(serializedObject.FindProperty("Blur"));
                 EditorGUILayout.PropertyField(serializedObject.FindProperty("ContactHardening"));
@@ -416,7 +418,7 @@ namespace VRCLightVolumes {
 
         // Draws the manually controlled shadow bake near-far space.
         private void DrawShadowClipGUI(PointLightVolume pointLightVolume, Vector3 origin, Transform transform) {
-            if (!pointLightVolume.Shadows) return;
+            if (!pointLightVolume.Shadows || !pointLightVolume.DebugClipPlanes) return;
 
             Handles.color = Handles.zTest == UnityEngine.Rendering.CompareFunction.LessEqual ? _shadowClipVisibleColor : _shadowClipHiddenColor;
             float nearClip = pointLightVolume.GetShadowNearClip();

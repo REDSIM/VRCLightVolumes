@@ -60,6 +60,8 @@ namespace VRCLightVolumes {
         [Tooltip("Far clip plane used by the shadow bake camera. Shadow casters outside the near-far range are clipped. 0 recalculates it from this light's current culling range.")]
         [FormerlySerializedAs("ShadowFarClip")]
         [Min(0)] public float FarPlane = 0f;
+        [Tooltip("Shows the shadow near and far clip plane gizmo.")]
+        public bool DebugClipPlanes = false;
         [Tooltip("Shadow blur radius applied after baking, normalized to 128x128 shadow resolution. Editor baking uses spherical shadow-space blur to reduce visible cubemap and Spot Light projection seams. Runtime baking uses Planar Blur unless Spherical Blur is enabled on the runtime baker. 0 keeps the baked shadow map unblurred. Requires rebaking.")]
         [Min(0)] public float Blur = 1f;
         [Tooltip("Hardens shadows near the contact areas. Can produce artefacts, so use with caution. Requires rebaking. More performant when set to 0 in realtime mode. Runtime baker Spherical Blur also applies to contact hardening samples.")]

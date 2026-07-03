@@ -128,6 +128,7 @@ namespace VRCLightVolumes {
         private TextureArrayResolution _shadowResolutionPrev = TextureArrayResolution._64x64;
         private ShadowTexturePrecision _shadowTextureFormatPrev = ShadowTexturePrecision.Float;
         private EditorCoroutine _generateAtlasCoroutine = null;
+        private static bool _postUndoGlobalSyncQueued = false;
         private bool _postUndoSyncQueued = false;
         private bool _postUndoReinitializePointLightTextures = false;
         private const string CubemapFaceShaderName = "Hidden/CubeFace";
@@ -213,6 +214,46 @@ namespace VRCLightVolumes {
             if (Selection.activeObject == gameObject) {
                 RefreshVolumesList();
             }
+        }
+
+        // Registers global Undo/Redo sync because restored objects may not have valid setup references during lifecycle callbacks.
+        [InitializeOnLoadMethod]
+        private static void InitializeUndoRedoSync() {
+            Undo.undoRedoPerformed -= QueueGlobalPostUndoSync;
+            Undo.undoRedoPerformed += QueueGlobalPostUndoSync;
+        }
+
+        // Queues all setup synchronization until Unity has fully restored destroyed scene objects.
+        private static void QueueGlobalPostUndoSync() {
+            if (EditorApplication.isPlayingOrWillChangePlaymode) return;
+            if (_postUndoGlobalSyncQueued) return;
+            _postUndoGlobalSyncQueued = true;
+            EditorApplication.delayCall += SyncSceneSetupsAfterUndo;
+        }
+
+        // Rebuilds all scene setup registries from restored authoring components.
+        private static void SyncSceneSetupsAfterUndo() {
+            if (EditorApplication.isPlayingOrWillChangePlaymode) {
+                _postUndoGlobalSyncQueued = false;
+                return;
+            }
+            if (Undo.isProcessing) {
+                EditorApplication.delayCall += SyncSceneSetupsAfterUndo;
+                return;
+            }
+            _postUndoGlobalSyncQueued = false;
+
+            LightVolumeSetup[] setups = Resources.FindObjectsOfTypeAll<LightVolumeSetup>();
+            for (int i = 0; i < setups.Length; i++) {
+                LightVolumeSetup setup = setups[i];
+                if (setup == null || setup.gameObject == null) continue;
+                if (!setup.gameObject.scene.IsValid() || !setup.gameObject.scene.isLoaded) continue;
+                if (setup.CompareTag("EditorOnly")) continue;
+                setup.RefreshVolumesList();
+            }
+
+            EditorApplication.QueuePlayerLoopUpdate();
+            SceneView.RepaintAll();
         }
 
         // Queues setup synchronization until Unity finishes Undo and Transform access is valid again.

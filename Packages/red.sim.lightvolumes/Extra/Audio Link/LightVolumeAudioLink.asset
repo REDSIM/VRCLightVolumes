@@ -300,7 +300,7 @@ MonoBehaviour:
       Data: 19|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Enables smoothing algorithm that tries to smooth out flickering that
+      Data: Enables a smoothing algorithm that tries to smooth out flickering that
         can usually be a problem
     - Name: 
       Entry: 8
@@ -365,8 +365,8 @@ MonoBehaviour:
     - Name: tooltip
       Entry: 1
       Data: Value from 0 to 1 that defines how much smoothing should be applied.
-        Zero usually applies just a little bit of smoothing. One smoothes out almost
-        all the fast blinks and makes intensity changing very slow
+        Zero usually applies just a little bit of smoothing. One smooths out almost
+        all fast blinks and makes intensity changes very slow
     - Name: 
       Entry: 8
       Data: 
@@ -794,8 +794,8 @@ MonoBehaviour:
       Data: 47|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Makes color full saturated and full bright before applying Audio Link
-        effect. AudioLink already affects auto theme colors in runtime for some reason,
+      Data: Makes color fully saturated and fully bright before applying Audio Link
+        effect. AudioLink already affects auto theme colors at runtime for some reason,
         so it prevents doubling the animation, which is especially visible when using
         Delay
     - Name: 
@@ -1204,7 +1204,7 @@ MonoBehaviour:
       Data: 72|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: List of the Mesh Renderers that has materials that should change color
+      Data: List of the Mesh Renderers that have materials that should change color
         based on AudioLink
     - Name: 
       Entry: 8

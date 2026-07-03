@@ -11,6 +11,7 @@ namespace VRCLightVolumes.Tests {
     public class LightVolumeEditorPipelineTests {
         private const float Epsilon = 0.0001f;
         private static readonly BindingFlags _nonPublicInstanceFlags = BindingFlags.Instance | BindingFlags.NonPublic;
+        private static readonly BindingFlags _nonPublicStaticFlags = BindingFlags.Static | BindingFlags.NonPublic;
         private static readonly FieldInfo _customTexturesDepthField = typeof(LightVolumeManager).GetField("_customTextureArrayDepth", _nonPublicInstanceFlags);
 
         private readonly List<UnityEngine.Object> _createdObjects = new List<UnityEngine.Object>();
@@ -599,6 +600,69 @@ namespace VRCLightVolumes.Tests {
             Assert.That(manager.PointLightVolumeInstances, Has.Length.EqualTo(0));
         }
 
+        // Verifies global Undo/Redo sync restores a regular Light Volume that returned after deletion.
+        [Test]
+        public void UndoRedoSyncRestoresDeletedLightVolumeToManager() {
+            GameObject setupObject = CreateGameObject("Undo Light Volume Setup", true);
+            LightVolumeSetup setup = setupObject.AddComponent<LightVolumeSetup>();
+            setup.SetupDependencies();
+            LightVolumeManager manager = setup.LightVolumeManager;
+            Texture3D atlas = CreateAtlas("Undo Light Volume Atlas");
+            manager.LightVolumeAtlas = atlas;
+            manager.LightVolumeAtlasBase = atlas;
+
+            GameObject lightObject = CreateGameObject("Undo Restored Light Volume", true);
+            LightVolumeInstance instance = lightObject.AddComponent<LightVolumeInstance>();
+            LightVolume volume = lightObject.AddComponent<LightVolume>();
+            volume.LightVolumeSetup = setup;
+            volume.LightVolumeInstance = instance;
+            volume.Additive = true;
+            volume.Intensity = 2f;
+            instance.LightVolumeManager = null;
+            instance.IsAdditive = false;
+            setup.LightVolumes.Clear();
+            setup.LightVolumesWeights.Clear();
+            manager.LightVolumeInstances = new LightVolumeInstance[0];
+
+            InvokeUndoRedoSync();
+
+            Assert.That(setup.LightVolumes, Does.Contain(volume));
+            Assert.That(instance.LightVolumeManager, Is.SameAs(manager));
+            Assert.That(instance.IsAdditive, Is.True);
+            Assert.That(instance.Intensity, Is.EqualTo(2f).Within(Epsilon));
+            Assert.That(manager.LightVolumeInstances, Has.Member(instance));
+        }
+
+        // Verifies global Undo/Redo sync restores a Point Light Volume that returned after deletion.
+        [Test]
+        public void UndoRedoSyncRestoresDeletedPointLightVolumeToManager() {
+            GameObject setupObject = CreateGameObject("Undo Point Light Volume Setup", true);
+            LightVolumeSetup setup = setupObject.AddComponent<LightVolumeSetup>();
+            setup.SetupDependencies();
+            LightVolumeManager manager = setup.LightVolumeManager;
+
+            GameObject lightObject = CreateGameObject("Undo Restored Point Light Volume", true);
+            PointLightVolumeInstance instance = lightObject.AddComponent<PointLightVolumeInstance>();
+            PointLightVolume pointLight = lightObject.AddComponent<PointLightVolume>();
+            pointLight.LightVolumeSetup = setup;
+            pointLight.PointLightVolumeInstance = instance;
+            pointLight.Type = PointLightVolume.LightType.SpotLight;
+            pointLight.Angle = 45f;
+            pointLight.Intensity = 3f;
+            instance.LightVolumeManager = null;
+            instance.LightType = 0;
+            setup.PointLightVolumes.Clear();
+            manager.PointLightVolumeInstances = new PointLightVolumeInstance[0];
+
+            InvokeUndoRedoSync();
+
+            Assert.That(setup.PointLightVolumes, Does.Contain(pointLight));
+            Assert.That(instance.LightVolumeManager, Is.SameAs(manager));
+            Assert.That(instance.LightType, Is.EqualTo(1)); // 1: spot light
+            Assert.That(instance.Intensity, Is.EqualTo(3f).Within(Epsilon));
+            Assert.That(manager.PointLightVolumeInstances, Has.Member(instance));
+        }
+
         // Verifies reserved UV space creates unique atlas islands filled with neutral SH data.
         [Test]
         public void ReservedUVSpaceCreatesUniqueWhiteAtlasIslands() {
@@ -775,6 +839,13 @@ namespace VRCLightVolumes.Tests {
             material.name = "Editor Test Material";
             _createdObjects.Add(material);
             return material;
+        }
+
+        // Invokes the editor-only Undo/Redo registry sync without depending on Unity's undo event timing.
+        private static void InvokeUndoRedoSync() {
+            MethodInfo method = typeof(LightVolumeSetup).GetMethod("SyncSceneSetupsAfterUndo", _nonPublicStaticFlags);
+            Assert.That(method, Is.Not.Null);
+            method.Invoke(null, null);
         }
 
         // Destroys test objects immediately and releases render textures first.

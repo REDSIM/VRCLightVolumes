@@ -156,7 +156,7 @@ MonoBehaviour:
       Data: 9|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Enables smoothing algorithm that tries to smooth out flickering that
+      Data: Enables a smoothing algorithm that tries to smooth out flickering that
         is usually a problem. Recommended to always be turned on.
     - Name: 
       Entry: 8

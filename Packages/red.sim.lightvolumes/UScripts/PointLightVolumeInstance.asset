@@ -100,9 +100,9 @@ MonoBehaviour:
       Data: 6|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Defines whether this point light volume can be moved in runtime. Disabling
+      Data: Defines whether this point light volume can be moved at runtime. Disabling
         this option slightly improves performance. Don't forget to enable "Auto Update
-        Volumes" in your Light Volumes Setup to have this dynamic updates!
+        Volumes" in your Light Volumes Setup to get these dynamic updates!
     - Name: 
       Entry: 8
       Data: 

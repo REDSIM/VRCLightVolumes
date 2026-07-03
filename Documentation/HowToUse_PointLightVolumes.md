@@ -118,12 +118,6 @@ Area Light cookies use the mip chain of this shared texture array to approximate
 > [!IMPORTANT]
 > It’s recommended to completely disable compression for any texture used as a Cookie or a LUT. The Light Volumes system does not inherit the compression settings, but compression artifacts will still remain and affect the result.
 
-### Recommended Source Texture Formats:
-
-- **`RGBA32`** – The lightest format, but it does **not** support HDR. Not recommended for LUTs, as it causes visible banding artifacts.
-- **`RGBA Half`** – The recommended format for most cases. Supports HDR and works well with LUTs. It uses half precision, so minimal banding may still be visible, but usually unnoticeable.
-- **`RGBA Float`** – The highest quality format with full HDR support and no banding. It’s also the most memory-heavy and is typically overkill for general use.
-
 For shadow setup, baked shadows, the Realtime Shadow Baker and runtime script control, see [Point Light Volume Shadows](../Documentation/HowToUse_Shadows.md).
 
 ## Point Light Volume Component Description
@@ -142,7 +136,7 @@ For shadow setup, baked shadows, the Realtime Shadow Baker and runtime script co
 |`Projection` | Parametric uses settings to compute light falloff. LUT uses a texture: X - cone falloff, Y - attenuation (Y only for point lights). Cookie projects a texture for spot lights. Cubemap projects a cubemap for point lights. Area Lights hide this dropdown and use the Cookie field directly when a source is assigned.|
 |`Angle` | Angle of a spotlight cone in degrees. (Only available in spotlight mode)|
 |`Falloff` | Spotlight cone falloff. (Only available in parametric spotlight mode)|
-|`Falloff LUT` | Texture that defines custom light shape. Similar to IES. X - cone falloff, Y - attenuation. No compression and RGBA Float or RGBA Half format is recommended.|
+|`Falloff LUT` | Texture that defines custom light shape. Similar to IES. X - cone falloff, Y - attenuation. Disable compression to avoid LUT artifacts.|
 |`Cookie` | Projects a texture, RenderTexture or Material for Spot Light cookies and Area Light Emission.|
 |`Spot Cookie Aspect` | Width / height aspect used by custom Spot Light cookie projection. Area Light cookies use the Area Light transform scale instead.|
 |`Cubemap` | Projects a texture, Cubemap, Texture2DArray, RenderTexture, or Material for point lights. Cubemap and array sources use independent faces; a single 2D texture is copied to all faces.|

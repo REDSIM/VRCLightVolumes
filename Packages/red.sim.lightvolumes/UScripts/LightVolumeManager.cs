@@ -72,9 +72,9 @@ namespace VRCLightVolumes {
         public bool LightProbesBlending = true;
         [Tooltip("Disables smooth blending with areas outside Light Volumes. Use it if your entire scene's play area is covered by Light Volumes. It also improves performance.")]
         public bool SharpBounds = true;
-        [Tooltip("Automatically updates most of the volumes properties in runtime. Enabling/Disabling, Color and Intensity updates automatically even without this option enabled. Position, Rotation and Scale gets updated only for volumes that are marked dynamic. It's more performant to keep it off.")]
+        [Tooltip("Automatically updates most volume properties at runtime. Enabling/disabling, Color and Intensity update automatically even without this option enabled. Position, Rotation and Scale get updated only for volumes that are marked dynamic. It's more performant to keep it off.")]
         public bool AutoUpdateVolumes = true;
-        [Tooltip("Automatically updates dynamic point light cookie and shadow texture sources in runtime. It's more performant to keep it off.")]
+        [Tooltip("Automatically updates dynamic point light cookie and shadow texture sources at runtime. It's more performant to keep it off.")]
         public bool AutoUpdateTextures = true;
         [Tooltip("Limits the maximum number of additive volumes and Point Light Volumes that can affect a single pixel. This also limits individual Point Light Volume speculars in modern compatible shaders. Lower values improve worst-case performance in overlap-heavy areas.")]
         public int AdditiveMaxOverdraw = 4;
@@ -82,15 +82,15 @@ namespace VRCLightVolumes {
         public bool ForceSceneLighting = false;
 
         [Header("Runtime Registries")]
-        [Tooltip("All Light Volume instances sorted in decreasing order by weight. You can enable or disable volumes game objects at runtime. Manually disabling unnecessary volumes improves performance.")]
+        [Tooltip("All Light Volume instances sorted in decreasing order by weight. You can enable or disable volume GameObjects at runtime. Manually disabling unnecessary volumes improves performance.")]
         public LightVolumeInstance[] LightVolumeInstances = new LightVolumeInstance[0];
-        [Tooltip("All Point Light Volume instances. You can enable or disable point light volumes game objects at runtime. Manually disabling unnecessary point light volumes improves performance.")]
+        [Tooltip("All Point Light Volume instances. You can enable or disable point light volume GameObjects at runtime. Manually disabling unnecessary point light volumes improves performance.")]
         public PointLightVolumeInstance[] PointLightVolumeInstances = new PointLightVolumeInstance[0];
 
         [Header("Runtime Textures")]
         [Tooltip("Runtime texture array used for point light cubemaps, LUTs and cookies.")]
         public RenderTexture CustomTextures;
-        [Tooltip("Cubemaps count that stored in CustomTextures. Cubemap array elements starts from the beginning, 6 elements each.")]
+        [Tooltip("Cubemap count stored in CustomTextures. Cubemap array elements start from the beginning, 6 elements each.")]
         public int CubemapsCount = 0;
         [Tooltip("Runtime texture array that stores per-light shadow maps.")]
         public RenderTexture ShadowTextures;
@@ -165,7 +165,7 @@ namespace VRCLightVolumes {
 
 #region Volume State And Shader Buffers
 
-        private bool _isInitialized = false; // Tracks one-time shader array initialization in runtime while still allowing editor property IDs to refresh
+        private bool _isInitialized = false; // Tracks one-time shader array initialization at runtime while still allowing editor property IDs to refresh
         private bool _isRangeDirty = false; // Global state mirrors and dirty flags
 
         // Compact shader buffers are the runtime source of truth. These flags only decide whether to upload them.
@@ -571,7 +571,7 @@ namespace VRCLightVolumes {
         }
 
 #if !UDONSHARP || UNITY_EDITOR
-        // To make it work when changing values on UdonSharpBehaviour in editor
+        // To make it work when changing values on UdonSharpBehaviour in the editor
         private void Update() {
             if (_prevAutoUpdateVolumes != AutoUpdateVolumes) {
                 _prevAutoUpdateVolumes = AutoUpdateVolumes;
@@ -1883,7 +1883,7 @@ namespace VRCLightVolumes {
 #endif
             TryInitialize();
 
-            // Defines if Force Scene Lighting Feature is enabled in scene. 0 if disabled.
+            // Defines whether Force Scene Lighting Feature is enabled in the scene. 0 if disabled.
             // Lore: https://x.com/lil_xyzw/status/1961487430256922928?s=20
             VRCShader.SetGlobalInteger(_forceSceneLightingID, ForceSceneLighting ? 1 : 0);
 

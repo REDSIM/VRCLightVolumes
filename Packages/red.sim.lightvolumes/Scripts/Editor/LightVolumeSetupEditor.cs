@@ -72,7 +72,7 @@ namespace VRCLightVolumes {
                 Rect fieldRect = new Rect(xOffset + 96, rect.y + 2, 32, rect.height);
 
                 GUIContent title = new GUIContent($"Light Volumes ({_lightVolumeSetup.LightVolumes.Count})");
-                title.tooltip = "Max 32 can be visible on scene at the same time.";
+                title.tooltip = "Max 32 can be visible in the scene at the same time.";
                 EditorGUI.LabelField(volumeHeaderRect, title);
                 EditorGUI.LabelField(weightHeaderRect, "Weight");
 
@@ -173,7 +173,7 @@ namespace VRCLightVolumes {
                 Rect volumeHeaderRect = new Rect(xOffset, rect.y, volumeWidth, EditorGUIUtility.singleLineHeight);
 
                 GUIContent title = new GUIContent($"Point Light Volumes ({_lightVolumeSetup.PointLightVolumes.Count})");
-                title.tooltip = "Max 128 can be visible on scene at the same time.";
+                title.tooltip = "Max 128 can be visible in the scene at the same time.";
                 EditorGUI.LabelField(volumeHeaderRect, title);
 
             };
@@ -245,7 +245,7 @@ namespace VRCLightVolumes {
             GUILayout.Space(10);
 
             if (LVUtils.IsInPrefabAsset(_lightVolumeSetup)) {
-                EditorGUILayout.HelpBox("This component is part of a prefab asset (not in the scene). Please, use one that is placed on your scene!", MessageType.Warning);
+                EditorGUILayout.HelpBox("This component is part of a prefab asset (not in the scene). Please use one that is placed in your scene!", MessageType.Warning);
                 GUILayout.Space(10);
             } else if (_isMultipleInstancesError) {
                 EditorGUILayout.HelpBox("Multiple Light Volume Managers detected in the scene. Please ensure only one is active to avoid unexpected behavior!", MessageType.Error);

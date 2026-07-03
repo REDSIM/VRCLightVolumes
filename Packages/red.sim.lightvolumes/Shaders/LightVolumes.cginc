@@ -12,13 +12,13 @@
 cbuffer LightVolumeUniforms {
 #endif
 
-// Are Light Volumes enabled on scene? can be 0 or 1
+// Are Light Volumes enabled in the scene? Can be 0 or 1
 uniform float _UdonLightVolumeEnabled;
 
 // Returns 1, 2 or other number if there are light volumes on the scene. Number represents the light volumes system internal version number.
 uniform float _UdonLightVolumeVersion;
 
-// All volumes count in scene
+// Total volume count in the scene
 uniform float _UdonLightVolumeCount;
 
 // Additive volumes max overdraw count
@@ -120,7 +120,7 @@ uniform float _UdonPointLightVolumeTextureMaxMip;
 // Main 3D Texture atlas
 uniform Texture3D _UdonLightVolume;
 uniform SamplerState sampler_UdonLightVolume;
-// First elements must be cubemap faces (6 face textures per cubemap). Then goes other textures
+// First elements must be cubemap faces (6 face textures per cubemap). Other textures follow.
 uniform Texture2DArray _UdonPointLightVolumeTexture;
 uniform SamplerState sampler_UdonPointLightVolumeTexture;
 // First elements are baked shadow cubemap faces, 6 face textures per cubemap.
@@ -613,7 +613,7 @@ bool LV_PointLightVolumeContribution(uint id, float3 worldPos, float3 pointLight
     return counted;
 }
 
-// Samples 3 SH textures and packing them into L1 channels
+// Samples 3 SH textures and packs them into L1 channels
 void LV_SampleLightVolumeTex(float3 uvw0, float3 uvw1, float3 uvw2, out float3 L0, out float3 L1r, out float3 L1g, out float3 L1b) {
     // Sampling 3D Atlas
     float4 tex0 = LV_SAMPLE(_UdonLightVolume, uvw0);

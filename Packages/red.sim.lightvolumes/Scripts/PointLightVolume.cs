@@ -10,7 +10,7 @@ namespace VRCLightVolumes {
     [ExecuteAlways]
     public class PointLightVolume : MonoBehaviour {
 
-        [Tooltip("Defines whether this point light volume can be moved in runtime. Disabling this option slightly improves performance. Don't forget to enable \"Auto Update Volumes\" in your Light Volumes Setup to have this dynamic updates!")]
+        [Tooltip("Defines whether this point light volume can be moved at runtime. Disabling this option slightly improves performance. Don't forget to enable \"Auto Update Volumes\" in your Light Volumes Setup to get these dynamic updates!")]
         public bool Dynamic = false;
         [Tooltip("Point light is the most performant type. For static lighting, it's recommended to bake regular additive light volumes instead.")]
         public LightType Type = LightType.PointLight;
@@ -45,7 +45,7 @@ namespace VRCLightVolumes {
         [Tooltip("Shows overdrawing range gizmo. Less point light volumes intersections - more performance!")]
         public bool DebugRange = false;
         [Space]
-        [Tooltip("Enables baked shadow map rendering for this light. This shadows are baked, but can affect dynamic objects in runtime, like avatars. It's more performant not to use shadows.")]
+        [Tooltip("Enables baked shadow map rendering for this light. These shadows are baked, but can affect dynamic objects at runtime, like avatars. It's more performant not to use shadows.")]
         public bool Shadows = false;
         [Tooltip("Rebakes shadows for this point light automatically when you click \"Bake Shadows\" in Light Volume Setup. Alternatively, you can bake it manually pressing the \"Bake Shadows\" button here.")]
         public bool RebakeShadows = false;

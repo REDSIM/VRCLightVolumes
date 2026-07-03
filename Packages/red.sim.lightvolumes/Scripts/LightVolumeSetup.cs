@@ -77,9 +77,9 @@ namespace VRCLightVolumes {
         public bool LightProbesBlending = true;
         [Tooltip("Disables smooth blending with areas outside Light Volumes. Use it if your entire scene's play area is covered by Light Volumes. It also improves performance.")]
         public bool SharpBounds = true;
-        [Tooltip("Automatically updates most of the volumes properties in runtime. Enabling/Disabling, Color and Intensity updates automatically even without this option enabled. Position, Rotation and Scale gets updated only for volumes that are marked dynamic. It's more performant to keep it off.")]
+        [Tooltip("Automatically updates most volume properties at runtime. Enabling/disabling, Color and Intensity update automatically even without this option enabled. Position, Rotation and Scale get updated only for volumes that are marked dynamic. It's more performant to keep it off.")]
         public bool AutoUpdateVolumes = true;
-        [Tooltip("Automatically updates dynamic point light cookie and shadow texture sources in runtime. It's more performant to keep it off.")]
+        [Tooltip("Automatically updates dynamic point light cookie and shadow texture sources at runtime. It's more performant to keep it off.")]
         public bool AutoUpdateTextures = true;
         [Tooltip("Limits the maximum number of additive volumes and Point Light Volumes that can affect a single pixel. This also limits individual Point Light Volume speculars in modern compatible shaders. Lower values improve worst-case performance in overlap-heavy areas.")]
         [Min(1)]public int AdditiveMaxOverdraw = 4;
@@ -151,7 +151,7 @@ namespace VRCLightVolumes {
             }
             bool canAdoptUnassignedVolumes = setupCount <= 1;
 
-            // Searching for all light volumes in scene
+            // Searching for all light volumes in the scene
             var volumes = FindObjectsOfType<LightVolume>(true);
             for (int i = 0; i < volumes.Length; i++) {
                 if (volumes[i].CompareTag("EditorOnly")) continue;
@@ -174,7 +174,7 @@ namespace VRCLightVolumes {
                 }
             }
 
-            // Searching for all point light volumes in scene
+            // Searching for all point light volumes in the scene
             var pointVolumes = FindObjectsOfType<PointLightVolume>(true);
             for (int i = 0; i < pointVolumes.Length; i++) {
                 if (pointVolumes[i].CompareTag("EditorOnly")) continue;

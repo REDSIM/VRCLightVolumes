@@ -68,7 +68,7 @@ They **add their light** on top of the regular volumes. Additive volumes can als
 
 #### How to Bake an Additive Light Volume
 
-Here will be explained how to bake a togglable light zone for your world. It's useful if you want to make a light switch for an apartment, or a light from a TV screen. If you want to make a point light, flashlight, or a projector, use a Point Light Volume instead! It's much cheaper and easier.
+Here will be explained how to bake a togglable light zone for your world. This is most useful when you have many lights that can be enabled and disabled together as one lighting setup, or when correct/colorful indirect lighting is important. If you only need to bake one or two local lights, it is usually easier and cheaper to use Point Light Volumes with shadows instead. For a point light, flashlight, or projector, use a Point Light Volume instead too.
 
 1. Create a **separate scene** for baking. Usually, a copy of your main scene if you want to bake light for a room.
 2. **Disable or delete** all the lights that you don't want to bake into your additive light volume.

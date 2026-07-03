@@ -18,7 +18,7 @@ namespace VRCLightVolumes {
     {
         [Tooltip("Render Texture used by your video player. Can be just a static texture if you want it to be. Make sure that Enable Mip Maps and Auto Generate Mip Maps are Enabled in the texture’s import settings.")]
         public Texture TargetRenderTexture;
-        [Tooltip("Enables smoothing algorithm that tries to smooth out flickering that is usually a problem. Recommended to always be turned on.")]
+        [Tooltip("Enables a smoothing algorithm that tries to smooth out flickering that is usually a problem. Recommended to always be turned on.")]
         public bool AntiFlickering = true;
         [Space]
         [Tooltip("List of the Light Volumes that should be affected by the Light Volume TVGI script.")]
@@ -79,7 +79,7 @@ namespace VRCLightVolumes {
             if (AntiFlickering) {
                 float diff = ColorDifference(color, _prevColor); // Difference between prev and current color
                 float smoothing = dTime / Mathf.Lerp(0.25f, 1e-05f, Mathf.Pow(diff * 1.5f, 0.1f)); // Smoothing speed depends on the color difference
-                _prevColor = Color.Lerp(_prevColor, color, smoothing); // Actually smoothing colors
+                _prevColor = Color.Lerp(_prevColor, color, smoothing); // Actually smooths colors
             } else {
                 _prevColor = color;
             }

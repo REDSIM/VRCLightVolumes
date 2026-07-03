@@ -14,9 +14,9 @@ namespace VRCLightVolumes {
     {
 
         [Header("Volume Setup")]
-        [Tooltip("Defines whether this volume can be moved in runtime. Disabling this option slightly improves performance. Don't forget to enable \"Auto Update Volumes\" in your Light Volumes Setup to have this dynamic updates!")]
+        [Tooltip("Defines whether this volume can be moved at runtime. Disabling this option slightly improves performance. Don't forget to enable \"Auto Update Volumes\" in your Light Volumes Setup to get these dynamic updates!")]
         public bool IsDynamic = false;
-        [Tooltip("Additive volumes apply their light on top of others as an overlay. Useful for movable and togglable lights. They can also project light onto static lightmapped objects if the surface shader supports it.")]
+        [Tooltip("Additive volumes apply their light on top of others as an overlay. Useful for movable and toggleable lights. They can also project light onto static lightmapped objects if the surface shader supports it.")]
         public bool IsAdditive = false;
         [Tooltip("Multiplies the volume’s color by this value.")]
         [ColorUsage(showAlpha: false)] public Color Color = Color.white;
@@ -85,7 +85,7 @@ namespace VRCLightVolumes {
 #endif
 
 #if !UDONSHARP || UNITY_EDITOR
-        // To make it work when changing values on UdonSharpBehaviour in editor
+        // To make it work when changing values on UdonSharpBehaviour in the editor
         private void Update() {
             if (_old_Color != Color || _old_Intensity != Intensity) {
                 _old_Color = Color;

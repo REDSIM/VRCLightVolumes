@@ -12,7 +12,7 @@
 | [Area Light Emission](../Documentation/HowToUse_AreaLightEmission.md)|
 | [Audio Link Integration](../Documentation/HowToUse_AudioLinkIntegration.md)|
 | [TV Screens Integration](../Documentation/HowToUse_TVScreensIntegration.md)|
-| **How Light Volumes Work?**<br />• [Spherical Harmonics](#Spherical-Harmonics)<br />• [Light Data](#Light-Data)<br />• [Light Data Storage](#Light-Data-Storage)<br />• [Light Volume Evaluation](#Light-Volume-Evaluation)<br />• [Specular Evaluation](#Specular-Evaluation)<br />• [Point Light Volumes](#Point-Light-Volumes)<br />• [Textured Area Light Emission](#Textured-Area-Light-Emission) |
+| **How Light Volumes Work?**<br />- [Spherical Harmonics](#Spherical-Harmonics)<br />- [Light Data](#Light-Data)<br />- [Light Data Storage](#Light-Data-Storage)<br />- [Light Volume Evaluation](#Light-Volume-Evaluation)<br />- [Specular Evaluation](#Specular-Evaluation)<br />- [Point Light Volumes](#Point-Light-Volumes)<br />- [Point Light Volume EVSM Shadows](#Point-Light-Volume-EVSM-Shadows)<br />- [Textured Area Light Emission](#Textured-Area-Light-Emission)<br />- [Animated Cookies And Material Sources](#Animated-Cookies-And-Material-Sources) |
 
 ## How Do Light Volumes Work?
 
@@ -71,17 +71,19 @@ Once the shader retrieves the L0 and L1 data, it computes the final color using 
 FinalColor = L0 + dot(L1, WorldNormal);
 ```
 
-This is the fastest and simplest method of evaluating SH data. There are more advanced methods (e.g., Geomerics or ZH3), but they are more expensive.
+This is the fastest and simplest method of evaluating SH data. There are more advanced methods, such as Geomerics or ZH3, but they are more expensive.
 
 ## Specular Evaluation
 
-The current `LightVolumes.cginc` has two specular paths.
+The main high-quality specular path is `LightVolumeSHSpecular()`. It samples diffuse SH lighting and specular lighting in one call, so Point Light Volumes can be evaluated as real separate light sources instead of only as averaged SH data.
 
-`LightVolumeSpecular()` and `LightVolumeSpecularDominant()` read already accumulated SH data. They are cheaper and can work with Light Volumes, Unity light probes, or any other L1 SH data, but they cannot know which individual Point Light Volume created the SH contribution.
+This path is more expensive, but it is more correct for glossy PBR materials. Each visible Point Light Volume gets its own specular highlight with its own direction, color, cookie, shadow mask, per-surface shading and source size. A small source gives a sharper highlight. A large source gives a broader, softer highlight. Shadowed or black lights can skip the expensive specular BRDF work.
 
-`LightVolumeSHSpecular()` samples SH and specular lighting together. Regular and additive voxel Light Volumes still use dominant SH specular, while Point Light Volumes are evaluated individually with their own direction, shadow mask, cookie/projection color, per-surface shading and source size. This lets large sources produce wider highlights and small sources produce sharper highlights.
+Area Light specular is still an approximation. The diffuse/SH part uses a rectangular area-light approximation, but the specular broadening treats the Area Light more like a large spherical source with a size based on the rectangle. This is much cheaper than evaluating a true rectangular area-light reflection, and it still gives the important result: bigger Area Lights make softer highlights.
 
-For performance, individual Point Light Volume speculars are only evaluated for visible Point Light Volumes up to `Additive Max Overdraw`. If a Point Light Volume is fully shadowed or contributes no light, its expensive specular BRDF work is skipped.
+Regular and additive voxel Light Volumes do not store individual lights, only SH data, so they still use the cheaper dominant-SH specular approximation. The older helpers `LightVolumeSpecular()` and `LightVolumeSpecularDominant()` also use already accumulated SH data. They are cheaper and useful when you only need a rough glossy response, but they cannot know which exact Point Light Volume created the light.
+
+`Additive Max Overdraw` caps how many Point Light Volumes can contribute to diffuse lighting and individual speculars per pixel. This keeps worst-case cost predictable when many dynamic lights overlap.
 
 ## Point Light Volumes
 
@@ -111,14 +113,38 @@ Mask = \text{Saturate}\left(1 - \frac{\text{DistanceToLight}^2}{\text{CutoffDist
 
 The `Saturate()` function clamps the value between 0 and 1. The final light color is multiplied by this squared mask.
 
-In Light Volumes 3.0, Point Light Volumes can also apply per-surface shading and EVSM shadow maps before their SH contribution is added. Shadow maps are stored in a shared runtime texture array as warped depth moments. Point and Area lights usually use cubemap shadows, while Spot Lights can use a cheaper single projected shadow texture when the cone angle allows it.
+In Light Volumes 3.0, Point Light Volumes can also apply per-surface shading and shadows before their SH contribution is added.
 
-`Additive Max Overdraw` limits how many Point Light Volumes and additive Light Volumes can be accumulated for one pixel. In modern `LightVolumeSHSpecular()` shaders, it also limits how many individual Point Light Volume speculars can be evaluated. This keeps the worst-case shader cost predictable when many dynamic lights overlap.
+## Point Light Volume EVSM Shadows
 
-### Textured Area Light Emission
+Point Light Volume shadows are a mix between baked shadows and realtime shadows.
+
+The expensive part of a shadow is finding what the light can see. In normal realtime shadows, Unity renders a shadow map from the light every frame or whenever the light updates. For a Point Light or Area Light, that usually means six directions, like a cubemap. That costs draw calls, CPU work and GPU rendering work.
+
+Point Light Volume baked shadows usually do that expensive camera rendering step ahead of time. The result is saved as a shadow texture. In runtime, the shader only asks a simple question: "Is this pixel behind something in the saved shadow texture?" Because the receiving object can move and the shader checks the shadow every frame, the result behaves realtime on receivers. But because the shadow texture itself was baked, moving objects do not cast new shadows unless you use the runtime baker.
+
+That is why baked Point Light Volume shadows are cheap compared to full realtime shadows. They do not render shadow cameras every frame. They only sample an already prepared texture and run the shadow visibility math in the material shader.
+
+They are still more expensive than the same Point Light Volume without shadows, because every shadowed light needs shadow texture memory and extra shader work. Full realtime mode through **Point Light Shadow Runtime Baker** is usually heavier than Unity's built-in realtime shadows, because it has to render its own cameras, encode EVSM data, optionally blur it, and copy the result into the shared shadow texture array. It is a custom pipeline on top of the normal frame, not Unity's built-in optimized shadow path.
+
+EVSM means **Exponential Variance Shadow Maps**. Instead of storing only one depth value and doing a hard depth comparison, EVSM stores filtered depth moments. This makes the shadow texture much easier to blur and filter. Compared to Unity's default Built-in Render Pipeline realtime shadows, EVSM can give smoother soft shadows and wider penumbra with fewer blocky PCF-looking steps. The tradeoff is that EVSM needs more channels, more math, and careful settings such as `Shadow Min Variance` and `Shadow Bleed Reduction` to control light bleeding and mobile precision artifacts.
+
+Point and Area lights usually use cubemap shadows, which take six texture slices. Spot Lights can use one projected shadow texture when the angle is below 180 degrees and `Force Cubemap Shadows` is disabled, so Spot Light shadows are usually much cheaper in memory.
+
+## Textured Area Light Emission
 
 Area Lights can also use a Cookie source as a textured emitter. The Cookie is packed into the shared Point Light Volume texture array, and the array gets mipmaps when at least one Area Light cookie is present.
 
 The shader samples the local Cookie detail close to the Area Light and blends toward coarser mip levels as the receiver gets farther away or sees the emitter at a grazing angle. This keeps nearby high-frequency texture detail while still letting bright areas influence darker parts of the projection through the averaged mip levels.
 
 For old shaders that do not support Area Light cookies, the manager reads the final mip level from the packed texture array and uses it as an average-color fallback for that Area Light.
+
+## Animated Cookies And Material Sources
+
+Animated cookies are not a special lighting simulation. Under the hood, they are texture copies.
+
+Point Light Volume cookies, cubemaps, LUTs, Area Light cookies and shadow sources are packed into shared `Texture2DArray` render textures. Static sources are copied when the array is initialized or rebuilt. Animated RenderTexture and Material sources are copied again when `Auto Update Textures` is enabled.
+
+For a single-slice source, such as a Spot Light cookie or Area Light cookie, the manager blits one texture or Material pass into one array slice. For a cubemap source, it writes six slices, one for each face. A Material source simply renders pass `0` into the target slice, with `_CustomRenderTextureInfo` telling the shader which slice or cubemap face is being rendered.
+
+This keeps the shader side simple: receivers just sample the shared texture array. The cost is paid when the source is blitted, so animated cookies should use the lowest acceptable `Cookie Resolution`, and `Auto Update Textures` should stay disabled for sources that do not actually change.

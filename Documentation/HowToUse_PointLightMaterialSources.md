@@ -8,7 +8,7 @@
 |[Regular Light Volumes](../Documentation/HowToUse_RegularLightVolumes.md)|
 |[Point Light Volumes](../Documentation/HowToUse_PointLightVolumes.md)|
 |[Point Light Volume Shadows](../Documentation/HowToUse_Shadows.md)|
-|**Point Light Material Sources**<br />&bull; [What This Material Does](#What-This-Material-Does)<br />&bull; [Quick Setup](#Quick-Setup)<br />&bull; [Material Rendering Contract](#Material-Rendering-Contract)<br />&bull; [Cookie Projection Materials](#Cookie-Projection-Materials)<br />&bull; [Shadow Map Materials](#Shadow-Map-Materials)<br />&bull; [Cubemap Sources](#Cubemap-Sources)<br />&bull; [Single-Slice Sources](#Single-Slice-Sources)<br />&bull; [Shader Templates](#Shader-Templates)<br />&bull; [Runtime Updates](#Runtime-Updates)<br />&bull; [Troubleshooting](#Troubleshooting)|
+|**Point Light Material Sources**<br />&bull; [What This Material Does](#What-This-Material-Does)<br />&bull; [Quick Setup](#Quick-Setup)<br />&bull; [Material Rendering Contract](#Material-Rendering-Contract)<br />&bull; [Shadow Map Materials](#Shadow-Map-Materials)<br />&bull; [Cubemap Sources](#Cubemap-Sources)<br />&bull; [Single-Slice Sources](#Single-Slice-Sources)|
 |[Area Light Emission](../Documentation/HowToUse_AreaLightEmission.md)|
 |[Audio Link Integration](../Documentation/HowToUse_AudioLinkIntegration.md)|
 |[TV Screens Integration](../Documentation/HowToUse_TVScreensIntegration.md)|
@@ -33,14 +33,12 @@ The same Material object is shared between lights when possible. If two lights n
 
 ## Quick Setup
 
-1. Create or pick a Material that draws the picture you want using regular `0..1` UVs.
+1. Create or pick a Material that draws the picture you want using regular `0..1` UVs, exactly as it would look on a simple quad.
 2. Make sure the shader writes the result in pass `0`. Additional passes are ignored by the Light Volume Manager.
 3. For a custom shader, use the usual blit setup: `Cull Off`, `ZWrite Off` and `ZTest Always`.
 4. Assign the Material to the `Cubemap`, `Cookie` or `Shadow Map` field on the **Point Light Volume** authoring component.
 5. For animated Materials or RenderTextures, enable `Auto Update Textures` in **Light Volume Setup**.
 6. Use the lowest acceptable `Cookie Resolution` or `Shadow Resolution`, because cubemap sources consume six slices.
-
-For cookie projection, the Material usually does not need to be special. If pass `0` of the shader samples a texture with normal UVs and outputs a color, it can usually be used as a Material Cookie source.
 
 > [!IMPORTANT]
 > A shadow Material is advanced. It must output the same EVSM data layout used by VRC Light Volumes. If you only need normal geometry-cast shadows, use `Bake Shadows` or the `Point Light Shadow Runtime Baker` instead.
@@ -49,39 +47,27 @@ For cookie projection, the Material usually does not need to be special. If pass
 
 The manager renders the Material into a shared `Texture2DArray`. Think of it as drawing the Material into a small render texture, then using that texture as the light cookie or shadow source.
 
-The shader gets regular UVs from the blit. In most cases, just sample a texture and return the color:
+The shader gets regular `0..1` UVs from the blit, so pass `0` is rendered as if the Material was drawn on a simple quad.
 
-```hlsl
-float4 cookie = tex2D(_MainTex, i.uv);
-return cookie;
-```
-
-The shader can also read these optional values:
+The manager provides this extra shader property before rendering each Material source:
 
 | Shader property | Meaning |
 |----|----|
-|`_MainTex` | The texture assigned to the Material's `_MainTex` field. It is optional; if no texture is assigned, the source is `null`. |
 |`float4 _CustomRenderTextureInfo` | `x` = output width, `y` = output height, `z` = output array depth or `1` for cubemap face updates, `w` = output slice index or cubemap face index. |
+
+Any other textures, colors or parameters must be normal Material properties declared by your shader and assigned on that Material.
 
 The manager does not automatically pass the Point Light Volume color, intensity, transform, near plane or far clip to the Material. If your shader needs those values, expose normal Material properties such as `_Tint`, `_ShadowNearClip` or `_ShadowFarClip` and set them yourself.
 
-## Cookie Projection Materials
+For cookie projection, pass `0` should output regular linear color. The result is multiplied by the Point Light Volume `Color` and `Intensity` during lighting. Values above `1` are allowed for bright cookie areas, but keep the final light intensity under control to avoid clipping and banding on low precision targets.
 
-Cookie projection Materials output regular color. The result is multiplied by the Point Light Volume `Color` and `Intensity` during lighting.
+Cookie alpha behavior depends on the light type:
 
-For a simple cookie, use a normal texture Material. UV `0,0` is one corner of the cookie and UV `1,1` is the opposite corner. Tiling, offset, tint and procedural noise can be implemented the same way as in a normal unlit shader.
-
-For **Point Light** custom projection, the Material is rendered as a cubemap cookie. RGB is used by lighting. Alpha is not used by the current point cubemap cookie path, so write `1` unless you need the channel for your own intermediate workflow.
-
-For **Spot Light** custom projection, RGB tints the light and alpha masks it. A transparent cookie pixel contributes no light:
-
-```hlsl
-return float4(cookieColor.rgb, cookieMask);
-```
-
-For **Area Light** cookies, alpha is treated as an emission mask and the receiver uses `RGB * Alpha`. Keep alpha meaningful if the texture has transparent parts.
-
-Cookie Materials should normally output linear color. Values above `1` are allowed if you want parts of the cookie to be brighter, but keep the final light intensity under control to avoid clipping and banding on low precision targets.
+| Light type | Cookie output |
+|----|----|
+| **Point Light** custom cubemap | RGB is used by lighting. Alpha is currently ignored, so write `1` unless you use it for your own intermediate workflow. |
+| **Spot Light** custom cookie | RGB tints the light and alpha masks it. A transparent cookie pixel contributes no light. |
+| **Area Light** cookie | Alpha is treated as an emission mask and the receiver uses `RGB * Alpha`. Keep alpha meaningful if the source has transparent parts. |
 
 ## Shadow Map Materials
 
@@ -123,9 +109,9 @@ Cubemap Material sources are rendered six times, once per cubemap face. If your 
 
 Use `_CustomRenderTextureInfo.w` only when the shader needs different output per face, for example a procedural cubemap, a direction-based mask or a cubemap shadow source.
 
-Cubemap face order:
+Cubemap face ID is stored in `_CustomRenderTextureInfo.w`:
 
-| `_CustomRenderTextureInfo.w` | Face |
+| ID | Face |
 |----|----|
 |`0` | `+X` |
 |`1` | `-X` |
@@ -165,127 +151,6 @@ Single-slice Material sources are rendered once into one texture-array slice. Th
 
 Single-slice projection is used by Spot Light cookies and Area Light cookies. For Spot Lights, the center of the texture is the light forward direction, and the visible cone maps to the texture rectangle.
 
-Spot cookie alpha masks the light, so a typical single-slice cookie should output:
-
-```hlsl
-return float4(cookieRgb, cookieAlpha);
-```
-
 `_CustomRenderTextureInfo.w` contains the final destination slice index. Most cookie shaders can ignore it.
 
 Single-slice shadows are projected like a spotlight shadow camera. If a shadow Material writes EVSM data into one slice, the encoded depth must match the same projection, near plane and far clip used by the Point Light Volume.
-
-## Shader Templates
-
-If you already have a simple unlit texture shader, you can often use it directly. This is a minimal custom version:
-
-```hlsl
-Shader "Hidden/MyWorld/VRCLVSingleCookieMaterial" {
-    Properties {
-        _MainTex("Cookie", 2D) = "white" {}
-        _Color("Color", Color) = (1, 1, 1, 1)
-    }
-    SubShader {
-        Tags { "RenderType" = "Opaque" }
-        Pass {
-            Cull Off
-            ZWrite Off
-            ZTest Always
-
-            CGPROGRAM
-            #pragma vertex vert
-            #pragma fragment frag
-            #include "UnityCG.cginc"
-
-            sampler2D _MainTex;
-            float4 _MainTex_ST;
-            float4 _Color;
-
-            struct appdata {
-                float4 vertex : POSITION;
-                float2 uv : TEXCOORD0;
-            };
-
-            struct v2f {
-                float4 pos : SV_POSITION;
-                float2 uv : TEXCOORD0;
-            };
-
-            v2f vert(appdata v) {
-                v2f o;
-                o.pos = UnityObjectToClipPos(v.vertex);
-                o.uv = TRANSFORM_TEX(v.uv, _MainTex);
-                return o;
-            }
-
-            float4 frag(v2f i) : SV_Target {
-                float4 cookie = tex2D(_MainTex, i.uv) * _Color;
-                return cookie;
-            }
-            ENDCG
-        }
-    }
-}
-```
-
-Minimal procedural cubemap cookie fragment:
-
-```hlsl
-float4 frag(v2f i) : SV_Target {
-    float face = floor(_CustomRenderTextureInfo.w + 0.5);
-    float3 direction = CubemapDirection(i.uv, face);
-
-    float3 axisColor = abs(direction);
-    float majorAxis = max(axisColor.x, max(axisColor.y, axisColor.z));
-    float band = smoothstep(0.86, 0.98, majorAxis);
-    return float4(lerp(axisColor * 0.25, axisColor, band), 1.0);
-}
-```
-
-Minimal EVSM shadow output, assuming your shader already knows the radial depth:
-
-```hlsl
-float4 frag(v2f i) : SV_Target {
-    float radialDistance = tex2D(_DepthTex, i.uv).r * _ShadowFarClip;
-    float depth01 = (radialDistance - _ShadowNearClip) / max(_ShadowFarClip - _ShadowNearClip, 0.0001);
-    return EncodeVRCLVShadowEVSM(depth01);
-}
-```
-
-These snippets are intentionally simple. Production shaders should avoid unnecessary texture samples, avoid dynamic branching in hot fragments, and use `half` where precision is enough, especially for Quest.
-
-## Runtime Updates
-
-Static Texture and Cubemap sources are packed when the texture arrays are initialized or rebuilt. Material and RenderTexture sources are treated as animated by the authoring component, but they only refresh in runtime when `Auto Update Textures` is enabled in **Light Volume Setup**.
-
-Changing a Material property does not automatically rebuild source lists. If the Material is already registered and `Auto Update Textures` is enabled, the next update copies the new output into the same runtime slice. If you replace the whole source object, add a new light, remove a light, or change between Texture and Material source types from Udon, call the relevant reinitialize method on the manager.
-
-For performance:
-
-- Prefer static Texture or Cubemap assets when the result does not change.
-- Use one shared Material only when several lights should use exactly the same generated texture.
-- Use separate Material instances when each light needs different generated content.
-- Keep cubemap material shaders cheap, because they run once per face.
-- Disable `Auto Update Textures` when animated sources are not needed.
-- Keep projection and shadow resolutions as low as the visual result allows.
-
-## Troubleshooting
-
-If the Material source appears black:
-
-- Make sure the shader writes useful data in pass `0`.
-- Make sure the Material is assigned to the active field for the selected light type: `Cubemap` for Point Light custom projection, `Cookie` for Spot Light custom projection, or `Shadow Map` for shadows.
-- Make sure `Auto Update Textures` is enabled when the Material output changes at runtime.
-- If the shader samples `_MainTex`, make sure the Material has a texture assigned to `_MainTex`.
-
-If a cubemap projection is rotated, mirrored or inside-out:
-
-- Check the face order and the direction helper.
-- Test with a simple colored axis pattern before using a complex procedural texture.
-
-If a shadow Material gives incorrect shadows:
-
-- Confirm that the output is EVSM moments in `RGBA`, not visibility or alpha.
-- Confirm that the Material depth normalization uses the same near/far range as the Point Light Volume.
-- If `Far Clip Plane` is `0`, remember that the Material does not receive the resolved culling range automatically.
-- Use `Bake Shadows` first to compare against a known-good EVSM shadow source.

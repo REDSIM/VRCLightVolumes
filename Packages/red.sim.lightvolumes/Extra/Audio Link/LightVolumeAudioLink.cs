@@ -24,9 +24,9 @@ namespace VRCLightVolumes {
         public AudioLinkBand AudioBand = AudioLinkBand.Bass;
         [Tooltip("Defines how many samples back in history we're getting data from. Can be a value from 0 to 127. Zero means no delay at all")]
         [Range(0, 127)] public int Delay = 0;
-        [Tooltip("Enables smoothing algorithm that tries to smooth out flickering that can usually be a problem")]
+        [Tooltip("Enables a smoothing algorithm that tries to smooth out flickering that can usually be a problem")]
         public bool SmoothingEnabled = true;
-        [Tooltip("Value from 0 to 1 that defines how much smoothing should be applied. Zero usually applies just a little bit of smoothing. One smoothes out almost all the fast blinks and makes intensity changing very slow")]
+        [Tooltip("Value from 0 to 1 that defines how much smoothing should be applied. Zero usually applies just a little bit of smoothing. One smooths out almost all fast blinks and makes intensity changes very slow")]
         [Range(0, 1)] public float Smoothing = 0.25f;
 
         [Tooltip("Inverts Audio Link data to dim the color based on the band, instead of lighting it up.")]
@@ -46,7 +46,7 @@ namespace VRCLightVolumes {
         [Tooltip("Auto uses Theme Colors 0, 1, 2, 3 for Bass, LowMid, HighMid, Treble. Override Color allows you to set the static color value")]
         public AudioLinkColor ColorMode = AudioLinkColor.Auto;
 
-        [Tooltip("Makes color full saturated and full bright before applying Audio Link effect. AudioLink already affects auto theme colors in runtime for some reason, so it prevents doubling the animation, which is especially visible when using Delay")]
+        [Tooltip("Makes color fully saturated and fully bright before applying Audio Link effect. AudioLink already affects auto theme colors at runtime for some reason, so it prevents doubling the animation, which is especially visible when using Delay")]
         public bool NormalizeColors = true;
 
         [Tooltip("Color that will be used when Override Color is enabled")]
@@ -62,7 +62,7 @@ namespace VRCLightVolumes {
         public LightVolumeInstance[] TargetLightVolumes;
         [Tooltip("List of the Point Light Volumes that should be affected by AudioLink")]
         public PointLightVolumeInstance[] TargetPointLightVolumes;
-        [Tooltip("List of the Mesh Renderers that has materials that should change color based on AudioLink")]
+        [Tooltip("List of the Mesh Renderers that have materials that should change color based on AudioLink")]
         public Renderer[] TargetMeshRenderers;
 
 #if AUDIOLINK
@@ -146,7 +146,7 @@ namespace VRCLightVolumes {
             }
         }
 
-        // Gets color with max brightness and saturation. Applies on top of the color chord color because AL dims the brightness of this color by dafault, which makes it no sense to use with smoothing, delayed effects, etc.
+        // Gets color with max brightness and saturation. Applies on top of the color chord color because AL dims the brightness of this color by default, which makes no sense to use with smoothing, delayed effects, etc.
         private Color NormalizeColor(Color color) {
             if (NormalizeColors) {
                 Color.RGBToHSV(color, out float h, out float s, out float v);

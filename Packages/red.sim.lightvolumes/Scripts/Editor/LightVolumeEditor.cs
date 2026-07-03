@@ -77,12 +77,12 @@ namespace VRCLightVolumes {
                 if (isYRotationSupported) {
                     if ((rotEuler.x != 0 || rotEuler.z != 0) && LightVolume.LightVolumeSetup.IsBakeryMode) {
                         GUILayout.Space(10);
-                        EditorGUILayout.HelpBox("With your Bakery version, only Y-axis rotation is supported in the editor. Apply the Bakery latest patch to have full rotation support. Free rotation will still work at runtime.", MessageType.Warning);
+                        EditorGUILayout.HelpBox("With your Bakery version, only Y-axis rotation is supported in the editor. Apply the latest Bakery patch to have full rotation support. Free rotation will still work at runtime.", MessageType.Warning);
                     }
                 } else {
                     if ((rotEuler.x != 0 || rotEuler.z != 0 || rotEuler.y != 0) && LightVolume.LightVolumeSetup.IsBakeryMode) {
                         GUILayout.Space(10);
-                        EditorGUILayout.HelpBox("With your Bakery version, volume rotation is not supported in the editor. Apply the Bakery latest patch to have full rotation support. Free rotation will still work at runtime.", MessageType.Warning);
+                        EditorGUILayout.HelpBox("With your Bakery version, volume rotation is not supported in the editor. Apply the latest Bakery patch to have full rotation support. Free rotation will still work at runtime.", MessageType.Warning);
                     }
                 }
             }

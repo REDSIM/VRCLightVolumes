@@ -77,7 +77,7 @@ When assigning Area Light cookies from Udon with `SetCustomMaterial()` or `SetCu
 
 Modern shaders that include the current VRC Light Volumes code sample the textured Area Light directly.
 
-Older VRC Light Volumes shaders that do not know about Area Light cookies still get a fallback: the manager reads the final mip level from the packed cookie texture array through GPU readback, multiplies it by the light `Color` and `Intensity`, and writes that average color into the regular Point Light Volume color data.
+Here, old shaders means VRC Light Volumes `2.x.x` compatible shaders that support Point Light Volumes, but do not know about Area Light cookies. They still get a fallback: the manager reads the final mip level from the packed cookie texture array through GPU readback, multiplies it by the light `Color` and `Intensity`, and writes that average color into the regular Point Light Volume color data.
 
 The fallback cannot show texture detail, but it prevents old shaders from turning the light black. They receive a normal Area Light using the average emitted color instead.
 
@@ -85,7 +85,7 @@ Default Unity shaders still do not receive Point Light Volumes or this fallback.
 
 ## Performance Notes
 
-Area Light cookies are heavier than no-cookie Area Lights because each visible light needs extra texture samples. They are still designed to be practical for a small number of important screen or panel lights.
+Area Light cookies are a little more expensive than no-cookie Area Lights because each visible light needs extra texture samples. In practice this is still a fairly cheap setup, and it is intended to be practical for normal use on important screen, sign, window and panel lights.
 
 For best performance:
 

@@ -120,7 +120,7 @@ namespace VRCLightVolumes {
             }
             EditorApplication.update += DelayedSave;
 #else
-            Debug.LogError($"[LightVolumeUtils] You can only save asset in editor!");
+            Debug.LogError($"[LightVolumeUtils] You can only save assets in the editor!");
 #endif
         }
 
@@ -139,7 +139,7 @@ namespace VRCLightVolumes {
                 Debug.LogError($"[LightVolumeUtils] Save failed: {e.Message}");
             }
 #else
-            Debug.LogError($"[LightVolumeUtils] You can only save asset in editor!");
+            Debug.LogError($"[LightVolumeUtils] You can only save assets in the editor!");
 #endif
         }
 

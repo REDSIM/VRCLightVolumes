@@ -18,7 +18,7 @@ namespace VRCLightVolumes {
 #endif
     {
         [Header("Light Setup")]
-        [Tooltip("Defines whether this point light volume can be moved in runtime. Disabling this option slightly improves performance. Don't forget to enable \"Auto Update Volumes\" in your Light Volumes Setup to have this dynamic updates!")]
+        [Tooltip("Defines whether this point light volume can be moved at runtime. Disabling this option slightly improves performance. Don't forget to enable \"Auto Update Volumes\" in your Light Volumes Setup to get these dynamic updates!")]
         public bool IsDynamic = false;
         [Tooltip("Point light volume shape. 0 = point, 1 = spot, 2 = area.")]
         public int LightType = 0; // 0: point, 1: spot, 2: area
@@ -173,7 +173,7 @@ namespace VRCLightVolumes {
 #endif
 
 #if !UDONSHARP || UNITY_EDITOR
-        // To make it work when changing values on UdonSharpBehaviour in editor
+        // To make it work when changing values on UdonSharpBehaviour in the editor
         private void Update() {
             if (_old_Color != Color || _old_Intensity != Intensity) {
                 _old_Color = Color;

@@ -3,9 +3,17 @@
 # Compatible Shaders
 
 ## Light Volumes v.3.0.0+ compatible
-*Shaders yet to be added. Stay tuned!*
-
 VRC Light Volumes v.3.0.0+ shader integration is required for Point Light Volume shadows, per-surface Point Light Volume shading, full textured **Area Light Emission**, and the current `LightVolumeSHSpecular()` individual Point Light Volume specular path. Older v.2.x compatible shaders still receive the average-color fallback for Area Light cookies, but they will not show the projected texture detail or size-aware individual specular highlights.
+
+| Shader                                                       | Description                                                  | Supported since |
+| ------------------------------------------------------------ | ------------------------------------------------------------ | :-------------: |
+| [Mochies Unity Shaders](https://github.com/MochiesCode/Mochies-Unity-Shaders) | A collection of shaders including a highly customizable toon shader, a standard shader replacement, particle shader, water shader, glass shader, and screenspace effect shader. |    v1.74.1     |
+| [VixenWear Latex Ultra](https://vixenlicous.gumroad.com/l/latex-ultra) | A PBR surface shader for synthetic materials with Light Volumes, LTCGI, AreaLit, and AudioLink integration support. |        -        |
+
+*More shaders yet to be added. Stay tuned!*
+
+Contact me in Discord if you want your shader to be added in this list.
+Discord: @RED_SIM
 
 ## Light Volumes v.2.0.0+ compatible
 All of these shaders also work with v.3.0.0, but without Point Light Volume shadows, per-surface Point Light Volume shading and size-aware individual Point Light Volume specular support.

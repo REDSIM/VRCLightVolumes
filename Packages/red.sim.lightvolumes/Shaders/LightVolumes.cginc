@@ -372,10 +372,9 @@ inline float LV_PointLightSolidAngle(float sqdist, float sqlightSize) {
     return saturate(sqrt(sqdist * rcp(sqlightSize + sqdist)));
 }
 
-// Calculates Point Light shading using a pre-scaled surface normal, precomputed bias, and finite source size.
-inline float LV_PointLightShading(float3 pointLightShadingNormal, float pointLightShadingScale, float pointLightShadingBias, float3 lightDirNormal, float lightSpreadSq) {
-    float lightSpread = saturate(sqrt(lightSpreadSq));
-    float ramp = (dot(pointLightShadingNormal, lightDirNormal) + pointLightShadingScale * lightSpread) * rcp(1.0 + lightSpread) + pointLightShadingBias;
+// Calculates Point Light shading for the normal mask using a pre-scaled surface normal and precomputed bias.
+inline float LV_PointLightShading(float3 pointLightShadingNormal, float pointLightShadingBias, float3 lightDirNormal) {
+    float ramp = dot(pointLightShadingNormal, lightDirNormal) + pointLightShadingBias;
     return LV_Smoothstep01(saturate(ramp));
 }
 
@@ -432,12 +431,12 @@ inline float4 LV_AreaLightCookie(float3 localPos, float2 size, uint textureId) {
 
 // Resolves point-light normal shading and baked shadows. lightDir samples shadows, normalMaskLightDir attenuates by surface normal.
 // Returns true when the light remains visible enough to consume one overdraw slot.
-inline bool LV_PointLightVolumeShadowMask(uint id, float shadowIdData, float shadowFarClip, float3 worldPos, float3 lightDir, float3 normalMaskLightDir, float distSq, float invDist, float sourceSpreadSq, float3 pointLightShadingNormal, float pointLightShadingScale, float pointLightShadingBias, out float shadow) {
+inline bool LV_PointLightVolumeShadowMask(uint id, float shadowIdData, float shadowFarClip, float3 worldPos, float3 lightDir, float3 normalMaskLightDir, float distSq, float invDist, float3 pointLightShadingNormal, float pointLightShadingBias, out float shadow) {
     shadow = 1;
     bool shadowVisible = true;
     [flatten] if (shadowIdData == 0) { // No baked shadow and full-strength normal shading
         [flatten] if (pointLightShadingBias >= 0) { // Apply full-strength surface-normal shading when configured
-            shadow = LV_PointLightShading(pointLightShadingNormal, pointLightShadingScale, pointLightShadingBias, normalMaskLightDir, sourceSpreadSq);
+            shadow = LV_PointLightShading(pointLightShadingNormal, pointLightShadingBias, normalMaskLightDir);
             shadowVisible = shadow > 0;
         }
     } else { // Optional normal shading strength and optional baked shadow map
@@ -447,7 +446,7 @@ inline bool LV_PointLightVolumeShadowMask(uint id, float shadowIdData, float sha
             float normalAttenuation = 1;
 
             [flatten] if (pointLightShadingBias >= 0) { // Apply surface-normal shading before strength blending
-                normalAttenuation = LV_PointLightShading(pointLightShadingNormal, pointLightShadingScale, pointLightShadingBias, normalMaskLightDir, sourceSpreadSq);
+                normalAttenuation = LV_PointLightShading(pointLightShadingNormal, pointLightShadingBias, normalMaskLightDir);
                 shadowVisible = normalAttenuation > 0 || shadingStrength < 1;
             }
 
@@ -466,7 +465,7 @@ inline bool LV_PointLightVolumeShadowMask(uint id, float shadowIdData, float sha
 
 // Samples one Point Light Volume. Returns true when this light consumes one overdraw slot
 // Outputs: l0 = RGB irradiance, l1 = SH L1 direction term, lightDirNormal = center direction, specularSpreadSq = visible source size, shadow = normal mask and shadow
-bool LV_PointLightVolumeContribution(uint id, float3 worldPos, float3 pointLightShadingNormal, float pointLightShadingScale, float pointLightShadingBias, out float3 l0, out float3 l1, out float3 lightDirNormal, out float specularSpreadSq, out float shadow) {
+bool LV_PointLightVolumeContribution(uint id, float3 worldPos, float3 pointLightShadingNormal, float pointLightShadingBias, out float3 l0, out float3 l1, out float3 lightDirNormal, out float specularSpreadSq, out float shadow) {
 
     l0 = 0; l1 = 0; lightDirNormal = 0; specularSpreadSq = 0; shadow = 1;
     bool counted = false;
@@ -488,7 +487,7 @@ bool LV_PointLightVolumeContribution(uint id, float3 worldPos, float3 pointLight
             float sourceSpreadSq = customId <= 0 ? pos.w * invDist * invDist : 0;
 
             // Point light is not fully culled by surface-normal shading or shadow visibility
-            [branch] if (LV_PointLightVolumeShadowMask(id, customID_data.y, customID_data.w, worldPos, lightDir, lightDir, distSq, invDist, sourceSpreadSq, pointLightShadingNormal, pointLightShadingScale, pointLightShadingBias, shadow)) {
+            [branch] if (LV_PointLightVolumeShadowMask(id, customID_data.y, customID_data.w, worldPos, lightDir, lightDir, distSq, invDist, pointLightShadingNormal, pointLightShadingBias, shadow)) {
                 counted = true;
                 [branch] if (customId > 0) { // Point light with a baked attenuation LUT
                     float dirRadius = distSq * pos.w;
@@ -539,7 +538,7 @@ bool LV_PointLightVolumeContribution(uint id, float3 worldPos, float3 pointLight
                     float sourceSpreadSq = customId <= 0 ? -pos.w * invDist * invDist : 0;
 
                     // Spot light is not fully culled by surface-normal shading or shadow visibility
-                    [branch] if (LV_PointLightVolumeShadowMask(id, customID_data.y, customID_data.w, worldPos, lightDir, lightDir, distSq, invDist, sourceSpreadSq, pointLightShadingNormal, pointLightShadingScale, pointLightShadingBias, shadow)) {
+                    [branch] if (LV_PointLightVolumeShadowMask(id, customID_data.y, customID_data.w, worldPos, lightDir, lightDir, distSq, invDist, pointLightShadingNormal, pointLightShadingBias, shadow)) {
                         counted = true;
 
                         [branch] if (customId > 0) { // Spot light with Attenuation LUT. LUT already includes cone attenuation
@@ -597,7 +596,7 @@ bool LV_PointLightVolumeContribution(uint id, float3 worldPos, float3 pointLight
                             float3 lightDir = dir * invDist;
 
                             // Area light is not fully culled by surface-normal shading or shadow visibility
-                            [branch] if (LV_PointLightVolumeShadowMask(id, customID_data.y, customID_data.w, worldPos, lightDir, areaPointLightShadingDir, distSq, invDist, sourceSpreadSq, pointLightShadingNormal, pointLightShadingScale, pointLightShadingBias, shadow)) {
+                            [branch] if (LV_PointLightVolumeShadowMask(id, customID_data.y, customID_data.w, worldPos, lightDir, areaPointLightShadingDir, distSq, invDist, pointLightShadingNormal, pointLightShadingBias, shadow)) {
                                 counted = true;
                                 lightDirNormal = lightDir;
                                 specularSpreadSq = sourceSpreadSq;
@@ -758,9 +757,9 @@ void LV_PointLightVolumeSHSpecular(float3 worldPos, float3 worldNormal, float3 s
     [loop] for (uint pid = 0; pid < pointCount && pcount < maxOverdraw; pid++) {
         float3 l0, l1, lightDirNormal;
         float specularSpreadSq, shadow;
-        if (LV_PointLightVolumeContribution(pid, worldPos, pointLightShadingNormal, pointLightShadingScale, pointLightShadingBias, l0, l1, lightDirNormal, specularSpreadSq, shadow)) {
+        if (LV_PointLightVolumeContribution(pid, worldPos, pointLightShadingNormal, pointLightShadingBias, l0, l1, lightDirNormal, specularSpreadSq, shadow)) {
             l0 *= shadow;
-            [branch] if (max(max(l0.r, l0.g), l0.b) > 0) {
+            [branch] if (any(l0)) {
                 L0 += l0;
                 L1r += l1 * l0.r;
                 L1g += l1 * l0.g;
@@ -786,7 +785,7 @@ void LV_PointLightVolumeSH(float3 worldPos, float3 worldNormal, float pointLight
     [loop] for (uint pid = 0; pid < pointCount && pcount < maxOverdraw; pid++) {
         float3 l0, l1, unused_lightDirNormal;
         float unused_specularSpreadSq, shadow;
-        if (LV_PointLightVolumeContribution(pid, worldPos, pointLightShadingNormal, pointLightShadingScale, pointLightShadingBias, l0, l1, unused_lightDirNormal, unused_specularSpreadSq, shadow)) {
+        if (LV_PointLightVolumeContribution(pid, worldPos, pointLightShadingNormal, pointLightShadingBias, l0, l1, unused_lightDirNormal, unused_specularSpreadSq, shadow)) {
             l0 *= shadow;
             L0 += l0;
             L1r += l1 * l0.r;
@@ -931,7 +930,7 @@ float LightVolumesVersion() {
 }
 
 // Calculates L1 SH based on the world position. Samples regular volumes, additive volumes and Point Light Volumes.
-void LightVolumeSH(float3 worldPos, out float3 L0, out float3 L1r, out float3 L1g, out float3 L1b, float3 worldPosOffset = 0, float3 worldNormal = 0, float pointLightShading = 1) {
+void LightVolumeSH(float3 worldPos, out float3 L0, out float3 L1r, out float3 L1g, out float3 L1b, float3 worldPosOffset = 0, float3 worldNormal = 0, float pointLightShading = 3) {
     L0 = 0; L1r = 0; L1g = 0; L1b = 0;
     [branch] if (_UdonLightVolumeEnabled == 0 || _UdonLightVolumeVersion < VRCLV_MIN_SUPPORTED_VERSION) {
         LV_SampleLightProbe(L0, L1r, L1g, L1b);
@@ -943,7 +942,7 @@ void LightVolumeSH(float3 worldPos, out float3 L0, out float3 L1r, out float3 L1
 }
 
 // Calculates L0 SH based on the world position. Samples regular volumes, additive volumes and Point Light Volumes.
-float3 LightVolumeSH_L0(float3 worldPos, float3 worldPosOffset = 0, float3 worldNormal = 0, float pointLightShading = 1) {
+float3 LightVolumeSH_L0(float3 worldPos, float3 worldPosOffset = 0, float3 worldNormal = 0, float pointLightShading = 3) {
     [branch] if (_UdonLightVolumeEnabled == 0 || _UdonLightVolumeVersion < VRCLV_MIN_SUPPORTED_VERSION) {
         return float3(unity_SHAr.w, unity_SHAg.w, unity_SHAb.w);
     } else {
@@ -956,7 +955,7 @@ float3 LightVolumeSH_L0(float3 worldPos, float3 worldPosOffset = 0, float3 world
 }
 
 // Calculates L1 SH based on the world position from Additive Light Volumes and Point Light Volumes.
-void LightVolumeAdditiveSH(float3 worldPos, out float3 L0, out float3 L1r, out float3 L1g, out float3 L1b, float3 worldPosOffset = 0, float3 worldNormal = 0, float pointLightShading = 1) {
+void LightVolumeAdditiveSH(float3 worldPos, out float3 L0, out float3 L1r, out float3 L1g, out float3 L1b, float3 worldPosOffset = 0, float3 worldNormal = 0, float pointLightShading = 3) {
     L0 = 0; L1r = 0; L1g = 0; L1b = 0;
     [branch] if (_UdonLightVolumeEnabled != 0 && _UdonLightVolumeVersion >= VRCLV_MIN_SUPPORTED_VERSION) {
         LV_LightVolumeAdditiveSH(worldPos + worldPosOffset, L0, L1r, L1g, L1b);
@@ -965,7 +964,7 @@ void LightVolumeAdditiveSH(float3 worldPos, out float3 L0, out float3 L1r, out f
 }
 
 // Calculates L0 SH based on the world position from additive volumes and Point Light Volumes.
-float3 LightVolumeAdditiveSH_L0(float3 worldPos, float3 worldPosOffset = 0, float3 worldNormal = 0, float pointLightShading = 1) {
+float3 LightVolumeAdditiveSH_L0(float3 worldPos, float3 worldPosOffset = 0, float3 worldNormal = 0, float pointLightShading = 3) {
     [branch] if (_UdonLightVolumeEnabled == 0 || _UdonLightVolumeVersion < VRCLV_MIN_SUPPORTED_VERSION) {
         return 0;
     } else {
@@ -1002,7 +1001,7 @@ float3 LightVolumeSpecularDominant(float3 albedo, float smoothness, float metall
 }
 
 // Calculates L1 SH and speculars based on custom f0. Volumes use dominant SH specular, Point Light Volumes are accumulated individually.
-void LightVolumeSHSpecular(float3 worldPos, out float3 L0, out float3 L1r, out float3 L1g, out float3 L1b, out float3 specular, float3 f0, float smoothness, float3 worldNormal, float3 viewDir, float3 worldPosOffset = 0, float pointLightShading = 1) {
+void LightVolumeSHSpecular(float3 worldPos, out float3 L0, out float3 L1r, out float3 L1g, out float3 L1b, out float3 specular, float3 f0, float smoothness, float3 worldNormal, float3 viewDir, float3 worldPosOffset = 0, float pointLightShading = 3) {
     L0 = 0; L1r = 0; L1g = 0; L1b = 0; specular = 0;
     [branch] if (_UdonLightVolumeEnabled == 0 || _UdonLightVolumeVersion < VRCLV_MIN_SUPPORTED_VERSION) {
         LV_SampleLightProbe(L0, L1r, L1g, L1b);
@@ -1016,12 +1015,12 @@ void LightVolumeSHSpecular(float3 worldPos, out float3 L0, out float3 L1r, out f
 }
 
 // Calculates L1 SH and speculars based on PBR data. Volumes use dominant SH specular, Point Light Volumes are accumulated individually.
-void LightVolumeSHSpecular(float3 worldPos, out float3 L0, out float3 L1r, out float3 L1g, out float3 L1b, out float3 specular, float3 albedo, float smoothness, float metallic, float3 worldNormal, float3 viewDir, float3 worldPosOffset = 0, float pointLightShading = 1) {
+void LightVolumeSHSpecular(float3 worldPos, out float3 L0, out float3 L1r, out float3 L1g, out float3 L1b, out float3 specular, float3 albedo, float smoothness, float metallic, float3 worldNormal, float3 viewDir, float3 worldPosOffset = 0, float pointLightShading = 3) {
     LightVolumeSHSpecular(worldPos, L0, L1r, L1g, L1b, specular, lerp(0.04, albedo, metallic), smoothness, worldNormal, viewDir, worldPosOffset, pointLightShading);
 }
 
 // Calculates additive L1 SH and speculars based on custom f0. Additive volumes use dominant SH specular, Point Light Volumes are accumulated individually.
-void LightVolumeAdditiveSHSpecular(float3 worldPos, out float3 L0, out float3 L1r, out float3 L1g, out float3 L1b, out float3 specular, float3 f0, float smoothness, float3 worldNormal, float3 viewDir, float3 worldPosOffset = 0, float pointLightShading = 1) {
+void LightVolumeAdditiveSHSpecular(float3 worldPos, out float3 L0, out float3 L1r, out float3 L1g, out float3 L1b, out float3 specular, float3 f0, float smoothness, float3 worldNormal, float3 viewDir, float3 worldPosOffset = 0, float pointLightShading = 3) {
     L0 = 0; L1r = 0; L1g = 0; L1b = 0; specular = 0;
     [branch] if (_UdonLightVolumeEnabled != 0 && _UdonLightVolumeVersion >= VRCLV_MIN_SUPPORTED_VERSION) {
         LV_LightVolumeAdditiveSH(worldPos + worldPosOffset, L0, L1r, L1g, L1b);
@@ -1031,7 +1030,7 @@ void LightVolumeAdditiveSHSpecular(float3 worldPos, out float3 L0, out float3 L1
 }
 
 // Calculates additive L1 SH and speculars based on PBR data. Additive volumes use dominant SH specular, Point Light Volumes are accumulated individually.
-void LightVolumeAdditiveSHSpecular(float3 worldPos, out float3 L0, out float3 L1r, out float3 L1g, out float3 L1b, out float3 specular, float3 albedo, float smoothness, float metallic, float3 worldNormal, float3 viewDir, float3 worldPosOffset = 0, float pointLightShading = 1) {
+void LightVolumeAdditiveSHSpecular(float3 worldPos, out float3 L0, out float3 L1r, out float3 L1g, out float3 L1b, out float3 specular, float3 albedo, float smoothness, float metallic, float3 worldNormal, float3 viewDir, float3 worldPosOffset = 0, float pointLightShading = 3) {
     LightVolumeAdditiveSHSpecular(worldPos, L0, L1r, L1g, L1b, specular, lerp(0.04, albedo, metallic), smoothness, worldNormal, viewDir, worldPosOffset, pointLightShading);
 }
 

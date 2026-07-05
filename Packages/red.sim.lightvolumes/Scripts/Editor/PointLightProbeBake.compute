@@ -28,7 +28,7 @@ void BakePointLightVolumesIntoProbes(uint3 id : SV_DispatchThreadID) {
     [loop] for (uint i = 0; i < lightCount; i++) {
         float3 l0, l1, lightDirNormal;
         float specularSpreadSq, shadow;
-        if (LV_PointLightVolumeContribution(i, _ProbePositions[probeIndex], 0, 0, -1, l0, l1, lightDirNormal, specularSpreadSq, shadow)) {
+        if (LV_PointLightVolumeContribution(i, _ProbePositions[probeIndex], 0, -1, l0, l1, lightDirNormal, specularSpreadSq, shadow)) {
             l0 *= shadow;
             L0 += l0;
             L1r += l0.r * l1;

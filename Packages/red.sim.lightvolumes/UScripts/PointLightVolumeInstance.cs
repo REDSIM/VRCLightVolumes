@@ -160,7 +160,9 @@ namespace VRCLightVolumes {
         private float _old_Intensity = 100f;
         private float _old_ShadingStrength = 1;
         private bool _isRegisteredWithManager = false;
-        [HideInInspector] public int AreaCookieAverageCustomId = -1;
+        [NonSerialized] public int AreaCookieAverageCustomId = -1;
+        [NonSerialized] public bool AreaCookieAverageReadbackPending = false;
+        [NonSerialized] public bool AreaCookieAverageReadbackDirty = false;
 #if COMPILER_UDONSHARP
         private Color32[] _areaCookieAveragePixels = new Color32[0];
 #endif
@@ -322,18 +324,42 @@ namespace VRCLightVolumes {
 #if COMPILER_UDONSHARP
         // Receives the area-cookie fallback average and sends it back to the manager
         public override void OnAsyncGpuReadbackComplete(VRCAsyncGPUReadbackRequest request) {
-            if (request.hasError) return;
+            if (LightVolumeManager == null) {
+                AreaCookieAverageReadbackPending = false;
+                AreaCookieAverageReadbackDirty = false;
+                AreaCookieAverageCustomId = -1;
+                return;
+            }
+            if (request.hasError) {
+                LightVolumeManager.CompleteAreaCookieAverageReadback(this, false, Color.clear);
+                return;
+            }
             if (_areaCookieAveragePixels.Length != 1) _areaCookieAveragePixels = new Color32[1];
-            if (!request.TryGetData(_areaCookieAveragePixels)) return;
-            LightVolumeManager.UploadAreaCookieAverageColor(AreaCookieAverageCustomId, _areaCookieAveragePixels[0]);
+            if (!request.TryGetData(_areaCookieAveragePixels)) {
+                LightVolumeManager.CompleteAreaCookieAverageReadback(this, false, Color.clear);
+                return;
+            }
+            LightVolumeManager.CompleteAreaCookieAverageReadback(this, true, _areaCookieAveragePixels[0]);
         }
 #else
         // Receives the area-cookie fallback average and sends it back to the manager
         public void OnAsyncGpuReadbackComplete(AsyncGPUReadbackRequest request) {
-            if (request.hasError) return;
+            if (LightVolumeManager == null) {
+                AreaCookieAverageReadbackPending = false;
+                AreaCookieAverageReadbackDirty = false;
+                AreaCookieAverageCustomId = -1;
+                return;
+            }
+            if (request.hasError) {
+                LightVolumeManager.CompleteAreaCookieAverageReadback(this, false, Color.clear);
+                return;
+            }
             Unity.Collections.NativeArray<Color32> pixels = request.GetData<Color32>();
-            if (pixels.Length <= 0) return;
-            LightVolumeManager.UploadAreaCookieAverageColor(AreaCookieAverageCustomId, pixels[0]);
+            if (pixels.Length <= 0) {
+                LightVolumeManager.CompleteAreaCookieAverageReadback(this, false, Color.clear);
+                return;
+            }
+            LightVolumeManager.CompleteAreaCookieAverageReadback(this, true, pixels[0]);
 #if UNITY_EDITOR
             if (!Application.isPlaying) {
                 UnityEditor.EditorApplication.QueuePlayerLoopUpdate();

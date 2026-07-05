@@ -108,6 +108,7 @@ namespace VRCLightVolumes {
             void DelayedSave() {
                 EditorApplication.update -= DelayedSave;
                 try {
+                    assetPath = EscapeAssetPathFileName(assetPath);
                     string dir = Path.GetDirectoryName(assetPath);
                     if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir)) Directory.CreateDirectory(dir);
                     AssetDatabase.CreateAsset(asset, assetPath);
@@ -124,6 +125,55 @@ namespace VRCLightVolumes {
 #endif
         }
 
+        // Escapes unsupported characters in the file-name segment of a Unity asset path.
+        public static string EscapeAssetPathFileName(string assetPath) {
+            if (string.IsNullOrEmpty(assetPath)) return assetPath;
+
+            int separatorIndex = assetPath.LastIndexOf('/');
+            string fileName = assetPath.Substring(separatorIndex + 1);
+            string escapedFileName = EscapeFileName(fileName);
+            if (escapedFileName == fileName) return assetPath;
+
+            return separatorIndex < 0 ? escapedFileName : assetPath.Substring(0, separatorIndex + 1) + escapedFileName;
+        }
+
+        // Escapes only characters that cannot be stored inside a file name.
+        public static string EscapeFileName(string fileName) {
+            if (string.IsNullOrEmpty(fileName)) return fileName;
+
+            System.Text.StringBuilder builder = null;
+            for (int i = 0; i < fileName.Length; i++) {
+                char character = fileName[i];
+                if (!IsInvalidFileNameCharacter(character)) {
+                    if (builder != null) builder.Append(character);
+                    continue;
+                }
+
+                if (builder == null) {
+                    builder = new System.Text.StringBuilder(fileName.Length + 8);
+                    builder.Append(fileName, 0, i);
+                }
+                builder.Append('%');
+                builder.Append(((int)character).ToString("X2"));
+            }
+
+            return builder == null ? fileName : builder.ToString();
+        }
+
+        // Checks if the character is not supported by Windows file names or Unity asset path separators.
+        private static bool IsInvalidFileNameCharacter(char character) {
+            return character < 32 ||
+                character == '<' ||
+                character == '>' ||
+                character == ':' ||
+                character == '"' ||
+                character == '/' ||
+                character == '\\' ||
+                character == '|' ||
+                character == '?' ||
+                character == '*';
+        }
+
         public static void SaveAsAsset(Object asset, string assetPath) {
 #if UNITY_EDITOR
             if (asset == null || string.IsNullOrEmpty(assetPath)) {
@@ -131,6 +181,7 @@ namespace VRCLightVolumes {
                 return;
             }
             try {
+                assetPath = EscapeAssetPathFileName(assetPath);
                 string dir = Path.GetDirectoryName(assetPath);
                 if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir)) Directory.CreateDirectory(dir);
                 AssetDatabase.CreateAsset(asset, assetPath);

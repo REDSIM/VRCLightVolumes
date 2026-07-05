@@ -83,6 +83,30 @@ namespace VRCLightVolumes.Tests {
             Assert.That(instance.AutoUpdateCustomTexture, Is.False);
         }
 
+        // Verifies file name escaping preserves characters that are valid in file names.
+        [Test]
+        public void EscapeFileNameLeavesValidFileNameCharactersUnchanged() {
+            string fileName = "Valid Name (1) #%.[]{}+=,;!@'`~.asset";
+
+            Assert.That(LVUtils.EscapeFileName(fileName), Is.EqualTo(fileName));
+        }
+
+        // Verifies file name escaping covers only characters that cannot be stored in file names.
+        [Test]
+        public void EscapeFileNameEscapesInvalidFileNameCharacters() {
+            string fileName = "<>:\"/\\|?*\u0001";
+
+            Assert.That(LVUtils.EscapeFileName(fileName), Is.EqualTo("%3C%3E%3A%22%2F%5C%7C%3F%2A%01"));
+        }
+
+        // Verifies asset path escaping changes only the final file-name segment.
+        [Test]
+        public void EscapeAssetPathFileNameEscapesOnlyFileNameSegment() {
+            string assetPath = "Assets/Valid Folder/Name:Bad?.asset";
+
+            Assert.That(LVUtils.EscapeAssetPathFileName(assetPath), Is.EqualTo("Assets/Valid Folder/Name%3ABad%3F.asset"));
+        }
+
         // Verifies editor sync copies changed projection source references before texture array rebuilds.
         [Test]
         public void PointLightVolumeEditorSyncTargetsCopiesChangedProjectionSources() {

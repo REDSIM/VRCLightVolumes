@@ -174,7 +174,8 @@ namespace VRCLightVolumes {
         // Saves the baked shadow asset into the scene-local VRCLightVolumes temp folder.
         private static void SaveShadowAsset(PointLightVolume pointLightVolume, UnityEngine.Object shadowAsset) {
             string scenePath = UnityEngine.SceneManagement.SceneManager.GetActiveScene().path;
-            string path = $"{System.IO.Path.GetDirectoryName(scenePath)}/{UnityEngine.SceneManagement.SceneManager.GetActiveScene().name}/VRCLightVolumes/Temp/{pointLightVolume.gameObject.name}_shadows.asset";
+            string escapedName = LVUtils.EscapeFileName(pointLightVolume.gameObject.name);
+            string path = $"{System.IO.Path.GetDirectoryName(scenePath)}/{UnityEngine.SceneManagement.SceneManager.GetActiveScene().name}/VRCLightVolumes/Temp/{escapedName}_shadows.asset";
             if (AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(path) != null) AssetDatabase.DeleteAsset(path);
             LVUtils.SaveAsAsset(shadowAsset, path);
         }

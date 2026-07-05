@@ -41,7 +41,7 @@ The same Material object is shared between lights when possible. If two lights n
 6. Use the lowest acceptable `Cookie Resolution` or `Shadow Resolution`, because cubemap sources consume six slices.
 
 > [!IMPORTANT]
-> A shadow Material is advanced. It must output the same EVSM data layout used by VRC Light Volumes. If you only need normal geometry-cast shadows, use `Bake Shadows` or the `Point Light Shadow Runtime Baker` instead.
+> A shadow Material is advanced. It must output the same EVSM data layout used by VRC Light Volumes. If you only need normal geometry-cast shadows, use `Bake Shadows` or `Bake In Game` instead. Use `Point Light Shadow Runtime Baker` only for `OnEnable` rebakes or full realtime shadows.
 
 ## Material Rendering Contract
 

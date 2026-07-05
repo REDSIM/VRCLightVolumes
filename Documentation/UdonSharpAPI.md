@@ -38,6 +38,9 @@ Stores the Light Volume atlas, Point Light Volume texture arrays and references 
 |`int ShadowMapsCount` | Total shadow map count stored in `ShadowTextures`. Cubemap shadows use 6 array slices, single projected shadows use 1 slice. |
 |`bool HasAutoShadowTextureUpdates` | Internal state. True when at least one shadow source needs per-frame texture updates. |
 |`Material CubemapFaceMaterial` | Internal material used to copy cubemap faces into runtime texture arrays. You usually don't need to touch this field manually. |
+|`Camera RuntimeShadowCamera` | Internal shared disabled camera used by Point Light Volume runtime shadow baking. Prepared by editor/build preprocessing. |
+|`Material RuntimeShadowDepthEncodeMaterial` | Internal shared material used to encode runtime shadow camera depth into EVSM moments. Prepared by editor/build preprocessing. |
+|`Material RuntimeShadowBlurMaterial` | Internal shared material used by runtime shadow blur passes. Prepared by editor/build preprocessing. |
 
 ### Public Properties
 | Public Property | Description |
@@ -58,7 +61,7 @@ Stores the Light Volume atlas, Point Light Volume texture arrays and references 
 |`void UpdateAutoCustomTextures()` | Updates only projection sources marked for per-frame refresh. Usually called automatically when `AutoUpdateTextures` is enabled. |
 |`void ReinitializeShadowTextures()` | Rebuilds the shared runtime texture array for Point Light Volume shadow maps. Call this after changing shadow sources manually. |
 |`void UpdateAutoShadowTextures()` | Updates only shadow sources marked for per-frame refresh. Usually called automatically when `AutoUpdateTextures` is enabled. |
-|`void UpdatePointLightShadowTextureSlice(PointLightVolumeInstance instance, int sourceSlice)` | Copies one shadow source slice into the shared shadow texture array. Runtime shadow bakers use this when they manage their own update loop. |
+|`void UpdatePointLightShadowTextureSlice(PointLightVolumeInstance instance, int sourceSlice)` | Copies one shadow source slice into the shared shadow texture array. `PointLightVolumeInstance.BakeShadows()` uses this for local runtime output when it needs to publish completed slices. |
 |`int GetPointLightCustomID(PointLightVolumeInstance instance)` | Returns the resolved projection texture ID for a Point Light Volume instance, or `-1` if none is assigned. |
 |`void RequestUpdateVolumes()` | Schedules a Light Volume data update on the next delayed update tick. Prefer this over calling `UpdateVolumes()` repeatedly. |
 |`void UpdateVolumes()` | Immediately rebuilds and uploads all Light Volume and Point Light Volume shader data. Useful when you intentionally manage updates manually instead of relying on delayed requests. |
@@ -101,9 +104,9 @@ When changing a Light Volume from another Udon script, prefer the setter methods
 |`void UpdateTransform()` | Recalculates `InvWorldMatrix`, `RelativeRotationRow0`, `RelativeRotationRow1` and `IsRotated`, then notifies the manager. Executes automatically from the manager for dynamic volumes when `AutoUpdateVolumes` is enabled. |
 
 ## PointLightVolumeInstance
-Stores all runtime Point Light Volume configuration including light type, projection source, shadow source, transform data, color and culling range.
+Stores all runtime Point Light Volume configuration including light type, projection source, shadow source, runtime shadow bake settings, transform data, color and culling range.
 
-When changing a Point Light Volume from another Udon script, prefer the setter methods below over direct field writes. They skip unchanged values, keep internal change caches in sync and notify the manager without rebuilding unrelated texture or light data.
+When changing a Point Light Volume from another Udon script, prefer the setter methods below where they exist. Runtime shadow bake configuration is mostly controlled by public fields: assign the fields, then call `BakeShadows()`.
 
 ### Public Fields
 | Public Field | Description |
@@ -151,6 +154,12 @@ When changing a Point Light Volume from another Udon script, prefer the setter m
 |`float FarClip` | Far clip distance used when the EVSM shadow map is baked. `0` recalculates it from this light's current culling range and is usually the recommended default. Use a manual value only to clip distant shadow casters or reduce the shadow depth range for a known bounded area. |
 |`float Blur` | Shadow blur radius applied after baking, normalized to 128x128 shadow resolution. Editor baking uses spherical shadow-space blur to reduce visible cubemap and Spot Light projection seams. Runtime baking uses `Planar Blur` unless `PointLightShadowRuntimeBaker.SphericalBlur` is enabled. `0` keeps the baked shadow map unblurred. |
 |`float ContactHardening` | Hardens shadows near contact areas. Can produce artifacts, so use it carefully. More performant when set to `0` in runtime shadow mode. Runtime baker spherical mode also applies to contact hardening samples. |
+|`bool BakeInGame` | Bakes this light's shadow once from `Start()` in Play Mode or VRChat. The editor can still use a baked preview texture, but build/upload preprocessing clears that texture reference so it does not enter the build or asset bundle for this light. |
+|`int RuntimeShadowResolution` | Resolution used by `BakeShadows()`. For `BakeInGame`, build/upload preprocessing normally sets it from **Light Volume Setup** shadow resolution. |
+|`int RuntimeShadowBlurSamplePreset` | Runtime blur and contact hardening sample preset. `0` = Low, `1` = Medium, `2` = High, `3` = editor-quality internal preset. `BakeInGame` uses the highest normal runtime quality. |
+|`bool RuntimeShadowSphericalBlur` | Enables spherical shadow-space runtime blur. `BakeInGame` enables this for better cubemap and single-slice Spot Light edge quality. |
+|`int RuntimeShadowFacesPerFrame` | Number of cubemap faces processed per `BakeShadows()` trigger. Valid practical values are `1`, `2`, `3` and `6`; single-slice Spot Light shadows ignore this and bake one slice. `BakeInGame` uses one-frame full baking. |
+|`bool RuntimeShadowDirectOutput` | Advanced realtime option. When true and the resolution matches the manager shadow atlas, `BakeShadows()` writes directly into the manager shadow texture array. The external realtime baker uses this to avoid keeping a full source texture per frame. |
 |`bool ShadowMapTextureIsCubemap` | Internal metadata. True when `ShadowMapTexture` is a real cubemap source. |
 |`bool ShadowMapTextureHasDepthSlices` | Internal metadata. True when `ShadowMapTexture` is a Texture2DArray or array RenderTexture with independent slices. |
 |`bool ShadowMapUsesCubemap` | Internal metadata. True when the shadow source occupies 6 cubemap slices in the runtime shadow texture array. |
@@ -175,29 +184,31 @@ When changing a Point Light Volume from another Udon script, prefer the setter m
 |`void SetColor(Color color)` | Sets light source color, updates the internal change cache and marks range dirty only when the value changes. |
 |`void SetIntensity(float intensity)` | Sets light source intensity, updates the internal change cache and marks range dirty only when the value changes. |
 |`void SetShadingStrength(float shadingStrength)` | Sets per-surface Point Light Volume shading and shadow strength in the `0..1` range, updating the internal change cache only when the value changes. |
-|`void SetShadowSettings(float shadowMapID, bool worldSpaceShadows, int layerMask, float nearClip, float farClip, float bias, float blur, float contactHardening)` | Sets shadow ID, shadow projection mode and runtime bake settings in one call. `farClip = 0` keeps the automatic culling-range based far clip. Notifies the manager only when shader-facing shadow data changes; layer mask, bias, blur and contact hardening changes are stored for runtime bakers without forcing unrelated rebuilds. |
+|`void BakeShadows()` | Runs one native runtime shadow bake trigger using the current runtime shadow bake fields. Full one-frame baking happens when the light uses a single-slice Spot Light shadow or `RuntimeShadowFacesPerFrame` covers all required cubemap faces. Lower face counts continue the current bake cycle across repeated calls. |
 |`void UpdateTransform()` | Updates position, rotation and scale data only when transform values changed. |
 |`void UpdatePosition()` | Forces position data update and notifies the manager. |
 |`void UpdateRotation()` | Forces rotation or direction data update and notifies the manager. |
 |`void UpdateScale()` | Forces scale-dependent data update, recalculates area size when needed and marks range dirty. |
 
 ## PointLightShadowRuntimeBaker
-Runtime Udon component from `Extra/Shadow Runtime Baker` that renders EVSM shadow maps for one **Point Light Volume Instance**. Use it when a shadow needs to update in runtime.
+Runtime Udon extension component from `Extra/Shadow Runtime Baker` that configures and triggers one **Point Light Volume Instance**. The actual runtime shadow bake is implemented in `PointLightVolumeInstance.BakeShadows()`. Use this component when a light needs rebaking on `OnEnable` or full realtime shadow updates.
 
-The hidden camera and runtime materials are prepared automatically by the editor and build preprocessor, so they are intentionally not listed here as regular user-facing fields. The `_RealtimeBakeLoop()` public event is internal to the delayed bake loop and should not be called manually.
+The hidden camera and runtime materials are prepared automatically by the editor and build preprocessor. The `_RealtimeBakeLoop()` public event is internal to the delayed bake loop and should not be called manually.
+
+Full realtime shadow baking is very expensive, usually more expensive than Unity realtime shadows. Prefer single-slice Spot Lights for realtime use, keep Spot Light angles below 180 degrees and preferably around 120 degrees or lower, and reserve realtime mode for heroic lights or single flashlights. Point Light and Area Light realtime shadows require cubemap updates and are much heavier.
 
 ### Public Fields
 | Public Field | Description |
 | --- | --- |
 |`PointLightVolumeInstance TargetPointLightVolume` | Target point, spot or area light instance that receives the runtime-baked shadow texture. |
-|`bool BakeOnEnable` | Runs one distributed bake cycle when the baker becomes active. |
-|`bool Realtime` | Continuously updates shadow slices through a delayed Udon event loop. Use carefully because realtime shadow baking is expensive. |
-|`int Resolution` | Resolution used by the runtime depth target and shadow texture. Matching **Light Volume Setup** `Shadow Resolution` avoids an extra copy path. |
-|`int RealtimeFacesPerFrame` | Number of cubemap faces rendered per realtime bake tick. Single-slice Spot Light shadows ignore this and update one slice. |
+|`bool BakeOnEnable` | Configures the target Point Light Volume and triggers one full bake when this baker becomes active. Use it for enable-time rebakes. For simple startup-only baking, prefer `PointLightVolumeInstance.BakeInGame`. |
+|`bool Realtime` | Continuously triggers target shadow bake calls through a delayed Udon event loop. Use carefully because full realtime shadow baking is expensive. |
+|`int Resolution` | Resolution written into the target Point Light Volume before triggering its bake. Matching **Light Volume Setup** `Shadow Resolution` allows direct atlas output in realtime mode. |
+|`int RealtimeFacesPerFrame` | Number of cubemap faces requested from the target per realtime bake tick. Single-slice Spot Light shadows ignore this and update one slice. |
 |`int ShadowBlurSamplePreset` | Runtime blur and contact hardening sample preset. `0` = Low, `1` = Medium, `2` = High. `Planar Blur` uses 30/62/126 two-pass blur taps; `SphericalBlur` uses 33/65/129 one-pass blur taps. Lower presets are cheaper. |
 |`bool SphericalBlur` | Samples runtime blur and contact hardening in spherical shadow space to reduce visible cubemap and single-slice Spot Light projection seams. More correct, but more expensive than `Planar Blur`. |
 
 ### Public Methods
 | Public Method | Description |
 | --- | --- |
-|`void BakeShadows()` | Bakes all shadow slices immediately. If `Realtime` is enabled, it also starts the realtime bake loop. |
+|`void BakeShadows()` | Writes one-shot bake settings into `TargetPointLightVolume` and calls `TargetPointLightVolume.BakeShadows()`. It does not contain separate bake logic. |

@@ -26,7 +26,7 @@ The `Point Light Volume` component is an editor-only script that helps you confi
 
 The `Point Light Volume Instance` component is a VRChat Udon script that stores all the data required by the Light Volumes system to render the light. You generally shouldn’t modify its values manually in the editor - use the `Point Light Volume` script instead. However, if you’re writing game logic that changes light parameters at runtime, you should reference the `Point Light Volume Instance` component, since it is the one that actually functions as the real light in-game.
 
-For runtime changes from Udon, prefer `Point Light Volume Instance` setter methods such as `SetColor()`, `SetIntensity()`, `SetDynamic()`, `SetLightSourceSize()`, `SetPointLight()`, `SetSpotLight()` and `SetShadowSettings()` so the manager receives only the update it actually needs.
+For runtime changes from Udon, prefer `Point Light Volume Instance` setter methods such as `SetColor()`, `SetIntensity()`, `SetDynamic()`, `SetLightSourceSize()`, `SetPointLight()` and `SetSpotLight()` where they exist, so the manager receives only the update it actually needs. Shadow bake fields are public; assign them directly and call `BakeShadows()` when you want the instance to run its native runtime shadow bake.
 
 ## Point Light Volumes Placement
 
@@ -118,7 +118,7 @@ Area Light cookies use the mip chain of this shared texture array to approximate
 > [!IMPORTANT]
 > It’s recommended to completely disable compression for any texture used as a Cookie or a LUT. The Light Volumes system does not inherit the compression settings, but compression artifacts will still remain and affect the result.
 
-For shadow setup, baked shadows, the Realtime Shadow Baker and runtime script control, see [Point Light Volume Shadows](../Documentation/HowToUse_Shadows.md).
+For shadow setup, baked shadows, `Bake In Game`, the Realtime Shadow Baker and runtime script control, see [Point Light Volume Shadows](../Documentation/HowToUse_Shadows.md).
 
 ## Point Light Volume Component Description
 

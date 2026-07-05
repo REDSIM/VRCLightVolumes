@@ -48,11 +48,11 @@ Lower `Additive Max Overdraw` when overlap-heavy areas become expensive. It caps
 
 ## Point Light Volume Baked Realtime Shadows
 
-Point Light Volume Shadows are shadows similar to Unity's realtime point light shadows, but they are intended to work mostly in baked mode, which is much more optimized. You usually prebake depth shadow maps in the editor, or bake them only once on start in runtime, and use this data to project shadows even on movable dynamic objects. Dynamic objects will not cast shadows themselves in that mode. This is usually enough for most cases and gives much more performant behavior than a regular realtime approach.
+Point Light Volume Shadows are shadows similar to Unity's realtime point light shadows, but they are intended to work mostly in baked mode, which is much more optimized. You usually prebake depth shadow maps in the editor, or enable `Bake In Game` to bake them once from `Start()` in runtime, and use this data to project shadows even on movable dynamic objects. Dynamic objects will not cast shadows themselves in that mode. This is usually enough for most cases and gives much more performant behavior than a regular realtime approach.
 
 Point Light Volume Shadows use **Exponential Variance Shadow Maps (EVSM)**. They are cheap to filter, support wide blur kernels well, and keep the same shadow pipeline on PC and Quest.
 
-Editor-baked shadow blur uses the spherical shadow-space blur path, so larger `Blur` values stay more consistent across cubemap faces and single-slice Spot Light projections.
+Editor-baked shadow blur uses the spherical shadow-space blur path, so larger `Blur` values stay more consistent across cubemap faces and single-slice Spot Light projections. `Bake In Game` also uses high-quality runtime baking and spherical blur, but the baked shadow asset assigned for editor preview is removed from the build/upload runtime state, saving bundle memory.
 
 Use shadows only where they visibly matter. Shadowed Point Light Volumes need extra texture memory and extra shader work, so they are heavier, especially for Quest and Mobile.
 
@@ -80,9 +80,11 @@ See [Point Light Volume Shadows](../Documentation/HowToUse_Shadows.md) for the f
 
 ## Point Light Volume Realtime Shadows
 
-Realtime shadow baking is available through the extra **Point Light Shadow Runtime Baker** Udon script with `Realtime` mode enabled there.
+Realtime shadow baking is available through the extra **Point Light Shadow Runtime Baker** Udon script with `Realtime` mode enabled there. For one-shot startup baking, use the Point Light Volume `Bake In Game` checkbox instead. Use the extra baker for rebaking on `OnEnable` or for full realtime shadow updates.
 
-Point Light Volume Realtime Shadows are **not cheaper than Unity's realtime shadows**. They are heavier. Under the hood, **Point Light Shadow Runtime Baker** renders cameras and blur passes in runtime, which means 2 draw calls for a single realtime Spot Light and 7 draw calls for a single Point Light or Area Light. Use it for a small number of important lights and choose culling layers carefully.
+Point Light Volume Realtime Shadows are **not cheaper than Unity's realtime shadows**. They are heavier. Under the hood, the target Point Light Volume renders cameras, encodes EVSM depth, optionally runs blur passes and updates the shared shadow array in runtime. Use full realtime only for heroic lights, single flashlights or other isolated important lights, and choose culling layers carefully.
+
+Prefer realtime Spot Lights. With `Force Cubemap Shadows` disabled and an angle below 180 degrees, a Spot Light uses one shadow slice and is about six times cheaper than Point Light or Area Light cubemap shadows. Keep the angle around 120 degrees or lower when possible for better quality. Full realtime Point Light shadows are very expensive.
 
 Keep `Spherical Blur` disabled for realtime shadows unless the cheaper `Planar Blur` produces visible cubemap seams or Spot Light projection-edge artifacts. Spherical blur reduces those artifacts but adds more expensive shadow-space samples.
 
@@ -100,7 +102,7 @@ Cookie source Materials are rendered as texture generators, not as normal world 
 
 With `Auto Update Textures` disabled in **Light Volume Manager**, projection sources are copied when the custom texture array is initialized or rebuilt. Use `ReinitializeCustomTextures()` after advanced manual source replacement, or keep `autoUpdate = true` and use `UpdateAutoCustomTextures()` when you intentionally manage the update call yourself.
 
-For Point Light Volume Shadows, runtime bakers can update one managed shadow slice directly with `UpdatePointLightShadowTextureSlice()`.
+For Point Light Volume Shadows, `PointLightVolumeInstance.BakeShadows()` can publish completed runtime-baked slices into the managed shadow array.
 
 Runtime projection sources are shared by source object and auto-update mode. Several lights using the same Texture, RenderTexture, Cubemap or Material with the same `autoUpdate` value share one runtime texture-array entry. The same source used once with `autoUpdate = false` and once with `autoUpdate = true` gets separate entries, so an auto-updated copy cannot overwrite a static captured copy.
 
@@ -126,7 +128,7 @@ Disabling **Light Volumes Manager** object disables the whole Light Volumes syst
 
 To update a volume's transform in runtime, enable **Dynamic** on its component and enable **Auto Update Volumes** in Light Volume Setup. Otherwise, you must manually update positions of Dynamic volumes from an Udon script. Color, Intensity, enabling and disabling update without **Auto Update Volumes**. If you do not need runtime transform updates, leave both options off for better performance.
 
-When changing Light Volume or Point Light Volume data from Udon, prefer the instance setter methods such as `SetColor()`, `SetIntensity()`, `SetDynamic()`, `SetAdditive()`, `SetLightSourceSize()` and `SetShadowSettings()` instead of writing public fields directly. These methods skip unchanged values and notify the manager with a more targeted update.
+When changing Light Volume or Point Light Volume data from Udon, prefer the instance setter methods such as `SetColor()`, `SetIntensity()`, `SetDynamic()`, `SetAdditive()` and `SetLightSourceSize()` where they exist. For runtime shadow baking, assign public shadow bake fields directly and call `BakeShadows()`.
 
 ## Spawning New Light Volumes In Runtime
 

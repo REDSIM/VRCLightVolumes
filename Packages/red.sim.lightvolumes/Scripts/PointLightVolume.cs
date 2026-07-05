@@ -258,9 +258,14 @@ namespace VRCLightVolumes {
 
         // Returns true when the assigned shadow texture has independent cubemap face slices
         private bool ShadowMapTextureHasDepthSlices() {
-            RenderTexture renderTexture = ShadowMap as RenderTexture;
+            return TextureHasDepthSlices(ShadowMap as Texture);
+        }
+
+        // Returns true when a texture source stores independent texture array slices
+        private static bool TextureHasDepthSlices(Texture texture) {
+            RenderTexture renderTexture = texture as RenderTexture;
             if (renderTexture != null) return renderTexture.dimension == UnityEngine.Rendering.TextureDimension.Tex2DArray && renderTexture.volumeDepth > 1;
-            return ShadowMap is Texture2DArray;
+            return texture is Texture2DArray;
         }
 
         // Returns true when the shadow source needs a per-frame copy into the runtime texture array
@@ -303,7 +308,7 @@ namespace VRCLightVolumes {
         }
 
         // Syncs this authoring component into the runtime instance, optionally refreshing projection texture references
-        public void SyncUdonScript(bool syncTextureSources = true) {
+        public void SyncUdonScript(bool syncTextureSources = true, bool notifyManager = true) {
             if (gameObject == null) return;
 #if UNITY_EDITOR
             if (UnityEditor.Undo.isProcessing) {
@@ -318,32 +323,32 @@ namespace VRCLightVolumes {
 #if UDONSHARP
             if (Application.isPlaying) {
                 // To sync variables in play-mode, we need to do it directly to the UdonBehaviour
-                _pointLightVolumeBehaviour.SetProgramVariable("IsDynamic", Dynamic);
-                _pointLightVolumeBehaviour.SetProgramVariable("Color", Color);
-                _pointLightVolumeBehaviour.SetProgramVariable("Intensity", Intensity);
-                _pointLightVolumeBehaviour.SetProgramVariable("ShadingStrength", Mathf.Clamp01(ShadingStrength));
-                _pointLightVolumeBehaviour.SetProgramVariable("SpotCookieAspect", Mathf.Max(Mathf.Abs(SpotCookieAspect), 0.001f));
-                _pointLightVolumeBehaviour.SetProgramVariable("IsRangeDirty", true);
-                _pointLightVolumeBehaviour.SetProgramVariable("ShadowMapID", (float)GetShadowRuntimeID());
-                _pointLightVolumeBehaviour.SetProgramVariable("BakeInGame", Shadows && BakeInGame);
-                _pointLightVolumeBehaviour.SetProgramVariable("RuntimeShadowResolution", GetRuntimeShadowResolution());
-                _pointLightVolumeBehaviour.SetProgramVariable("RuntimeShadowBlurSamplePreset", 2);
-                _pointLightVolumeBehaviour.SetProgramVariable("RuntimeShadowSphericalBlur", true);
-                _pointLightVolumeBehaviour.SetProgramVariable("RuntimeShadowFacesPerFrame", 6);
-                _pointLightVolumeBehaviour.SetProgramVariable("RuntimeShadowDirectOutput", false);
-                _pointLightVolumeBehaviour.SetProgramVariable("WorldSpaceShadows", UseWorldSpace);
-                _pointLightVolumeBehaviour.SetProgramVariable("Bias", Bias);
-                _pointLightVolumeBehaviour.SetProgramVariable("LayerMask", LayerMask.value);
-                _pointLightVolumeBehaviour.SetProgramVariable("NearClip", GetShadowNearClip());
-                _pointLightVolumeBehaviour.SetProgramVariable("FarClip", GetShadowFarClip());
-                _pointLightVolumeBehaviour.SetProgramVariable("Blur", Blur);
-                _pointLightVolumeBehaviour.SetProgramVariable("ContactHardening", ContactHardening);
-                _pointLightVolumeBehaviour.SetProgramVariable("ShadowBakePosition", PointLightVolumeInstance.ShadowBakePosition);
-                _pointLightVolumeBehaviour.SetProgramVariable("ShadowBakeRotation", PointLightVolumeInstance.ShadowBakeRotation);
-                if (syncTextureSources) SyncTextureSourcesToUdon();
+                float shadingStrength = Mathf.Clamp01(ShadingStrength);
+                float spotCookieAspect = Mathf.Max(Mathf.Abs(SpotCookieAspect), 0.001f);
+                Texture currentShadowMapTexture = _pointLightVolumeBehaviour.GetProgramVariable("ShadowMapTexture") as Texture;
+                Texture authoringShadowMapTexture = GetShadowMapTexture();
+                bool hasRuntimeShadowMapSource = currentShadowMapTexture != null && currentShadowMapTexture != authoringShadowMapTexture;
+                bool useRuntimeShadowMapSource = ShouldUseRuntimeShadowMapSource(currentShadowMapTexture, authoringShadowMapTexture);
+                Vector3 shadowBakePosition = PointLightVolumeInstance.ShadowBakePosition;
+                Quaternion shadowBakeRotation = PointLightVolumeInstance.ShadowBakeRotation;
+                if (useRuntimeShadowMapSource && hasRuntimeShadowMapSource) {
+                    object currentShadowBakePosition = _pointLightVolumeBehaviour.GetProgramVariable("ShadowBakePosition");
+                    object currentShadowBakeRotation = _pointLightVolumeBehaviour.GetProgramVariable("ShadowBakeRotation");
+                    if (currentShadowBakePosition is Vector3) shadowBakePosition = (Vector3)currentShadowBakePosition;
+                    if (currentShadowBakeRotation is Quaternion) shadowBakeRotation = (Quaternion)currentShadowBakeRotation;
+                }
+                float shadowMapID = GetShadowRuntimeID(currentShadowMapTexture);
+                bool bakeInGame = Shadows && BakeInGame;
+                int runtimeShadowResolution = GetRuntimeShadowResolution();
+                float nearClip = GetShadowNearClip();
+                float farClip = GetShadowFarClip();
+                bool proxyCustomTexturesChanged = false;
+                bool proxyShadowTexturesChanged = false;
+                if (syncTextureSources) proxyCustomTexturesChanged = SyncTextureSourcesToUdon(currentShadowMapTexture, authoringShadowMapTexture, useRuntimeShadowMapSource, hasRuntimeShadowMapSource, out proxyShadowTexturesChanged);
+                SyncRuntimeSettingsToUdonAndInstance(shadingStrength, spotCookieAspect, shadowMapID, bakeInGame, runtimeShadowResolution, nearClip, farClip, shadowBakePosition, shadowBakeRotation, notifyManager);
                 PointLightVolumeInstance.IsActive = gameObject.activeInHierarchy && Intensity != 0 && Color != UnityEngine.Color.black;
                 LightVolumeManager manager = LightVolumeSetup != null ? LightVolumeSetup.LightVolumeManager : PointLightVolumeInstance.LightVolumeManager;
-                if (manager != null && gameObject.activeInHierarchy) manager.NotifyPointLightVolumeChanged(PointLightVolumeInstance, false, false, false);
+                if (notifyManager && manager != null && gameObject.activeInHierarchy) manager.NotifyPointLightVolumeChanged(PointLightVolumeInstance, false, proxyCustomTexturesChanged, proxyShadowTexturesChanged);
                 // Udon does not support parameterized methods, so the values are passed through temporary program variables
                 // Set the parameters first, then execute a parameterless method
                 bool hasProjectionSource = HasProjectionSource();
@@ -384,7 +389,7 @@ namespace VRCLightVolumes {
                 PointLightVolumeInstance.RuntimeShadowSphericalBlur = true;
                 PointLightVolumeInstance.RuntimeShadowFacesPerFrame = 6;
                 PointLightVolumeInstance.RuntimeShadowDirectOutput = false;
-                PointLightVolumeInstance.ShadowMapID = GetShadowRuntimeID();
+                PointLightVolumeInstance.ShadowMapID = GetShadowRuntimeID(PointLightVolumeInstance.ShadowMapTexture);
                 PointLightVolumeInstance.WorldSpaceShadows = UseWorldSpace;
                 PointLightVolumeInstance.LayerMask = LayerMask.value;
                 PointLightVolumeInstance.NearClip = GetShadowNearClip();
@@ -563,7 +568,7 @@ namespace VRCLightVolumes {
                 PointLightVolumeInstance.RuntimeShadowSphericalBlur = true;
                 PointLightVolumeInstance.RuntimeShadowFacesPerFrame = 6;
                 PointLightVolumeInstance.RuntimeShadowDirectOutput = false;
-                PointLightVolumeInstance.ShadowMapID = GetShadowRuntimeID();
+                PointLightVolumeInstance.ShadowMapID = GetShadowRuntimeID(PointLightVolumeInstance.ShadowMapTexture);
                 PointLightVolumeInstance.WorldSpaceShadows = UseWorldSpace;
                 PointLightVolumeInstance.LayerMask = LayerMask.value;
                 PointLightVolumeInstance.NearClip = GetShadowNearClip();
@@ -590,35 +595,124 @@ namespace VRCLightVolumes {
 #endif
 
 #if UDONSHARP
-        // Copies projection texture sources into the Udon behaviour proxy in play mode
-        private void SyncTextureSourcesToUdon() {
+        // Copies runtime scalar and shadow settings into the Udon behaviour and mirrors them to the C# proxy in play mode
+        private void SyncRuntimeSettingsToUdonAndInstance(float shadingStrength, float spotCookieAspect, float shadowMapID, bool bakeInGame, int runtimeShadowResolution, float nearClip, float farClip, Vector3 shadowBakePosition, Quaternion shadowBakeRotation, bool notifyManager) {
+            _pointLightVolumeBehaviour.SetProgramVariable("IsDynamic", Dynamic);
+            _pointLightVolumeBehaviour.SetProgramVariable("Color", Color);
+            _pointLightVolumeBehaviour.SetProgramVariable("Intensity", Intensity);
+            _pointLightVolumeBehaviour.SetProgramVariable("ShadingStrength", shadingStrength);
+            _pointLightVolumeBehaviour.SetProgramVariable("SpotCookieAspect", spotCookieAspect);
+            _pointLightVolumeBehaviour.SetProgramVariable("IsRangeDirty", true);
+            _pointLightVolumeBehaviour.SetProgramVariable("ShadowMapID", shadowMapID);
+            _pointLightVolumeBehaviour.SetProgramVariable("BakeInGame", bakeInGame);
+            _pointLightVolumeBehaviour.SetProgramVariable("RuntimeShadowResolution", runtimeShadowResolution);
+            _pointLightVolumeBehaviour.SetProgramVariable("RuntimeShadowBlurSamplePreset", 2);
+            _pointLightVolumeBehaviour.SetProgramVariable("RuntimeShadowSphericalBlur", true);
+            _pointLightVolumeBehaviour.SetProgramVariable("RuntimeShadowFacesPerFrame", 6);
+            _pointLightVolumeBehaviour.SetProgramVariable("RuntimeShadowDirectOutput", false);
+            _pointLightVolumeBehaviour.SetProgramVariable("WorldSpaceShadows", UseWorldSpace);
+            _pointLightVolumeBehaviour.SetProgramVariable("Bias", Bias);
+            _pointLightVolumeBehaviour.SetProgramVariable("LayerMask", LayerMask.value);
+            _pointLightVolumeBehaviour.SetProgramVariable("NearClip", nearClip);
+            _pointLightVolumeBehaviour.SetProgramVariable("FarClip", farClip);
+            _pointLightVolumeBehaviour.SetProgramVariable("Blur", Blur);
+            _pointLightVolumeBehaviour.SetProgramVariable("ContactHardening", ContactHardening);
+            _pointLightVolumeBehaviour.SetProgramVariable("ShadowBakePosition", shadowBakePosition);
+            _pointLightVolumeBehaviour.SetProgramVariable("ShadowBakeRotation", shadowBakeRotation);
+
+            if (notifyManager) {
+                PointLightVolumeInstance.SetDynamic(Dynamic);
+                PointLightVolumeInstance.SetColor(Color);
+                PointLightVolumeInstance.SetIntensity(Intensity);
+                PointLightVolumeInstance.SetShadingStrength(shadingStrength);
+                PointLightVolumeInstance.SetSpotCookieAspect(spotCookieAspect);
+            } else {
+                PointLightVolumeInstance.IsDynamic = Dynamic;
+                PointLightVolumeInstance.Color = Color;
+                PointLightVolumeInstance.Intensity = Intensity;
+                PointLightVolumeInstance.ShadingStrength = shadingStrength;
+                PointLightVolumeInstance.SpotCookieAspect = spotCookieAspect;
+            }
+            PointLightVolumeInstance.IsRangeDirty = true;
+            PointLightVolumeInstance.ShadowMapID = shadowMapID;
+            PointLightVolumeInstance.BakeInGame = bakeInGame;
+            PointLightVolumeInstance.RuntimeShadowResolution = runtimeShadowResolution;
+            PointLightVolumeInstance.RuntimeShadowBlurSamplePreset = 2;
+            PointLightVolumeInstance.RuntimeShadowSphericalBlur = true;
+            PointLightVolumeInstance.RuntimeShadowFacesPerFrame = 6;
+            PointLightVolumeInstance.RuntimeShadowDirectOutput = false;
+            PointLightVolumeInstance.WorldSpaceShadows = UseWorldSpace;
+            PointLightVolumeInstance.Bias = Bias;
+            PointLightVolumeInstance.LayerMask = LayerMask.value;
+            PointLightVolumeInstance.NearClip = nearClip;
+            PointLightVolumeInstance.FarClip = farClip;
+            PointLightVolumeInstance.Blur = Blur;
+            PointLightVolumeInstance.ContactHardening = ContactHardening;
+            PointLightVolumeInstance.ShadowBakePosition = shadowBakePosition;
+            PointLightVolumeInstance.ShadowBakeRotation = shadowBakeRotation;
+        }
+
+        // Copies projection and shadow texture sources into the Udon behaviour and mirrors them to the C# proxy in play mode
+        private bool SyncTextureSourcesToUdon(Texture currentShadowMapTexture, Texture authoringShadowMapTexture, bool useRuntimeShadowMapSource, bool hasRuntimeShadowMapSource, out bool shadowTexturesChanged) {
             Texture customTexture = GetCustomTexture();
             Material customTextureMaterial = GetCustomTextureMaterial();
             int projectionType = GetProjectionType();
             int projectionMode = GetProjectionMode();
             bool customSourceChanged = CustomTextureSourceChanged(_pointLightVolumeBehaviour, customTexture, customTextureMaterial, projectionType, projectionMode);
-            bool useRuntimeBakeShadowSource = ShouldUseRuntimeBakeShadowSource();
-            Texture authoringShadowMapTexture = GetShadowMapTexture();
-            Texture currentRuntimeShadowMapTexture = useRuntimeBakeShadowSource ? _pointLightVolumeBehaviour.GetProgramVariable("ShadowMapTexture") as Texture : null;
-            Texture shadowMapTexture = useRuntimeBakeShadowSource ? (currentRuntimeShadowMapTexture != null && currentRuntimeShadowMapTexture != authoringShadowMapTexture ? currentRuntimeShadowMapTexture : null) : authoringShadowMapTexture;
-            Material shadowMapMaterial = useRuntimeBakeShadowSource ? null : ShadowMap as Material;
+            bool autoUpdateCustomTexture = PointLightVolumeInstance.AutoUpdateCustomTexture;
+            if (customSourceChanged) {
+                autoUpdateCustomTexture = ShouldAutoUpdateCustomTexture();
+            } else {
+                object currentAutoUpdateCustomTexture = _pointLightVolumeBehaviour.GetProgramVariable("AutoUpdateCustomTexture");
+                if (currentAutoUpdateCustomTexture is bool) autoUpdateCustomTexture = (bool)currentAutoUpdateCustomTexture;
+            }
+            bool customTextureIsCubemap = IsProjectionTextureCubemap();
+            bool customTextureHasDepthSlices = ProjectionTextureHasDepthSlices();
+            Texture shadowMapTexture = useRuntimeShadowMapSource ? (hasRuntimeShadowMapSource ? currentShadowMapTexture : null) : authoringShadowMapTexture;
+            Material shadowMapMaterial = useRuntimeShadowMapSource ? null : ShadowMap as Material;
+            bool autoUpdateShadowMap = !useRuntimeShadowMapSource && ShouldAutoUpdateShadowMap();
+            bool shadowMapUsesCubemap = UsesCubemapShadows();
+            bool shadowMapTextureIsCubemap = IsShadowMapTextureCubemap();
+            bool shadowMapTextureHasDepthSlices = ShadowMapTextureHasDepthSlices();
+            if (useRuntimeShadowMapSource && shadowMapTexture != null) {
+                object currentShadowMapUsesCubemap = _pointLightVolumeBehaviour.GetProgramVariable("ShadowMapUsesCubemap");
+                if (currentShadowMapUsesCubemap is bool) shadowMapUsesCubemap = (bool)currentShadowMapUsesCubemap;
+                shadowMapTextureIsCubemap = IsCubemapTexture(shadowMapTexture);
+                shadowMapTextureHasDepthSlices = shadowMapUsesCubemap && TextureHasDepthSlices(shadowMapTexture);
+            }
+            bool customTexturesChanged = PointLightVolumeInstance.CustomTexture != customTexture || PointLightVolumeInstance.CustomTextureMaterial != customTextureMaterial || PointLightVolumeInstance.ProjectionType != projectionType || PointLightVolumeInstance.ProjectionMode != projectionMode || PointLightVolumeInstance.AutoUpdateCustomTexture != autoUpdateCustomTexture || PointLightVolumeInstance.CustomTextureIsCubemap != customTextureIsCubemap || PointLightVolumeInstance.CustomTextureHasDepthSlices != customTextureHasDepthSlices;
+            shadowTexturesChanged = PointLightVolumeInstance.ShadowMapTexture != shadowMapTexture || PointLightVolumeInstance.ShadowMapMaterial != shadowMapMaterial || PointLightVolumeInstance.AutoUpdateShadowMap != autoUpdateShadowMap || PointLightVolumeInstance.ShadowMapTextureIsCubemap != shadowMapTextureIsCubemap || PointLightVolumeInstance.ShadowMapTextureHasDepthSlices != shadowMapTextureHasDepthSlices || PointLightVolumeInstance.ShadowMapUsesCubemap != shadowMapUsesCubemap;
             _pointLightVolumeBehaviour.SetProgramVariable("CustomTexture", customTexture);
             _pointLightVolumeBehaviour.SetProgramVariable("CustomTextureMaterial", customTextureMaterial);
             _pointLightVolumeBehaviour.SetProgramVariable("ProjectionType", projectionType);
             _pointLightVolumeBehaviour.SetProgramVariable("ProjectionMode", projectionMode);
-            if (customSourceChanged) _pointLightVolumeBehaviour.SetProgramVariable("AutoUpdateCustomTexture", ShouldAutoUpdateCustomTexture());
-            _pointLightVolumeBehaviour.SetProgramVariable("CustomTextureIsCubemap", IsProjectionTextureCubemap());
-            _pointLightVolumeBehaviour.SetProgramVariable("CustomTextureHasDepthSlices", ProjectionTextureHasDepthSlices());
+            if (customSourceChanged) _pointLightVolumeBehaviour.SetProgramVariable("AutoUpdateCustomTexture", autoUpdateCustomTexture);
+            _pointLightVolumeBehaviour.SetProgramVariable("CustomTextureIsCubemap", customTextureIsCubemap);
+            _pointLightVolumeBehaviour.SetProgramVariable("CustomTextureHasDepthSlices", customTextureHasDepthSlices);
             _pointLightVolumeBehaviour.SetProgramVariable("ShadowMapTexture", shadowMapTexture);
             _pointLightVolumeBehaviour.SetProgramVariable("ShadowMapMaterial", shadowMapMaterial);
-            _pointLightVolumeBehaviour.SetProgramVariable("AutoUpdateShadowMap", !useRuntimeBakeShadowSource && ShouldAutoUpdateShadowMap());
-            _pointLightVolumeBehaviour.SetProgramVariable("ShadowMapTextureIsCubemap", IsShadowMapTextureCubemap());
-            _pointLightVolumeBehaviour.SetProgramVariable("ShadowMapTextureHasDepthSlices", ShadowMapTextureHasDepthSlices());
-            _pointLightVolumeBehaviour.SetProgramVariable("ShadowMapUsesCubemap", UsesCubemapShadows());
+            _pointLightVolumeBehaviour.SetProgramVariable("AutoUpdateShadowMap", autoUpdateShadowMap);
+            _pointLightVolumeBehaviour.SetProgramVariable("ShadowMapTextureIsCubemap", shadowMapTextureIsCubemap);
+            _pointLightVolumeBehaviour.SetProgramVariable("ShadowMapTextureHasDepthSlices", shadowMapTextureHasDepthSlices);
+            _pointLightVolumeBehaviour.SetProgramVariable("ShadowMapUsesCubemap", shadowMapUsesCubemap);
+            PointLightVolumeInstance.CustomTexture = customTexture;
+            PointLightVolumeInstance.CustomTextureMaterial = customTextureMaterial;
+            PointLightVolumeInstance.ProjectionType = projectionType;
+            PointLightVolumeInstance.ProjectionMode = projectionMode;
+            PointLightVolumeInstance.AutoUpdateCustomTexture = autoUpdateCustomTexture;
+            PointLightVolumeInstance.CustomTextureIsCubemap = customTextureIsCubemap;
+            PointLightVolumeInstance.CustomTextureHasDepthSlices = customTextureHasDepthSlices;
+            PointLightVolumeInstance.ShadowMapTexture = shadowMapTexture;
+            PointLightVolumeInstance.ShadowMapMaterial = shadowMapMaterial;
+            PointLightVolumeInstance.AutoUpdateShadowMap = autoUpdateShadowMap;
+            PointLightVolumeInstance.ShadowMapTextureIsCubemap = shadowMapTextureIsCubemap;
+            PointLightVolumeInstance.ShadowMapTextureHasDepthSlices = shadowMapTextureHasDepthSlices;
+            PointLightVolumeInstance.ShadowMapUsesCubemap = shadowMapUsesCubemap;
+            return customTexturesChanged;
         }
 #endif
 
-        // Copies projection texture sources into the runtime point light instance
+        // Copies projection and shadow texture sources into the runtime point light instance
         private void SyncTextureSourcesToInstance() {
             Texture customTexture = GetCustomTexture();
             Material customTextureMaterial = GetCustomTextureMaterial();
@@ -632,29 +726,44 @@ namespace VRCLightVolumes {
             if (customSourceChanged) PointLightVolumeInstance.AutoUpdateCustomTexture = ShouldAutoUpdateCustomTexture();
             PointLightVolumeInstance.CustomTextureIsCubemap = IsProjectionTextureCubemap();
             PointLightVolumeInstance.CustomTextureHasDepthSlices = ProjectionTextureHasDepthSlices();
-            bool useRuntimeBakeShadowSource = ShouldUseRuntimeBakeShadowSource();
             Texture authoringShadowMapTexture = GetShadowMapTexture();
-            Texture shadowMapTexture = useRuntimeBakeShadowSource ? (PointLightVolumeInstance.ShadowMapTexture != null && PointLightVolumeInstance.ShadowMapTexture != authoringShadowMapTexture ? PointLightVolumeInstance.ShadowMapTexture : null) : authoringShadowMapTexture;
-            Material shadowMapMaterial = useRuntimeBakeShadowSource ? null : ShadowMap as Material;
+            Texture currentShadowMapTexture = PointLightVolumeInstance.ShadowMapTexture;
+            bool hasRuntimeShadowMapSource = currentShadowMapTexture != null && currentShadowMapTexture != authoringShadowMapTexture;
+            bool useRuntimeShadowMapSource = ShouldUseRuntimeShadowMapSource(currentShadowMapTexture, authoringShadowMapTexture);
+            Texture shadowMapTexture = useRuntimeShadowMapSource ? (hasRuntimeShadowMapSource ? currentShadowMapTexture : null) : authoringShadowMapTexture;
+            Material shadowMapMaterial = useRuntimeShadowMapSource ? null : ShadowMap as Material;
             bool shadowSourceChanged = PointLightVolumeInstance.ShadowMapTexture != shadowMapTexture || PointLightVolumeInstance.ShadowMapMaterial != shadowMapMaterial;
+            bool shadowMapUsesCubemap = UsesCubemapShadows();
+            bool shadowMapTextureIsCubemap = IsShadowMapTextureCubemap();
+            bool shadowMapTextureHasDepthSlices = ShadowMapTextureHasDepthSlices();
+            if (useRuntimeShadowMapSource && shadowMapTexture != null) {
+                shadowMapUsesCubemap = PointLightVolumeInstance.ShadowMapUsesCubemap;
+                shadowMapTextureIsCubemap = IsCubemapTexture(shadowMapTexture);
+                shadowMapTextureHasDepthSlices = shadowMapUsesCubemap && TextureHasDepthSlices(shadowMapTexture);
+            }
             PointLightVolumeInstance.ShadowMapTexture = shadowMapTexture;
             PointLightVolumeInstance.ShadowMapMaterial = shadowMapMaterial;
-            PointLightVolumeInstance.AutoUpdateShadowMap = !useRuntimeBakeShadowSource && ShouldAutoUpdateShadowMap();
-            PointLightVolumeInstance.ShadowMapTextureIsCubemap = IsShadowMapTextureCubemap();
-            PointLightVolumeInstance.ShadowMapTextureHasDepthSlices = ShadowMapTextureHasDepthSlices();
-            PointLightVolumeInstance.ShadowMapUsesCubemap = UsesCubemapShadows();
+            PointLightVolumeInstance.AutoUpdateShadowMap = !useRuntimeShadowMapSource && ShouldAutoUpdateShadowMap();
+            PointLightVolumeInstance.ShadowMapTextureIsCubemap = shadowMapTextureIsCubemap;
+            PointLightVolumeInstance.ShadowMapTextureHasDepthSlices = shadowMapTextureHasDepthSlices;
+            PointLightVolumeInstance.ShadowMapUsesCubemap = shadowMapUsesCubemap;
             if (shadowSourceChanged) {
                 PointLightVolumeInstance.ShadowBakePosition = transform.position;
                 PointLightVolumeInstance.ShadowBakeRotation = transform.rotation;
             }
         }
 
-        // Returns true when runtime should ignore the assigned shadow file and bake a generated source instead.
-        private bool ShouldUseRuntimeBakeShadowSource() {
+        // Returns true when play-mode sync should preserve a generated runtime shadow source.
+        private bool ShouldUseRuntimeShadowMapSource(Texture runtimeShadowMapTexture, Texture authoringShadowMapTexture) {
 #if UNITY_EDITOR
             if (!Application.isPlaying) return false;
 #endif
-            return Shadows && BakeInGame;
+            if (!Shadows) return false;
+            if (BakeInGame) return true;
+#if UNITY_EDITOR
+            if (runtimeShadowMapTexture == _shadowMapPrev) return false;
+#endif
+            return runtimeShadowMapTexture != null && runtimeShadowMapTexture != authoringShadowMapTexture;
         }
 
         // Checks whether editor sync is assigning a new projection source that should reset the auto-update default.
@@ -727,8 +836,10 @@ namespace VRCLightVolumes {
 #endif
 
         // Returns a valid shadow map ID or disables the shadow for runtime
-        private int GetShadowRuntimeID() {
-            return Shadows && HasShadowMapSource() ? 0 : -1;
+        private int GetShadowRuntimeID(Texture runtimeShadowMapTexture) {
+            if (!Shadows) return -1;
+            if (HasShadowMapSource()) return 0;
+            return ShouldUseRuntimeShadowMapSource(runtimeShadowMapTexture, GetShadowMapTexture()) ? 0 : -1;
         }
 
         // Returns the one-shot in-game bake resolution copied from the current setup.

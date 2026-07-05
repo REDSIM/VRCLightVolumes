@@ -466,11 +466,11 @@ namespace VRCLightVolumes.Tests {
             pointLightVolume.ShadowMap = shadowMap;
             pointLightVolume.Shadows = false;
 
-            Assert.That((int)method.Invoke(pointLightVolume, null), Is.EqualTo(-1));
+            Assert.That((int)method.Invoke(pointLightVolume, new object[] { null }), Is.EqualTo(-1));
 
             pointLightVolume.Shadows = true;
 
-            Assert.That((int)method.Invoke(pointLightVolume, null), Is.EqualTo(0));
+            Assert.That((int)method.Invoke(pointLightVolume, new object[] { null }), Is.EqualTo(0));
         }
 
         // Verifies build-time Bake In Game preparation removes baked shadow asset references from both authoring and runtime components.

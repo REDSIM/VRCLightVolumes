@@ -957,7 +957,7 @@ namespace VRCLightVolumes {
             RenderTexture previousRenderTexture = RenderTexture.active;
             VRCGraphics.SetRenderTarget(destination, 0, CubemapFace.Unknown, targetSlice);
             VRCGraphics.Blit(sourceTexture, material, pass);
-            RenderTexture.active = previousRenderTexture;
+            RenderTexture.active = previousRenderTexture == destination ? null : previousRenderTexture;
 #endif
         }
 
@@ -967,7 +967,7 @@ namespace VRCLightVolumes {
 #if COMPILER_UDONSHARP
             Destroy(texture);
 #else
-            if (RenderTexture.active == texture) RenderTexture.active = null;
+            RenderTexture.active = null;
             texture.Release();
             if (Application.isPlaying) Destroy(texture);
             else DestroyImmediate(texture);

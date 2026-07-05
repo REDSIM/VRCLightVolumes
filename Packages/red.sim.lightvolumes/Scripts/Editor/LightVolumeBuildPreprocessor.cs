@@ -350,6 +350,7 @@ namespace VRCLightVolumes {
             SetUdonProgramVariable(udonBehaviour, "ShadowMapID", pointLight.ShadowMapID);
             SetUdonProgramVariable(udonBehaviour, "ShadowMapTextureIsCubemap", pointLight.ShadowMapTextureIsCubemap);
             SetUdonProgramVariable(udonBehaviour, "ShadowMapTextureHasDepthSlices", pointLight.ShadowMapTextureHasDepthSlices);
+            SetUdonProgramVariable(udonBehaviour, "ShadowMapUsesCubemap", pointLight.ShadowMapUsesCubemap);
         }
 
         // Pushes runtime shadow bake settings into one backing UdonBehaviour after build-time authoring sync.

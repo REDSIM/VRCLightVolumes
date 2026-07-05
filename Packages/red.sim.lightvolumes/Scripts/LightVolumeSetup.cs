@@ -380,8 +380,9 @@ namespace VRCLightVolumes {
             }
             LightVolumeManager.CubemapFaceMaterial = GetCubemapFaceMaterial();
 
+            bool notifyPointLightManager = !Application.isPlaying;
             for (int i = 0; i < PointLightVolumes.Count; i++) {
-                if (PointLightVolumes[i] != null) PointLightVolumes[i].SyncUdonScript();
+                if (PointLightVolumes[i] != null) PointLightVolumes[i].SyncUdonScript(true, notifyPointLightManager);
             }
 
 #if UDONSHARP
@@ -389,6 +390,9 @@ namespace VRCLightVolumes {
             else SyncShadowTextureMetadataToUdon();
             if (Application.isPlaying && _lightVolumeManagerBehaviour != null) {
                 var instances = GetPointLightVolumeInstances();
+#if UNITY_EDITOR
+                LightVolumeManager.PointLightVolumeInstances = instances;
+#endif
                 UdonBehaviour[] pointLightVolumeInstances = new UdonBehaviour[instances.Length];
                 for (int i = 0; i < instances.Length; i++) {
                     pointLightVolumeInstances[i] = instances[i].GetComponent<UdonBehaviour>();
@@ -396,6 +400,11 @@ namespace VRCLightVolumes {
                 _lightVolumeManagerBehaviour.SetProgramVariable("PointLightVolumeInstances", pointLightVolumeInstances);
                 _lightVolumeManagerBehaviour.SendCustomEvent(customTextures ? "ReinitializeCustomTextures" : "ReinitializeShadowTextures");
                 _lightVolumeManagerBehaviour.SendCustomEvent("UpdateVolumes");
+#if UNITY_EDITOR
+                if (customTextures) LightVolumeManager.ReinitializeCustomTextures();
+                else LightVolumeManager.ReinitializeShadowTextures();
+                LightVolumeManager.UpdateVolumes();
+#endif
                 return;
             }
 #endif
@@ -1195,6 +1204,9 @@ namespace VRCLightVolumes {
 
                 SyncLightVolumeRuntimeInstances();
                 var instances = GetLightVolumeInstances();
+#if UNITY_EDITOR
+                LightVolumeManager.LightVolumeInstances = instances;
+#endif
                 UdonBehaviour[] lightVolumeInstances = new UdonBehaviour[instances.Length];
                 for (int i = 0; i < instances.Length; i++) {
                     lightVolumeInstances[i] = instances[i].GetComponent<UdonBehaviour>();
@@ -1203,13 +1215,27 @@ namespace VRCLightVolumes {
 
                 SyncPointLightVolumeRuntimeInstances();
                 var pointInstances = GetPointLightVolumeInstances();
+#if UNITY_EDITOR
+                LightVolumeManager.PointLightVolumeInstances = pointInstances;
+#endif
                 UdonBehaviour[] pointLightVolumeInstances = new UdonBehaviour[pointInstances.Length];
                 for (int i = 0; i < pointInstances.Length; i++) {
                     pointLightVolumeInstances[i] = pointInstances[i].GetComponent<UdonBehaviour>();
                 }
                 _lightVolumeManagerBehaviour.SetProgramVariable("PointLightVolumeInstances", pointLightVolumeInstances);
+#if UNITY_EDITOR
+                _lightVolumeManagerBehaviour.SendCustomEvent("ReinitializeCustomTextures");
+                _lightVolumeManagerBehaviour.SendCustomEvent("ReinitializeShadowTextures");
+                _lightVolumeManagerBehaviour.SendCustomEvent("UpdateVolumes");
+                LightVolumeManager.ReinitializeCustomTextures();
+                LightVolumeManager.ReinitializeShadowTextures();
+                LightVolumeManager.UpdateVolumes();
+#else
+                _lightVolumeManagerBehaviour.SendCustomEvent("ReinitializeCustomTextures");
+                _lightVolumeManagerBehaviour.SendCustomEvent("ReinitializeShadowTextures");
                 // General setup changes are applied by the manager on the next scheduled Udon update frame
                 _lightVolumeManagerBehaviour.SendCustomEvent("RequestUpdateVolumes");
+#endif
 
             } else {
 #endif
@@ -1298,11 +1324,12 @@ namespace VRCLightVolumes {
 
         // Synchronizes authoring Point Light Volume fields before setup uploads runtime instances.
         private void SyncPointLightVolumeRuntimeInstances() {
+            bool notifyManager = !Application.isPlaying;
             int count = PointLightVolumes.Count;
             for (int i = 0; i < count; i++) {
                 PointLightVolume pointLightVolume = PointLightVolumes[i];
                 if (pointLightVolume == null) continue;
-                pointLightVolume.SyncUdonScript();
+                pointLightVolume.SyncUdonScript(true, notifyManager);
             }
         }
 

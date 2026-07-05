@@ -412,6 +412,7 @@ namespace VRCLightVolumes {
         public void NotifyLightVolumeChanged(LightVolumeInstance lightVolume, bool rebuildFinalData) {
             // Checking, initializing...
             if (lightVolume == null) return;
+            if (LightVolumeInstances == null) LightVolumeInstances = new LightVolumeInstance[0];
             int registryIndex = Array.IndexOf((Array)LightVolumeInstances, lightVolume, 0, LightVolumeInstances.Length);
             if (registryIndex < 0) {
                 if (!lightVolume.IsActive) return;
@@ -439,6 +440,7 @@ namespace VRCLightVolumes {
         public void NotifyPointLightVolumeChanged(PointLightVolumeInstance pointLightVolume, bool rebuildFinalData, bool customTexturesChanged, bool shadowTexturesChanged) {
             // Checking, initializing...
             if (pointLightVolume == null) return;
+            if (PointLightVolumeInstances == null) PointLightVolumeInstances = new PointLightVolumeInstance[0];
             int registryIndex = Array.IndexOf((Array)PointLightVolumeInstances, pointLightVolume, 0, PointLightVolumeInstances.Length);
             if (registryIndex < 0) {
                 if (!pointLightVolume.IsActive) return;
@@ -1440,7 +1442,7 @@ namespace VRCLightVolumes {
 #if COMPILER_UDONSHARP
             Destroy(texture);
 #else
-            if (RenderTexture.active == texture) RenderTexture.active = null;
+            RenderTexture.active = null;
             texture.Release();
             if (Application.isPlaying) Destroy(texture);
             else DestroyImmediate(texture);
@@ -1530,14 +1532,14 @@ namespace VRCLightVolumes {
             VRCGraphics.Blit(_dummyRT, destination, 0, targetSlice);
             VRCGraphics.Blit(sourceTexture, material, 0, targetSlice);
 #if !COMPILER_UDONSHARP
-            RenderTexture.active = previousRenderTexture;
+            RenderTexture.active = previousRenderTexture == destination ? null : previousRenderTexture;
 #endif
 #else
             // Unity Graphics can bind the target slice directly, so the material pass can render in one blit
             RenderTexture previousRenderTexture = RenderTexture.active;
             VRCGraphics.SetRenderTarget(destination, 0, CubemapFace.Unknown, targetSlice);
             VRCGraphics.Blit(sourceTexture, material, 0);
-            RenderTexture.active = previousRenderTexture;
+            RenderTexture.active = previousRenderTexture == destination ? null : previousRenderTexture;
 #endif
         }
 

@@ -30,7 +30,7 @@ namespace VRCLightVolumes {
         [Tooltip("Multiplies the point light volume’s color by this value.")]
         [ColorUsage(showAlpha: false)] public Color Color = Color.white;
         [Tooltip("Brightness of the point light volume.")]
-        public float Intensity = 1f;
+        public float Intensity = 100f;
         [Tooltip("Controls per-surface Point Light shading and shadow opacity based on surface normal. 0 disables this extra shading and shadows for this light; 1 applies them fully. Modern individual speculars use the same light mask.")]
         [Range(0, 1)] public float ShadingStrength = 1f;
 
@@ -38,7 +38,7 @@ namespace VRCLightVolumes {
         [Tooltip("World-space position used by this point light volume.")]
         public Vector3 Position = Vector3.zero;
         [Tooltip("Light source size used by parametric Point Lights, parametric Spot Lights, cookies and cubemap projections. It affects calculated range and broadens size-aware specular highlights in modern compatible shaders.")]
-        [Min(0.0001f)] public float LightSourceSize = 1f;
+        [Min(0.0001f)] public float LightSourceSize = 0.025f;
         [Tooltip("Inverse squared range used by LUT projection.")]
         [Min(0)] public float InverseSquaredRange = 1f;
         [Tooltip("Area Light width in meters. Affects textured Area Light emission and size-aware Area Light speculars in modern compatible shaders.")]
@@ -157,7 +157,7 @@ namespace VRCLightVolumes {
         private Vector3 _prevScale = Vector3.one;
 
         private Color _old_Color = Color.white;
-        private float _old_Intensity = 1;
+        private float _old_Intensity = 100f;
         private float _old_ShadingStrength = 1;
         private bool _isRegisteredWithManager = false;
         [HideInInspector] public int AreaCookieAverageCustomId = -1;

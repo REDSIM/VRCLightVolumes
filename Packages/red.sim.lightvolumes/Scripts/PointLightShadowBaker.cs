@@ -6,367 +6,184 @@ using UnityEngine.Rendering;
 namespace VRCLightVolumes {
 
     public static class PointLightShadowBaker {
-        private static class ShaderConstants {
-            public const string ShadowDepthEncodeShaderName = "Hidden/VRCLV/PointLightShadowDepthEncode";
-            public const string ShadowBlurShaderName = "Hidden/VRCLV/PointLightShadowRuntimeBlur";
-            public const string EditorShadowBlurQualityKeyword = "VRCLV_EDITOR_SHADOW_BLUR_QUALITY";
-            public const string RuntimeShadowQualityHighKeyword = "VRCLV_RUNTIME_SHADOW_QUALITY_HIGH";
-            public const string RuntimeShadowBlurUniformKeyword = "VRCLV_RUNTIME_SHADOW_BLUR_UNIFORM";
-            public const string RuntimeShadowBlurDirectKeyword = "VRCLV_RUNTIME_SHADOW_BLUR_DIRECT";
-        }
-
         private struct RendererState {
             public Renderer Renderer;
             public bool PreviousForceRenderingOff;
         }
 
-        private static readonly int _shadowDepthTexID = Shader.PropertyToID("_ShadowDepthTex");
-        private static readonly int _shadowFarClipID = Shader.PropertyToID("_ShadowFarClip");
-        private static readonly int _shadowNearClipID = Shader.PropertyToID("_ShadowNearClip");
-        private static readonly int _shadowBakeBiasID = Shader.PropertyToID("_ShadowBakeBias");
-        private static readonly int _shadowTanHalfFovID = Shader.PropertyToID("_ShadowTanHalfFov");
-        private static readonly int _sourceArrayTexID = Shader.PropertyToID("_SourceArrayTex");
-        private static readonly int _depthArrayTexID = Shader.PropertyToID("_DepthArrayTex");
-        private static readonly int _faceIndexID = Shader.PropertyToID("_FaceIndex");
-        private static readonly int _sourceBaseSliceID = Shader.PropertyToID("_SourceBaseSlice");
-        private static readonly int _depthBaseSliceID = Shader.PropertyToID("_DepthBaseSlice");
-        private static readonly int _blurRadiusID = Shader.PropertyToID("_BlurRadius");
-        private static readonly int _blurDepthID = Shader.PropertyToID("_BlurDepth");
-        private static readonly int _invResolutionID = Shader.PropertyToID("_InvResolution");
-        private const float ShadowBlurBaseResolution = 128f;
-
-        private static readonly CubemapFace[] _cubemapFaces = {
-            CubemapFace.PositiveX,
-            CubemapFace.NegativeX,
-            CubemapFace.PositiveY,
-            CubemapFace.NegativeY,
-            CubemapFace.PositiveZ,
-            CubemapFace.NegativeZ
-        };
+        private const string ShadowDepthEncodeShaderName = "Hidden/VRCLV/PointLightShadowDepthEncode";
+        private const string ShadowBlurShaderName = "Hidden/VRCLV/PointLightShadowRuntimeBlur";
+        private const string EditorShadowBlurQualityKeyword = "VRCLV_EDITOR_SHADOW_BLUR_QUALITY";
+        private const int ShadowTextureFormatHalf = 0;
+        private const int EditorShadowBlurSamplePreset = 3;
 
         private static readonly int[] _oppositeCubemapFaceIndices = { 1, 0, 3, 2, 5, 4 };
         private static readonly bool[] _arrayToCubemapHorizontalFlip = { false, false, true, true, false, false };
-        private static readonly Quaternion[] _faceRotations = {
-            new Quaternion(0f, -0.70710678f, 0f, 0.70710678f),
-            new Quaternion(0f, 0.70710678f, 0f, 0.70710678f),
-            new Quaternion(0f, -0.70710678f, 0.70710678f, 0f),
-            new Quaternion(0f, 0.70710678f, 0.70710678f, 0f),
-            new Quaternion(0f, 1f, 0f, 0f),
-            Quaternion.identity
-        };
 
-        // Bakes an EVSM shadow cubemap from the light position.
-        public static Cubemap BakeShadowMap(PointLightVolume pointLightVolume, int resolution, float farClip, string infoString = "") {
-            return BakeShadowMap(pointLightVolume, resolution, farClip, TextureFormat.RGBAFloat, 0, 0.05f, infoString);
-        }
+        // Bakes this light through PointLightVolumeInstance, saves the result as an asset and assigns it back to the authoring light.
+        public static bool BakeShadowMap(PointLightVolume pointLightVolume, string infoString, bool regenerateArray) {
+            if (pointLightVolume == null) return false;
 
-        // Bakes an EVSM shadow cubemap from the light position.
-        public static Cubemap BakeShadowMap(PointLightVolume pointLightVolume, int resolution, float farClip, TextureFormat textureFormat, string infoString = "") {
-            return BakeShadowMap(pointLightVolume, resolution, farClip, textureFormat, 0, 0.05f, infoString);
-        }
+            pointLightVolume.SetupDependencies();
+            pointLightVolume.SyncUdonScript(false);
 
-        // Bakes an EVSM shadow cubemap from the light position.
-        public static Cubemap BakeShadowMap(PointLightVolume pointLightVolume, int resolution, float farClip, TextureFormat textureFormat, float blurRadius, string infoString = "") {
-            return BakeShadowMap(pointLightVolume, resolution, farClip, textureFormat, blurRadius, 0.1f, infoString);
-        }
+            PointLightVolumeInstance pointLightInstance = pointLightVolume.PointLightVolumeInstance;
+            LightVolumeSetup lightVolumeSetup = pointLightVolume.LightVolumeSetup;
+            LightVolumeManager manager = lightVolumeSetup != null ? lightVolumeSetup.LightVolumeManager : null;
+            if (pointLightInstance == null || manager == null) {
+                Debug.LogError("[PointLightShadowBaker] Failed to resolve PointLightVolumeInstance or LightVolumeManager for editor shadow bake.", pointLightVolume);
+                return false;
+            }
+            if (!EnsureRuntimeShadowBakeDependencies(manager, pointLightVolume)) return false;
 
-        // Bakes an EVSM shadow cubemap from the light position.
-        public static Cubemap BakeShadowMap(PointLightVolume pointLightVolume, int resolution, float farClip, TextureFormat textureFormat, float blurRadius, float blurDepth, string infoString = "") {
-            RenderTexture cubeRT = BakeShadowMapRenderTexture(pointLightVolume, resolution, farClip, textureFormat, blurRadius, blurDepth, infoString);
-            if (cubeRT == null) return null;
-
+            bool cubemapShadows = pointLightVolume.ShouldBakeCubemapShadows();
+            int resolution = lightVolumeSetup != null ? Mathf.Max((int)lightVolumeSetup.ShadowResolution, 16) : 128;
+            TextureFormat textureFormat = lightVolumeSetup != null ? lightVolumeSetup.GetShadowMapBakeFormat() : TextureFormat.RGBAFloat;
             TextureFormat safeTextureFormat = GetSafeShadowMomentFormat(textureFormat);
-            Cubemap cubemap = new Cubemap(cubeRT.width, safeTextureFormat, false) {
-                wrapMode = TextureWrapMode.Clamp,
-                filterMode = FilterMode.Bilinear,
-                anisoLevel = 0
-            };
+            float nearClip = pointLightVolume.GetShadowNearClip();
+            float farClip = pointLightVolume.GetShadowFarClip();
+            if (nearClip >= farClip) nearClip = farClip * 0.5f;
 
-            try {
-                ReadRenderTextureToCubemap(cubeRT, cubemap, cubeRT.width, safeTextureFormat);
-                return cubemap;
-            } finally {
-                if (RenderTexture.active == cubeRT) RenderTexture.active = null;
-                cubeRT.Release();
-                Object.DestroyImmediate(cubeRT);
-            }
-        }
-
-        // Bakes an EVSM shadow texture array from the light position.
-        public static Texture2DArray BakeShadowMapTextureArray(PointLightVolume pointLightVolume, int resolution, float farClip, TextureFormat textureFormat, float blurRadius, float blurDepth, string infoString = "") {
-            RenderTexture arrayRT = BakeShadowMapRenderTexture(pointLightVolume, resolution, farClip, textureFormat, blurRadius, blurDepth, infoString);
-            if (arrayRT == null) return null;
-
-            TextureFormat safeTextureFormat = GetSafeShadowMomentFormat(textureFormat);
-            Texture2DArray textureArray = new Texture2DArray(arrayRT.width, arrayRT.height, 6, safeTextureFormat, false, true) {
-                wrapMode = TextureWrapMode.Clamp,
-                filterMode = FilterMode.Bilinear,
-                anisoLevel = 0
-            };
-
-            try {
-                ReadRenderTextureToTextureArray(arrayRT, textureArray, arrayRT.width, safeTextureFormat);
-                return textureArray;
-            } finally {
-                if (RenderTexture.active == arrayRT) RenderTexture.active = null;
-                arrayRT.Release();
-                Object.DestroyImmediate(arrayRT);
-            }
-        }
-
-        // Bakes an EVSM shadow texture from a spotlight position and direction.
-        public static Texture2D BakeSingleShadowMap(PointLightVolume pointLightVolume, int resolution, float farClip, TextureFormat textureFormat, float blurRadius, float blurDepth, string infoString = "") {
-            RenderTexture textureRT = BakeShadowMapRenderTexture(pointLightVolume, resolution, farClip, textureFormat, blurRadius, blurDepth, false, infoString);
-            if (textureRT == null) return null;
-
-            TextureFormat safeTextureFormat = GetSafeShadowMomentFormat(textureFormat);
-            Texture2D texture = new Texture2D(textureRT.width, textureRT.height, safeTextureFormat, false, true) {
-                wrapMode = TextureWrapMode.Clamp,
-                filterMode = FilterMode.Bilinear,
-                anisoLevel = 0
-            };
-
-            try {
-                ReadRenderTextureToTexture2D(textureRT, texture, textureRT.width);
-                return texture;
-            } finally {
-                if (RenderTexture.active == textureRT) RenderTexture.active = null;
-                textureRT.Release();
-                Object.DestroyImmediate(textureRT);
-            }
-        }
-
-        // Bakes an EVSM shadow texture into a live RenderTexture.
-        public static RenderTexture BakeShadowMapRenderTexture(PointLightVolume pointLightVolume, int resolution, float farClip, TextureFormat textureFormat, float blurRadius, float blurDepth, string infoString = "") {
-            return BakeShadowMapRenderTexture(pointLightVolume, resolution, farClip, textureFormat, blurRadius, blurDepth, true, infoString);
-        }
-
-        // Bakes an EVSM shadow texture into a live RenderTexture with either six cubemap faces or one spotlight slice.
-        private static RenderTexture BakeShadowMapRenderTexture(PointLightVolume pointLightVolume, int resolution, float farClip, TextureFormat textureFormat, float blurRadius, float blurDepth, bool cubemapShadows, string infoString) {
-            if (pointLightVolume == null) return null;
-
-            Shader shadowDepthEncodeShader = Shader.Find(ShaderConstants.ShadowDepthEncodeShaderName);
-            if (shadowDepthEncodeShader == null) {
-                Debug.LogError($"[PointLightShadowBaker] Failed to find shadow depth encode shader '{ShaderConstants.ShadowDepthEncodeShaderName}'.", pointLightVolume);
-                return null;
-            }
-            Shader shadowBlurShader = Shader.Find(ShaderConstants.ShadowBlurShaderName);
-
-            int safeResolution = Mathf.Clamp(resolution, 16, 2048);
-            float safeFarClip = Mathf.Max(farClip, 0.0001f);
-            float safeNearClip = pointLightVolume.GetShadowNearClip();
-            float safeBias = Mathf.Max(pointLightVolume.Bias, 0);
-            bool useBlur = blurRadius > 0.0001f && shadowBlurShader != null;
-            RenderTextureFormat renderTextureFormat = GetShadowRenderTextureFormat(textureFormat);
-            int shadowSliceCount = cubemapShadows ? 6 : 1;
-
+            int oldShadowTextureFormat = manager.ShadowTextureFormat;
+            bool oldPointLightInstanceEnabled = pointLightInstance.enabled;
             RenderTexture oldActive = RenderTexture.active;
-            RenderTexture depthTexture = null;
-            RenderTexture rawTexture = null;
-            RenderTexture blurTexture = null;
-            RenderTexture resultTexture = null;
-            GameObject bakerObject = null;
-            Material shadowDepthEncodeMaterial = null;
-            Material editorShadowBlurMaterial = null;
             RendererState[] objectMaskRendererStates = null;
-            bool keepResultTexture = false;
+            RenderTexture runtimeShadowTexture = null;
+            bool baked = false;
 
             try {
                 objectMaskRendererStates = ApplyObjectMaskFilter(pointLightVolume);
-                bakerObject = new GameObject($"VRCLV Shadow Baker {infoString}") {
-                    hideFlags = HideFlags.HideAndDontSave
-                };
 
-                Camera shadowCamera = bakerObject.AddComponent<Camera>();
-                ConfigureShadowCamera(shadowCamera, safeNearClip, safeFarClip, pointLightVolume.LayerMask.value, cubemapShadows ? 90f : GetSpotShadowFieldOfView(pointLightVolume));
+                manager.ShadowTextureFormat = GetShadowTextureFormatValue(textureFormat);
+                ResetManagerRuntimeShadowBlurState(manager);
 
-                depthTexture = CreateDepthTexture(safeResolution);
-                rawTexture = CreateShadowArrayTexture(safeResolution, renderTextureFormat, shadowSliceCount);
-                shadowDepthEncodeMaterial = new Material(shadowDepthEncodeShader) { hideFlags = HideFlags.HideAndDontSave };
-                if (cubemapShadows) BakeRawShadowFaces(pointLightVolume, shadowCamera, depthTexture, rawTexture, shadowDepthEncodeMaterial, safeBias);
-                else BakeRawSingleShadow(pointLightVolume, shadowCamera, depthTexture, rawTexture, shadowDepthEncodeMaterial, safeBias);
+                pointLightInstance.enabled = true;
+                pointLightInstance.LightVolumeManager = manager;
+                pointLightInstance.RuntimeShadowCamera = manager.RuntimeShadowCamera;
+                pointLightInstance.RuntimeShadowDepthEncodeMaterial = manager.RuntimeShadowDepthEncodeMaterial;
+                pointLightInstance.RuntimeShadowBlurMaterial = manager.RuntimeShadowBlurMaterial;
+                pointLightInstance.RuntimeShadowResolution = resolution;
+                pointLightInstance.RuntimeShadowBlurSamplePreset = EditorShadowBlurSamplePreset;
+                pointLightInstance.RuntimeShadowSphericalBlur = true;
+                pointLightInstance.RuntimeShadowFacesPerFrame = 6;
+                pointLightInstance.RuntimeShadowDirectOutput = false;
+                pointLightInstance.ShadowMapTexture = null;
+                pointLightInstance.ShadowMapMaterial = null;
+                pointLightInstance.AutoUpdateShadowMap = false;
+                pointLightInstance.ShadowMapID = -1f;
+                pointLightInstance.ShadowMapTextureIsCubemap = false;
+                pointLightInstance.ShadowMapTextureHasDepthSlices = false;
+                pointLightInstance.ShadowMapUsesCubemap = cubemapShadows;
+                pointLightInstance.LayerMask = pointLightVolume.LayerMask.value;
+                pointLightInstance.NearClip = nearClip;
+                pointLightInstance.FarClip = farClip;
+                pointLightInstance.Bias = pointLightVolume.Bias;
+                pointLightInstance.Blur = pointLightVolume.Blur;
+                pointLightInstance.ContactHardening = pointLightVolume.ContactHardening;
+                if (pointLightInstance.Intensity == 0f) pointLightInstance.Intensity = 1f;
+                if (pointLightInstance.Color == Color.black) pointLightInstance.Color = Color.white;
 
-                if (useBlur) {
-                    blurTexture = CreateShadowArrayTexture(safeResolution, renderTextureFormat, shadowSliceCount);
-                    editorShadowBlurMaterial = new Material(shadowBlurShader) { hideFlags = HideFlags.HideAndDontSave };
-                    ConfigureEditorBlurMaterial(editorShadowBlurMaterial, Mathf.Max(blurRadius, 0), Mathf.Clamp01(blurDepth), safeResolution, !cubemapShadows, cubemapShadows ? 1f : Mathf.Tan(shadowCamera.fieldOfView * 0.5f * Mathf.Deg2Rad));
-                    BlurShadowFaces(rawTexture, blurTexture, editorShadowBlurMaterial, shadowSliceCount);
-                    resultTexture = blurTexture;
-                } else {
-                    resultTexture = rawTexture;
+                pointLightInstance.BakeShadows();
+                runtimeShadowTexture = pointLightInstance.ShadowMapTexture as RenderTexture;
+                int sliceCount = cubemapShadows ? 6 : 1;
+                if (!IsRuntimeShadowTextureValid(runtimeShadowTexture, resolution, sliceCount)) {
+                    Debug.LogError($"[PointLightShadowBaker] PointLightVolumeInstance did not produce a valid editor shadow output {infoString}.", pointLightVolume);
+                    return false;
                 }
 
-                keepResultTexture = true;
-                return resultTexture;
+                UnityEngine.Object shadowAsset = cubemapShadows ? CreateCubemapShadowAsset(runtimeShadowTexture, safeTextureFormat) : CreateSingleShadowAsset(runtimeShadowTexture, safeTextureFormat);
+                if (shadowAsset == null) return false;
+
+                SaveShadowAsset(pointLightVolume, shadowAsset);
+                pointLightVolume.ShadowMap = shadowAsset;
+                LVUtils.MarkDirty(pointLightVolume);
+                LVUtils.MarkDirty(pointLightInstance);
+                baked = true;
+                return true;
             } finally {
                 RestoreObjectMaskFilter(objectMaskRendererStates);
-                ReleaseBakeTexture(depthTexture, keepResultTexture ? resultTexture : null);
-                ReleaseBakeTexture(rawTexture, keepResultTexture ? resultTexture : null);
-                ReleaseBakeTexture(blurTexture, keepResultTexture ? resultTexture : null);
-                if (shadowDepthEncodeMaterial != null) Object.DestroyImmediate(shadowDepthEncodeMaterial);
-                if (editorShadowBlurMaterial != null) Object.DestroyImmediate(editorShadowBlurMaterial);
+                manager.ShadowTextureFormat = oldShadowTextureFormat;
+                ResetManagerRuntimeShadowBlurState(manager);
+                pointLightVolume.SyncEditorChanges(false, true);
+                pointLightInstance.enabled = oldPointLightInstanceEnabled;
+                if (baked && regenerateArray && pointLightVolume.LightVolumeSetup != null) pointLightVolume.LightVolumeSetup.ReinitializeShadowTextures();
+                ReleaseTemporaryRenderTexture(runtimeShadowTexture);
                 RenderTexture.active = oldActive;
-                if (bakerObject != null) Object.DestroyImmediate(bakerObject);
             }
         }
 
-        // Configures a temporary perspective camera for shadow depth rendering.
-        private static void ConfigureShadowCamera(Camera shadowCamera, float nearClip, float farClip, int cullingMask, float fieldOfView) {
-            float safeFarClip = Mathf.Max(farClip, 0.0001f);
-            float safeNearClip = Mathf.Max(nearClip, 0.0001f);
-            if (safeNearClip >= safeFarClip) safeNearClip = safeFarClip * 0.5f;
+        // Ensures the manager has the shared camera and materials required by PointLightVolumeInstance.BakeShadows().
+        private static bool EnsureRuntimeShadowBakeDependencies(LightVolumeManager manager, PointLightVolume pointLightVolume) {
+            Shader shadowDepthEncodeShader = Shader.Find(ShadowDepthEncodeShaderName);
+            if (shadowDepthEncodeShader == null) {
+                Debug.LogError($"[PointLightShadowBaker] Failed to find shadow depth encode shader '{ShadowDepthEncodeShaderName}'.", pointLightVolume);
+                return false;
+            }
 
-            shadowCamera.enabled = false;
-            shadowCamera.clearFlags = CameraClearFlags.Depth;
-            shadowCamera.backgroundColor = Color.white;
-            shadowCamera.orthographic = false;
-            shadowCamera.fieldOfView = Mathf.Clamp(fieldOfView, 0.1f, 179.9f);
-            shadowCamera.aspect = 1f;
-            shadowCamera.nearClipPlane = safeNearClip;
-            shadowCamera.farClipPlane = safeFarClip;
-            shadowCamera.depthTextureMode = DepthTextureMode.None;
-            shadowCamera.renderingPath = RenderingPath.Forward;
-            shadowCamera.allowHDR = false;
-            shadowCamera.allowMSAA = false;
-            shadowCamera.useOcclusionCulling = false;
-            shadowCamera.cullingMask = cullingMask;
-            shadowCamera.stereoTargetEye = StereoTargetEyeMask.None;
-            shadowCamera.ResetReplacementShader();
+            manager.EnsureRuntimeShadowCamera();
+            if (manager.RuntimeShadowDepthEncodeMaterial == null || manager.RuntimeShadowDepthEncodeMaterial.shader != shadowDepthEncodeShader) manager.RuntimeShadowDepthEncodeMaterial = new Material(shadowDepthEncodeShader) { hideFlags = HideFlags.HideAndDontSave };
+
+            Shader shadowBlurShader = Shader.Find(ShadowBlurShaderName);
+            if (shadowBlurShader == null) {
+                if (pointLightVolume.Blur > 0.0001f) Debug.LogWarning($"[PointLightShadowBaker] Failed to find shadow blur shader '{ShadowBlurShaderName}'. Baking without blur.", pointLightVolume);
+                manager.RuntimeShadowBlurMaterial = null;
+            } else if (manager.RuntimeShadowBlurMaterial == null || manager.RuntimeShadowBlurMaterial.shader != shadowBlurShader) {
+                manager.RuntimeShadowBlurMaterial = new Material(shadowBlurShader) { hideFlags = HideFlags.HideAndDontSave };
+            }
+
+            return manager.RuntimeShadowCamera != null && manager.RuntimeShadowDepthEncodeMaterial != null;
         }
 
-        // Returns a safe spotlight field of view for single-slice shadow baking
-        private static float GetSpotShadowFieldOfView(PointLightVolume pointLightVolume) {
-            if (pointLightVolume == null) return 90f;
-            return Mathf.Clamp(pointLightVolume.Angle, 0.1f, 179.9f);
+        // Resets cached blur keyword state so the shared material is configured by the next bake.
+        private static void ResetManagerRuntimeShadowBlurState(LightVolumeManager manager) {
+            if (manager == null) return;
+            manager.RuntimeShadowBlurQualityPreset = -1;
+            manager.RuntimeShadowBlurUniformKeyword = -1;
+            manager.RuntimeShadowBlurDirectKeyword = -1;
+            manager.RuntimeShadowBlurSphericalKeyword = -1;
+            if (manager.RuntimeShadowBlurMaterial != null) manager.RuntimeShadowBlurMaterial.DisableKeyword(EditorShadowBlurQualityKeyword);
         }
 
-        // Creates the explicit depth target sampled by the shadow encode pass.
-        private static RenderTexture CreateDepthTexture(int resolution) {
-            RenderTexture texture = new RenderTexture(resolution, resolution, 32, RenderTextureFormat.Depth, RenderTextureReadWrite.Linear);
-            texture.dimension = TextureDimension.Tex2D;
-            texture.useMipMap = false;
-            texture.autoGenerateMips = false;
-            texture.wrapMode = TextureWrapMode.Clamp;
-            texture.filterMode = FilterMode.Point;
-            texture.anisoLevel = 0;
-            texture.hideFlags = HideFlags.HideAndDontSave;
-            texture.Create();
+        // Checks that BakeShadows returned the local texture-array layout expected by the editor asset copy.
+        private static bool IsRuntimeShadowTextureValid(RenderTexture texture, int resolution, int sliceCount) {
+            return texture != null && texture.dimension == TextureDimension.Tex2DArray && texture.width == resolution && texture.height == resolution && texture.volumeDepth >= sliceCount;
+        }
+
+        // Creates a persistent cubemap asset from the runtime texture-array shadow output.
+        private static Cubemap CreateCubemapShadowAsset(RenderTexture source, TextureFormat textureFormat) {
+            Cubemap cubemap = new Cubemap(source.width, textureFormat, false) {
+                wrapMode = TextureWrapMode.Clamp,
+                filterMode = FilterMode.Bilinear,
+                anisoLevel = 0
+            };
+            ReadRenderTextureToCubemap(source, cubemap, source.width, textureFormat);
+            return cubemap;
+        }
+
+        // Creates a persistent single-slice texture asset from the runtime texture-array shadow output.
+        private static Texture2D CreateSingleShadowAsset(RenderTexture source, TextureFormat textureFormat) {
+            Texture2D texture = new Texture2D(source.width, source.height, textureFormat, false, true) {
+                wrapMode = TextureWrapMode.Clamp,
+                filterMode = FilterMode.Bilinear,
+                anisoLevel = 0
+            };
+            ReadRenderTextureToTexture2D(source, texture);
             return texture;
         }
 
-        // Creates a texture array for editor shadow baking.
-        private static RenderTexture CreateShadowArrayTexture(int resolution, RenderTextureFormat format, int sliceCount) {
-            RenderTexture texture = new RenderTexture(resolution, resolution, 0, format, RenderTextureReadWrite.Linear);
-            texture.dimension = TextureDimension.Tex2DArray;
-            texture.volumeDepth = Mathf.Max(sliceCount, 1);
-            texture.useMipMap = false;
-            texture.autoGenerateMips = false;
-            texture.wrapMode = TextureWrapMode.Clamp;
-            texture.filterMode = FilterMode.Bilinear;
-            texture.anisoLevel = 0;
-            texture.hideFlags = HideFlags.HideAndDontSave;
-            texture.Create();
-            return texture;
-        }
-
-        // Renders depth and encodes shadow moments for all six point-light faces.
-        private static void BakeRawShadowFaces(PointLightVolume pointLightVolume, Camera shadowCamera, RenderTexture depthTexture, RenderTexture outputTexture, Material encodeMaterial, float bias) {
-            Transform cameraTransform = shadowCamera.transform;
-            Transform lightTransform = pointLightVolume.transform;
-            Quaternion bakeRotation = lightTransform.rotation;
-
-            encodeMaterial.SetFloat(_shadowFarClipID, shadowCamera.farClipPlane);
-            encodeMaterial.SetFloat(_shadowNearClipID, shadowCamera.nearClipPlane);
-            encodeMaterial.SetFloat(_shadowBakeBiasID, bias);
-            encodeMaterial.SetFloat(_shadowTanHalfFovID, 1f);
-            encodeMaterial.SetTexture(_shadowDepthTexID, depthTexture, RenderTextureSubElement.Depth);
-
-            RenderTexture previousTargetTexture = shadowCamera.targetTexture;
-            shadowCamera.targetTexture = depthTexture;
-            cameraTransform.position = lightTransform.position;
-            for (int i = 0; i < 6; i++) {
-                cameraTransform.rotation = bakeRotation * _faceRotations[i];
-                shadowCamera.Render();
-                BlitMaterialToSlice(depthTexture, encodeMaterial, 0, outputTexture, i);
-            }
-            shadowCamera.targetTexture = previousTargetTexture;
-        }
-
-        // Renders depth and encodes shadow moments for one spotlight shadow slice.
-        private static void BakeRawSingleShadow(PointLightVolume pointLightVolume, Camera shadowCamera, RenderTexture depthTexture, RenderTexture outputTexture, Material encodeMaterial, float bias) {
-            Transform cameraTransform = shadowCamera.transform;
-            Transform lightTransform = pointLightVolume.transform;
-
-            encodeMaterial.SetFloat(_shadowFarClipID, shadowCamera.farClipPlane);
-            encodeMaterial.SetFloat(_shadowNearClipID, shadowCamera.nearClipPlane);
-            encodeMaterial.SetFloat(_shadowBakeBiasID, bias);
-            encodeMaterial.SetFloat(_shadowTanHalfFovID, Mathf.Tan(shadowCamera.fieldOfView * 0.5f * Mathf.Deg2Rad));
-            encodeMaterial.SetTexture(_shadowDepthTexID, depthTexture, RenderTextureSubElement.Depth);
-
-            RenderTexture previousTargetTexture = shadowCamera.targetTexture;
-            shadowCamera.targetTexture = depthTexture;
-            cameraTransform.position = lightTransform.position;
-            cameraTransform.rotation = lightTransform.rotation;
-            shadowCamera.Render();
-            BlitMaterialToSlice(depthTexture, encodeMaterial, 0, outputTexture, 0);
-            shadowCamera.targetTexture = previousTargetTexture;
-        }
-
-        // Configures the high-quality editor blur material.
-        private static void ConfigureEditorBlurMaterial(Material blurMaterial, float blurRadius, float blurDepth, int resolution, bool directBlur, float tanHalfFov) {
-            blurMaterial.EnableKeyword(ShaderConstants.EditorShadowBlurQualityKeyword);
-            blurMaterial.EnableKeyword(ShaderConstants.RuntimeShadowQualityHighKeyword);
-            if (blurDepth <= 0f) blurMaterial.EnableKeyword(ShaderConstants.RuntimeShadowBlurUniformKeyword);
-            else blurMaterial.DisableKeyword(ShaderConstants.RuntimeShadowBlurUniformKeyword);
-            if (directBlur) blurMaterial.EnableKeyword(ShaderConstants.RuntimeShadowBlurDirectKeyword);
-            else blurMaterial.DisableKeyword(ShaderConstants.RuntimeShadowBlurDirectKeyword);
-
-            blurMaterial.SetFloat(_blurRadiusID, blurRadius * (Mathf.Max(resolution, 1) / ShadowBlurBaseResolution));
-            if (blurDepth <= 0f) blurMaterial.SetFloat(_blurDepthID, 0f);
-            else {
-                float normalizedBlurDepth = Mathf.Clamp01(blurDepth);
-                blurMaterial.SetFloat(_blurDepthID, (Mathf.Pow(10f, normalizedBlurDepth) - 1f) * 0.1111111111f);
-            }
-            blurMaterial.SetFloat(_invResolutionID, 1f / Mathf.Max(resolution, 1));
-            blurMaterial.SetFloat(_shadowTanHalfFovID, Mathf.Max(tanHalfFov, 0.000001f));
-        }
-
-        // Applies the high-quality spherical editor blur in one pass.
-        private static void BlurShadowFaces(RenderTexture rawTexture, RenderTexture outputTexture, Material blurMaterial, int faceCount) {
-            for (int i = 0; i < faceCount; i++) BlitShadowBlurFace(rawTexture, outputTexture, blurMaterial, i);
-        }
-
-        // Applies spherical blur to one editor texture-array face.
-        private static void BlitShadowBlurFace(Texture sourceTexture, RenderTexture destination, Material blurMaterial, int face) {
-            blurMaterial.SetTexture(_sourceArrayTexID, sourceTexture);
-            blurMaterial.SetTexture(_depthArrayTexID, sourceTexture);
-            blurMaterial.SetFloat(_sourceBaseSliceID, 0);
-            blurMaterial.SetFloat(_depthBaseSliceID, 0);
-            blurMaterial.SetInt(_faceIndexID, face);
-            BlitMaterialToSlice(sourceTexture, blurMaterial, 0, destination, face);
-        }
-
-        // Renders one material pass into one texture-array slice.
-        private static void BlitMaterialToSlice(Texture sourceTexture, Material material, int pass, RenderTexture destination, int targetSlice) {
-            RenderTexture previousRenderTexture = RenderTexture.active;
-            Graphics.SetRenderTarget(destination, 0, CubemapFace.Unknown, targetSlice);
-            Graphics.Blit(sourceTexture, material, pass);
-            RenderTexture.active = previousRenderTexture;
-        }
-
-        // Releases an editor bake render texture unless it is the returned result.
-        private static void ReleaseBakeTexture(RenderTexture texture, RenderTexture keepTexture) {
-            if (texture == null || texture == keepTexture) return;
-            if (RenderTexture.active == texture) RenderTexture.active = null;
-            texture.Release();
-            Object.DestroyImmediate(texture);
+        // Saves the baked shadow asset into the scene-local VRCLightVolumes temp folder.
+        private static void SaveShadowAsset(PointLightVolume pointLightVolume, UnityEngine.Object shadowAsset) {
+            string scenePath = UnityEngine.SceneManagement.SceneManager.GetActiveScene().path;
+            string path = $"{System.IO.Path.GetDirectoryName(scenePath)}/{UnityEngine.SceneManagement.SceneManager.GetActiveScene().name}/VRCLightVolumes/Temp/{pointLightVolume.gameObject.name}_shadows.asset";
+            if (AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(path) != null) AssetDatabase.DeleteAsset(path);
+            LVUtils.SaveAsAsset(shadowAsset, path);
         }
 
         // Temporarily hides renderers outside the point light's object mask for this editor bake.
         private static RendererState[] ApplyObjectMaskFilter(PointLightVolume pointLightVolume) {
             if (!HasObjectMask(pointLightVolume)) return null;
 
-            Renderer[] renderers = Object.FindObjectsByType<Renderer>(FindObjectsInactive.Exclude, FindObjectsSortMode.None);
+            Renderer[] renderers = UnityEngine.Object.FindObjectsByType<Renderer>(FindObjectsInactive.Exclude, FindObjectsSortMode.None);
             RendererState[] rendererStates = new RendererState[renderers.Length];
             for (int i = 0; i < renderers.Length; i++) {
                 Renderer renderer = renderers[i];
@@ -377,7 +194,7 @@ namespace VRCLightVolumes {
             return rendererStates;
         }
 
-        // Restores renderer visibility changed by ApplyObjectMaskFilter.
+        // Restores renderer visibility changed by ApplyObjectMaskFilter().
         private static void RestoreObjectMaskFilter(RendererState[] rendererStates) {
             if (rendererStates == null) return;
             for (int i = 0; i < rendererStates.Length; i++) {
@@ -388,7 +205,7 @@ namespace VRCLightVolumes {
 
         // Checks whether this point light has at least one valid object-mask root.
         private static bool HasObjectMask(PointLightVolume pointLightVolume) {
-            if (pointLightVolume == null || pointLightVolume.ObjectMask == null) return false;
+            if (pointLightVolume.ObjectMask == null) return false;
             for (int i = 0; i < pointLightVolume.ObjectMask.Length; i++) {
                 if (pointLightVolume.ObjectMask[i] != null) return true;
             }
@@ -408,51 +225,68 @@ namespace VRCLightVolumes {
             return false;
         }
 
-        // Copies the baked render texture to the persistent cubemap through the CPU side so the asset is serializable.
+        // Copies the runtime texture-array shadow output into a serializable cubemap asset.
         private static void ReadRenderTextureToCubemap(RenderTexture source, Cubemap destination, int resolution, TextureFormat textureFormat) {
             RenderTexture oldActive = RenderTexture.active;
             Texture2D temp = new Texture2D(resolution, resolution, textureFormat, false, true);
-            int bytesPerPixel = GetTextureFormatBytesPerPixel(textureFormat);
-            byte[] transformedFaceData = source.dimension == TextureDimension.Cube ? null : new byte[resolution * resolution * bytesPerPixel];
+            RenderTexture sourceFace = CreateTemporaryFaceTexture(source, resolution);
+            RenderTexture transformedFace = CreateTemporaryFaceTexture(source, resolution);
             try {
-                for (int i = 0; i < _cubemapFaces.Length; i++) {
-                    if (source.dimension == TextureDimension.Cube) Graphics.SetRenderTarget(source, 0, _cubemapFaces[i]);
-                    else Graphics.SetRenderTarget(source, 0, CubemapFace.Unknown, i);
+                for (int i = 0; i < 6; i++) {
+                    int destinationFaceIndex = _oppositeCubemapFaceIndices[i];
+                    bool horizontalFlip = _arrayToCubemapHorizontalFlip[i];
+                    Vector2 scale = horizontalFlip ? new Vector2(-1f, 1f) : new Vector2(1f, -1f);
+                    Vector2 offset = horizontalFlip ? new Vector2(1f, 0f) : new Vector2(0f, 1f);
+
+                    Graphics.CopyTexture(source, i, 0, sourceFace, 0, 0);
+                    Graphics.Blit(sourceFace, transformedFace, scale, offset);
+                    RenderTexture.active = transformedFace;
                     temp.ReadPixels(new Rect(0, 0, resolution, resolution), 0, 0);
                     temp.Apply(false);
-                    if (source.dimension == TextureDimension.Cube) destination.SetPixelData(temp.GetRawTextureData<byte>(), 0, _cubemapFaces[i]);
-                    else SetArraySliceAsCubemapFace(temp, destination, i, resolution, bytesPerPixel, transformedFaceData);
+                    destination.SetPixelData(temp.GetRawTextureData<byte>(), 0, (CubemapFace)destinationFaceIndex);
                 }
                 destination.Apply(false);
             } finally {
                 RenderTexture.active = oldActive;
-                Object.DestroyImmediate(temp);
+                ReleaseTemporaryRenderTexture(sourceFace);
+                ReleaseTemporaryRenderTexture(transformedFace);
+                UnityEngine.Object.DestroyImmediate(temp);
             }
         }
 
-        // Stores one runtime-layout array slice in the cubemap orientation expected by Hidden/CubeFace.
-        private static void SetArraySliceAsCubemapFace(Texture2D source, Cubemap destination, int sourceFaceIndex, int resolution, int bytesPerPixel, byte[] transformedFaceData) {
-            int destinationFaceIndex = _oppositeCubemapFaceIndices[sourceFaceIndex];
-            bool horizontalFlip = _arrayToCubemapHorizontalFlip[sourceFaceIndex];
-            var sourceData = source.GetRawTextureData<byte>();
-
-            for (int y = 0; y < resolution; y++) {
-                int destinationY = horizontalFlip ? y : resolution - 1 - y;
-                for (int x = 0; x < resolution; x++) {
-                    int destinationX = horizontalFlip ? resolution - 1 - x : x;
-                    int sourceOffset = (y * resolution + x) * bytesPerPixel;
-                    int destinationOffset = (destinationY * resolution + destinationX) * bytesPerPixel;
-                    for (int b = 0; b < bytesPerPixel; b++) transformedFaceData[destinationOffset + b] = sourceData[sourceOffset + b];
-                }
-            }
-
-            destination.SetPixelData(transformedFaceData, 0, _cubemapFaces[destinationFaceIndex]);
+        // Creates a temporary 2D render target used while converting runtime array slices to cubemap faces.
+        private static RenderTexture CreateTemporaryFaceTexture(RenderTexture source, int resolution) {
+            RenderTexture texture = new RenderTexture(resolution, resolution, 0, source.format, RenderTextureReadWrite.Linear) {
+                dimension = TextureDimension.Tex2D,
+                useMipMap = false,
+                autoGenerateMips = false,
+                wrapMode = TextureWrapMode.Clamp,
+                filterMode = FilterMode.Point,
+                anisoLevel = 0,
+                hideFlags = HideFlags.HideAndDontSave
+            };
+            texture.Create();
+            return texture;
         }
 
-        // Returns the byte width of one RGBA EVSM texel.
-        private static int GetTextureFormatBytesPerPixel(TextureFormat textureFormat) {
-            if (textureFormat == TextureFormat.RGBAFloat) return 16;
-            return 8;
+        // Copies the first runtime texture-array slice into a serializable Texture2D asset.
+        private static void ReadRenderTextureToTexture2D(RenderTexture source, Texture2D destination) {
+            RenderTexture oldActive = RenderTexture.active;
+            try {
+                Graphics.SetRenderTarget(source, 0, CubemapFace.Unknown, 0);
+                destination.ReadPixels(new Rect(0, 0, source.width, source.height), 0, 0);
+                destination.Apply(false);
+            } finally {
+                RenderTexture.active = oldActive;
+            }
+        }
+
+        // Releases a temporary render texture used by editor shadow baking.
+        private static void ReleaseTemporaryRenderTexture(RenderTexture texture) {
+            if (texture == null || AssetDatabase.Contains(texture)) return;
+            if (RenderTexture.active == texture) RenderTexture.active = null;
+            texture.Release();
+            UnityEngine.Object.DestroyImmediate(texture);
         }
 
         // Resolves the persistent texture format used to store baked EVSM moments.
@@ -460,42 +294,10 @@ namespace VRCLightVolumes {
             return textureFormat == TextureFormat.RGBAHalf ? TextureFormat.RGBAHalf : TextureFormat.RGBAFloat;
         }
 
-        // Resolves the render texture format used while baking EVSM moments.
-        private static RenderTextureFormat GetShadowRenderTextureFormat(TextureFormat textureFormat) {
-            return textureFormat == TextureFormat.RGBAHalf ? RenderTextureFormat.ARGBHalf : RenderTextureFormat.ARGBFloat;
+        // Resolves the manager texture format value used by PointLightVolumeInstance.BakeShadows().
+        private static int GetShadowTextureFormatValue(TextureFormat textureFormat) {
+            return textureFormat == TextureFormat.RGBAHalf ? ShadowTextureFormatHalf : 1;
         }
-
-        // Copies the baked render texture to a persistent Texture2DArray without changing face order or orientation.
-        private static void ReadRenderTextureToTextureArray(RenderTexture source, Texture2DArray destination, int resolution, TextureFormat textureFormat) {
-            RenderTexture oldActive = RenderTexture.active;
-            Texture2D temp = new Texture2D(resolution, resolution, textureFormat, false, true);
-            try {
-                for (int i = 0; i < 6; i++) {
-                    Graphics.SetRenderTarget(source, 0, CubemapFace.Unknown, i);
-                    temp.ReadPixels(new Rect(0, 0, resolution, resolution), 0, 0);
-                    temp.Apply(false);
-                    destination.SetPixelData(temp.GetRawTextureData<byte>(), 0, i);
-                }
-                destination.Apply(false);
-            } finally {
-                RenderTexture.active = oldActive;
-                Object.DestroyImmediate(temp);
-            }
-        }
-
-        // Copies the first baked render texture slice to a persistent Texture2D.
-        private static void ReadRenderTextureToTexture2D(RenderTexture source, Texture2D destination, int resolution) {
-            RenderTexture oldActive = RenderTexture.active;
-            try {
-                Graphics.SetRenderTarget(source, 0, CubemapFace.Unknown, 0);
-                destination.ReadPixels(new Rect(0, 0, resolution, resolution), 0, 0);
-                destination.Apply(false);
-            } finally {
-                RenderTexture.active = oldActive;
-            }
-        }
-
     }
-
 }
 #endif

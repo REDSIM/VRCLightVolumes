@@ -39,6 +39,7 @@ namespace VRCLightVolumes {
         private const RenderTextureFormat FixedCustomTexturesFormat = RenderTextureFormat.ARGBHalf;
         private const float DisabledShadingShadowId = 10000f;
         private const int ShadowTextureFormatHalf = 0;
+        private const string RuntimeShadowCameraName = "Runtime Shadow Camera";
 #endregion
 
 #region Inspector And Runtime References
@@ -101,6 +102,20 @@ namespace VRCLightVolumes {
 
         // Material used to copy cubemap source faces into the animated projection texture array
         [HideInInspector] public Material CubemapFaceMaterial;
+        // Shared disabled camera used by all runtime point light shadow bakes
+        [HideInInspector] public Camera RuntimeShadowCamera;
+        // Shared material used by all runtime point light shadow bakes to encode camera depth
+        [HideInInspector] public Material RuntimeShadowDepthEncodeMaterial;
+        // Shared material used by all runtime point light shadow bakes to blur encoded shadows
+        [HideInInspector] public Material RuntimeShadowBlurMaterial;
+        // Cached quality keyword state for the shared runtime shadow blur material
+        [HideInInspector] public int RuntimeShadowBlurQualityPreset = -1;
+        // Cached uniform-radius keyword state for the shared runtime shadow blur material
+        [HideInInspector] public int RuntimeShadowBlurUniformKeyword = -1;
+        // Cached direct-output keyword state for the shared runtime shadow blur material
+        [HideInInspector] public int RuntimeShadowBlurDirectKeyword = -1;
+        // Cached spherical blur keyword state for the shared runtime shadow blur material
+        [HideInInspector] public int RuntimeShadowBlurSphericalKeyword = -1;
 #endregion
 
 #region Runtime Texture Cache
@@ -706,6 +721,12 @@ namespace VRCLightVolumes {
         // Initializes a Point Light Volume by adding it to the point light volume registry
         public void InitializePointLightVolume(PointLightVolumeInstance pointLightVolume) {
             if (pointLightVolume == null) return;
+#if !COMPILER_UDONSHARP
+            if (RuntimeShadowCamera == null) EnsureRuntimeShadowCamera();
+#endif
+            if (pointLightVolume.RuntimeShadowCamera == null) pointLightVolume.RuntimeShadowCamera = RuntimeShadowCamera;
+            if (pointLightVolume.RuntimeShadowDepthEncodeMaterial == null && RuntimeShadowDepthEncodeMaterial != null) pointLightVolume.RuntimeShadowDepthEncodeMaterial = RuntimeShadowDepthEncodeMaterial;
+            if (pointLightVolume.RuntimeShadowBlurMaterial == null && RuntimeShadowBlurMaterial != null) pointLightVolume.RuntimeShadowBlurMaterial = RuntimeShadowBlurMaterial;
             int count = PointLightVolumeInstances.Length;
             bool invalidateCustomTextures = _customTexturesInitialized && pointLightVolume.IsActive && (pointLightVolume.CustomTexture != null || pointLightVolume.CustomTextureMaterial != null);
             bool invalidateShadowTextures = _shadowTexturesInitialized && pointLightVolume.IsActive && (pointLightVolume.ShadowMapTexture != null || pointLightVolume.ShadowMapMaterial != null || pointLightVolume.ShadowMapID >= 0);
@@ -1419,7 +1440,7 @@ namespace VRCLightVolumes {
 #if COMPILER_UDONSHARP
             Destroy(texture);
 #else
-            RenderTexture.active = null;
+            if (RenderTexture.active == texture) RenderTexture.active = null;
             texture.Release();
             if (Application.isPlaying) Destroy(texture);
             else DestroyImmediate(texture);
@@ -1561,6 +1582,47 @@ namespace VRCLightVolumes {
             return false;
 #endif
         }
+
+#if !COMPILER_UDONSHARP
+        // Creates or reuses the one persistent hidden camera shared by all runtime shadow bakes.
+        public void EnsureRuntimeShadowCamera() {
+            if (RuntimeShadowCamera == null || RuntimeShadowCamera.transform.parent != transform) {
+                RuntimeShadowCamera = null;
+                Camera[] cameras = GetComponentsInChildren<Camera>(true);
+                for (int i = 0; i < cameras.Length; i++) {
+                    Camera camera = cameras[i];
+                    if (camera == null || camera.transform.parent != transform) continue;
+                    if (camera.gameObject.name != RuntimeShadowCameraName) continue;
+                    if (camera.hideFlags != HideFlags.HideInInspector || camera.gameObject.hideFlags != HideFlags.HideInHierarchy) continue;
+                    RuntimeShadowCamera = camera;
+                    break;
+                }
+                if (RuntimeShadowCamera == null) {
+                    GameObject cameraObject = new GameObject(RuntimeShadowCameraName);
+                    cameraObject.transform.SetParent(transform, false);
+                    RuntimeShadowCamera = cameraObject.AddComponent<Camera>();
+                }
+            }
+
+            RuntimeShadowCamera.gameObject.name = RuntimeShadowCameraName;
+            RuntimeShadowCamera.gameObject.hideFlags = HideFlags.HideInHierarchy;
+            RuntimeShadowCamera.hideFlags = HideFlags.HideInInspector;
+            RuntimeShadowCamera.enabled = false;
+            RuntimeShadowCamera.clearFlags = CameraClearFlags.Depth;
+            RuntimeShadowCamera.backgroundColor = Color.white;
+            RuntimeShadowCamera.orthographic = false;
+            RuntimeShadowCamera.fieldOfView = 90f;
+            RuntimeShadowCamera.aspect = 1f;
+            RuntimeShadowCamera.depthTextureMode = DepthTextureMode.None;
+            RuntimeShadowCamera.renderingPath = RenderingPath.Forward;
+            RuntimeShadowCamera.allowHDR = false;
+            RuntimeShadowCamera.allowMSAA = false;
+            RuntimeShadowCamera.useOcclusionCulling = false;
+            RuntimeShadowCamera.stereoTargetEye = StereoTargetEyeMask.None;
+            RuntimeShadowCamera.ResetReplacementShader();
+        }
+
+#endif
 
 #if !COMPILER_UDONSHARP && (!UDONSHARP || UNITY_EDITOR)
         // Destroys the editor/runtime material instance used by non-Udon execution
@@ -1847,10 +1909,10 @@ namespace VRCLightVolumes {
             float shadowFarClip = 0;
             float shadowNearClip = 0;
             if (hasShadow) {
-                float farClip = instance.FarClip;
-                shadowFarClip = farClip > 0 ? farClip : Mathf.Sqrt(Mathf.Max(squaredRange, 0.000001f));
                 shadowNearClip = Mathf.Max(instance.NearClip, 0.0001f);
-                if (shadowNearClip >= shadowFarClip) shadowNearClip = shadowFarClip * 0.5f;
+                float farClip = instance.FarClip;
+                shadowFarClip = farClip > 0f ? Mathf.Max(farClip, shadowNearClip + 0.0001f) : Mathf.Sqrt(Mathf.Max(squaredRange, 0.000001f));
+                if (shadowNearClip >= shadowFarClip) shadowFarClip = shadowNearClip + 0.0001f;
             }
             extraData.w = shadowNearClip;
             _pointLightExtraData[shaderIndex] = extraData;

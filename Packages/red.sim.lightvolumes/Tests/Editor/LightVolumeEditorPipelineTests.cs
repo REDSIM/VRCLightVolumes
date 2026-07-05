@@ -273,6 +273,43 @@ namespace VRCLightVolumes.Tests {
             Assert.That(instance.ProjectionMode, Is.EqualTo(2)); // 2: cookie/cubemap
         }
 
+        // Verifies point light runtime shadow dependencies are runtime caches, not serialized build data.
+        [Test]
+        public void PointLightRuntimeShadowDependenciesAreNonSerializedRuntimeCaches() {
+            AssertRuntimeCacheFieldIsNonSerialized(nameof(PointLightVolumeInstance.RuntimeShadowCamera));
+            AssertRuntimeCacheFieldIsNonSerialized(nameof(PointLightVolumeInstance.RuntimeShadowDepthEncodeMaterial));
+            AssertRuntimeCacheFieldIsNonSerialized(nameof(PointLightVolumeInstance.RuntimeShadowBlurMaterial));
+        }
+
+        // Verifies the manager owns shared runtime shadow bake dependencies and assigns them to point lights when they register.
+        [Test]
+        public void ManagerAssignsSharedRuntimeShadowDependenciesToRegisteredPointLight() {
+            GameObject setupObject = CreateGameObject("Shared Runtime Shadow Camera Setup", true);
+            LightVolumeSetup setup = setupObject.AddComponent<LightVolumeSetup>();
+            setup.SetupDependencies();
+            LightVolumeManager manager = setup.LightVolumeManager;
+            Assert.That(manager, Is.Not.Null);
+            Assert.That(manager.RuntimeShadowCamera, Is.Not.Null);
+            manager.RuntimeShadowDepthEncodeMaterial = CreateMaterial("Hidden/VRCLV/PointLightShadowDepthEncode");
+            manager.RuntimeShadowBlurMaterial = CreateMaterial("Hidden/VRCLV/PointLightShadowRuntimeBlur");
+
+            Camera sharedRuntimeCamera = manager.RuntimeShadowCamera;
+            Material sharedDepthEncodeMaterial = manager.RuntimeShadowDepthEncodeMaterial;
+            Material sharedBlurMaterial = manager.RuntimeShadowBlurMaterial;
+            PointLightVolumeInstance point = CreatePointLight(manager, "Shared Runtime Shadow Camera Point", true);
+            point.RuntimeShadowCamera = null;
+            point.RuntimeShadowDepthEncodeMaterial = null;
+            point.RuntimeShadowBlurMaterial = null;
+
+            manager.InitializePointLightVolume(point);
+
+            Assert.That(manager.RuntimeShadowCamera, Is.SameAs(sharedRuntimeCamera));
+            Assert.That(point.RuntimeShadowCamera, Is.SameAs(sharedRuntimeCamera));
+            Assert.That(point.RuntimeShadowDepthEncodeMaterial, Is.SameAs(sharedDepthEncodeMaterial));
+            Assert.That(point.RuntimeShadowBlurMaterial, Is.SameAs(sharedBlurMaterial));
+            Assert.That(manager.PointLightVolumeInstances, Has.Member(point));
+        }
+
         // Verifies cubemap RenderTextures are unfolded as cubemaps instead of copied as a single 2D slice.
         [Test]
         public void PointLightVolumeDetectsCubemapRenderTextureSources() {
@@ -410,6 +447,217 @@ namespace VRCLightVolumes.Tests {
             pointLightVolume.Shadows = true;
 
             Assert.That((int)method.Invoke(pointLightVolume, null), Is.EqualTo(0));
+        }
+
+        // Verifies build-time Bake In Game preparation removes baked shadow asset references from both authoring and runtime components.
+        [Test]
+        public void BuildPreprocessorClearsBakeInGameAuthoringShadowSource() {
+            GameObject setupObject = CreateGameObject("Build Bake In Game Setup", true);
+            LightVolumeSetup setup = setupObject.AddComponent<LightVolumeSetup>();
+            setup.SetupDependencies();
+            setup.ShadowResolution = LightVolumeSetup.TextureArrayResolution._512x512;
+            LightVolumeManager manager = setup.LightVolumeManager;
+            Assert.That(manager, Is.Not.Null);
+            Camera sharedRuntimeCamera = manager.RuntimeShadowCamera;
+            Assert.That(sharedRuntimeCamera, Is.Not.Null);
+            Assert.That(sharedRuntimeCamera.transform.parent, Is.SameAs(manager.transform));
+            Assert.That(sharedRuntimeCamera.enabled, Is.False);
+
+            GameObject lightObject = CreateGameObject("Build Bake In Game Point Light", true);
+            PointLightVolumeInstance instance = lightObject.AddComponent<PointLightVolumeInstance>();
+            PointLightVolume pointLight = lightObject.AddComponent<PointLightVolume>();
+            Texture2D shadowMap = CreateTexture2D("Build Bake In Game Shadow Source");
+            pointLight.LightVolumeSetup = setup;
+            pointLight.PointLightVolumeInstance = instance;
+            pointLight.Shadows = true;
+            pointLight.BakeInGame = true;
+            pointLight.ShadowMap = shadowMap;
+            instance.BakeInGame = false;
+            instance.RuntimeShadowResolution = 64;
+            instance.ShadowMapTexture = shadowMap;
+            instance.AutoUpdateShadowMap = true;
+            instance.ShadowMapID = 0;
+            instance.ShadowMapTextureIsCubemap = true;
+            instance.ShadowMapTextureHasDepthSlices = true;
+
+            System.Type preprocessorType = GetLightVolumePreprocessorType();
+            MethodInfo method = preprocessorType.GetMethod("PrepareRuntimeDependencies", _nonPublicStaticFlags);
+            MethodInfo clearMethod = preprocessorType.GetMethod("ClearRuntimeDependencies", _nonPublicStaticFlags);
+            Assert.That(method, Is.Not.Null);
+            Assert.That(clearMethod, Is.Not.Null);
+
+            method.Invoke(null, new object[] { new[] { lightObject }, true });
+
+            Assert.That(pointLight.ShadowMap, Is.SameAs(shadowMap));
+            Assert.That(instance.BakeInGame, Is.True);
+            Assert.That(instance.RuntimeShadowResolution, Is.EqualTo(512));
+            Assert.That(instance.RuntimeShadowFacesPerFrame, Is.EqualTo(6));
+            Assert.That(instance.RuntimeShadowDirectOutput, Is.False);
+            Assert.That(instance.ShadowMapTexture, Is.Null);
+            Assert.That(instance.AutoUpdateShadowMap, Is.False);
+            Assert.That(instance.ShadowMapID, Is.EqualTo(-1f).Within(Epsilon));
+            Assert.That(instance.ShadowMapTextureIsCubemap, Is.False);
+            Assert.That(instance.ShadowMapTextureHasDepthSlices, Is.False);
+            Assert.That(manager.RuntimeShadowCamera, Is.SameAs(sharedRuntimeCamera));
+            Assert.That(manager.RuntimeShadowDepthEncodeMaterial, Is.Not.Null);
+            Assert.That(manager.RuntimeShadowBlurMaterial, Is.Not.Null);
+
+            pointLight.ShadowMap = shadowMap;
+            instance.BakeInGame = false;
+            instance.ShadowMapTexture = shadowMap;
+            instance.AutoUpdateShadowMap = true;
+            instance.ShadowMapID = 0;
+            instance.ShadowMapTextureIsCubemap = true;
+            instance.ShadowMapTextureHasDepthSlices = true;
+
+            method.Invoke(null, new object[] { new[] { lightObject }, false });
+
+            Assert.That(pointLight.ShadowMap, Is.Null);
+            Assert.That(instance.BakeInGame, Is.True);
+            Assert.That(instance.ShadowMapTexture, Is.Null);
+            Assert.That(instance.ShadowMapMaterial, Is.Null);
+            Assert.That(instance.AutoUpdateShadowMap, Is.False);
+            Assert.That(instance.ShadowMapID, Is.EqualTo(-1f).Within(Epsilon));
+            Assert.That(instance.ShadowMapTextureIsCubemap, Is.False);
+            Assert.That(instance.ShadowMapTextureHasDepthSlices, Is.False);
+            Assert.That(manager.RuntimeShadowCamera, Is.SameAs(sharedRuntimeCamera));
+            Assert.That(manager.RuntimeShadowDepthEncodeMaterial, Is.Not.Null);
+            Assert.That(manager.RuntimeShadowBlurMaterial, Is.Not.Null);
+
+            pointLight.Shadows = false;
+            pointLight.ShadowMap = shadowMap;
+            instance.BakeInGame = true;
+            instance.ShadowMapTexture = shadowMap;
+            instance.AutoUpdateShadowMap = true;
+            instance.ShadowMapID = 0;
+            instance.ShadowMapTextureIsCubemap = true;
+            instance.ShadowMapTextureHasDepthSlices = true;
+
+            method.Invoke(null, new object[] { new[] { lightObject }, false });
+
+            Assert.That(pointLight.ShadowMap, Is.Null);
+            Assert.That(instance.BakeInGame, Is.False);
+            Assert.That(instance.ShadowMapTexture, Is.Null);
+            Assert.That(instance.AutoUpdateShadowMap, Is.False);
+            Assert.That(instance.ShadowMapID, Is.EqualTo(-1f).Within(Epsilon));
+            Assert.That(instance.ShadowMapTextureIsCubemap, Is.False);
+            Assert.That(instance.ShadowMapTextureHasDepthSlices, Is.False);
+
+            clearMethod.Invoke(null, new object[] { new[] { lightObject } });
+        }
+
+        // Verifies build-time preparation drops editor-only serialized references that should not enter the player.
+        [Test]
+        public void BuildPreprocessorClearsBuildOnlySerializedReferences() {
+            GameObject setupObject = CreateGameObject("Build Serialized Cleanup Setup", true);
+            LightVolumeSetup setup = setupObject.AddComponent<LightVolumeSetup>();
+            setup.SetupDependencies();
+            LightVolumeManager manager = setup.LightVolumeManager;
+            Assert.That(manager, Is.Not.Null);
+            Camera expectedRuntimeShadowCamera = manager.RuntimeShadowCamera;
+            Assert.That(expectedRuntimeShadowCamera, Is.Not.Null);
+
+            Texture3D atlasBase = CreateAtlas("Build Cleanup Atlas Base");
+            Texture3D volumeTexture0 = CreateAtlas("Build Cleanup Volume Texture 0");
+            Texture3D volumeTexture1 = CreateAtlas("Build Cleanup Volume Texture 1");
+            Texture3D volumeTexture2 = CreateAtlas("Build Cleanup Volume Texture 2");
+            RenderTexture customTextures = CreateRenderTexture("Build Cleanup Custom Textures", 4, 4, 1, TextureDimension.Tex2DArray);
+            RenderTexture shadowTextures = CreateRenderTexture("Build Cleanup Shadow Textures", 4, 4, 1, TextureDimension.Tex2DArray);
+            RenderTexture postProcessorTexture = CreateRenderTexture("Build Cleanup Post Processor", 4, 4, 1, TextureDimension.Tex2DArray);
+            Material postProcessorMaterial = CreateMaterial("Hidden/CubeFace");
+            manager.LightVolumeAtlasBase = atlasBase;
+            manager.LightVolumeAtlas = atlasBase;
+            manager.CustomTextures = customTextures;
+            manager.ShadowTextures = shadowTextures;
+            setup.AtlasPostProcessors = new[] { new LightVolumeSetup.PostProcessor { RT = postProcessorTexture, Mat = postProcessorMaterial, TextureName = "_MainTex" } };
+
+            GameObject volumeObject = CreateGameObject("Build Serialized Cleanup Volume", true);
+            LightVolumeInstance volumeInstance = volumeObject.AddComponent<LightVolumeInstance>();
+            LightVolume volume = volumeObject.AddComponent<LightVolume>();
+            volume.LightVolumeSetup = setup;
+            volume.LightVolumeInstance = volumeInstance;
+            volume.Texture0 = volumeTexture0;
+            volume.Texture1 = volumeTexture1;
+            volume.Texture2 = volumeTexture2;
+            setup.LightVolumes.Add(volume);
+            setup.LightVolumesWeights.Add(1f);
+            setup.LightVolumeDataList.Add(new LightVolumeData(1f, volumeInstance));
+
+            GameObject maskedObject = CreateGameObject("Build Serialized Cleanup Mask", true);
+            GameObject pointObject = CreateGameObject("Build Serialized Cleanup Point Light", true);
+            PointLightVolumeInstance pointInstance = pointObject.AddComponent<PointLightVolumeInstance>();
+            PointLightVolume pointLight = pointObject.AddComponent<PointLightVolume>();
+            Texture2D normalShadow = CreateTexture2D("Build Cleanup Normal Shadow");
+            Texture2D cookieSource = CreateTexture2D("Build Cleanup Cookie Source");
+            Texture2D falloffSource = CreateTexture2D("Build Cleanup Falloff Source");
+            Cubemap cubemapSource = CreateCubemap("Build Cleanup Cubemap Source");
+            pointLight.LightVolumeSetup = setup;
+            pointLight.PointLightVolumeInstance = pointInstance;
+            pointLight.Type = PointLightVolume.LightType.SpotLight;
+            pointLight.Projection = PointLightVolume.LightProjection.Custom;
+            pointLight.FalloffLUT = falloffSource;
+            pointLight.Cookie = cookieSource;
+            pointLight.Cubemap = cubemapSource;
+            pointLight.Shadows = true;
+            pointLight.BakeInGame = false;
+            pointLight.ShadowMap = normalShadow;
+            pointLight.ObjectMask = new[] { maskedObject };
+            pointInstance.CustomTexture = cookieSource;
+            pointInstance.ProjectionType = 1;
+            pointInstance.ProjectionMode = 2;
+            pointInstance.AutoUpdateCustomTexture = true;
+            pointInstance.BakeInGame = true;
+            pointInstance.ShadowMapTexture = normalShadow;
+            pointInstance.AutoUpdateShadowMap = true;
+            pointInstance.ShadowMapID = 0;
+            pointInstance.ShadowMapTextureIsCubemap = true;
+            pointInstance.ShadowMapTextureHasDepthSlices = true;
+            setup.PointLightVolumes.Add(pointLight);
+
+            Texture expectedFinalAtlas = manager.LightVolumeAtlas;
+            Assert.That(expectedFinalAtlas, Is.SameAs(postProcessorTexture));
+
+            System.Type preprocessorType = GetLightVolumePreprocessorType();
+            MethodInfo method = preprocessorType.GetMethod("PrepareRuntimeDependencies", _nonPublicStaticFlags);
+            MethodInfo clearMethod = preprocessorType.GetMethod("ClearRuntimeDependencies", _nonPublicStaticFlags);
+            Assert.That(method, Is.Not.Null);
+            Assert.That(clearMethod, Is.Not.Null);
+
+            method.Invoke(null, new object[] { new[] { setupObject, volumeObject, pointObject }, false });
+
+            Assert.That(manager.LightVolumeAtlas, Is.SameAs(expectedFinalAtlas));
+            Assert.That(manager.LightVolumeAtlasBase, Is.SameAs(atlasBase));
+            Assert.That(manager.RuntimeShadowCamera, Is.SameAs(expectedRuntimeShadowCamera));
+            Assert.That(manager.RuntimeShadowCamera.enabled, Is.False);
+            Assert.That(manager.RuntimeShadowDepthEncodeMaterial, Is.Not.Null);
+            Assert.That(manager.RuntimeShadowBlurMaterial, Is.Not.Null);
+            Assert.That(manager.CustomTextures, Is.Null);
+            Assert.That(manager.ShadowTextures, Is.Null);
+            Assert.That(setup.LightVolumes, Is.Empty);
+            Assert.That(setup.LightVolumesWeights, Is.Empty);
+            Assert.That(setup.PointLightVolumes, Is.Empty);
+            Assert.That(setup.LightVolumeDataList, Is.Empty);
+            Assert.That(setup.AtlasPostProcessors, Is.Null);
+            Assert.That(volume.Texture0, Is.Null);
+            Assert.That(volume.Texture1, Is.Null);
+            Assert.That(volume.Texture2, Is.Null);
+            Assert.That(pointLight.ObjectMask, Is.Empty);
+            Assert.That(pointLight.FalloffLUT, Is.SameAs(falloffSource));
+            Assert.That(pointLight.Cookie, Is.SameAs(cookieSource));
+            Assert.That(pointLight.Cubemap, Is.SameAs(cubemapSource));
+            Assert.That(pointInstance.CustomTexture, Is.SameAs(cookieSource));
+            Assert.That(pointInstance.ProjectionType, Is.EqualTo(1));
+            Assert.That(pointInstance.ProjectionMode, Is.EqualTo(2));
+            Assert.That(pointInstance.AutoUpdateCustomTexture, Is.True);
+            Assert.That(pointInstance.BakeInGame, Is.False);
+            Assert.That(pointLight.ShadowMap, Is.SameAs(normalShadow));
+            Assert.That(pointInstance.ShadowMapTexture, Is.SameAs(normalShadow));
+            Assert.That(pointInstance.AutoUpdateShadowMap, Is.True);
+            Assert.That(pointInstance.ShadowMapID, Is.EqualTo(0f).Within(Epsilon));
+            Assert.That(pointInstance.ShadowMapTextureIsCubemap, Is.True);
+            Assert.That(pointInstance.ShadowMapTextureHasDepthSlices, Is.True);
+
+            clearMethod.Invoke(null, new object[] { new[] { setupObject, volumeObject, pointObject } });
         }
 
         // Verifies zero Far Plane always recalculates from the current light range instead of reusing stale baked instance metadata.
@@ -771,6 +1019,13 @@ namespace VRCLightVolumes.Tests {
             return Mathf.Abs(a.x - b.x) > Epsilon || Mathf.Abs(a.y - b.y) > Epsilon || Mathf.Abs(a.z - b.z) > Epsilon;
         }
 
+        // Asserts one public runtime cache field is not serialized by Unity.
+        private static void AssertRuntimeCacheFieldIsNonSerialized(string fieldName) {
+            FieldInfo field = typeof(PointLightVolumeInstance).GetField(fieldName, BindingFlags.Instance | BindingFlags.Public);
+            Assert.That(field, Is.Not.Null);
+            Assert.That(field.IsNotSerialized, Is.True);
+        }
+
         // Asserts colors with the shared editor-test tolerance.
         private static void AssertColorClose(Color expected, Color actual) {
             Assert.That(actual.r, Is.EqualTo(expected.r).Within(Epsilon));
@@ -846,6 +1101,18 @@ namespace VRCLightVolumes.Tests {
             MethodInfo method = typeof(LightVolumeSetup).GetMethod("SyncSceneSetupsAfterUndo", _nonPublicStaticFlags);
             Assert.That(method, Is.Not.Null);
             method.Invoke(null, null);
+        }
+
+        // Returns the internal build preprocessor type through reflection because it is not part of the public editor API.
+        private static System.Type GetLightVolumePreprocessorType() {
+            System.Reflection.Assembly[] assemblies = System.AppDomain.CurrentDomain.GetAssemblies();
+            for (int i = 0; i < assemblies.Length; i++) {
+                if (assemblies[i].GetName().Name != "red.sim.LightVolumesEditor") continue;
+                System.Type type = assemblies[i].GetType("VRCLightVolumes.LightVolumePreprocessor");
+                if (type != null) return type;
+            }
+            Assert.Fail("LightVolumePreprocessor type was not found.");
+            return null;
         }
 
         // Destroys test objects immediately and releases render textures first.

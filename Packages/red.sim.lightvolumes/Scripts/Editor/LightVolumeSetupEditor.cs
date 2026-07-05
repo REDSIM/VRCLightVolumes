@@ -284,7 +284,7 @@ namespace VRCLightVolumes {
             bundleRawBytes += bakedShadowTextureBytes;
 
             GUILayout.Label(new GUIContent($"Data size in VRAM: {SizeInVRAM(vramBytes)} MB", "Includes only the Light Volume 3D atlas, cookie texture arrays, baked EVSM shadow map assets and shadow map arrays."));
-            GUILayout.Label(new GUIContent($"Data size in bundle: {SizeInBundle(bundleRawBytes)} MB (Approximately)", "Includes only the Light Volume 3D atlas and baked EVSM shadow map assets."));
+            GUILayout.Label(new GUIContent($"Data size in bundle: {SizeInBundle(bundleRawBytes)} MB (Approximately)", "Includes only the Light Volume 3D atlas and baked EVSM shadow map assets that are included in the build. Bake In Game shadow preview assets are excluded."));
 
             GUILayout.Space(10);
 
@@ -400,7 +400,7 @@ namespace VRCLightVolumes {
             HashSet<Texture> countedTextures = new HashSet<Texture>();
             for (int i = 0; i < _lightVolumeSetup.PointLightVolumes.Count; i++) {
                 PointLightVolume pointLightVolume = _lightVolumeSetup.PointLightVolumes[i];
-                if (pointLightVolume == null || !pointLightVolume.Shadows) continue;
+                if (pointLightVolume == null || !pointLightVolume.Shadows || pointLightVolume.BakeInGame) continue;
                 Texture texture = pointLightVolume.GetShadowMapTexture();
                 if (texture == null || texture is RenderTexture || !countedTextures.Add(texture)) continue;
                 bytes += GetShadowTextureTexelCount(texture) * bytesPerPixel;

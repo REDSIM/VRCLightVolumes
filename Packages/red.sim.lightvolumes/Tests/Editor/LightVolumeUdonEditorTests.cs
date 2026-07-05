@@ -1512,6 +1512,33 @@ namespace VRCLightVolumes.Tests {
             AssertPointCustomData(point, 0, 1);
         }
 
+        // Verifies manager shader uploads sanitize shadow clip values without rewriting the light instance.
+        [Test]
+        public void PointLightShadowClipUploadClampsWithoutMutatingInstance() {
+            LightVolumeManager manager = CreateManager("Shadow Clip Upload Clamp Manager", false);
+            Cubemap source = CreateCubemap("Shadow Clip Upload Clamp Source");
+            manager.ShadowTexturesWidth = 4;
+            manager.ShadowTexturesHeight = 4;
+
+            PointLightVolumeInstance point = CreatePointLight(manager, "Shadow Clip Upload Clamp Light", true);
+            point.SquaredRange = 64f;
+            point.IsRangeDirty = false;
+            point.NearClip = 4f;
+            point.FarClip = 1f;
+            point.WorldSpaceShadows = true;
+            ConfigureShadowTexture(point, source, false, true, false);
+            manager.PointLightVolumeInstances = new[] { point };
+
+            manager.ReinitializeShadowTextures();
+            manager.UpdateVolumes();
+
+            AssertPointCustomData(point, 0, 1);
+            Assert.That(Shader.GetGlobalVectorArray(_pointLightExtraDataID)[0].w, Is.EqualTo(4f).Within(Epsilon));
+            Assert.That(Shader.GetGlobalVectorArray(_pointLightCustomIdID)[0].w, Is.EqualTo(4.0001f).Within(Epsilon));
+            Assert.That(point.NearClip, Is.EqualTo(4f).Within(Epsilon));
+            Assert.That(point.FarClip, Is.EqualTo(1f).Within(Epsilon));
+        }
+
         // Verifies runtime shadow baking uses the target light far clip data.
         [Test]
         public void RuntimeShadowBakerUsesTargetRangeForShadowFarClip() {
@@ -1519,34 +1546,26 @@ namespace VRCLightVolumes.Tests {
             PointLightVolumeInstance point = CreatePointLight(manager, "Runtime Shadow Far Clip Light", true);
             point.SquaredRange = 64;
 
-            GameObject bakerObject = CreateGameObject("Runtime Shadow Far Clip Baker", true);
-            PointLightShadowRuntimeBaker baker = bakerObject.AddComponent<PointLightShadowRuntimeBaker>();
-            baker.TargetPointLightVolume = point;
-            AddRuntimeShadowCamera(baker);
+            PointLightVolumeInstance baker = point;
+            baker.RuntimeShadowResolution = 16;
+            baker.RuntimeShadowDepthEncodeMaterial = CreateMaterial("Hidden/VRCLV/PointLightShadowDepthEncode");
+            Camera shadowCamera = AddRuntimeShadowCamera(baker);
 
-            MethodInfo cacheMethod = typeof(PointLightShadowRuntimeBaker).GetMethod("CacheRuntimeReferences", _lifecycleMethodFlags);
-            MethodInfo refreshSettingsMethod = typeof(PointLightShadowRuntimeBaker).GetMethod("RefreshBakeSettings", _lifecycleMethodFlags);
-            FieldInfo bakeFarClipField = typeof(PointLightShadowRuntimeBaker).GetField("_bakeFarClip", _lifecycleMethodFlags);
-            Assert.That(cacheMethod, Is.Not.Null);
-            Assert.That(refreshSettingsMethod, Is.Not.Null);
-            Assert.That(bakeFarClipField, Is.Not.Null);
-
-            cacheMethod.Invoke(baker, null);
             point.SquaredRange = 64;
             point.IsRangeDirty = false;
-            refreshSettingsMethod.Invoke(baker, null);
-            Assert.That((float)bakeFarClipField.GetValue(baker), Is.EqualTo(8).Within(Epsilon));
+            baker.BakeShadows();
+            Assert.That(shadowCamera.farClipPlane, Is.EqualTo(8).Within(Epsilon));
 
             point.SquaredRange = 4;
             point.IsRangeDirty = false;
 
-            refreshSettingsMethod.Invoke(baker, null);
-            Assert.That((float)bakeFarClipField.GetValue(baker), Is.EqualTo(2).Within(Epsilon));
+            baker.BakeShadows();
+            Assert.That(shadowCamera.farClipPlane, Is.EqualTo(2).Within(Epsilon));
 
             point.FarClip = 3;
 
-            refreshSettingsMethod.Invoke(baker, null);
-            Assert.That((float)bakeFarClipField.GetValue(baker), Is.EqualTo(3).Within(Epsilon));
+            baker.BakeShadows();
+            Assert.That(shadowCamera.farClipPlane, Is.EqualTo(3).Within(Epsilon));
         }
 
         // Verifies runtime shadow baking treats FarClip as an input setting and does not publish calculated range back to the target.
@@ -1557,42 +1576,68 @@ namespace VRCLightVolumes.Tests {
             point.SquaredRange = 64;
             point.FarClip = 0;
 
-            GameObject bakerObject = CreateGameObject("Runtime Shadow Published Far Clip Baker", true);
-            PointLightShadowRuntimeBaker baker = bakerObject.AddComponent<PointLightShadowRuntimeBaker>();
-            baker.TargetPointLightVolume = point;
-            AddRuntimeShadowCamera(baker);
+            PointLightVolumeInstance baker = point;
+            baker.RuntimeShadowResolution = 16;
+            baker.RuntimeShadowDepthEncodeMaterial = CreateMaterial("Hidden/VRCLV/PointLightShadowDepthEncode");
+            Camera shadowCamera = AddRuntimeShadowCamera(baker);
 
-            MethodInfo cacheMethod = typeof(PointLightShadowRuntimeBaker).GetMethod("CacheRuntimeReferences", _lifecycleMethodFlags);
-            MethodInfo refreshSettingsMethod = typeof(PointLightShadowRuntimeBaker).GetMethod("RefreshBakeSettings", _lifecycleMethodFlags);
-            MethodInfo applyMethod = typeof(PointLightShadowRuntimeBaker).GetMethod("ApplyTargetShadowSourceInternal", _lifecycleMethodFlags);
-            FieldInfo bakeFarClipField = typeof(PointLightShadowRuntimeBaker).GetField("_bakeFarClip", _lifecycleMethodFlags);
-            Assert.That(cacheMethod, Is.Not.Null);
-            Assert.That(refreshSettingsMethod, Is.Not.Null);
-            Assert.That(applyMethod, Is.Not.Null);
-            Assert.That(bakeFarClipField, Is.Not.Null);
-
-            cacheMethod.Invoke(baker, null);
             point.SquaredRange = 64;
             point.IsRangeDirty = false;
-            refreshSettingsMethod.Invoke(baker, null);
-            float firstFarClip = (float)bakeFarClipField.GetValue(baker);
-            Assert.That(firstFarClip, Is.EqualTo(8).Within(Epsilon));
-            Assert.That((bool)applyMethod.Invoke(baker, new object[] { Vector3.zero, firstFarClip, 0.01f, 0.1f, false }), Is.True);
+            baker.BakeShadows();
+            Assert.That(shadowCamera.farClipPlane, Is.EqualTo(8).Within(Epsilon));
             Assert.That(point.FarClip, Is.EqualTo(0).Within(Epsilon));
 
             point.SquaredRange = 4;
             point.IsRangeDirty = false;
-            refreshSettingsMethod.Invoke(baker, null);
-            float secondFarClip = (float)bakeFarClipField.GetValue(baker);
-            Assert.That(secondFarClip, Is.EqualTo(2).Within(Epsilon));
-            applyMethod.Invoke(baker, new object[] { Vector3.zero, secondFarClip, 0.01f, 0.1f, false });
+            baker.BakeShadows();
+            Assert.That(shadowCamera.farClipPlane, Is.EqualTo(2).Within(Epsilon));
             Assert.That(point.FarClip, Is.EqualTo(0).Within(Epsilon));
 
             point.FarClip = 5;
-            refreshSettingsMethod.Invoke(baker, null);
-            Assert.That((float)bakeFarClipField.GetValue(baker), Is.EqualTo(5).Within(Epsilon));
-            applyMethod.Invoke(baker, new object[] { Vector3.zero, 5f, 0.01f, 0.1f, false });
+            baker.BakeShadows();
+            Assert.That(shadowCamera.farClipPlane, Is.EqualTo(5).Within(Epsilon));
             Assert.That(point.FarClip, Is.EqualTo(5).Within(Epsilon));
+        }
+
+        // Verifies runtime shadow baking clamps unsafe bake inputs locally without normalizing public fields.
+        [Test]
+        public void RuntimeShadowBakerClampsBakeInputsWithoutMutatingTargetFields() {
+            LightVolumeManager manager = CreateManager("Runtime Shadow Clamp Inputs Manager", false);
+            PointLightVolumeInstance point = CreatePointLight(manager, "Runtime Shadow Clamp Inputs Light", true);
+            point.SquaredRange = 4f;
+            point.IsRangeDirty = false;
+            point.NearClip = -2f;
+            point.FarClip = -1f;
+            point.Bias = -0.25f;
+            point.Blur = -1f;
+            point.ContactHardening = 2f;
+
+            PointLightVolumeInstance baker = point;
+            baker.RuntimeShadowResolution = 16;
+            baker.RuntimeShadowDepthEncodeMaterial = CreateMaterial("Hidden/VRCLV/PointLightShadowDepthEncode");
+            baker.RuntimeShadowBlurMaterial = CreateMaterial("Hidden/VRCLV/PointLightShadowRuntimeBlur");
+            Camera shadowCamera = AddRuntimeShadowCamera(baker);
+
+            baker.BakeShadows();
+
+            Assert.That(shadowCamera.nearClipPlane, Is.EqualTo(0.0001f).Within(Epsilon));
+            Assert.That(shadowCamera.farClipPlane, Is.EqualTo(2f).Within(Epsilon));
+            Assert.That(baker.RuntimeShadowDepthEncodeMaterial.GetFloat("_ShadowNearClip"), Is.EqualTo(0.0001f).Within(Epsilon));
+            Assert.That(baker.RuntimeShadowDepthEncodeMaterial.GetFloat("_ShadowFarClip"), Is.EqualTo(2f).Within(Epsilon));
+            Assert.That(baker.RuntimeShadowDepthEncodeMaterial.GetFloat("_ShadowBakeBias"), Is.EqualTo(0f).Within(Epsilon));
+            Assert.That(point.NearClip, Is.EqualTo(-2f).Within(Epsilon));
+            Assert.That(point.FarClip, Is.EqualTo(-1f).Within(Epsilon));
+            Assert.That(point.Bias, Is.EqualTo(-0.25f).Within(Epsilon));
+            Assert.That(point.Blur, Is.EqualTo(-1f).Within(Epsilon));
+            Assert.That(point.ContactHardening, Is.EqualTo(2f).Within(Epsilon));
+
+            point.Blur = 2f;
+            baker.BakeShadows();
+
+            Assert.That(baker.RuntimeShadowBlurMaterial.GetFloat("_BlurRadius"), Is.EqualTo(0.25f).Within(Epsilon));
+            Assert.That(baker.RuntimeShadowBlurMaterial.GetFloat("_BlurDepth"), Is.EqualTo(1f).Within(Epsilon));
+            Assert.That(point.Blur, Is.EqualTo(2f).Within(Epsilon));
+            Assert.That(point.ContactHardening, Is.EqualTo(2f).Within(Epsilon));
         }
 
         // Verifies runtime shadow baking uses the target light bias so it matches editor shadow bakes.
@@ -1602,26 +1647,18 @@ namespace VRCLightVolumes.Tests {
             PointLightVolumeInstance point = CreatePointLight(manager, "Runtime Shadow Bias Light", true);
             point.Bias = 0;
 
-            GameObject bakerObject = CreateGameObject("Runtime Shadow Bias Baker", true);
-            PointLightShadowRuntimeBaker baker = bakerObject.AddComponent<PointLightShadowRuntimeBaker>();
-            baker.TargetPointLightVolume = point;
+            PointLightVolumeInstance baker = point;
+            baker.RuntimeShadowResolution = 16;
+            baker.RuntimeShadowDepthEncodeMaterial = CreateMaterial("Hidden/VRCLV/PointLightShadowDepthEncode");
             AddRuntimeShadowCamera(baker);
 
-            MethodInfo cacheMethod = typeof(PointLightShadowRuntimeBaker).GetMethod("CacheRuntimeReferences", _lifecycleMethodFlags);
-            MethodInfo refreshSettingsMethod = typeof(PointLightShadowRuntimeBaker).GetMethod("RefreshBakeSettings", _lifecycleMethodFlags);
-            FieldInfo bakeBiasField = typeof(PointLightShadowRuntimeBaker).GetField("_bakeBias", _lifecycleMethodFlags);
-            Assert.That(cacheMethod, Is.Not.Null);
-            Assert.That(refreshSettingsMethod, Is.Not.Null);
-            Assert.That(bakeBiasField, Is.Not.Null);
-
-            cacheMethod.Invoke(baker, null);
-            refreshSettingsMethod.Invoke(baker, null);
-            Assert.That((float)bakeBiasField.GetValue(baker), Is.EqualTo(0).Within(Epsilon));
+            baker.BakeShadows();
+            Assert.That(baker.RuntimeShadowDepthEncodeMaterial.GetFloat("_ShadowBakeBias"), Is.EqualTo(0).Within(Epsilon));
 
             point.Bias = 0.125f;
 
-            refreshSettingsMethod.Invoke(baker, null);
-            Assert.That((float)bakeBiasField.GetValue(baker), Is.EqualTo(0.125f).Within(Epsilon));
+            baker.BakeShadows();
+            Assert.That(baker.RuntimeShadowDepthEncodeMaterial.GetFloat("_ShadowBakeBias"), Is.EqualTo(0.125f).Within(Epsilon));
         }
 
         // Verifies runtime shadow baking reads camera and blur settings from the target light instance.
@@ -1634,35 +1671,61 @@ namespace VRCLightVolumes.Tests {
             point.Blur = 6.5f;
             point.ContactHardening = 0.35f;
 
-            GameObject bakerObject = CreateGameObject("Runtime Shadow Settings Baker", true);
-            PointLightShadowRuntimeBaker baker = bakerObject.AddComponent<PointLightShadowRuntimeBaker>();
-            baker.TargetPointLightVolume = point;
-            baker.SphericalBlur = true;
-            AddRuntimeShadowCamera(baker);
+            PointLightVolumeInstance baker = point;
+            baker.RuntimeShadowSphericalBlur = true;
+            baker.RuntimeShadowDepthEncodeMaterial = CreateMaterial("Hidden/VRCLV/PointLightShadowDepthEncode");
+            baker.RuntimeShadowBlurMaterial = CreateMaterial("Hidden/VRCLV/PointLightShadowRuntimeBlur");
+            Camera shadowCamera = AddRuntimeShadowCamera(baker);
 
-            MethodInfo cacheMethod = typeof(PointLightShadowRuntimeBaker).GetMethod("CacheRuntimeReferences", _lifecycleMethodFlags);
-            MethodInfo refreshSettingsMethod = typeof(PointLightShadowRuntimeBaker).GetMethod("RefreshBakeSettings", _lifecycleMethodFlags);
-            FieldInfo bakeNearClipField = typeof(PointLightShadowRuntimeBaker).GetField("_bakeNearClip", _lifecycleMethodFlags);
-            FieldInfo bakeCullingMaskField = typeof(PointLightShadowRuntimeBaker).GetField("_bakeCullingMask", _lifecycleMethodFlags);
-            FieldInfo bakeBlurField = typeof(PointLightShadowRuntimeBaker).GetField("_bakeBlur", _lifecycleMethodFlags);
-            FieldInfo bakeBlurDepthField = typeof(PointLightShadowRuntimeBaker).GetField("_bakeBlurDepth", _lifecycleMethodFlags);
-            FieldInfo useSphericalBlurField = typeof(PointLightShadowRuntimeBaker).GetField("_useSphericalBlur", _lifecycleMethodFlags);
-            Assert.That(cacheMethod, Is.Not.Null);
-            Assert.That(refreshSettingsMethod, Is.Not.Null);
-            Assert.That(bakeNearClipField, Is.Not.Null);
-            Assert.That(bakeCullingMaskField, Is.Not.Null);
-            Assert.That(bakeBlurField, Is.Not.Null);
-            Assert.That(bakeBlurDepthField, Is.Not.Null);
-            Assert.That(useSphericalBlurField, Is.Not.Null);
+            baker.BakeShadows();
 
-            cacheMethod.Invoke(baker, null);
-            refreshSettingsMethod.Invoke(baker, null);
+            Assert.That(shadowCamera.nearClipPlane, Is.EqualTo(0.25f).Within(Epsilon));
+            Assert.That(shadowCamera.cullingMask, Is.EqualTo(1 << 7));
+            Assert.That(baker.RuntimeShadowBlurMaterial.GetFloat("_BlurRadius"), Is.EqualTo(6.5f).Within(Epsilon));
+            Assert.That(baker.RuntimeShadowBlurMaterial.GetFloat("_BlurDepth"), Is.EqualTo((Mathf.Pow(10f, 0.35f) - 1f) * 0.1111111111f).Within(Epsilon));
+            Assert.That(baker.RuntimeShadowBlurMaterial.IsKeywordEnabled("VRCLV_RUNTIME_SHADOW_BLUR_SPHERICAL"), Is.True);
+        }
 
-            Assert.That((float)bakeNearClipField.GetValue(baker), Is.EqualTo(0.25f).Within(Epsilon));
-            Assert.That((int)bakeCullingMaskField.GetValue(baker), Is.EqualTo(1 << 7));
-            Assert.That((float)bakeBlurField.GetValue(baker), Is.EqualTo(6.5f).Within(Epsilon));
-            Assert.That((float)bakeBlurDepthField.GetValue(baker), Is.EqualTo(0.35f).Within(Epsilon));
-            Assert.That((bool)useSphericalBlurField.GetValue(baker), Is.True);
+        // Verifies every runtime bake reconfigures the shared camera from the current light settings.
+        [Test]
+        public void RuntimeShadowBakerReconfiguresSharedCameraBetweenLights() {
+            LightVolumeManager manager = CreateManager("Runtime Shadow Shared Camera Config Manager", false);
+            manager.ShadowTexturesWidth = 16;
+            manager.ShadowTexturesHeight = 16;
+            manager.RuntimeShadowDepthEncodeMaterial = CreateMaterial("Hidden/VRCLV/PointLightShadowDepthEncode");
+            manager.EnsureRuntimeShadowCamera();
+            Camera sharedCamera = manager.RuntimeShadowCamera;
+
+            PointLightVolumeInstance first = CreatePointLight(manager, "Runtime Shadow Shared Camera First", true);
+            PointLightVolumeInstance second = CreatePointLight(manager, "Runtime Shadow Shared Camera Second", true);
+            manager.PointLightVolumeInstances = new[] { first, second };
+
+            first.RuntimeShadowResolution = 16;
+            first.LayerMask = 1 << 5;
+            first.NearClip = 0.25f;
+            first.FarClip = 4f;
+            first.Blur = 0f;
+
+            second.RuntimeShadowResolution = 16;
+            second.LayerMask = 1 << 7;
+            second.NearClip = 0.5f;
+            second.FarClip = 8f;
+            second.Blur = 0f;
+
+            first.BakeShadows();
+            Assert.That(sharedCamera.cullingMask, Is.EqualTo(1 << 5));
+            Assert.That(sharedCamera.nearClipPlane, Is.EqualTo(0.25f).Within(Epsilon));
+            Assert.That(sharedCamera.farClipPlane, Is.EqualTo(4f).Within(Epsilon));
+
+            second.BakeShadows();
+            Assert.That(sharedCamera.cullingMask, Is.EqualTo(1 << 7));
+            Assert.That(sharedCamera.nearClipPlane, Is.EqualTo(0.5f).Within(Epsilon));
+            Assert.That(sharedCamera.farClipPlane, Is.EqualTo(8f).Within(Epsilon));
+
+            first.BakeShadows();
+            Assert.That(sharedCamera.cullingMask, Is.EqualTo(1 << 5));
+            Assert.That(sharedCamera.nearClipPlane, Is.EqualTo(0.25f).Within(Epsilon));
+            Assert.That(sharedCamera.farClipPlane, Is.EqualTo(4f).Within(Epsilon));
         }
 
         // Verifies realtime baking keeps the baker resolution separate from the manager-owned final array size.
@@ -1673,29 +1736,81 @@ namespace VRCLightVolumes.Tests {
             manager.ShadowTexturesHeight = 32;
             PointLightVolumeInstance point = CreatePointLight(manager, "Runtime Shadow Resolution Light", true);
 
-            GameObject bakerObject = CreateGameObject("Runtime Shadow Resolution Baker", true);
-            PointLightShadowRuntimeBaker baker = bakerObject.AddComponent<PointLightShadowRuntimeBaker>();
-            baker.TargetPointLightVolume = point;
-            baker.Realtime = true;
-            baker.Resolution = 96;
+            PointLightVolumeInstance baker = point;
+            baker.RuntimeShadowResolution = 96;
+            baker.RuntimeShadowDepthEncodeMaterial = CreateMaterial("Hidden/VRCLV/PointLightShadowDepthEncode");
             AddRuntimeShadowCamera(baker);
 
-            MethodInfo cacheMethod = typeof(PointLightShadowRuntimeBaker).GetMethod("CacheRuntimeReferences", _lifecycleMethodFlags);
-            MethodInfo refreshSettingsMethod = typeof(PointLightShadowRuntimeBaker).GetMethod("RefreshBakeSettings", _lifecycleMethodFlags);
-            FieldInfo bakeResolutionField = typeof(PointLightShadowRuntimeBaker).GetField("_bakeResolution", _lifecycleMethodFlags);
-            FieldInfo useDirectOutputField = typeof(PointLightShadowRuntimeBaker).GetField("_useDirectOutput", _lifecycleMethodFlags);
-            Assert.That(cacheMethod, Is.Not.Null);
-            Assert.That(refreshSettingsMethod, Is.Not.Null);
-            Assert.That(bakeResolutionField, Is.Not.Null);
-            Assert.That(useDirectOutputField, Is.Not.Null);
+            FieldInfo shadowTextureField = typeof(PointLightVolumeInstance).GetField("_runtimeShadowTexture", _lifecycleMethodFlags);
+            Assert.That(shadowTextureField, Is.Not.Null);
 
-            cacheMethod.Invoke(baker, null);
-            refreshSettingsMethod.Invoke(baker, null);
+            baker.BakeShadows();
 
-            Assert.That((int)bakeResolutionField.GetValue(baker), Is.EqualTo(96));
-            Assert.That((bool)useDirectOutputField.GetValue(baker), Is.False);
+            RenderTexture shadowTexture = (RenderTexture)shadowTextureField.GetValue(baker);
+            Assert.That(shadowTexture, Is.Not.Null);
+            Assert.That(shadowTexture.width, Is.EqualTo(96));
+            Assert.That(shadowTexture.height, Is.EqualTo(96));
             Assert.That(manager.ShadowTexturesWidth, Is.EqualTo(32));
             Assert.That(manager.ShadowTexturesHeight, Is.EqualTo(32));
+        }
+
+        // Verifies texture recreation restarts an unfinished per-face bake without cached resolution fields.
+        [Test]
+        public void RuntimeShadowBakerResolutionChangeRestartsPartialBake() {
+            LightVolumeManager manager = CreateManager("Runtime Shadow Resolution Restart Manager", false);
+            PointLightVolumeInstance point = CreatePointLight(manager, "Runtime Shadow Resolution Restart Light", true);
+
+            PointLightVolumeInstance baker = point;
+            baker.RuntimeShadowResolution = 16;
+            baker.RuntimeShadowFacesPerFrame = 1;
+            baker.RuntimeShadowDepthEncodeMaterial = CreateMaterial("Hidden/VRCLV/PointLightShadowDepthEncode");
+            AddRuntimeShadowCamera(baker);
+
+            FieldInfo faceIndexField = typeof(PointLightVolumeInstance).GetField("_runtimeShadowFaceIndex", _lifecycleMethodFlags);
+            FieldInfo shadowTextureField = typeof(PointLightVolumeInstance).GetField("_runtimeShadowTexture", _lifecycleMethodFlags);
+            Assert.That(faceIndexField, Is.Not.Null);
+            Assert.That(shadowTextureField, Is.Not.Null);
+
+            baker.BakeShadows();
+            Assert.That((int)faceIndexField.GetValue(baker), Is.EqualTo(1));
+
+            baker.RuntimeShadowResolution = 32;
+            baker.BakeShadows();
+
+            RenderTexture shadowTexture = (RenderTexture)shadowTextureField.GetValue(baker);
+            Assert.That(shadowTexture, Is.Not.Null);
+            Assert.That(shadowTexture.width, Is.EqualTo(32));
+            Assert.That((int)faceIndexField.GetValue(baker), Is.EqualTo(1));
+        }
+
+        // Verifies Bake In Game keeps a full-size generated shadow source instead of publishing a 1x1 direct-output registration texture.
+        [Test]
+        public void BakeInGameRuntimeShadowBakeUsesFullResolutionSourceTexture() {
+            LightVolumeManager manager = CreateManager("Bake In Game Source Texture Manager", false);
+            manager.ShadowTexturesWidth = 16;
+            manager.ShadowTexturesHeight = 16;
+            PointLightVolumeInstance point = CreatePointLight(manager, "Bake In Game Source Texture Light", true);
+            point.BakeInGame = true;
+            point.RuntimeShadowResolution = 16;
+            point.RuntimeShadowDepthEncodeMaterial = CreateMaterial("Hidden/VRCLV/PointLightShadowDepthEncode");
+            manager.PointLightVolumeInstances = new[] { point };
+            AddRuntimeShadowCamera(point);
+
+            FieldInfo shadowTextureField = typeof(PointLightVolumeInstance).GetField("_runtimeShadowTexture", _lifecycleMethodFlags);
+            FieldInfo registrationTextureField = typeof(PointLightVolumeInstance).GetField("_runtimeShadowRegistrationTexture", _lifecycleMethodFlags);
+            Assert.That(shadowTextureField, Is.Not.Null);
+            Assert.That(registrationTextureField, Is.Not.Null);
+
+            point.BakeShadows();
+
+            RenderTexture shadowTexture = (RenderTexture)shadowTextureField.GetValue(point);
+            RenderTexture registrationTexture = (RenderTexture)registrationTextureField.GetValue(point);
+            Assert.That(registrationTexture, Is.Null);
+            Assert.That(shadowTexture, Is.Not.Null);
+            Assert.That(shadowTexture.width, Is.EqualTo(16));
+            Assert.That(shadowTexture.height, Is.EqualTo(16));
+            Assert.That(shadowTexture.dimension, Is.EqualTo(TextureDimension.Tex2DArray));
+            Assert.That(shadowTexture.volumeDepth, Is.EqualTo(6));
         }
 
         // Verifies runtime spot shadow baking uses one texture slice when the target is in single-shadow mode.
@@ -1707,44 +1822,22 @@ namespace VRCLightVolumes.Tests {
             spot.ShadowMapUsesCubemap = false;
             manager.PointLightVolumeInstances = new[] { spot };
 
-            GameObject bakerObject = CreateGameObject("Runtime Shadow Single Spot Baker", true);
-            PointLightShadowRuntimeBaker baker = bakerObject.AddComponent<PointLightShadowRuntimeBaker>();
-            baker.TargetPointLightVolume = spot;
-            baker.Resolution = 16;
-            baker.SphericalBlur = true;
+            PointLightVolumeInstance baker = spot;
+            baker.RuntimeShadowResolution = 16;
+            baker.RuntimeShadowSphericalBlur = true;
             baker.RuntimeShadowDepthEncodeMaterial = CreateMaterial("Hidden/VRCLV/PointLightShadowDepthEncode");
             AddRuntimeShadowCamera(baker);
 
-            MethodInfo prepareBakeMethod = typeof(PointLightShadowRuntimeBaker).GetMethod("PrepareBake", _lifecycleMethodFlags);
-            MethodInfo applyMethod = typeof(PointLightShadowRuntimeBaker).GetMethod("ApplyTargetShadowSourceInternal", _lifecycleMethodFlags);
-            FieldInfo shadowTextureField = typeof(PointLightShadowRuntimeBaker).GetField("_shadowTexture", _lifecycleMethodFlags);
-            FieldInfo useCubemapShadowField = typeof(PointLightShadowRuntimeBaker).GetField("_useCubemapShadow", _lifecycleMethodFlags);
-            FieldInfo bakeSliceCountField = typeof(PointLightShadowRuntimeBaker).GetField("_bakeSliceCount", _lifecycleMethodFlags);
-            FieldInfo bakeFieldOfViewField = typeof(PointLightShadowRuntimeBaker).GetField("_bakeFieldOfView", _lifecycleMethodFlags);
-            FieldInfo bakeTanHalfFovField = typeof(PointLightShadowRuntimeBaker).GetField("_bakeTanHalfFov", _lifecycleMethodFlags);
-            FieldInfo useSphericalBlurField = typeof(PointLightShadowRuntimeBaker).GetField("_useSphericalBlur", _lifecycleMethodFlags);
-            Assert.That(prepareBakeMethod, Is.Not.Null);
-            Assert.That(applyMethod, Is.Not.Null);
+            FieldInfo shadowTextureField = typeof(PointLightVolumeInstance).GetField("_runtimeShadowTexture", _lifecycleMethodFlags);
             Assert.That(shadowTextureField, Is.Not.Null);
-            Assert.That(useCubemapShadowField, Is.Not.Null);
-            Assert.That(bakeSliceCountField, Is.Not.Null);
-            Assert.That(bakeFieldOfViewField, Is.Not.Null);
-            Assert.That(bakeTanHalfFovField, Is.Not.Null);
-            Assert.That(useSphericalBlurField, Is.Not.Null);
 
-            Assert.That((bool)prepareBakeMethod.Invoke(baker, null), Is.True);
+            baker.BakeShadows();
 
             RenderTexture shadowTexture = (RenderTexture)shadowTextureField.GetValue(baker);
             Assert.That(shadowTexture, Is.Not.Null);
             Assert.That(shadowTexture.dimension, Is.EqualTo(TextureDimension.Tex2DArray));
             Assert.That(shadowTexture.volumeDepth, Is.EqualTo(1));
-            Assert.That((bool)useCubemapShadowField.GetValue(baker), Is.False);
-            Assert.That((int)bakeSliceCountField.GetValue(baker), Is.EqualTo(1));
-            Assert.That((bool)useSphericalBlurField.GetValue(baker), Is.True);
-            Assert.That((float)bakeFieldOfViewField.GetValue(baker), Is.EqualTo(60).Within(Epsilon));
-            Assert.That((float)bakeTanHalfFovField.GetValue(baker), Is.EqualTo(Mathf.Tan(30f * Mathf.Deg2Rad)).Within(Epsilon));
 
-            Assert.That((bool)applyMethod.Invoke(baker, new object[] { Vector3.zero, 8f, 0.01f, 0.1f, false }), Is.True);
             Assert.That(spot.ShadowMapTexture, Is.SameAs(shadowTexture));
             Assert.That(spot.ShadowMapUsesCubemap, Is.False);
             Assert.That(spot.ShadowMapTextureHasDepthSlices, Is.False);
@@ -1776,47 +1869,26 @@ namespace VRCLightVolumes.Tests {
         // Verifies runtime blur radius is normalized by resolution before shader sampling.
         [Test]
         public void RuntimeShadowBlurMaterialKeepsEffectiveRadiusStableAcrossResolution() {
-            GameObject bakerObject = CreateGameObject("Runtime Shadow Blur Resolution Baker", true);
-            PointLightShadowRuntimeBaker baker = bakerObject.AddComponent<PointLightShadowRuntimeBaker>();
+            PointLightVolumeInstance baker = CreatePointLight(null, "Runtime Shadow Blur Resolution Light", false);
             Material blurMaterial = CreateMaterial("Hidden/VRCLV/PointLightShadowRuntimeBlur");
 
-            MethodInfo initializeShaderPropertiesMethod = typeof(PointLightShadowRuntimeBaker).GetMethod("InitializeShaderProperties", _lifecycleMethodFlags);
-            MethodInfo prepareShadowBlurMaterialMethod = typeof(PointLightShadowRuntimeBaker).GetMethod("PrepareShadowBlurMaterial", _lifecycleMethodFlags);
-            FieldInfo shadowBlurMaterialField = typeof(PointLightShadowRuntimeBaker).GetField("_shadowBlurMaterial", _lifecycleMethodFlags);
-            FieldInfo useBlurField = typeof(PointLightShadowRuntimeBaker).GetField("_useBlur", _lifecycleMethodFlags);
-            FieldInfo bakeBlurField = typeof(PointLightShadowRuntimeBaker).GetField("_bakeBlur", _lifecycleMethodFlags);
-            FieldInfo bakeBlurDepthField = typeof(PointLightShadowRuntimeBaker).GetField("_bakeBlurDepth", _lifecycleMethodFlags);
-            FieldInfo bakeResolutionField = typeof(PointLightShadowRuntimeBaker).GetField("_bakeResolution", _lifecycleMethodFlags);
-            FieldInfo useCubemapShadowField = typeof(PointLightShadowRuntimeBaker).GetField("_useCubemapShadow", _lifecycleMethodFlags);
-            FieldInfo bakeTanHalfFovField = typeof(PointLightShadowRuntimeBaker).GetField("_bakeTanHalfFov", _lifecycleMethodFlags);
+            MethodInfo initializeShaderPropertiesMethod = typeof(PointLightVolumeInstance).GetMethod("InitializeRuntimeShadowShaderProperties", _lifecycleMethodFlags);
+            MethodInfo prepareShadowBlurMaterialMethod = typeof(PointLightVolumeInstance).GetMethod("PrepareRuntimeShadowBlurMaterial", _lifecycleMethodFlags);
             Assert.That(initializeShaderPropertiesMethod, Is.Not.Null);
             Assert.That(prepareShadowBlurMaterialMethod, Is.Not.Null);
-            Assert.That(shadowBlurMaterialField, Is.Not.Null);
-            Assert.That(useBlurField, Is.Not.Null);
-            Assert.That(bakeBlurField, Is.Not.Null);
-            Assert.That(bakeBlurDepthField, Is.Not.Null);
-            Assert.That(bakeResolutionField, Is.Not.Null);
-            Assert.That(useCubemapShadowField, Is.Not.Null);
-            Assert.That(bakeTanHalfFovField, Is.Not.Null);
 
             initializeShaderPropertiesMethod.Invoke(baker, null);
-            shadowBlurMaterialField.SetValue(baker, blurMaterial);
-            useBlurField.SetValue(baker, true);
-            bakeBlurField.SetValue(baker, 1f);
-            bakeBlurDepthField.SetValue(baker, 0f);
-            useCubemapShadowField.SetValue(baker, false);
+            baker.RuntimeShadowBlurMaterial = blurMaterial;
+            baker.Blur = 1f;
+            baker.ContactHardening = 0f;
 
-            bakeTanHalfFovField.SetValue(baker, 0.25f);
-            bakeResolutionField.SetValue(baker, 64);
-            Assert.That((bool)prepareShadowBlurMaterialMethod.Invoke(baker, null), Is.True);
+            Assert.That((bool)prepareShadowBlurMaterialMethod.Invoke(baker, new object[] { true, 0.25f, 64, false, false }), Is.True);
             float lowResolutionEffectiveRadius = blurMaterial.GetFloat("_BlurRadius") * blurMaterial.GetFloat("_InvResolution");
             float narrowTanHalfFov = blurMaterial.GetFloat("_ShadowTanHalfFov");
             float narrowAngleProjectedRadius = lowResolutionEffectiveRadius / narrowTanHalfFov;
             float narrowAnglePhysicalRadius = narrowAngleProjectedRadius * narrowTanHalfFov;
 
-            bakeTanHalfFovField.SetValue(baker, 1f);
-            bakeResolutionField.SetValue(baker, 256);
-            Assert.That((bool)prepareShadowBlurMaterialMethod.Invoke(baker, null), Is.True);
+            Assert.That((bool)prepareShadowBlurMaterialMethod.Invoke(baker, new object[] { true, 1f, 256, false, false }), Is.True);
             float highResolutionEffectiveRadius = blurMaterial.GetFloat("_BlurRadius") * blurMaterial.GetFloat("_InvResolution");
             float wideTanHalfFov = blurMaterial.GetFloat("_ShadowTanHalfFov");
             float wideAngleProjectedRadius = highResolutionEffectiveRadius / wideTanHalfFov;
@@ -1827,6 +1899,45 @@ namespace VRCLightVolumes.Tests {
             Assert.That(lowResolutionEffectiveRadius, Is.EqualTo(highResolutionEffectiveRadius).Within(Epsilon));
             Assert.That(narrowAngleProjectedRadius, Is.GreaterThan(wideAngleProjectedRadius));
             Assert.That(narrowAnglePhysicalRadius, Is.EqualTo(wideAnglePhysicalRadius).Within(Epsilon));
+        }
+
+        // Verifies shared manager-owned blur materials use manager keyword state instead of stale per-light state.
+        [Test]
+        public void RuntimeShadowBlurSharedMaterialReappliesKeywordsBetweenLights() {
+            LightVolumeManager manager = CreateManager("Runtime Shadow Shared Blur Manager", false);
+            Material blurMaterial = CreateMaterial("Hidden/VRCLV/PointLightShadowRuntimeBlur");
+            manager.RuntimeShadowBlurMaterial = blurMaterial;
+            manager.RuntimeShadowBlurQualityPreset = -1;
+            manager.RuntimeShadowBlurUniformKeyword = -1;
+            manager.RuntimeShadowBlurDirectKeyword = -1;
+            manager.RuntimeShadowBlurSphericalKeyword = -1;
+
+            PointLightVolumeInstance highQuality = CreatePointLight(manager, "Runtime Shadow Shared Blur High", true);
+            PointLightVolumeInstance lowQuality = CreatePointLight(manager, "Runtime Shadow Shared Blur Low", true);
+            highQuality.RuntimeShadowBlurMaterial = blurMaterial;
+            lowQuality.RuntimeShadowBlurMaterial = blurMaterial;
+            highQuality.RuntimeShadowBlurSamplePreset = 2;
+            lowQuality.RuntimeShadowBlurSamplePreset = 0;
+
+            MethodInfo initializeShaderPropertiesMethod = typeof(PointLightVolumeInstance).GetMethod("InitializeRuntimeShadowShaderProperties", _lifecycleMethodFlags);
+            MethodInfo prepareShadowBlurMaterialMethod = typeof(PointLightVolumeInstance).GetMethod("PrepareRuntimeShadowBlurMaterial", _lifecycleMethodFlags);
+            Assert.That(initializeShaderPropertiesMethod, Is.Not.Null);
+            Assert.That(prepareShadowBlurMaterialMethod, Is.Not.Null);
+
+            ConfigureRuntimeShadowBlurReflectionState(highQuality, initializeShaderPropertiesMethod);
+            ConfigureRuntimeShadowBlurReflectionState(lowQuality, initializeShaderPropertiesMethod);
+
+            Assert.That((bool)prepareShadowBlurMaterialMethod.Invoke(highQuality, new object[] { true, 1f, 128, true, false }), Is.True);
+            Assert.That(blurMaterial.IsKeywordEnabled("VRCLV_RUNTIME_SHADOW_QUALITY_HIGH"), Is.True);
+            Assert.That(manager.RuntimeShadowBlurQualityPreset, Is.EqualTo(2));
+
+            Assert.That((bool)prepareShadowBlurMaterialMethod.Invoke(lowQuality, new object[] { true, 1f, 128, true, false }), Is.True);
+            Assert.That(blurMaterial.IsKeywordEnabled("VRCLV_RUNTIME_SHADOW_QUALITY_LOW"), Is.True);
+            Assert.That(manager.RuntimeShadowBlurQualityPreset, Is.EqualTo(0));
+
+            Assert.That((bool)prepareShadowBlurMaterialMethod.Invoke(highQuality, new object[] { true, 1f, 128, true, false }), Is.True);
+            Assert.That(blurMaterial.IsKeywordEnabled("VRCLV_RUNTIME_SHADOW_QUALITY_HIGH"), Is.True);
+            Assert.That(manager.RuntimeShadowBlurQualityPreset, Is.EqualTo(2));
         }
 
         // Verifies planar runtime Spot Light blur compensates projection scale so changing the cone angle keeps blur width stable.
@@ -1853,72 +1964,60 @@ namespace VRCLightVolumes.Tests {
             point.WorldSpaceShadows = true;
             RenderTexture source = CreateRenderTexture("Runtime Shadow Metadata Source", 4, 4, 1, TextureDimension.Cube);
 
-            GameObject bakerObject = CreateGameObject("Runtime Shadow Metadata Baker", true);
-            PointLightShadowRuntimeBaker baker = bakerObject.AddComponent<PointLightShadowRuntimeBaker>();
-            baker.TargetPointLightVolume = point;
-            baker.Realtime = true;
+            PointLightVolumeInstance baker = point;
             AddRuntimeShadowCamera(baker);
             point.FarClip = 12f;
+            point.NearClip = 0.35f;
+            point.Bias = 0.25f;
 
-            MethodInfo cacheMethod = typeof(PointLightShadowRuntimeBaker).GetMethod("CacheRuntimeReferences", _lifecycleMethodFlags);
-            MethodInfo refreshSettingsMethod = typeof(PointLightShadowRuntimeBaker).GetMethod("RefreshBakeSettings", _lifecycleMethodFlags);
-            FieldInfo shadowMapTextureField = typeof(PointLightShadowRuntimeBaker).GetField("_shadowTexture", _lifecycleMethodFlags);
-            MethodInfo applyMethod = typeof(PointLightShadowRuntimeBaker).GetMethod("ApplyTargetShadowSourceInternal", _lifecycleMethodFlags);
-            Assert.That(cacheMethod, Is.Not.Null);
-            Assert.That(refreshSettingsMethod, Is.Not.Null);
+            FieldInfo shadowMapTextureField = typeof(PointLightVolumeInstance).GetField("_runtimeShadowTexture", _lifecycleMethodFlags);
+            MethodInfo applyMethod = typeof(PointLightVolumeInstance).GetMethod("ApplyRuntimeShadowSourceInternal", _lifecycleMethodFlags);
             Assert.That(shadowMapTextureField, Is.Not.Null);
             Assert.That(applyMethod, Is.Not.Null);
-            cacheMethod.Invoke(baker, null);
-            refreshSettingsMethod.Invoke(baker, null);
             shadowMapTextureField.SetValue(baker, source);
 
             Vector3 bakePosition = new Vector3(1, 2, 3);
-            Assert.That((bool)applyMethod.Invoke(baker, new object[] { bakePosition, 12f, 0.35f, 0.25f, false }), Is.True);
+            Quaternion bakeRotation = Quaternion.Euler(0f, 45f, 0f);
+            Assert.That((bool)applyMethod.Invoke(baker, new object[] { bakePosition, bakeRotation, false, false, true }), Is.True);
             Assert.That(point.FarClip, Is.EqualTo(12f).Within(Epsilon));
             Assert.That(point.NearClip, Is.EqualTo(0.35f).Within(Epsilon));
             Assert.That(point.Bias, Is.EqualTo(0.25f).Within(Epsilon));
             Assert.That(point.AutoUpdateShadowMap, Is.False);
             AssertVectorClose(new Vector4(bakePosition.x, bakePosition.y, bakePosition.z, 0), new Vector4(point.ShadowBakePosition.x, point.ShadowBakePosition.y, point.ShadowBakePosition.z, 0));
+            Assert.That(Quaternion.Dot(point.ShadowBakeRotation, bakeRotation), Is.EqualTo(1f).Within(Epsilon));
 
-            Assert.That((bool)applyMethod.Invoke(baker, new object[] { bakePosition, 12f, 0.35f, 0.25f, false }), Is.False);
-            Assert.That((bool)applyMethod.Invoke(baker, new object[] { bakePosition + Vector3.right, 12f, 0.35f, 0.25f, false }), Is.True);
+            Assert.That((bool)applyMethod.Invoke(baker, new object[] { bakePosition, bakeRotation, false, false, true }), Is.False);
+            Assert.That((bool)applyMethod.Invoke(baker, new object[] { bakePosition + Vector3.right, bakeRotation, false, false, true }), Is.True);
         }
 
         // Verifies direct runtime baker output reserves a manager shadow slot without entering the auto shadow update cache.
         [Test]
         public void RuntimeShadowBakerDirectOutputDoesNotEnterAutoShadowUpdateCache() {
             LightVolumeManager manager = CreateManager("Runtime Shadow Direct Auto Cache Manager", false);
-            manager.ShadowTexturesWidth = 8;
-            manager.ShadowTexturesHeight = 8;
+            manager.ShadowTexturesWidth = 16;
+            manager.ShadowTexturesHeight = 16;
             PointLightVolumeInstance point = CreatePointLight(manager, "Runtime Shadow Direct Auto Cache Light", true);
             point.AutoUpdateShadowMap = true;
             manager.PointLightVolumeInstances = new[] { point };
 
-            GameObject bakerObject = CreateGameObject("Runtime Shadow Direct Auto Cache Baker", true);
-            PointLightShadowRuntimeBaker baker = bakerObject.AddComponent<PointLightShadowRuntimeBaker>();
-            baker.TargetPointLightVolume = point;
-            baker.Realtime = true;
-            baker.Resolution = 8;
+            PointLightVolumeInstance baker = point;
+            baker.RuntimeShadowResolution = 16;
             AddRuntimeShadowCamera(baker);
 
             RenderTexture registrationTexture = CreateRenderTexture("Runtime Shadow Direct Registration", 1, 1, 6, TextureDimension.Tex2DArray);
-            FieldInfo registrationTextureField = typeof(PointLightShadowRuntimeBaker).GetField("_registrationTexture", _lifecycleMethodFlags);
-            FieldInfo useDirectOutputField = typeof(PointLightShadowRuntimeBaker).GetField("_useDirectOutput", _lifecycleMethodFlags);
-            MethodInfo cacheMethod = typeof(PointLightShadowRuntimeBaker).GetMethod("CacheRuntimeReferences", _lifecycleMethodFlags);
-            MethodInfo refreshSettingsMethod = typeof(PointLightShadowRuntimeBaker).GetMethod("RefreshBakeSettings", _lifecycleMethodFlags);
-            MethodInfo applyMethod = typeof(PointLightShadowRuntimeBaker).GetMethod("ApplyTargetShadowSourceInternal", _lifecycleMethodFlags);
+            FieldInfo registrationTextureField = typeof(PointLightVolumeInstance).GetField("_runtimeShadowRegistrationTexture", _lifecycleMethodFlags);
+            MethodInfo applyMethod = typeof(PointLightVolumeInstance).GetMethod("ApplyRuntimeShadowSourceInternal", _lifecycleMethodFlags);
             Assert.That(registrationTextureField, Is.Not.Null);
-            Assert.That(useDirectOutputField, Is.Not.Null);
-            Assert.That(cacheMethod, Is.Not.Null);
-            Assert.That(refreshSettingsMethod, Is.Not.Null);
             Assert.That(applyMethod, Is.Not.Null);
 
-            cacheMethod.Invoke(baker, null);
-            refreshSettingsMethod.Invoke(baker, null);
+            baker.RuntimeShadowResolution = 16;
+            baker.RuntimeShadowBlurSamplePreset = 1;
+            baker.RuntimeShadowSphericalBlur = false;
+            baker.RuntimeShadowFacesPerFrame = 1;
+            baker.RuntimeShadowDirectOutput = true;
             registrationTextureField.SetValue(baker, registrationTexture);
-            Assert.That((bool)useDirectOutputField.GetValue(baker), Is.True);
 
-            Assert.That((bool)applyMethod.Invoke(baker, new object[] { Vector3.zero, 8f, 0.01f, 0.1f, true }), Is.True);
+            Assert.That((bool)applyMethod.Invoke(baker, new object[] { Vector3.zero, Quaternion.identity, false, true, true }), Is.True);
             manager.ReinitializeShadowTextures();
 
             Assert.That(point.AutoUpdateShadowMap, Is.False);
@@ -1933,56 +2032,44 @@ namespace VRCLightVolumes.Tests {
             point.WorldSpaceShadows = false;
             RenderTexture source = CreateRenderTexture("Runtime Shadow Local Metadata Source", 4, 4, 6, TextureDimension.Tex2DArray);
 
-            GameObject bakerObject = CreateGameObject("Runtime Shadow Local Metadata Baker", true);
-            PointLightShadowRuntimeBaker baker = bakerObject.AddComponent<PointLightShadowRuntimeBaker>();
-            baker.TargetPointLightVolume = point;
+            PointLightVolumeInstance baker = point;
             AddRuntimeShadowCamera(baker);
 
-            MethodInfo cacheMethod = typeof(PointLightShadowRuntimeBaker).GetMethod("CacheRuntimeReferences", _lifecycleMethodFlags);
-            MethodInfo refreshSettingsMethod = typeof(PointLightShadowRuntimeBaker).GetMethod("RefreshBakeSettings", _lifecycleMethodFlags);
-            FieldInfo shadowMapTextureField = typeof(PointLightShadowRuntimeBaker).GetField("_shadowTexture", _lifecycleMethodFlags);
-            MethodInfo applyMethod = typeof(PointLightShadowRuntimeBaker).GetMethod("ApplyTargetShadowSourceInternal", _lifecycleMethodFlags);
-            Assert.That(cacheMethod, Is.Not.Null);
-            Assert.That(refreshSettingsMethod, Is.Not.Null);
+            FieldInfo shadowMapTextureField = typeof(PointLightVolumeInstance).GetField("_runtimeShadowTexture", _lifecycleMethodFlags);
+            MethodInfo applyMethod = typeof(PointLightVolumeInstance).GetMethod("ApplyRuntimeShadowSourceInternal", _lifecycleMethodFlags);
             Assert.That(shadowMapTextureField, Is.Not.Null);
             Assert.That(applyMethod, Is.Not.Null);
-            cacheMethod.Invoke(baker, null);
-            refreshSettingsMethod.Invoke(baker, null);
             shadowMapTextureField.SetValue(baker, source);
 
             Vector3 bakePosition = new Vector3(1, 2, 3);
-            Assert.That((bool)applyMethod.Invoke(baker, new object[] { bakePosition, 12f, 0.35f, 0.25f, false }), Is.True);
-            Assert.That((bool)applyMethod.Invoke(baker, new object[] { bakePosition + Vector3.right, 12f, 0.35f, 0.25f, false }), Is.False);
+            Assert.That((bool)applyMethod.Invoke(baker, new object[] { bakePosition, Quaternion.identity, false, false, true }), Is.True);
+            Assert.That((bool)applyMethod.Invoke(baker, new object[] { bakePosition + Vector3.right, Quaternion.identity, false, false, true }), Is.False);
         }
 
-        // Verifies realtime baker settings refresh does not notify the manager for local-space transform-only movement.
+        // Verifies runtime shadow baking does not dirty manager metadata for local-space transform-only movement.
         [Test]
-        public void RuntimeShadowBakerRefreshSettingsDoesNotDirtyManagerOnLocalSpaceMove() {
+        public void RuntimeShadowBakerDoesNotDirtyManagerOnLocalSpaceMove() {
             LightVolumeManager manager = CreateManager("Runtime Shadow Local Move Manager", false);
             PointLightVolumeInstance point = CreatePointLight(manager, "Runtime Shadow Local Move Light", true);
             point.WorldSpaceShadows = false;
             manager.PointLightVolumeInstances = new[] { point };
             manager.UpdateVolumes();
 
-            GameObject bakerObject = CreateGameObject("Runtime Shadow Local Move Baker", true);
-            PointLightShadowRuntimeBaker baker = bakerObject.AddComponent<PointLightShadowRuntimeBaker>();
-            baker.TargetPointLightVolume = point;
+            PointLightVolumeInstance baker = point;
+            baker.RuntimeShadowResolution = 16;
+            baker.RuntimeShadowDepthEncodeMaterial = CreateMaterial("Hidden/VRCLV/PointLightShadowDepthEncode");
             AddRuntimeShadowCamera(baker);
 
-            MethodInfo cacheMethod = typeof(PointLightShadowRuntimeBaker).GetMethod("CacheRuntimeReferences", _lifecycleMethodFlags);
-            MethodInfo refreshSettingsMethod = typeof(PointLightShadowRuntimeBaker).GetMethod("RefreshBakeSettings", _lifecycleMethodFlags);
-            Assert.That(cacheMethod, Is.Not.Null);
-            Assert.That(refreshSettingsMethod, Is.Not.Null);
             Assert.That(_pointLightArraysDirtyField, Is.Not.Null);
 
-            cacheMethod.Invoke(baker, null);
+            baker.BakeShadows();
             point.IsRangeDirty = false;
             SetManagerField(manager, _pointLightArraysDirtyField, false);
 
             point.transform.position = new Vector3(3, 4, 5);
             point.transform.rotation = Quaternion.Euler(0, 45, 0);
 
-            refreshSettingsMethod.Invoke(baker, null);
+            baker.BakeShadows();
 
             Assert.That(GetManagerField<bool>(manager, _pointLightArraysDirtyField), Is.False);
         }
@@ -1994,27 +2081,19 @@ namespace VRCLightVolumes.Tests {
             PointLightVolumeInstance point = CreatePointLight(manager, "Runtime Shadow Blur Metadata Light", true);
             RenderTexture shadowSource = CreateRenderTexture("Runtime Shadow Blur Source", 4, 4, 6, TextureDimension.Tex2DArray);
 
-            GameObject bakerObject = CreateGameObject("Runtime Shadow Blur Metadata Baker", true);
-            PointLightShadowRuntimeBaker baker = bakerObject.AddComponent<PointLightShadowRuntimeBaker>();
-            baker.TargetPointLightVolume = point;
-            AddRuntimeShadowCamera(baker);
-
-            MethodInfo cacheMethod = typeof(PointLightShadowRuntimeBaker).GetMethod("CacheRuntimeReferences", _lifecycleMethodFlags);
-            MethodInfo refreshSettingsMethod = typeof(PointLightShadowRuntimeBaker).GetMethod("RefreshBakeSettings", _lifecycleMethodFlags);
-            FieldInfo shadowMapTextureField = typeof(PointLightShadowRuntimeBaker).GetField("_shadowTexture", _lifecycleMethodFlags);
-            MethodInfo applyMethod = typeof(PointLightShadowRuntimeBaker).GetMethod("ApplyTargetShadowSourceInternal", _lifecycleMethodFlags);
-            Assert.That(cacheMethod, Is.Not.Null);
-            Assert.That(refreshSettingsMethod, Is.Not.Null);
-            Assert.That(shadowMapTextureField, Is.Not.Null);
-            Assert.That(applyMethod, Is.Not.Null);
-            cacheMethod.Invoke(baker, null);
-            refreshSettingsMethod.Invoke(baker, null);
-
+            PointLightVolumeInstance baker = point;
             point.Blur = 1;
             baker.RuntimeShadowBlurMaterial = CreateMaterial("Hidden/VRCLV/PointLightShadowRuntimeBlur");
+            AddRuntimeShadowCamera(baker);
+
+            FieldInfo shadowMapTextureField = typeof(PointLightVolumeInstance).GetField("_runtimeShadowTexture", _lifecycleMethodFlags);
+            MethodInfo applyMethod = typeof(PointLightVolumeInstance).GetMethod("ApplyRuntimeShadowSourceInternal", _lifecycleMethodFlags);
+            Assert.That(shadowMapTextureField, Is.Not.Null);
+            Assert.That(applyMethod, Is.Not.Null);
+
             shadowMapTextureField.SetValue(baker, shadowSource);
 
-            Assert.That((bool)applyMethod.Invoke(baker, new object[] { Vector3.zero, 8f, 0.01f, 0.1f, false }), Is.True);
+            Assert.That((bool)applyMethod.Invoke(baker, new object[] { Vector3.zero, Quaternion.identity, false, false, true }), Is.True);
             Assert.That(point.ShadowMapTexture, Is.SameAs(shadowSource));
             Assert.That(point.ShadowMapTextureIsCubemap, Is.False);
             Assert.That(point.ShadowMapTextureHasDepthSlices, Is.True);
@@ -2511,11 +2590,20 @@ namespace VRCLightVolumes.Tests {
             return gameObject;
         }
 
+        // Configures the private runtime blur state needed by reflection-based blur material tests.
+        private static void ConfigureRuntimeShadowBlurReflectionState(PointLightVolumeInstance point, MethodInfo initializeShaderPropertiesMethod) {
+            initializeShaderPropertiesMethod.Invoke(point, null);
+            point.Blur = 1f;
+            point.ContactHardening = 0f;
+        }
+
         // Adds the hidden camera that the editor preprocessor normally injects before Play Mode or build
-        private static Camera AddRuntimeShadowCamera(PointLightShadowRuntimeBaker baker) {
-            Camera camera = baker.gameObject.AddComponent<Camera>();
+        private Camera AddRuntimeShadowCamera(PointLightVolumeInstance point) {
+            GameObject cameraObject = CreateGameObject(point.name + " Runtime Shadow Camera", true);
+            cameraObject.transform.SetParent(point.transform, false);
+            Camera camera = cameraObject.AddComponent<Camera>();
             camera.enabled = false;
-            baker.ShadowCamera = camera;
+            point.RuntimeShadowCamera = camera;
             return camera;
         }
 
@@ -2666,7 +2754,12 @@ namespace VRCLightVolumes.Tests {
             Assert.That(data.x, Is.EqualTo(customId).Within(Epsilon));
             Assert.That(data.y, Is.EqualTo(shadowId).Within(Epsilon));
             Assert.That(data.z, Is.EqualTo(point.SquaredRange).Within(Epsilon));
-            float expectedShadowFarClip = point.ShadowMapID >= 0 ? (point.FarClip > 0 ? point.FarClip : Mathf.Sqrt(Mathf.Max(point.SquaredRange, 0.000001f))) : 0;
+            float expectedShadowFarClip = 0f;
+            if (point.ShadowMapID >= 0) {
+                float expectedShadowNearClip = Mathf.Max(point.NearClip, 0.0001f);
+                expectedShadowFarClip = point.FarClip > 0f ? Mathf.Max(point.FarClip, expectedShadowNearClip + 0.0001f) : Mathf.Sqrt(Mathf.Max(point.SquaredRange, 0.000001f));
+                if (expectedShadowNearClip >= expectedShadowFarClip) expectedShadowFarClip = expectedShadowNearClip + 0.0001f;
+            }
             Assert.That(data.w, Is.EqualTo(expectedShadowFarClip).Within(Epsilon));
         }
 

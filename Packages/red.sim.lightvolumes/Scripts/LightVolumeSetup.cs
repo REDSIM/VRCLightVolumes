@@ -737,6 +737,9 @@ namespace VRCLightVolumes {
             if (LightVolumeManager == null && !TryGetComponent(out LightVolumeManager)) {
                 LightVolumeManager = gameObject.AddComponent<LightVolumeManager>();
             }
+#if !COMPILER_UDONSHARP
+            if (LightVolumeManager != null) LightVolumeManager.EnsureRuntimeShadowCamera();
+#endif
 #if UDONSHARP
             if (_lightVolumeManagerBehaviour == null) {
                 TryGetComponent(out _lightVolumeManagerBehaviour);

@@ -20,8 +20,10 @@ namespace VRCLightVolumes {
 
         private static readonly List<LightVolumeManager> _managerBuffer = new List<LightVolumeManager>();
         private static readonly List<LightVolumeSetup> _setupBuffer = new List<LightVolumeSetup>();
+        private static readonly List<LightVolume> _authoringLightVolumeBuffer = new List<LightVolume>();
+        private static readonly List<PointLightVolume> _authoringPointLightBuffer = new List<PointLightVolume>();
+        private static readonly List<PointLightVolumeInstance> _pointLightBuffer = new List<PointLightVolumeInstance>();
         private static readonly List<PointLightShadowRuntimeBaker> _shadowBakerBuffer = new List<PointLightShadowRuntimeBaker>();
-        private static readonly List<Camera> _cameraBuffer = new List<Camera>();
         private static readonly object[] _setProgramVariableArgs = new object[2];
 
         private static MethodInfo _setProgramVariableMethod;
@@ -101,15 +103,35 @@ namespace VRCLightVolumes {
 
                 _managerBuffer.Clear();
                 root.GetComponentsInChildren(true, _managerBuffer);
-                for (int j = 0; j < _managerBuffer.Count; j++) PrepareManagerMaterial(_managerBuffer[j], cubemapFaceShader, editorTemporary);
+                for (int j = 0; j < _managerBuffer.Count; j++) PrepareManagerRuntimeDependencies(_managerBuffer[j], cubemapFaceShader, shadowDepthEncodeShader, shadowBlurShader, editorTemporary);
+
+                _authoringPointLightBuffer.Clear();
+                root.GetComponentsInChildren(true, _authoringPointLightBuffer);
+                for (int j = 0; j < _authoringPointLightBuffer.Count; j++) PrepareAuthoringPointLightRuntimeShadowDependencies(_authoringPointLightBuffer[j], shadowDepthEncodeShader, shadowBlurShader, editorTemporary);
+
+                _pointLightBuffer.Clear();
+                root.GetComponentsInChildren(true, _pointLightBuffer);
+                for (int j = 0; j < _pointLightBuffer.Count; j++) {
+                    PointLightVolumeInstance pointLight = _pointLightBuffer[j];
+                    if (pointLight == null) continue;
+                    if (pointLight.BakeInGame && pointLight.GetComponent<PointLightVolume>() == null) PreparePointLightRuntimeShadowDependencies(pointLight, shadowDepthEncodeShader, shadowBlurShader, editorTemporary);
+                }
 
                 _shadowBakerBuffer.Clear();
                 root.GetComponentsInChildren(true, _shadowBakerBuffer);
-                for (int j = 0; j < _shadowBakerBuffer.Count; j++) PrepareShadowBakerDependencies(_shadowBakerBuffer[j], shadowDepthEncodeShader, shadowBlurShader, editorTemporary);
+                for (int j = 0; j < _shadowBakerBuffer.Count; j++) {
+                    PointLightShadowRuntimeBaker baker = _shadowBakerBuffer[j];
+                    if (baker != null) PreparePointLightRuntimeShadowDependencies(baker.TargetPointLightVolume, shadowDepthEncodeShader, shadowBlurShader, editorTemporary);
+                }
+
+                if (!editorTemporary) ClearBuildOnlySerializedReferences(root);
             }
 
             _managerBuffer.Clear();
             _setupBuffer.Clear();
+            _authoringLightVolumeBuffer.Clear();
+            _authoringPointLightBuffer.Clear();
+            _pointLightBuffer.Clear();
             _shadowBakerBuffer.Clear();
         }
 
@@ -138,15 +160,18 @@ namespace VRCLightVolumes {
 
                 _managerBuffer.Clear();
                 root.GetComponentsInChildren(true, _managerBuffer);
-                for (int j = 0; j < _managerBuffer.Count; j++) ApplyManagerMaterial(_managerBuffer[j]);
+                for (int j = 0; j < _managerBuffer.Count; j++) ApplyManagerRuntimeDependencies(_managerBuffer[j]);
 
-                _shadowBakerBuffer.Clear();
-                root.GetComponentsInChildren(true, _shadowBakerBuffer);
-                for (int j = 0; j < _shadowBakerBuffer.Count; j++) ApplyShadowBakerDependencies(_shadowBakerBuffer[j]);
+                _pointLightBuffer.Clear();
+                root.GetComponentsInChildren(true, _pointLightBuffer);
+                for (int j = 0; j < _pointLightBuffer.Count; j++) {
+                    PointLightVolumeInstance pointLight = _pointLightBuffer[j];
+                    if (HasPointLightRuntimeShadowDependencies(pointLight)) ApplyPointLightRuntimeShadowDependencies(pointLight);
+                }
             }
 
             _managerBuffer.Clear();
-            _shadowBakerBuffer.Clear();
+            _pointLightBuffer.Clear();
         }
 
         // Clears editor-only runtime dependencies from Light Volumes Udon components under the given roots
@@ -158,112 +183,276 @@ namespace VRCLightVolumes {
                 _managerBuffer.Clear();
                 root.GetComponentsInChildren(true, _managerBuffer);
                 for (int j = 0; j < _managerBuffer.Count; j++) ClearManagerMaterial(_managerBuffer[j]);
-
-                _shadowBakerBuffer.Clear();
-                root.GetComponentsInChildren(true, _shadowBakerBuffer);
-                for (int j = 0; j < _shadowBakerBuffer.Count; j++) ClearShadowBakerDependencies(_shadowBakerBuffer[j]);
             }
 
             _managerBuffer.Clear();
-            _shadowBakerBuffer.Clear();
         }
 
-        // Prepares the cubemap face unwrap material for one runtime manager
-        static void PrepareManagerMaterial(LightVolumeManager manager, Shader cubemapFaceShader, bool editorTemporary) {
+        // Prepares all shared runtime materials and the shared shadow bake camera for one runtime manager.
+        static void PrepareManagerRuntimeDependencies(LightVolumeManager manager, Shader cubemapFaceShader, Shader depthEncodeShader, Shader blurShader, bool editorTemporary) {
             if (manager == null) return;
+            PrepareManagerRuntimeShadowDependencies(manager, depthEncodeShader, blurShader, editorTemporary, false);
             manager.CubemapFaceMaterial = CreateRuntimeMaterialInstance(cubemapFaceShader, manager.CubemapFaceMaterial, manager.name + "_CubemapFaceRuntime", editorTemporary);
-            ApplyManagerMaterial(manager);
+            ApplyManagerRuntimeDependencies(manager);
         }
 
-        // Prepares the shadow depth camera, encode material and blur material for one runtime shadow baker
-        static void PrepareShadowBakerDependencies(PointLightShadowRuntimeBaker baker, Shader depthEncodeShader, Shader blurShader, bool editorTemporary) {
-            if (baker == null) return;
-            baker.ShadowCamera = CreateRuntimeShadowCamera(baker, editorTemporary);
-            baker.RuntimeShadowDepthEncodeMaterial = CreateRuntimeMaterialInstance(depthEncodeShader, baker.RuntimeShadowDepthEncodeMaterial, baker.name + "_ShadowDepthEncodeRuntime", editorTemporary);
-            baker.RuntimeShadowBlurMaterial = CreateRuntimeMaterialInstance(blurShader, baker.RuntimeShadowBlurMaterial, baker.name + "_ShadowBlurRuntime", editorTemporary);
-            ApplyShadowBakerDependencies(baker);
+        // Prepares shared runtime shadow bake dependencies for one runtime manager.
+        static void PrepareManagerRuntimeShadowDependencies(LightVolumeManager manager, Shader depthEncodeShader, Shader blurShader, bool editorTemporary, bool apply) {
+            if (manager == null) return;
+            manager.EnsureRuntimeShadowCamera();
+            manager.RuntimeShadowDepthEncodeMaterial = CreateRuntimeMaterialInstance(depthEncodeShader, manager.RuntimeShadowDepthEncodeMaterial, manager.name + "_ShadowDepthEncodeRuntime", editorTemporary);
+            manager.RuntimeShadowBlurMaterial = CreateRuntimeMaterialInstance(blurShader, manager.RuntimeShadowBlurMaterial, manager.name + "_ShadowBlurRuntime", editorTemporary);
+            ResetManagerRuntimeShadowBlurState(manager);
+            if (apply) ApplyManagerRuntimeDependencies(manager);
         }
 
-        // Pushes the prepared cubemap face material into one backing UdonBehaviour
-        static void ApplyManagerMaterial(LightVolumeManager manager) {
+        // Uses the authoring Bake In Game state as the build-time source of truth and removes baked shadow asset references from the temporary build scene.
+        static void PrepareAuthoringPointLightRuntimeShadowDependencies(PointLightVolume authoringPointLight, Shader depthEncodeShader, Shader blurShader, bool editorTemporary) {
+            if (authoringPointLight == null) return;
+            PointLightVolumeInstance pointLight = authoringPointLight.PointLightVolumeInstance;
+            if (pointLight == null) return;
+            if (!authoringPointLight.BakeInGame) {
+                bool hadBakeInGame = pointLight.BakeInGame;
+                if (hadBakeInGame) pointLight.BakeInGame = false;
+                if (hadBakeInGame) ApplyPointLightRuntimeShadowBakeSettings(pointLight, GetBackingUdonBehaviour(pointLight));
+                return;
+            }
+            if (!editorTemporary) ClearAuthoringPointLightRuntimeShadowSource(authoringPointLight);
+
+            if (!authoringPointLight.Shadows) {
+                pointLight.BakeInGame = false;
+                ClearPointLightRuntimeShadowSource(pointLight);
+                ApplyPointLightRuntimeShadowDependencies(pointLight);
+                Component udonBehaviour = GetBackingUdonBehaviour(pointLight);
+                ApplyPointLightRuntimeShadowSource(pointLight, udonBehaviour);
+                return;
+            }
+
+            int runtimeShadowResolution = authoringPointLight.LightVolumeSetup != null ? (int)authoringPointLight.LightVolumeSetup.ShadowResolution : pointLight.RuntimeShadowResolution;
+            pointLight.BakeInGame = true;
+            pointLight.RuntimeShadowResolution = Mathf.Max(runtimeShadowResolution, 16);
+            pointLight.RuntimeShadowBlurSamplePreset = 2;
+            pointLight.RuntimeShadowSphericalBlur = true;
+            pointLight.RuntimeShadowFacesPerFrame = 6;
+            pointLight.RuntimeShadowDirectOutput = false;
+            PreparePointLightRuntimeShadowDependencies(pointLight, depthEncodeShader, blurShader, editorTemporary);
+        }
+
+        // Prepares one point light to use manager-owned runtime shadow bake dependencies.
+        static void PreparePointLightRuntimeShadowDependencies(PointLightVolumeInstance pointLight, Shader depthEncodeShader, Shader blurShader, bool editorTemporary) {
+            if (pointLight == null) return;
+            LightVolumeManager manager = ResolvePointLightManager(pointLight);
+            if (manager != null) {
+                manager.EnsureRuntimeShadowCamera();
+                if (manager.RuntimeShadowCamera == null || !IsRuntimeMaterialReady(manager.RuntimeShadowDepthEncodeMaterial, depthEncodeShader) || !IsRuntimeMaterialReady(manager.RuntimeShadowBlurMaterial, blurShader)) PrepareManagerRuntimeShadowDependencies(manager, depthEncodeShader, blurShader, editorTemporary, true);
+                else ApplyManagerRuntimeDependencies(manager);
+                pointLight.LightVolumeManager = manager;
+            }
+            if (pointLight.BakeInGame) ClearPointLightRuntimeShadowSource(pointLight);
+            ApplyPointLightRuntimeShadowDependencies(pointLight);
+        }
+
+        // Pushes the prepared manager runtime dependencies into one backing UdonBehaviour.
+        static void ApplyManagerRuntimeDependencies(LightVolumeManager manager) {
             if (manager == null) return;
             Component udonBehaviour = GetBackingUdonBehaviour(manager);
             if (udonBehaviour == null) return;
             SetUdonProgramVariable(udonBehaviour, "CubemapFaceMaterial", manager.CubemapFaceMaterial);
+            SetUdonProgramVariable(udonBehaviour, "RuntimeShadowCamera", manager.RuntimeShadowCamera);
+            SetUdonProgramVariable(udonBehaviour, "RuntimeShadowDepthEncodeMaterial", manager.RuntimeShadowDepthEncodeMaterial);
+            SetUdonProgramVariable(udonBehaviour, "RuntimeShadowBlurMaterial", manager.RuntimeShadowBlurMaterial);
+            SetUdonProgramVariable(udonBehaviour, "RuntimeShadowBlurQualityPreset", manager.RuntimeShadowBlurQualityPreset);
+            SetUdonProgramVariable(udonBehaviour, "RuntimeShadowBlurUniformKeyword", manager.RuntimeShadowBlurUniformKeyword);
+            SetUdonProgramVariable(udonBehaviour, "RuntimeShadowBlurDirectKeyword", manager.RuntimeShadowBlurDirectKeyword);
+            SetUdonProgramVariable(udonBehaviour, "RuntimeShadowBlurSphericalKeyword", manager.RuntimeShadowBlurSphericalKeyword);
         }
 
-        // Pushes the prepared runtime shadow dependencies into one backing UdonBehaviour
-        static void ApplyShadowBakerDependencies(PointLightShadowRuntimeBaker baker) {
-            if (baker == null) return;
-            Component udonBehaviour = GetBackingUdonBehaviour(baker);
+        // Pushes the prepared point light runtime shadow dependencies into one backing UdonBehaviour.
+        static void ApplyPointLightRuntimeShadowDependencies(PointLightVolumeInstance pointLight) {
+            if (pointLight == null) return;
+            Component udonBehaviour = GetBackingUdonBehaviour(pointLight);
             if (udonBehaviour == null) return;
-            SetUdonProgramVariable(udonBehaviour, "ShadowCamera", baker.ShadowCamera);
-            SetUdonProgramVariable(udonBehaviour, "RuntimeShadowDepthEncodeMaterial", baker.RuntimeShadowDepthEncodeMaterial);
-            SetUdonProgramVariable(udonBehaviour, "RuntimeShadowBlurMaterial", baker.RuntimeShadowBlurMaterial);
+            ApplyPointLightRuntimeShadowBakeSettings(pointLight, udonBehaviour);
+            if (pointLight.BakeInGame) ApplyPointLightRuntimeShadowSource(pointLight, udonBehaviour);
         }
 
-        // Clears one manager's temporary cubemap face material reference
+        // Returns true when this point light has runtime shadow bake data that needs pushing into Udon.
+        static bool HasPointLightRuntimeShadowDependencies(PointLightVolumeInstance pointLight) {
+            return pointLight != null && pointLight.BakeInGame;
+        }
+
+        // Clears one manager's temporary runtime material references.
         static void ClearManagerMaterial(LightVolumeManager manager) {
             if (manager == null) return;
             DestroyRuntimeMaterialInstance(manager.CubemapFaceMaterial);
+            DestroyRuntimeMaterialInstance(manager.RuntimeShadowDepthEncodeMaterial);
+            DestroyRuntimeMaterialInstance(manager.RuntimeShadowBlurMaterial);
             manager.CubemapFaceMaterial = null;
+            manager.RuntimeShadowDepthEncodeMaterial = null;
+            manager.RuntimeShadowBlurMaterial = null;
+            ResetManagerRuntimeShadowBlurState(manager);
         }
 
-        // Clears one shadow baker's temporary runtime shadow dependencies
-        static void ClearShadowBakerDependencies(PointLightShadowRuntimeBaker baker) {
-            if (baker == null) return;
-            bool clearCameraReference = baker.ShadowCamera != null && (baker.ShadowCamera.hideFlags & HideFlags.DontSaveInEditor) != 0;
-            DestroyRuntimeShadowCamera(baker.ShadowCamera);
-            DestroyRuntimeMaterialInstance(baker.RuntimeShadowDepthEncodeMaterial);
-            DestroyRuntimeMaterialInstance(baker.RuntimeShadowBlurMaterial);
-            if (clearCameraReference) baker.ShadowCamera = null;
-            baker.RuntimeShadowDepthEncodeMaterial = null;
-            baker.RuntimeShadowBlurMaterial = null;
+        // Resolves the manager that owns runtime dependencies for one point light, falling back to the authoring setup when needed.
+        static LightVolumeManager ResolvePointLightManager(PointLightVolumeInstance pointLight) {
+            if (pointLight == null) return null;
+            LightVolumeManager manager = pointLight.LightVolumeManager;
+            if (manager != null) return manager;
+            PointLightVolume authoringPointLight = pointLight.GetComponent<PointLightVolume>();
+            if (authoringPointLight == null || authoringPointLight.LightVolumeSetup == null) return null;
+            return authoringPointLight.LightVolumeSetup.LightVolumeManager;
         }
 
-        // Creates the hidden disabled depth camera used by one runtime shadow baker
-        static Camera CreateRuntimeShadowCamera(PointLightShadowRuntimeBaker baker, bool editorTemporary) {
-            Camera camera = baker.ShadowCamera;
-            if (!IsOwnedRuntimeShadowCamera(baker, camera)) {
-                camera = null;
-                baker.GetComponents(_cameraBuffer);
-                for (int i = 0; i < _cameraBuffer.Count; i++) {
-                    Camera candidate = _cameraBuffer[i];
-                    if (!IsOwnedRuntimeShadowCamera(baker, candidate)) continue;
-                    camera = candidate;
-                    break;
-                }
-                _cameraBuffer.Clear();
+        // Returns true when a runtime material already uses the shader requested by the current preparation pass.
+        static bool IsRuntimeMaterialReady(Material material, Shader shader) {
+            return material != null && shader != null && material.shader == shader;
+        }
+
+        // Invalidates cached keyword state for the shared runtime shadow blur material.
+        static void ResetManagerRuntimeShadowBlurState(LightVolumeManager manager) {
+            if (manager == null) return;
+            manager.RuntimeShadowBlurQualityPreset = -1;
+            manager.RuntimeShadowBlurUniformKeyword = -1;
+            manager.RuntimeShadowBlurDirectKeyword = -1;
+            manager.RuntimeShadowBlurSphericalKeyword = -1;
+        }
+
+        // Clears serialized runtime shadow source fields so Bake In Game lights do not include baked shadow assets in play/build runtime state.
+        static void ClearPointLightRuntimeShadowSource(PointLightVolumeInstance pointLight) {
+            if (pointLight == null) return;
+            pointLight.ShadowMapTexture = null;
+            pointLight.ShadowMapMaterial = null;
+            pointLight.AutoUpdateShadowMap = false;
+            pointLight.ShadowMapID = -1f;
+            pointLight.ShadowMapTextureIsCubemap = false;
+            pointLight.ShadowMapTextureHasDepthSlices = false;
+        }
+
+        // Clears stale runtime custom projection source fields that are not used by the current authoring projection mode.
+        static void ClearPointLightRuntimeCustomSource(PointLightVolumeInstance pointLight) {
+            if (pointLight == null) return;
+            pointLight.CustomTexture = null;
+            pointLight.CustomTextureMaterial = null;
+            pointLight.ProjectionType = 0;
+            pointLight.ProjectionMode = 0;
+            pointLight.AutoUpdateCustomTexture = false;
+            pointLight.CustomTextureIsCubemap = false;
+            pointLight.CustomTextureHasDepthSlices = false;
+        }
+
+        // Pushes runtime shadow source fields into one backing UdonBehaviour after build-time source cleanup.
+        static void ApplyPointLightRuntimeShadowSource(PointLightVolumeInstance pointLight, Component udonBehaviour) {
+            if (pointLight == null) return;
+            if (udonBehaviour == null) return;
+            SetUdonProgramVariable(udonBehaviour, "ShadowMapTexture", pointLight.ShadowMapTexture);
+            SetUdonProgramVariable(udonBehaviour, "ShadowMapMaterial", pointLight.ShadowMapMaterial);
+            SetUdonProgramVariable(udonBehaviour, "AutoUpdateShadowMap", pointLight.AutoUpdateShadowMap);
+            SetUdonProgramVariable(udonBehaviour, "ShadowMapID", pointLight.ShadowMapID);
+            SetUdonProgramVariable(udonBehaviour, "ShadowMapTextureIsCubemap", pointLight.ShadowMapTextureIsCubemap);
+            SetUdonProgramVariable(udonBehaviour, "ShadowMapTextureHasDepthSlices", pointLight.ShadowMapTextureHasDepthSlices);
+        }
+
+        // Pushes runtime shadow bake settings into one backing UdonBehaviour after build-time authoring sync.
+        static void ApplyPointLightRuntimeShadowBakeSettings(PointLightVolumeInstance pointLight, Component udonBehaviour) {
+            if (pointLight == null) return;
+            if (udonBehaviour == null) return;
+            SetUdonProgramVariable(udonBehaviour, "BakeInGame", pointLight.BakeInGame);
+            SetUdonProgramVariable(udonBehaviour, "RuntimeShadowResolution", pointLight.RuntimeShadowResolution);
+            SetUdonProgramVariable(udonBehaviour, "RuntimeShadowBlurSamplePreset", pointLight.RuntimeShadowBlurSamplePreset);
+            SetUdonProgramVariable(udonBehaviour, "RuntimeShadowSphericalBlur", pointLight.RuntimeShadowSphericalBlur);
+            SetUdonProgramVariable(udonBehaviour, "RuntimeShadowFacesPerFrame", pointLight.RuntimeShadowFacesPerFrame);
+            SetUdonProgramVariable(udonBehaviour, "RuntimeShadowDirectOutput", pointLight.RuntimeShadowDirectOutput);
+        }
+
+        // Pushes runtime custom projection source fields into one backing UdonBehaviour after build-time source cleanup.
+        static void ApplyPointLightRuntimeCustomSource(PointLightVolumeInstance pointLight) {
+            if (pointLight == null) return;
+            Component udonBehaviour = GetBackingUdonBehaviour(pointLight);
+            if (udonBehaviour == null) return;
+            SetUdonProgramVariable(udonBehaviour, "CustomTexture", pointLight.CustomTexture);
+            SetUdonProgramVariable(udonBehaviour, "CustomTextureMaterial", pointLight.CustomTextureMaterial);
+            SetUdonProgramVariable(udonBehaviour, "ProjectionType", pointLight.ProjectionType);
+            SetUdonProgramVariable(udonBehaviour, "ProjectionMode", pointLight.ProjectionMode);
+            SetUdonProgramVariable(udonBehaviour, "AutoUpdateCustomTexture", pointLight.AutoUpdateCustomTexture);
+            SetUdonProgramVariable(udonBehaviour, "CustomTextureIsCubemap", pointLight.CustomTextureIsCubemap);
+            SetUdonProgramVariable(udonBehaviour, "CustomTextureHasDepthSlices", pointLight.CustomTextureHasDepthSlices);
+        }
+
+        // Clears serialized editor-only references from the temporary build scene before authoring components are removed.
+        static void ClearBuildOnlySerializedReferences(GameObject root) {
+            if (root == null) return;
+
+            _managerBuffer.Clear();
+            root.GetComponentsInChildren(true, _managerBuffer);
+            for (int i = 0; i < _managerBuffer.Count; i++) ClearManagerBuildOnlySerializedReferences(_managerBuffer[i]);
+
+            _setupBuffer.Clear();
+            root.GetComponentsInChildren(true, _setupBuffer);
+            for (int i = 0; i < _setupBuffer.Count; i++) ClearSetupBuildOnlySerializedReferences(_setupBuffer[i]);
+
+            _authoringLightVolumeBuffer.Clear();
+            root.GetComponentsInChildren(true, _authoringLightVolumeBuffer);
+            for (int i = 0; i < _authoringLightVolumeBuffer.Count; i++) ClearAuthoringLightVolumeBuildOnlySerializedReferences(_authoringLightVolumeBuffer[i]);
+
+            _authoringPointLightBuffer.Clear();
+            root.GetComponentsInChildren(true, _authoringPointLightBuffer);
+            for (int i = 0; i < _authoringPointLightBuffer.Count; i++) ClearAuthoringPointLightBuildOnlySerializedReferences(_authoringPointLightBuffer[i]);
+        }
+
+        // Clears manager fields that are runtime-generated outputs, while preserving serialized atlas references.
+        static void ClearManagerBuildOnlySerializedReferences(LightVolumeManager manager) {
+            if (manager == null) return;
+            Texture finalAtlas = manager.LightVolumeAtlas;
+            if (finalAtlas == null && manager.LightVolumeAtlasBase != null) {
+                finalAtlas = manager.LightVolumeAtlasBase;
+                manager.LightVolumeAtlas = finalAtlas;
             }
-            if (camera == null) camera = baker.gameObject.AddComponent<Camera>();
+            manager.CustomTextures = null;
+            manager.ShadowTextures = null;
 
-            camera.hideFlags = editorTemporary ? HideFlags.HideInInspector | HideFlags.DontSaveInEditor : HideFlags.HideInInspector;
-            camera.enabled = false;
-            camera.clearFlags = CameraClearFlags.Depth;
-            camera.backgroundColor = Color.white;
-            camera.orthographic = false;
-            camera.fieldOfView = 90f;
-            camera.aspect = 1f;
-            camera.depthTextureMode = DepthTextureMode.None;
-            camera.renderingPath = RenderingPath.Forward;
-            camera.allowHDR = false;
-            camera.allowMSAA = false;
-            camera.useOcclusionCulling = false;
-            camera.stereoTargetEye = StereoTargetEyeMask.None;
-            camera.ResetReplacementShader();
-            return camera;
+            Component udonBehaviour = GetBackingUdonBehaviour(manager);
+            if (udonBehaviour == null) return;
+            if (finalAtlas != null) SetUdonProgramVariable(udonBehaviour, "LightVolumeAtlas", finalAtlas);
+            SetUdonProgramVariable(udonBehaviour, "CustomTextures", null);
+            SetUdonProgramVariable(udonBehaviour, "ShadowTextures", null);
         }
 
-        // Returns true only for the temporary camera owned by this baker
-        static bool IsOwnedRuntimeShadowCamera(PointLightShadowRuntimeBaker baker, Camera camera) {
-            if (baker == null || camera == null || camera.gameObject != baker.gameObject) return false;
-            return (camera.hideFlags & HideFlags.DontSaveInEditor) != 0 || (camera == baker.ShadowCamera && camera.hideFlags == HideFlags.HideInInspector);
+        // Clears setup-only registries and post processor references that are not consumed by runtime Udon.
+        static void ClearSetupBuildOnlySerializedReferences(LightVolumeSetup setup) {
+            if (setup == null) return;
+            if (setup.LightVolumes != null) setup.LightVolumes.Clear();
+            if (setup.LightVolumesWeights != null) setup.LightVolumesWeights.Clear();
+            if (setup.PointLightVolumes != null) setup.PointLightVolumes.Clear();
+            if (setup.LightVolumeDataList != null) setup.LightVolumeDataList.Clear();
+            setup.AtlasPostProcessors = null;
         }
 
-        // Destroys one editor-only runtime shadow camera created before entering play mode
-        static void DestroyRuntimeShadowCamera(Camera camera) {
-            if (camera == null || (camera.hideFlags & HideFlags.DontSaveInEditor) == 0) return;
-            UnityEngine.Object.DestroyImmediate(camera);
+        // Clears source 3D textures after their packed atlas data has already been copied to LightVolumeManager.
+        static void ClearAuthoringLightVolumeBuildOnlySerializedReferences(LightVolume volume) {
+            if (volume == null) return;
+            volume.Texture0 = null;
+            volume.Texture1 = null;
+            volume.Texture2 = null;
+#if BAKERY_INCLUDED
+            volume.BakeryVolume = null;
+#endif
+        }
+
+        // Clears authoring-only baked shadow asset references from the temporary build scene for Bake In Game lights.
+        static void ClearAuthoringPointLightRuntimeShadowSource(PointLightVolume pointLight) {
+            if (pointLight == null || !pointLight.BakeInGame) return;
+            pointLight.ShadowMap = null;
+        }
+
+        // Clears point-light bake-only authoring data and stale runtime projection state that has no active source.
+        static void ClearAuthoringPointLightBuildOnlySerializedReferences(PointLightVolume pointLight) {
+            if (pointLight == null) return;
+            pointLight.ObjectMask = Array.Empty<GameObject>();
+            UnityEngine.Object activeProjectionSource = pointLight.HasProjectionSource() ? pointLight.GetProjectionSource() : null;
+            if (activeProjectionSource == null) {
+                ClearPointLightRuntimeCustomSource(pointLight.PointLightVolumeInstance);
+                ApplyPointLightRuntimeCustomSource(pointLight.PointLightVolumeInstance);
+            }
         }
 
         // Creates or reuses a non-asset runtime material for one Udon component field
@@ -290,25 +479,26 @@ namespace VRCLightVolumes {
 
         // Removes authoring-only components from the temporary build scene in dependency order
         static void CleanupEditorComponents(GameObject[] roots) {
-            Cleanup<LightVolumeSetup>(roots);
-            Cleanup<LightVolume>(roots);
-            Cleanup<PointLightVolume>(roots);
+            CleanupComponents(roots, _setupBuffer);
+            CleanupComponents(roots, _authoringLightVolumeBuffer);
+            CleanupComponents(roots, _authoringPointLightBuffer);
         }
 
         // Removes one authoring-only component type from the scene copy used by the build pipeline
-        static void Cleanup<T>(GameObject[] roots) where T : Component {
-            var temp = new List<T>();
+        static void CleanupComponents<T>(GameObject[] roots, List<T> buffer) where T : Component {
             for (int i = 0; i < roots.Length; i++) {
                 GameObject root = roots[i];
                 if (root == null) continue;
 
-                temp.Clear();
-                root.GetComponentsInChildren(true, temp);
-                for (int j = 0; j < temp.Count; j++) {
-                    T component = temp[j];
+                buffer.Clear();
+                root.GetComponentsInChildren(true, buffer);
+                for (int j = 0; j < buffer.Count; j++) {
+                    T component = buffer[j];
                     if (component != null) UnityEngine.Object.DestroyImmediate(component);
                 }
             }
+
+            buffer.Clear();
         }
 
         // Returns the hidden UdonBehaviour assigned to one UdonSharp proxy
@@ -338,8 +528,8 @@ namespace VRCLightVolumes {
             return null;
         }
 
-        // Writes one object reference into a playing UdonBehaviour
-        static void SetUdonProgramVariable(Component udonBehaviour, string variableName, UnityEngine.Object value) {
+        // Writes one value into a playing UdonBehaviour.
+        static void SetUdonProgramVariable(Component udonBehaviour, string variableName, object value) {
             MethodInfo method = GetSetProgramVariableMethod(udonBehaviour);
             if (method == null) return;
 

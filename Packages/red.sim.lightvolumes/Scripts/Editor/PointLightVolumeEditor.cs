@@ -41,6 +41,7 @@ namespace VRCLightVolumes {
             hiddenFields.Add("ObjectMask");
             hiddenFields.Add("NearPlane");
             hiddenFields.Add("FarPlane");
+            hiddenFields.Add("BakeInGame");
             hiddenFields.Add("DebugClipPlanes");
             hiddenFields.Add("Blur");
             hiddenFields.Add("ContactHardening");
@@ -96,6 +97,7 @@ namespace VRCLightVolumes {
 
             if (drawShadowFields) {
                 DrawTextureMaterialField("ShadowMap", _cubemapMaterialHint, true);
+                EditorGUILayout.PropertyField(serializedObject.FindProperty("BakeInGame"));
                 EditorGUILayout.PropertyField(serializedObject.FindProperty("LayerMask"));
                 EditorGUILayout.PropertyField(serializedObject.FindProperty("ObjectMask"));
                 EditorGUILayout.PropertyField(serializedObject.FindProperty("NearPlane"));

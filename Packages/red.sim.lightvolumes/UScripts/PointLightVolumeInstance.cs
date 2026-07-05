@@ -1,11 +1,16 @@
 using UnityEngine;
+using UnityEngine.Rendering;
+using System;
 #if UDONSHARP
 using UdonSharp;
 #endif
 #if COMPILER_UDONSHARP
 using VRC.SDK3.Rendering;
+using VRCGraphics = VRC.SDKBase.VRCGraphics;
+using VRCShader = VRC.SDKBase.VRCShader;
 #else
-using UnityEngine.Rendering;
+using VRCGraphics = UnityEngine.Graphics;
+using VRCShader = UnityEngine.Shader;
 #endif
 
 namespace VRCLightVolumes {
@@ -105,14 +110,35 @@ namespace VRCLightVolumes {
         public int LayerMask = -1;
         [Tooltip("Near clip plane used by the shadow bake camera. Higher values can clip nearby occluders.")]
         [Min(0.0001f)] public float NearClip = 0.01f;
-        [Tooltip("World-space bias in meters applied while baking this light's shadow map. Larger values reduce self-shadow artifacts, but can detach contact edges. Requires rebaking.")]
-        [Min(0)] public float Bias = 0.03f;
         [Tooltip("Far clip distance used when the shadow map was baked. 0 falls back to this light's current culling range.")]
         [Min(0)] public float FarClip = 0f;
+        [Tooltip("World-space bias in meters applied while baking this light's shadow map. Larger values reduce self-shadow artifacts, but can detach contact edges. Requires rebaking.")]
+        [Min(0)] public float Bias = 0.03f;
         [Tooltip("Shadow blur radius applied after baking, normalized to 128x128 shadow resolution. Editor baking uses spherical shadow-space blur to reduce visible cubemap and Spot Light projection seams. Runtime baking uses Planar Blur unless Spherical Blur is enabled on the runtime baker. 0 keeps the baked shadow map unblurred. Requires rebaking.")]
         [Min(0)] public float Blur = 1f;
         [Tooltip("Hardens shadows near the contact areas. Can produce artefacts, so use with caution. Requires rebaking. More performant when set to 0 in realtime mode. Runtime baker Spherical Blur also applies to contact hardening samples.")]
         [Range(0, 1)] public float ContactHardening = 0f;
+
+        [Header("Runtime Shadow Bake")]
+        [Tooltip("Bakes this light's shadow map once when the runtime instance starts. If enabled, the editor-baked shadow texture is used only in the editor and is not included in the build or asset bundle.")]
+        public bool BakeInGame = false;
+        [Tooltip("Resolution used by runtime shadow baking.")]
+        [Min(16)] public int RuntimeShadowResolution = 128;
+        [Tooltip("Runtime blur and contact hardening sample preset. 0 = low, 1 = medium, 2 = high, 3 = editor.")]
+        [Range(0, 3)] public int RuntimeShadowBlurSamplePreset = 2;
+        [Tooltip("Samples runtime blur in spherical shadow space. This is slower but reduces cubemap and single-slice spot projection seams.")]
+        public bool RuntimeShadowSphericalBlur = true;
+        [Tooltip("How many shadow faces or slices are rendered each time runtime shadow baking is triggered. Valid values are 1, 2, 3 and 6. 6 bakes a full point shadow in one trigger.")]
+        [Range(1, 6)] public int RuntimeShadowFacesPerFrame = 6;
+        [Tooltip("Writes runtime shadow output directly into the manager shadow atlas when the bake resolution matches it. Intended for external realtime baking; Bake In Game keeps a full-size source texture.")]
+        [HideInInspector] public bool RuntimeShadowDirectOutput = false;
+
+        // Shared disabled runtime shadow bake camera assigned by the Light Volume Manager.
+        [NonSerialized] public Camera RuntimeShadowCamera;
+        // Cached shared runtime shadow depth encode material assigned by the Light Volume Manager.
+        [NonSerialized] public Material RuntimeShadowDepthEncodeMaterial;
+        // Cached shared runtime shadow blur material assigned by the Light Volume Manager.
+        [NonSerialized] public Material RuntimeShadowBlurMaterial;
 
         // Internal projection metadata copied from the authoring PointLightVolume
         [HideInInspector] public bool CustomTextureIsCubemap = false;
@@ -138,6 +164,55 @@ namespace VRCLightVolumes {
 #if COMPILER_UDONSHARP
         private Color32[] _areaCookieAveragePixels = new Color32[0];
 #endif
+
+        // Local shader keywords used by runtime shadow blur material
+        private const string ShadowQualityKeywordLow = "VRCLV_RUNTIME_SHADOW_QUALITY_LOW";
+        private const string ShadowQualityKeywordMedium = "VRCLV_RUNTIME_SHADOW_QUALITY_MEDIUM";
+        private const string ShadowQualityKeywordHigh = "VRCLV_RUNTIME_SHADOW_QUALITY_HIGH";
+        private const string ShadowQualityKeywordEditor = "VRCLV_EDITOR_SHADOW_BLUR_QUALITY";
+        private const string ShadowBlurKeywordUniform = "VRCLV_RUNTIME_SHADOW_BLUR_UNIFORM";
+        private const string ShadowBlurKeywordDirect = "VRCLV_RUNTIME_SHADOW_BLUR_DIRECT";
+        private const string ShadowBlurKeywordSpherical = "VRCLV_RUNTIME_SHADOW_BLUR_SPHERICAL";
+        private const float ShadowBlurBaseResolution = 128f;
+        private const int ShadowTextureFormatHalf = 0;
+
+        // Runtime shadow bake lifecycle and published source state.
+        private bool _inGameBakeStarted = false;
+        private bool _runtimeShadowSourceInitialized = false;
+        private bool _runtimeShadowShaderPropertiesInitialized = false;
+
+        // Incremental runtime bake progress for the current face cycle.
+        private int _runtimeShadowFaceIndex = 0;
+
+        // Locally-owned runtime shadow render targets.
+        private RenderTexture _runtimeShadowDepthTexture;
+        private RenderTexture _runtimeShadowTexture;
+        private RenderTexture _runtimeShadowRegistrationTexture;
+        private RenderTexture _runtimeShadowBlurTempTexture;
+        private RenderTexture _runtimeShadowMaterialBlitInputTexture;
+
+        // Local cubemap face rotations used by point-light runtime shadow rendering.
+        private Quaternion _runtimeShadowFaceRotation0 = new Quaternion(0f, -0.70710678f, 0f, 0.70710678f);
+        private Quaternion _runtimeShadowFaceRotation1 = new Quaternion(0f, 0.70710678f, 0f, 0.70710678f);
+        private Quaternion _runtimeShadowFaceRotation2 = new Quaternion(0f, -0.70710678f, 0.70710678f, 0f);
+        private Quaternion _runtimeShadowFaceRotation3 = new Quaternion(0f, 0.70710678f, 0.70710678f, 0f);
+        private Quaternion _runtimeShadowFaceRotation4 = new Quaternion(0f, 1f, 0f, 0f);
+
+        // Shader property IDs used by runtime shadow depth encode and blur passes.
+        private int _runtimeShadowDepthTextureID;
+        private int _runtimeShadowFarClipID;
+        private int _runtimeShadowNearClipID;
+        private int _runtimeShadowBiasID;
+        private int _runtimeShadowTanHalfFovID;
+        private int _runtimeShadowSourceArrayID;
+        private int _runtimeShadowDepthArrayID;
+        private int _runtimeShadowFaceIndexID;
+        private int _runtimeShadowSourceBaseSliceID;
+        private int _runtimeShadowDepthBaseSliceID;
+        private int _runtimeShadowBlurDirectionID;
+        private int _runtimeShadowBlurRadiusID;
+        private int _runtimeShadowBlurDepthID;
+        private int _runtimeShadowInvResolutionID;
 
 #if UDONSHARP
         // Works only when changing values directly on UdonBehaviour
@@ -215,6 +290,14 @@ namespace VRCLightVolumes {
             }
 #endif
             RegisterWithManager();
+            if (BakeInGame && !_inGameBakeStarted) {
+                _inGameBakeStarted = true;
+                RuntimeShadowBlurSamplePreset = 2;
+                RuntimeShadowSphericalBlur = true;
+                RuntimeShadowFacesPerFrame = 6;
+                RuntimeShadowDirectOutput = false;
+                BakeShadows();
+            }
         }
 
         private void OnEnable() {
@@ -229,6 +312,11 @@ namespace VRCLightVolumes {
                 LightVolumeManager.DeinitializePointLightVolume(this, customTexturesChanged, shadowTexturesChanged);
             }
             _isRegisteredWithManager = false;
+        }
+
+        // Releases runtime shadow resources owned by this point light.
+        private void OnDestroy() {
+            ReleaseRuntimeShadowTextures();
         }
 
 #if COMPILER_UDONSHARP
@@ -443,24 +531,474 @@ namespace VRCLightVolumes {
             NotifyManager(false, false, false);
         }
 
-        // Sets shadow bake and projection parameters without rebuilding unrelated light data
-        public void SetShadowSettings(float shadowMapID, bool worldSpaceShadows, int layerMask, float nearClip, float farClip, float bias, float blur, float contactHardening) {
-            float safeNearClip = Mathf.Max(nearClip, 0.0001f);
-            float safeFarClip = farClip > 0f ? Mathf.Max(farClip, safeNearClip + 0.0001f) : 0f;
-            float safeBias = Mathf.Max(bias, 0f);
-            float safeBlur = Mathf.Max(blur, 0f);
-            float safeContactHardening = Mathf.Clamp01(contactHardening);
-            bool shaderDataChanged = ShadowMapID != shadowMapID || WorldSpaceShadows != worldSpaceShadows || NearClip != safeNearClip || FarClip != safeFarClip;
-            if (!shaderDataChanged && LayerMask == layerMask && Bias == safeBias && Blur == safeBlur && ContactHardening == safeContactHardening) return;
-            ShadowMapID = shadowMapID;
-            WorldSpaceShadows = worldSpaceShadows;
-            LayerMask = layerMask;
-            NearClip = safeNearClip;
-            FarClip = safeFarClip;
-            Bias = safeBias;
-            Blur = safeBlur;
-            ContactHardening = safeContactHardening;
-            if (shaderDataChanged) NotifyManager(false, false, false);
+        // Runs one runtime shadow bake trigger using the current runtime bake options.
+        public void BakeShadows() {
+            bool rangeChanged = IsRangeDirty;
+            int bakeResolution = Mathf.Max(RuntimeShadowResolution, 16);
+            LightVolumeManager manager = LightVolumeManager;
+            Material depthEncodeMaterial = RuntimeShadowDepthEncodeMaterial;
+            int bakeFacesPerFrame = RuntimeShadowFacesPerFrame;
+            if (bakeFacesPerFrame <= 1) bakeFacesPerFrame = 1;
+            else if (bakeFacesPerFrame <= 2) bakeFacesPerFrame = 2;
+            else if (bakeFacesPerFrame <= 3) bakeFacesPerFrame = 3;
+            else bakeFacesPerFrame = 6;
+            bool useCubemapShadow = LightType != 1 || ShadowMapUsesCubemap; // 1: spot
+            int bakeSliceCount = useCubemapShadow ? 6 : 1;
+            bool useSphericalBlur = RuntimeShadowSphericalBlur;
+            bool useDirectOutput = RuntimeShadowDirectOutput && manager != null && manager.ShadowTexturesWidth == bakeResolution && manager.ShadowTexturesHeight == bakeResolution;
+            bool useBlur = Blur > 0.0001f && RuntimeShadowBlurMaterial != null;
+
+            // Validate runtime shadow bake dependencies and cache hot references for this trigger.
+            if (!enabled || !gameObject.activeInHierarchy || Intensity == 0f || Color == Color.black || manager == null || depthEncodeMaterial == null) {
+                _runtimeShadowFaceIndex = 0;
+                ReleaseIdleRuntimeShadowTextures();
+                return;
+            }
+            Camera runtimeShadowCamera = RuntimeShadowCamera;
+            if (runtimeShadowCamera == null) {
+                _runtimeShadowFaceIndex = 0;
+                ReleaseIdleRuntimeShadowTextures();
+                return;
+            }
+            Transform runtimeShadowCameraTransform = runtimeShadowCamera.transform;
+            if (!_runtimeShadowShaderPropertiesInitialized) InitializeRuntimeShadowShaderProperties();
+
+            // Prepare render targets for the selected runtime shadow output path.
+            RenderTextureFormat format = manager.ShadowTextureFormat == ShadowTextureFormatHalf ? RenderTextureFormat.ARGBHalf : RenderTextureFormat.ARGBFloat;
+            if (_runtimeShadowFaceIndex >= bakeSliceCount) _runtimeShadowFaceIndex = 0;
+            EnsureRuntimeShadowDepthTexture(bakeResolution);
+            if (useDirectOutput) {
+                // Direct output writes final faces straight into the manager atlas, so keep only a tiny registration source for metadata.
+                _runtimeShadowRegistrationTexture = EnsureRuntimeShadowOwnedArrayTexture(_runtimeShadowRegistrationTexture, format, 1, bakeSliceCount, FilterMode.Point, true);
+                if (_runtimeShadowTexture != null) {
+                    if (ShadowMapTexture == _runtimeShadowTexture) ShadowMapTexture = null;
+                    ReleaseRuntimeShadowRenderTexture(_runtimeShadowTexture);
+                    _runtimeShadowTexture = null;
+                }
+            } else {
+                // Local output keeps a full source array on this light, then copies completed faces to the manager atlas.
+                if (_runtimeShadowRegistrationTexture != null) {
+                    ReleaseRuntimeShadowRenderTexture(_runtimeShadowRegistrationTexture);
+                    _runtimeShadowRegistrationTexture = null;
+                    _runtimeShadowFaceIndex = 0;
+                }
+                _runtimeShadowTexture = EnsureRuntimeShadowOwnedArrayTexture(_runtimeShadowTexture, format, bakeResolution, bakeSliceCount, FilterMode.Bilinear, true);
+            }
+            if (useBlur) {
+                // Blur needs one scratch array matching the active output layout.
+                _runtimeShadowBlurTempTexture = EnsureRuntimeShadowOwnedArrayTexture(_runtimeShadowBlurTempTexture, format, bakeResolution, bakeSliceCount, FilterMode.Bilinear, false);
+            } else if (_runtimeShadowBlurTempTexture != null) {
+                // No-blur path should not keep scratch VRAM alive between bakes.
+                ReleaseRuntimeShadowRenderTexture(_runtimeShadowBlurTempTexture);
+                _runtimeShadowBlurTempTexture = null;
+            }
+
+            // Select the face range rendered by this bake trigger.
+            bool instantBake = !useCubemapShadow || bakeFacesPerFrame >= bakeSliceCount;
+            int firstFace = instantBake ? 0 : _runtimeShadowFaceIndex;
+            int faceCount = instantBake ? bakeSliceCount : bakeFacesPerFrame;
+            int remainingFaces = bakeSliceCount - firstFace;
+            if (faceCount > remainingFaces) faceCount = remainingFaces;
+
+            // Read current light transform and safe bake parameters.
+            Vector3 bakePosition = transform.position;
+            Quaternion bakeRotation = transform.rotation;
+            float bakeNearClip = Mathf.Max(NearClip, 0.0001f);
+            float bakeFarClip = FarClip > 0f ? Mathf.Max(FarClip, bakeNearClip + 0.0001f) : Mathf.Sqrt(Mathf.Max(SquaredRange, 0.000001f));
+            if (bakeNearClip >= bakeFarClip) bakeFarClip = bakeNearClip + 0.0001f;
+            float bakeBias = Mathf.Max(Bias, 0f);
+            float bakeFieldOfView;
+            float bakeTanHalfFov;
+            if (useCubemapShadow) {
+                // Cubemap faces always render with a 90-degree projection.
+                bakeFieldOfView = 90f;
+                bakeTanHalfFov = 1f;
+            } else {
+                // Single-slice spot shadows use the light cone projection.
+                bakeFieldOfView = Mathf.Clamp(Angle * Mathf.Rad2Deg * 2f, 0.1f, 179.9f);
+                bakeTanHalfFov = Mathf.Tan(bakeFieldOfView * 0.5f * Mathf.Deg2Rad);
+            }
+            bool blurUsesUniformRadius = Mathf.Clamp01(ContactHardening) <= 0f;
+
+            // Publish runtime shadow metadata before writing pixels into the selected output.
+            bool shadowDataChanged = ApplyRuntimeShadowSourceInternal(bakePosition, bakeRotation, rangeChanged, useDirectOutput, useCubemapShadow);
+            bool rebuildShadowArray = !_runtimeShadowSourceInitialized || manager.ShadowTextures == null || manager.ShadowMapsCount <= 0;
+            if (rebuildShadowArray) {
+                manager.InitializePointLightVolume(this);
+                manager.ReinitializeShadowTextures();
+                _runtimeShadowSourceInitialized = true;
+            }
+            if (rebuildShadowArray || shadowDataChanged) manager.RequestUpdateVolumes();
+            if (useDirectOutput && (manager.ShadowTextures == null || ShadowMapID < 0)) {
+                _runtimeShadowFaceIndex = 0;
+                ReleaseIdleRuntimeShadowTextures();
+                return;
+            }
+
+            // Resolve the output array and base slice that receive rendered shadow faces.
+            RenderTexture outputTexture;
+            int outputBaseSlice;
+            if (useDirectOutput) {
+                // Realtime/direct mode writes directly into the manager-owned shadow texture array.
+                outputTexture = manager.ShadowTextures;
+                int shadowId = (int)ShadowMapID;
+                if (shadowId < 0) outputBaseSlice = 0;
+                else if (useCubemapShadow) outputBaseSlice = shadowId * 6;
+                else {
+                    int cubemapCount = manager.ShadowCubemapsCount;
+                    outputBaseSlice = cubemapCount * 6 + shadowId - cubemapCount;
+                }
+            } else {
+                // One-shot/local mode writes into this light's runtime source texture first.
+                outputTexture = _runtimeShadowTexture;
+                outputBaseSlice = 0;
+            }
+
+            // Configure per-bake camera projection and culling settings.
+            runtimeShadowCamera.fieldOfView = bakeFieldOfView;
+            runtimeShadowCamera.nearClipPlane = bakeNearClip;
+            runtimeShadowCamera.farClipPlane = bakeFarClip;
+            runtimeShadowCamera.cullingMask = LayerMask;
+
+            // Upload current bake constants to runtime shadow materials.
+            depthEncodeMaterial.SetFloat(_runtimeShadowFarClipID, bakeFarClip);
+            depthEncodeMaterial.SetFloat(_runtimeShadowNearClipID, bakeNearClip);
+            depthEncodeMaterial.SetFloat(_runtimeShadowBiasID, bakeBias);
+            depthEncodeMaterial.SetFloat(_runtimeShadowTanHalfFovID, bakeTanHalfFov);
+            depthEncodeMaterial.SetTexture(_runtimeShadowDepthTextureID, _runtimeShadowDepthTexture, RenderTextureSubElement.Depth);
+            if (useBlur) useBlur = PrepareRuntimeShadowBlurMaterial(blurUsesUniformRadius, bakeTanHalfFov, bakeResolution, useCubemapShadow, useSphericalBlur);
+
+            // Render selected faces into the output array using the shared camera.
+            Quaternion previousCameraRotation = runtimeShadowCameraTransform.rotation;
+            runtimeShadowCameraTransform.position = bakePosition;
+            RenderTexture previousTargetTexture = runtimeShadowCamera.targetTexture;
+            runtimeShadowCamera.targetTexture = _runtimeShadowDepthTexture;
+
+            int face = firstFace;
+            if (useCubemapShadow) {
+                // Point/cubemap shadows render each requested cubemap face with a fixed face rotation.
+                for (int i = 0; i < faceCount; i++) {
+                    if (face == 0) runtimeShadowCameraTransform.rotation = bakeRotation * _runtimeShadowFaceRotation0;
+                    else if (face == 1) runtimeShadowCameraTransform.rotation = bakeRotation * _runtimeShadowFaceRotation1;
+                    else if (face == 2) runtimeShadowCameraTransform.rotation = bakeRotation * _runtimeShadowFaceRotation2;
+                    else if (face == 3) runtimeShadowCameraTransform.rotation = bakeRotation * _runtimeShadowFaceRotation3;
+                    else if (face == 4) runtimeShadowCameraTransform.rotation = bakeRotation * _runtimeShadowFaceRotation4;
+                    else runtimeShadowCameraTransform.rotation = bakeRotation;
+
+                    runtimeShadowCamera.Render();
+                    BlitRuntimeShadowMaterialToSlice(_runtimeShadowDepthTexture, depthEncodeMaterial, 0, outputTexture, outputBaseSlice + face);
+                    face++;
+                }
+            } else {
+                // Single-slice spot shadows render one projection using the light rotation.
+                runtimeShadowCameraTransform.rotation = bakeRotation;
+                runtimeShadowCamera.Render();
+                BlitRuntimeShadowMaterialToSlice(_runtimeShadowDepthTexture, depthEncodeMaterial, 0, outputTexture, outputBaseSlice);
+            }
+
+            runtimeShadowCamera.targetTexture = previousTargetTexture;
+            runtimeShadowCameraTransform.rotation = previousCameraRotation;
+
+            // Finish this trigger and publish local-output slices when this is a real runtime source.
+            bool cycleComplete = instantBake || face >= bakeSliceCount;
+            _runtimeShadowFaceIndex = cycleComplete ? 0 : face;
+            if (useBlur) {
+                // Blur is applied only after a full cycle so every face has matching source data.
+                if (cycleComplete) BlurRuntimeShadowFaces(bakeSliceCount, blurUsesUniformRadius, useDirectOutput, !useDirectOutput, outputTexture, outputBaseSlice, useSphericalBlur);
+            } else if (!useDirectOutput) {
+                // Without blur, local-output faces can be copied to the manager immediately.
+                int copyFirstFace = cycleComplete ? 0 : firstFace;
+                int copyFaceCount = cycleComplete ? bakeSliceCount : faceCount;
+                for (int i = 0; i < copyFaceCount; i++) manager.UpdatePointLightShadowTextureSlice(this, copyFirstFace + i);
+            }
+
+            if (cycleComplete && !useDirectOutput) ReleaseIdleRuntimeShadowTextures();
+        }
+
+        // Creates or validates the camera depth render target.
+        private void EnsureRuntimeShadowDepthTexture(int resolution) {
+            if (_runtimeShadowDepthTexture != null && _runtimeShadowDepthTexture.width == resolution && _runtimeShadowDepthTexture.height == resolution
+#if !COMPILER_UDONSHARP
+                && _runtimeShadowDepthTexture.format == RenderTextureFormat.Depth
+#endif
+                ) return;
+
+            _runtimeShadowFaceIndex = 0;
+            ReleaseRuntimeShadowRenderTexture(_runtimeShadowDepthTexture);
+            _runtimeShadowDepthTexture = new RenderTexture(resolution, resolution, 32, RenderTextureFormat.Depth, RenderTextureReadWrite.Linear);
+            _runtimeShadowDepthTexture.dimension = TextureDimension.Tex2D;
+            _runtimeShadowDepthTexture.useMipMap = false;
+            _runtimeShadowDepthTexture.autoGenerateMips = false;
+            _runtimeShadowDepthTexture.wrapMode = TextureWrapMode.Clamp;
+            _runtimeShadowDepthTexture.filterMode = FilterMode.Point;
+            _runtimeShadowDepthTexture.anisoLevel = 0;
+#if !COMPILER_UDONSHARP
+            _runtimeShadowDepthTexture.hideFlags = HideFlags.HideAndDontSave;
+#endif
+            _runtimeShadowDepthTexture.Create();
+        }
+
+        // Reuses or recreates a locally-owned runtime shadow texture array.
+        private RenderTexture EnsureRuntimeShadowOwnedArrayTexture(RenderTexture texture, RenderTextureFormat format, int resolution, int sliceCount, FilterMode filterMode, bool resetBakeCycle) {
+            if (texture != null && texture.width == resolution && texture.height == resolution && texture.volumeDepth == sliceCount
+#if !COMPILER_UDONSHARP
+                && texture.format == format
+#endif
+                ) return texture;
+
+            if (resetBakeCycle) _runtimeShadowFaceIndex = 0;
+            ReleaseRuntimeShadowRenderTexture(texture);
+            texture = new RenderTexture(resolution, resolution, 0, format, RenderTextureReadWrite.Linear);
+            texture.dimension = TextureDimension.Tex2DArray;
+            texture.volumeDepth = sliceCount;
+            texture.useMipMap = false;
+            texture.autoGenerateMips = false;
+            texture.wrapMode = TextureWrapMode.Clamp;
+            texture.filterMode = filterMode;
+            texture.anisoLevel = 0;
+#if !COMPILER_UDONSHARP
+            texture.hideFlags = HideFlags.HideAndDontSave;
+#endif
+            texture.Create();
+            return texture;
+        }
+
+        // Updates this light's runtime shadow source and returns whether shader metadata changed.
+        private bool ApplyRuntimeShadowSourceInternal(Vector3 bakePosition, Quaternion bakeRotation, bool rangeChanged, bool useDirectOutput, bool useCubemapShadow) {
+            Texture sourceTexture = useDirectOutput ? _runtimeShadowRegistrationTexture : _runtimeShadowTexture;
+            bool sourceIsCubemap = sourceTexture != null && sourceTexture.dimension == TextureDimension.Cube;
+            bool sourceHasSlices = sourceTexture != null && sourceTexture.dimension == TextureDimension.Tex2DArray && useCubemapShadow;
+            bool sourceChanged = ShadowMapID < 0 || ShadowMapTexture != sourceTexture || ShadowMapMaterial != null || AutoUpdateShadowMap || ShadowMapTextureIsCubemap != sourceIsCubemap || ShadowMapTextureHasDepthSlices != sourceHasSlices || ShadowMapUsesCubemap != useCubemapShadow;
+            bool bakePositionChanged = ShadowBakePosition != bakePosition;
+            bool bakeRotationChanged = ShadowBakeRotation != bakeRotation;
+            bool metadataChanged = sourceChanged || rangeChanged || (WorldSpaceShadows && (bakePositionChanged || bakeRotationChanged));
+
+            if (ShadowMapID < 0) ShadowMapID = 0f;
+            if (sourceChanged) {
+                ShadowMapTexture = sourceTexture;
+                ShadowMapMaterial = null;
+                AutoUpdateShadowMap = false;
+                ShadowMapTextureIsCubemap = sourceIsCubemap;
+                ShadowMapTextureHasDepthSlices = sourceHasSlices;
+                ShadowMapUsesCubemap = useCubemapShadow;
+                _runtimeShadowSourceInitialized = false;
+            }
+            if (bakePositionChanged) ShadowBakePosition = bakePosition;
+            if (bakeRotationChanged) ShadowBakeRotation = bakeRotation;
+            return metadataChanged;
+        }
+
+        // Applies the selected runtime blur path to the requested shadow slices.
+        private void BlurRuntimeShadowFaces(int sliceCount, bool blurUsesUniformRadius, bool useDirectOutput, bool copyToManager, RenderTexture outputTexture, int outputBaseSlice, bool useSphericalBlur) {
+            Material blurMaterial = RuntimeShadowBlurMaterial;
+            if (outputTexture == null || _runtimeShadowBlurTempTexture == null || blurMaterial == null) return;
+            if (useSphericalBlur) {
+                // Spherical blur samples across cubemap/spot projection space in one pass, reducing visible seams.
+                blurMaterial.SetTexture(_runtimeShadowSourceArrayID, outputTexture);
+                blurMaterial.SetFloat(_runtimeShadowSourceBaseSliceID, outputBaseSlice);
+                if (!blurUsesUniformRadius) {
+                    // Contact hardening uses the unblurred depth source to vary blur width by receiver depth.
+                    blurMaterial.SetTexture(_runtimeShadowDepthArrayID, outputTexture);
+                    blurMaterial.SetFloat(_runtimeShadowDepthBaseSliceID, outputBaseSlice);
+                }
+
+                // Write blurred faces into the scratch array at zero-based slice indices.
+                for (int face = 0; face < sliceCount; face++) {
+                    blurMaterial.SetInt(_runtimeShadowFaceIndexID, face);
+                    BlitRuntimeShadowMaterialToSlice(outputTexture, blurMaterial, 0, _runtimeShadowBlurTempTexture, face);
+                }
+
+                // Copy scratch slices back to either local output or the manager atlas base slice.
+                int targetBaseSlice = useDirectOutput ? outputBaseSlice : 0;
+                for (int face = 0; face < sliceCount; face++) {
+                    VRCGraphics.Blit(_runtimeShadowBlurTempTexture, outputTexture, face, targetBaseSlice + face);
+                }
+            } else {
+                // Planar blur is cheaper: horizontal pass into scratch, then vertical pass back to output.
+                blurMaterial.SetTexture(_runtimeShadowSourceArrayID, outputTexture);
+                blurMaterial.SetFloat(_runtimeShadowSourceBaseSliceID, outputBaseSlice);
+                blurMaterial.SetVector(_runtimeShadowBlurDirectionID, Vector2.right);
+                if (!blurUsesUniformRadius) {
+                    // Contact hardening in planar mode uses the same source depth for the horizontal pass.
+                    blurMaterial.SetTexture(_runtimeShadowDepthArrayID, outputTexture);
+                    blurMaterial.SetFloat(_runtimeShadowDepthBaseSliceID, outputBaseSlice);
+                }
+
+                // Horizontal pass writes each requested face into the scratch array.
+                for (int face = 0; face < sliceCount; face++) {
+                    blurMaterial.SetInt(_runtimeShadowFaceIndexID, face);
+                    BlitRuntimeShadowMaterialToSlice(outputTexture, blurMaterial, 0, _runtimeShadowBlurTempTexture, face);
+                }
+
+                blurMaterial.SetTexture(_runtimeShadowSourceArrayID, _runtimeShadowBlurTempTexture);
+                blurMaterial.SetFloat(_runtimeShadowSourceBaseSliceID, 0);
+                blurMaterial.SetVector(_runtimeShadowBlurDirectionID, Vector2.up);
+                if (!blurUsesUniformRadius) {
+                    // Vertical pass samples the horizontally blurred depth scratch for contact hardening.
+                    blurMaterial.SetTexture(_runtimeShadowDepthArrayID, _runtimeShadowBlurTempTexture);
+                    blurMaterial.SetFloat(_runtimeShadowDepthBaseSliceID, 0);
+                }
+
+                // Vertical pass writes final blurred faces to local output or direct atlas slices.
+                int targetBaseSlice = useDirectOutput ? outputBaseSlice : 0;
+                for (int face = 0; face < sliceCount; face++) {
+                    blurMaterial.SetInt(_runtimeShadowFaceIndexID, face);
+                    BlitRuntimeShadowMaterialToSlice(_runtimeShadowBlurTempTexture, blurMaterial, 0, outputTexture, targetBaseSlice + face);
+                }
+            }
+
+            LightVolumeManager manager = LightVolumeManager;
+            if (copyToManager && manager != null) {
+                // Local-output blur must publish the finished faces to the manager atlas after blur completes.
+                for (int face = 0; face < sliceCount; face++) manager.UpdatePointLightShadowTextureSlice(this, face);
+            }
+        }
+
+        // Prepares blur material constants and keyword state.
+        private bool PrepareRuntimeShadowBlurMaterial(bool blurUsesUniformRadius, float tanHalfFov, int bakeResolution, bool useCubemapShadow, bool useSphericalBlur) {
+            Material blurMaterial = RuntimeShadowBlurMaterial;
+            if (blurMaterial == null) return false;
+
+            // Clamp public blur settings only at material upload time.
+            float blurRadius = Mathf.Max(Blur, 0f);
+            float blurDepth = Mathf.Clamp01(ContactHardening);
+
+            // Convert public bake settings to local shader keyword state.
+            int qualityPreset = RuntimeShadowBlurSamplePreset;
+            if (qualityPreset <= 0) qualityPreset = 0;
+            else if (qualityPreset >= 3) qualityPreset = 3;
+            else if (qualityPreset >= 2) qualityPreset = 2;
+            else qualityPreset = 1;
+            int uniformKeyword = blurUsesUniformRadius ? 1 : 0;
+            int directKeyword = !useCubemapShadow ? 1 : 0;
+            int sphericalKeyword = useSphericalBlur ? 1 : 0;
+            LightVolumeManager sharedMaterialManager = LightVolumeManager;
+            bool useSharedBlurState = sharedMaterialManager != null && blurMaterial == sharedMaterialManager.RuntimeShadowBlurMaterial;
+            bool keywordStateChanged = true;
+            if (useSharedBlurState) keywordStateChanged = sharedMaterialManager.RuntimeShadowBlurQualityPreset != qualityPreset || sharedMaterialManager.RuntimeShadowBlurUniformKeyword != uniformKeyword || sharedMaterialManager.RuntimeShadowBlurDirectKeyword != directKeyword || sharedMaterialManager.RuntimeShadowBlurSphericalKeyword != sphericalKeyword;
+            if (keywordStateChanged) {
+                // Shared manager material tracks keyword state globally; local material always reapplies it.
+                blurMaterial.DisableKeyword(ShadowQualityKeywordLow);
+                blurMaterial.DisableKeyword(ShadowQualityKeywordMedium);
+                blurMaterial.DisableKeyword(ShadowQualityKeywordHigh);
+                blurMaterial.DisableKeyword(ShadowQualityKeywordEditor);
+                if (qualityPreset == 0) blurMaterial.EnableKeyword(ShadowQualityKeywordLow);
+                else if (qualityPreset == 3) {
+                    blurMaterial.EnableKeyword(ShadowQualityKeywordHigh);
+                    blurMaterial.EnableKeyword(ShadowQualityKeywordEditor);
+                }
+                else if (qualityPreset == 2) blurMaterial.EnableKeyword(ShadowQualityKeywordHigh);
+                else blurMaterial.EnableKeyword(ShadowQualityKeywordMedium);
+
+                if (blurUsesUniformRadius) blurMaterial.EnableKeyword(ShadowBlurKeywordUniform);
+                else blurMaterial.DisableKeyword(ShadowBlurKeywordUniform);
+
+                if (!useCubemapShadow) blurMaterial.EnableKeyword(ShadowBlurKeywordDirect);
+                else blurMaterial.DisableKeyword(ShadowBlurKeywordDirect);
+
+                if (useSphericalBlur) blurMaterial.EnableKeyword(ShadowBlurKeywordSpherical);
+                else blurMaterial.DisableKeyword(ShadowBlurKeywordSpherical);
+
+                if (useSharedBlurState) {
+                    sharedMaterialManager.RuntimeShadowBlurQualityPreset = qualityPreset;
+                    sharedMaterialManager.RuntimeShadowBlurUniformKeyword = uniformKeyword;
+                    sharedMaterialManager.RuntimeShadowBlurDirectKeyword = directKeyword;
+                    sharedMaterialManager.RuntimeShadowBlurSphericalKeyword = sphericalKeyword;
+                }
+            }
+
+            // Upload blur constants after keywords select planar/spherical/direct shader code.
+            blurMaterial.SetFloat(_runtimeShadowBlurRadiusID, blurRadius * (Mathf.Max(bakeResolution, 1) / ShadowBlurBaseResolution));
+            if (blurUsesUniformRadius) blurMaterial.SetFloat(_runtimeShadowBlurDepthID, 0f);
+            else {
+                // Contact hardening is exponential so low values stay subtle while high values expand quickly.
+                blurMaterial.SetFloat(_runtimeShadowBlurDepthID, (Mathf.Pow(10f, blurDepth) - 1f) * 0.1111111111f);
+            }
+            blurMaterial.SetFloat(_runtimeShadowInvResolutionID, 1f / bakeResolution);
+            // Single-slice spot blur needs projection scale compensation; cubemap blur does not.
+            if (!useCubemapShadow) blurMaterial.SetFloat(_runtimeShadowTanHalfFovID, tanHalfFov);
+            return true;
+        }
+
+        // Initializes all shader property IDs used by runtime shadow materials.
+        private void InitializeRuntimeShadowShaderProperties() {
+            _runtimeShadowDepthTextureID = VRCShader.PropertyToID("_ShadowDepthTex");
+            _runtimeShadowFarClipID = VRCShader.PropertyToID("_ShadowFarClip");
+            _runtimeShadowNearClipID = VRCShader.PropertyToID("_ShadowNearClip");
+            _runtimeShadowBiasID = VRCShader.PropertyToID("_ShadowBakeBias");
+            _runtimeShadowTanHalfFovID = VRCShader.PropertyToID("_ShadowTanHalfFov");
+            _runtimeShadowSourceArrayID = VRCShader.PropertyToID("_SourceArrayTex");
+            _runtimeShadowDepthArrayID = VRCShader.PropertyToID("_DepthArrayTex");
+            _runtimeShadowFaceIndexID = VRCShader.PropertyToID("_FaceIndex");
+            _runtimeShadowSourceBaseSliceID = VRCShader.PropertyToID("_SourceBaseSlice");
+            _runtimeShadowDepthBaseSliceID = VRCShader.PropertyToID("_DepthBaseSlice");
+            _runtimeShadowBlurDirectionID = VRCShader.PropertyToID("_BlurDirection");
+            _runtimeShadowBlurRadiusID = VRCShader.PropertyToID("_BlurRadius");
+            _runtimeShadowBlurDepthID = VRCShader.PropertyToID("_BlurDepth");
+            _runtimeShadowInvResolutionID = VRCShader.PropertyToID("_InvResolution");
+            _runtimeShadowShaderPropertiesInitialized = true;
+        }
+
+        // Renders one material pass into a destination texture-array slice.
+        private void BlitRuntimeShadowMaterialToSlice(Texture sourceTexture, Material material, int pass, RenderTexture destination, int targetSlice) {
+            if (material == null || destination == null) return;
+#if COMPILER_UDONSHARP
+            if (_runtimeShadowMaterialBlitInputTexture == null) {
+                _runtimeShadowMaterialBlitInputTexture = new RenderTexture(1, 1, 0, RenderTextureFormat.ARGB32, RenderTextureReadWrite.Linear);
+                _runtimeShadowMaterialBlitInputTexture.dimension = TextureDimension.Tex2D;
+                _runtimeShadowMaterialBlitInputTexture.useMipMap = false;
+                _runtimeShadowMaterialBlitInputTexture.autoGenerateMips = false;
+                _runtimeShadowMaterialBlitInputTexture.Create();
+            }
+            Texture blitSource = _runtimeShadowMaterialBlitInputTexture;
+            VRCGraphics.Blit(blitSource, destination, 0, targetSlice);
+            VRCGraphics.Blit(blitSource, material, pass, targetSlice);
+#else
+            RenderTexture previousRenderTexture = RenderTexture.active;
+            VRCGraphics.SetRenderTarget(destination, 0, CubemapFace.Unknown, targetSlice);
+            VRCGraphics.Blit(sourceTexture, material, pass);
+            RenderTexture.active = previousRenderTexture;
+#endif
+        }
+
+        // Releases one runtime shadow render texture before replacing it.
+        private void ReleaseRuntimeShadowRenderTexture(RenderTexture texture) {
+            if (texture == null) return;
+#if COMPILER_UDONSHARP
+            Destroy(texture);
+#else
+            if (RenderTexture.active == texture) RenderTexture.active = null;
+            texture.Release();
+            if (Application.isPlaying) Destroy(texture);
+            else DestroyImmediate(texture);
+#endif
+        }
+
+        // Releases temporary per-trigger bake buffers while keeping the published shadow source alive.
+        private void ReleaseIdleRuntimeShadowTextures() {
+            ReleaseRuntimeShadowRenderTexture(_runtimeShadowDepthTexture);
+            ReleaseRuntimeShadowRenderTexture(_runtimeShadowBlurTempTexture);
+            ReleaseRuntimeShadowRenderTexture(_runtimeShadowMaterialBlitInputTexture);
+            _runtimeShadowDepthTexture = null;
+            _runtimeShadowBlurTempTexture = null;
+            _runtimeShadowMaterialBlitInputTexture = null;
+        }
+
+        // Releases all locally-owned runtime shadow textures.
+        private void ReleaseRuntimeShadowTextures() {
+            if (ShadowMapTexture == _runtimeShadowTexture || ShadowMapTexture == _runtimeShadowRegistrationTexture) ShadowMapTexture = null;
+            ReleaseRuntimeShadowRenderTexture(_runtimeShadowDepthTexture);
+            ReleaseRuntimeShadowRenderTexture(_runtimeShadowTexture);
+            ReleaseRuntimeShadowRenderTexture(_runtimeShadowRegistrationTexture);
+            ReleaseRuntimeShadowRenderTexture(_runtimeShadowBlurTempTexture);
+            ReleaseRuntimeShadowRenderTexture(_runtimeShadowMaterialBlitInputTexture);
+            _runtimeShadowDepthTexture = null;
+            _runtimeShadowTexture = null;
+            _runtimeShadowRegistrationTexture = null;
+            _runtimeShadowBlurTempTexture = null;
+            _runtimeShadowMaterialBlitInputTexture = null;
+            _runtimeShadowFaceIndex = 0;
+            _runtimeShadowSourceInitialized = false;
         }
 
         // Marks this light range dirty and tells the manager which runtime data needs rebuilding.

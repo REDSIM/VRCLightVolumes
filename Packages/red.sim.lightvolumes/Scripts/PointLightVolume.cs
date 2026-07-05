@@ -47,6 +47,8 @@ namespace VRCLightVolumes {
         [Space]
         [Tooltip("Enables baked shadow map rendering for this light. These shadows are baked, but can affect dynamic objects at runtime, like avatars. It's more performant not to use shadows.")]
         public bool Shadows = false;
+        [Tooltip("Bakes this light's shadow map once when the world starts. If enabled, the editor-baked Shadow Map is used only in the editor and is not included in the build or asset bundle.")]
+        public bool BakeInGame = false;
         [Tooltip("Rebakes shadows for this point light automatically when you click \"Bake Shadows\" in Light Volume Setup. Alternatively, you can bake it manually pressing the \"Bake Shadows\" button here.")]
         public bool RebakeShadows = false;
         [Tooltip("Layers that can cast shadows.")]
@@ -84,6 +86,7 @@ namespace VRCLightVolumes {
 #if UNITY_EDITOR
         private UnityEngine.Object _shadowMapPrev = null;
         private bool _shadowsPrev = false;
+        private bool _bakeInGamePrev = false;
         private bool _forceCubemapShadowsPrev = false;
         private UnityEngine.Object _projectionSourcePrev = null;
         private LightType _typePrev = LightType.PointLight;
@@ -322,16 +325,25 @@ namespace VRCLightVolumes {
                 _pointLightVolumeBehaviour.SetProgramVariable("SpotCookieAspect", Mathf.Max(Mathf.Abs(SpotCookieAspect), 0.001f));
                 _pointLightVolumeBehaviour.SetProgramVariable("IsRangeDirty", true);
                 _pointLightVolumeBehaviour.SetProgramVariable("ShadowMapID", (float)GetShadowRuntimeID());
+                _pointLightVolumeBehaviour.SetProgramVariable("BakeInGame", Shadows && BakeInGame);
+                _pointLightVolumeBehaviour.SetProgramVariable("RuntimeShadowResolution", GetRuntimeShadowResolution());
+                _pointLightVolumeBehaviour.SetProgramVariable("RuntimeShadowBlurSamplePreset", 2);
+                _pointLightVolumeBehaviour.SetProgramVariable("RuntimeShadowSphericalBlur", true);
+                _pointLightVolumeBehaviour.SetProgramVariable("RuntimeShadowFacesPerFrame", 6);
+                _pointLightVolumeBehaviour.SetProgramVariable("RuntimeShadowDirectOutput", false);
                 _pointLightVolumeBehaviour.SetProgramVariable("WorldSpaceShadows", UseWorldSpace);
                 _pointLightVolumeBehaviour.SetProgramVariable("Bias", Bias);
                 _pointLightVolumeBehaviour.SetProgramVariable("LayerMask", LayerMask.value);
                 _pointLightVolumeBehaviour.SetProgramVariable("NearClip", GetShadowNearClip());
                 _pointLightVolumeBehaviour.SetProgramVariable("FarClip", GetShadowFarClip());
-                _pointLightVolumeBehaviour.SetProgramVariable("Blur", Mathf.Max(Blur, 0));
-                _pointLightVolumeBehaviour.SetProgramVariable("ContactHardening", Mathf.Clamp01(ContactHardening));
+                _pointLightVolumeBehaviour.SetProgramVariable("Blur", Blur);
+                _pointLightVolumeBehaviour.SetProgramVariable("ContactHardening", ContactHardening);
                 _pointLightVolumeBehaviour.SetProgramVariable("ShadowBakePosition", PointLightVolumeInstance.ShadowBakePosition);
                 _pointLightVolumeBehaviour.SetProgramVariable("ShadowBakeRotation", PointLightVolumeInstance.ShadowBakeRotation);
                 if (syncTextureSources) SyncTextureSourcesToUdon();
+                PointLightVolumeInstance.IsActive = gameObject.activeInHierarchy && Intensity != 0 && Color != UnityEngine.Color.black;
+                LightVolumeManager manager = LightVolumeSetup != null ? LightVolumeSetup.LightVolumeManager : PointLightVolumeInstance.LightVolumeManager;
+                if (manager != null && gameObject.activeInHierarchy) manager.NotifyPointLightVolumeChanged(PointLightVolumeInstance, false, false, false);
                 // Udon does not support parameterized methods, so the values are passed through temporary program variables
                 // Set the parameters first, then execute a parameterless method
                 bool hasProjectionSource = HasProjectionSource();
@@ -366,8 +378,23 @@ namespace VRCLightVolumes {
                 PointLightVolumeInstance.SetIntensity(Intensity);
                 PointLightVolumeInstance.SetShadingStrength(ShadingStrength);
                 PointLightVolumeInstance.SetSpotCookieAspect(SpotCookieAspect);
-                PointLightVolumeInstance.SetShadowSettings(GetShadowRuntimeID(), UseWorldSpace, LayerMask.value, GetShadowNearClip(), GetShadowFarClip(), Bias, Blur, ContactHardening);
+                PointLightVolumeInstance.BakeInGame = Shadows && BakeInGame;
+                PointLightVolumeInstance.RuntimeShadowResolution = GetRuntimeShadowResolution();
+                PointLightVolumeInstance.RuntimeShadowBlurSamplePreset = 2;
+                PointLightVolumeInstance.RuntimeShadowSphericalBlur = true;
+                PointLightVolumeInstance.RuntimeShadowFacesPerFrame = 6;
+                PointLightVolumeInstance.RuntimeShadowDirectOutput = false;
+                PointLightVolumeInstance.ShadowMapID = GetShadowRuntimeID();
+                PointLightVolumeInstance.WorldSpaceShadows = UseWorldSpace;
+                PointLightVolumeInstance.LayerMask = LayerMask.value;
+                PointLightVolumeInstance.NearClip = GetShadowNearClip();
+                PointLightVolumeInstance.FarClip = GetShadowFarClip();
+                PointLightVolumeInstance.Bias = Bias;
+                PointLightVolumeInstance.Blur = Blur;
+                PointLightVolumeInstance.ContactHardening = ContactHardening;
                 if (syncTextureSources) SyncTextureSourcesToInstance();
+                PointLightVolumeInstance.IsActive = PointLightVolumeInstance.gameObject.activeInHierarchy && PointLightVolumeInstance.Intensity != 0 && PointLightVolumeInstance.Color != UnityEngine.Color.black;
+                if (PointLightVolumeInstance.LightVolumeManager != null && PointLightVolumeInstance.gameObject.activeInHierarchy) PointLightVolumeInstance.LightVolumeManager.NotifyPointLightVolumeChanged(PointLightVolumeInstance, false, false, false);
 
                 bool hasProjectionSource = HasProjectionSource();
                 if (Type == LightType.AreaLight) {
@@ -398,6 +425,7 @@ namespace VRCLightVolumes {
             if (shadowTextures) {
                 _shadowMapPrev = ShadowMap;
                 _shadowsPrev = Shadows;
+                _bakeInGamePrev = BakeInGame;
                 _forceCubemapShadowsPrev = ForceCubemapShadows;
             }
             if (customTextures) {
@@ -414,7 +442,7 @@ namespace VRCLightVolumes {
 
         // Returns true when shadow texture array metadata needs rebuilding.
         public bool HasEditorShadowTextureChanges() {
-            return _shadowMapPrev != ShadowMap || _shadowsPrev != Shadows || _forceCubemapShadowsPrev != ForceCubemapShadows;
+            return _shadowMapPrev != ShadowMap || _shadowsPrev != Shadows || _bakeInGamePrev != BakeInGame || _forceCubemapShadowsPrev != ForceCubemapShadows;
         }
 
         // Caches editor-facing fields used to detect granular inspector changes.
@@ -428,6 +456,7 @@ namespace VRCLightVolumes {
             _anglePrev = Angle;
             _falloffPrev = Falloff;
             _spotCookieAspectPrev = SpotCookieAspect;
+            _bakeInGamePrev = BakeInGame;
             _useWorldSpacePrev = UseWorldSpace;
             _layerMaskPrev = LayerMask.value;
             _nearPlanePrev = NearPlane;
@@ -528,7 +557,23 @@ namespace VRCLightVolumes {
 
             if (shadowSettingsChanged) {
                 if (shadowTexturesChanged) SyncTextureSourcesToInstance();
-                PointLightVolumeInstance.SetShadowSettings(GetShadowRuntimeID(), UseWorldSpace, LayerMask.value, GetShadowNearClip(), GetShadowFarClip(), Bias, Blur, ContactHardening);
+                PointLightVolumeInstance.BakeInGame = Shadows && BakeInGame;
+                PointLightVolumeInstance.RuntimeShadowResolution = GetRuntimeShadowResolution();
+                PointLightVolumeInstance.RuntimeShadowBlurSamplePreset = 2;
+                PointLightVolumeInstance.RuntimeShadowSphericalBlur = true;
+                PointLightVolumeInstance.RuntimeShadowFacesPerFrame = 6;
+                PointLightVolumeInstance.RuntimeShadowDirectOutput = false;
+                PointLightVolumeInstance.ShadowMapID = GetShadowRuntimeID();
+                PointLightVolumeInstance.WorldSpaceShadows = UseWorldSpace;
+                PointLightVolumeInstance.LayerMask = LayerMask.value;
+                PointLightVolumeInstance.NearClip = GetShadowNearClip();
+                PointLightVolumeInstance.FarClip = GetShadowFarClip();
+                PointLightVolumeInstance.Bias = Bias;
+                PointLightVolumeInstance.Blur = Blur;
+                PointLightVolumeInstance.ContactHardening = ContactHardening;
+                PointLightVolumeInstance.IsActive = PointLightVolumeInstance.gameObject.activeInHierarchy && PointLightVolumeInstance.Intensity != 0 && PointLightVolumeInstance.Color != UnityEngine.Color.black;
+                if (PointLightVolumeInstance.LightVolumeManager != null && PointLightVolumeInstance.gameObject.activeInHierarchy) PointLightVolumeInstance.LightVolumeManager.NotifyPointLightVolumeChanged(PointLightVolumeInstance, false, false, false);
+                _bakeInGamePrev = BakeInGame;
                 _useWorldSpacePrev = UseWorldSpace;
                 _layerMaskPrev = LayerMask.value;
                 _nearPlanePrev = NearPlane;
@@ -552,6 +597,11 @@ namespace VRCLightVolumes {
             int projectionType = GetProjectionType();
             int projectionMode = GetProjectionMode();
             bool customSourceChanged = CustomTextureSourceChanged(_pointLightVolumeBehaviour, customTexture, customTextureMaterial, projectionType, projectionMode);
+            bool useRuntimeBakeShadowSource = ShouldUseRuntimeBakeShadowSource();
+            Texture authoringShadowMapTexture = GetShadowMapTexture();
+            Texture currentRuntimeShadowMapTexture = useRuntimeBakeShadowSource ? _pointLightVolumeBehaviour.GetProgramVariable("ShadowMapTexture") as Texture : null;
+            Texture shadowMapTexture = useRuntimeBakeShadowSource ? (currentRuntimeShadowMapTexture != null && currentRuntimeShadowMapTexture != authoringShadowMapTexture ? currentRuntimeShadowMapTexture : null) : authoringShadowMapTexture;
+            Material shadowMapMaterial = useRuntimeBakeShadowSource ? null : ShadowMap as Material;
             _pointLightVolumeBehaviour.SetProgramVariable("CustomTexture", customTexture);
             _pointLightVolumeBehaviour.SetProgramVariable("CustomTextureMaterial", customTextureMaterial);
             _pointLightVolumeBehaviour.SetProgramVariable("ProjectionType", projectionType);
@@ -559,9 +609,9 @@ namespace VRCLightVolumes {
             if (customSourceChanged) _pointLightVolumeBehaviour.SetProgramVariable("AutoUpdateCustomTexture", ShouldAutoUpdateCustomTexture());
             _pointLightVolumeBehaviour.SetProgramVariable("CustomTextureIsCubemap", IsProjectionTextureCubemap());
             _pointLightVolumeBehaviour.SetProgramVariable("CustomTextureHasDepthSlices", ProjectionTextureHasDepthSlices());
-            _pointLightVolumeBehaviour.SetProgramVariable("ShadowMapTexture", GetShadowMapTexture());
-            _pointLightVolumeBehaviour.SetProgramVariable("ShadowMapMaterial", ShadowMap as Material);
-            _pointLightVolumeBehaviour.SetProgramVariable("AutoUpdateShadowMap", ShouldAutoUpdateShadowMap());
+            _pointLightVolumeBehaviour.SetProgramVariable("ShadowMapTexture", shadowMapTexture);
+            _pointLightVolumeBehaviour.SetProgramVariable("ShadowMapMaterial", shadowMapMaterial);
+            _pointLightVolumeBehaviour.SetProgramVariable("AutoUpdateShadowMap", !useRuntimeBakeShadowSource && ShouldAutoUpdateShadowMap());
             _pointLightVolumeBehaviour.SetProgramVariable("ShadowMapTextureIsCubemap", IsShadowMapTextureCubemap());
             _pointLightVolumeBehaviour.SetProgramVariable("ShadowMapTextureHasDepthSlices", ShadowMapTextureHasDepthSlices());
             _pointLightVolumeBehaviour.SetProgramVariable("ShadowMapUsesCubemap", UsesCubemapShadows());
@@ -582,12 +632,14 @@ namespace VRCLightVolumes {
             if (customSourceChanged) PointLightVolumeInstance.AutoUpdateCustomTexture = ShouldAutoUpdateCustomTexture();
             PointLightVolumeInstance.CustomTextureIsCubemap = IsProjectionTextureCubemap();
             PointLightVolumeInstance.CustomTextureHasDepthSlices = ProjectionTextureHasDepthSlices();
-            Texture shadowMapTexture = GetShadowMapTexture();
-            Material shadowMapMaterial = ShadowMap as Material;
+            bool useRuntimeBakeShadowSource = ShouldUseRuntimeBakeShadowSource();
+            Texture authoringShadowMapTexture = GetShadowMapTexture();
+            Texture shadowMapTexture = useRuntimeBakeShadowSource ? (PointLightVolumeInstance.ShadowMapTexture != null && PointLightVolumeInstance.ShadowMapTexture != authoringShadowMapTexture ? PointLightVolumeInstance.ShadowMapTexture : null) : authoringShadowMapTexture;
+            Material shadowMapMaterial = useRuntimeBakeShadowSource ? null : ShadowMap as Material;
             bool shadowSourceChanged = PointLightVolumeInstance.ShadowMapTexture != shadowMapTexture || PointLightVolumeInstance.ShadowMapMaterial != shadowMapMaterial;
             PointLightVolumeInstance.ShadowMapTexture = shadowMapTexture;
             PointLightVolumeInstance.ShadowMapMaterial = shadowMapMaterial;
-            PointLightVolumeInstance.AutoUpdateShadowMap = ShouldAutoUpdateShadowMap();
+            PointLightVolumeInstance.AutoUpdateShadowMap = !useRuntimeBakeShadowSource && ShouldAutoUpdateShadowMap();
             PointLightVolumeInstance.ShadowMapTextureIsCubemap = IsShadowMapTextureCubemap();
             PointLightVolumeInstance.ShadowMapTextureHasDepthSlices = ShadowMapTextureHasDepthSlices();
             PointLightVolumeInstance.ShadowMapUsesCubemap = UsesCubemapShadows();
@@ -595,6 +647,14 @@ namespace VRCLightVolumes {
                 PointLightVolumeInstance.ShadowBakePosition = transform.position;
                 PointLightVolumeInstance.ShadowBakeRotation = transform.rotation;
             }
+        }
+
+        // Returns true when runtime should ignore the assigned shadow file and bake a generated source instead.
+        private bool ShouldUseRuntimeBakeShadowSource() {
+#if UNITY_EDITOR
+            if (!Application.isPlaying) return false;
+#endif
+            return Shadows && BakeInGame;
         }
 
         // Checks whether editor sync is assigning a new projection source that should reset the auto-update default.
@@ -671,6 +731,11 @@ namespace VRCLightVolumes {
             return Shadows && HasShadowMapSource() ? 0 : -1;
         }
 
+        // Returns the one-shot in-game bake resolution copied from the current setup.
+        private int GetRuntimeShadowResolution() {
+            return LightVolumeSetup != null ? Mathf.Max((int)LightVolumeSetup.ShadowResolution, 16) : 128;
+        }
+
         // Returns the far clip used by the shadow map bake
         public float GetShadowFarClip() {
             float farClip = FarPlane;
@@ -738,37 +803,9 @@ namespace VRCLightVolumes {
 
         // Bakes or re-bakes the shadow map for this light
         public bool BakeShadowMap(string infoString, bool regenerateArray) {
-            SetupDependencies();
-            SyncUdonScript(false);
-            float farClip = GetShadowFarClip();
-            float nearClip = GetShadowNearClip();
-            if (nearClip >= farClip) nearClip = farClip * 0.5f;
-            int resolution = LightVolumeSetup != null ? (int)LightVolumeSetup.ShadowResolution : 128;
-            TextureFormat format = LightVolumeSetup != null ? LightVolumeSetup.GetShadowMapBakeFormat() : TextureFormat.RGBAFloat;
-            UnityEngine.Object shadowTexture = ShouldBakeCubemapShadows() ? (UnityEngine.Object)PointLightShadowBaker.BakeShadowMap(this, resolution, farClip, format, Blur, ContactHardening, infoString) : PointLightShadowBaker.BakeSingleShadowMap(this, resolution, farClip, format, Blur, ContactHardening, infoString);
-            if (shadowTexture == null) return false;
-
-            string scenePath = UnityEngine.SceneManagement.SceneManager.GetActiveScene().path;
-            string path = $"{System.IO.Path.GetDirectoryName(scenePath)}/{UnityEngine.SceneManagement.SceneManager.GetActiveScene().name}/VRCLightVolumes/Temp/{gameObject.name}_shadows.asset";
-            if (UnityEditor.AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(path) != null) {
-                UnityEditor.AssetDatabase.DeleteAsset(path);
-            }
-            LVUtils.SaveAsAsset(shadowTexture, path);
-
-            ShadowMap = shadowTexture;
-            PointLightVolumeInstance.ShadowBakePosition = transform.position;
-            PointLightVolumeInstance.ShadowBakeRotation = transform.rotation;
-            PointLightVolumeInstance.FarClip = farClip;
-            PointLightVolumeInstance.NearClip = nearClip;
-            _shadowMapPrev = ShadowMap;
-            LVUtils.MarkDirty(this);
-            LVUtils.MarkDirty(PointLightVolumeInstance);
-
-            if (regenerateArray && LightVolumeSetup != null) {
-                LightVolumeSetup.ReinitializeShadowTextures();
-            }
-            SyncUdonScript();
-            return true;
+            bool baked = PointLightShadowBaker.BakeShadowMap(this, infoString, regenerateArray);
+            if (baked) _shadowMapPrev = ShadowMap;
+            return baked;
         }
 
 #endif

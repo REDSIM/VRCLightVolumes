@@ -213,7 +213,7 @@ namespace VRCLightVolumes.Tests {
             Assert.That(instance.IsRangeDirty, Is.False);
 
             float previousSquaredRange = instance.SquaredRange;
-            pointLight.Intensity = 2f;
+            pointLight.Intensity = 200f;
             pointLight.SyncUdonScript();
 
             Assert.That(EditorUtility.IsDirty(instance), Is.True);

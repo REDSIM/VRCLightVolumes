@@ -960,7 +960,8 @@ namespace VRCLightVolumes {
 
             int resolvedCustomId = LightVolumeManager.GetPointLightCustomID(pointLightVolume.PointLightVolumeInstance);
             if (resolvedCustomId < 0) return false;
-            customId = pointLightVolume.Projection == PointLightVolume.LightProjection.LUT ? resolvedCustomId + 1f : -resolvedCustomId - 1f;
+            if (pointLightVolume.Projection == PointLightVolume.LightProjection.LUT) customId = pointLightVolume.Type == PointLightVolume.LightType.PointLight ? resolvedCustomId : resolvedCustomId + 1f;
+            else customId = -resolvedCustomId - 1f;
             return true;
         }
 

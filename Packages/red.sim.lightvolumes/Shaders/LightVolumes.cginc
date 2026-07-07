@@ -491,7 +491,7 @@ bool LV_PointLightVolumeContribution(uint id, float3 worldPos, float3 pointLight
                 counted = true;
                 [branch] if (customId > 0) { // Point light with a baked attenuation LUT
                     float dirRadius = distSq * pos.w;
-                    uint textureId = (uint) _UdonPointLightVolumeCubeCount * 5 + customId - 1;
+                    uint textureId = (uint) _UdonPointLightVolumeCubeCount * 5 + customId;
                     float3 att = color.rgb * LV_SAMPLE_POINT(float3(0, sqrt(dirRadius), textureId)).xyz;
                     lightDirNormal = lightDir;
                     specularSpreadSq = 0;

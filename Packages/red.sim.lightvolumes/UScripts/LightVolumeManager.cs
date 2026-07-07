@@ -933,6 +933,8 @@ namespace VRCLightVolumes {
             int cubemapMaterialCount = 0;
             int singleTextureCount = 0;
             int singleMaterialCount = 0;
+            bool pointLutUsesFirstSingleTexture = false;
+            bool pointLutUsesFirstSingleMaterial = false;
 
             // Iterate through registry and collect unique texture/material sources in reusable arrays
             for (int i = 0; i < count; i++) {
@@ -952,6 +954,7 @@ namespace VRCLightVolumes {
 
                 bool usesCubemapProjection = lightType == 0 && projectionMode == 2; // 0: point, 2: custom cookie or cubemap
                 bool usesAreaCookieProjection = lightType == 2 && projectionMode == 2; // 2: area, 2: custom cookie
+                bool usesPointLutProjection = lightType == 0 && projectionMode == 1; // 0: point, 1: LUT
 
                 if (projectionType == 1) { // TEXTURE PROJECTION
 
@@ -994,6 +997,7 @@ namespace VRCLightVolumes {
                             _customSingleTextureAutoUpdates[singleTextureCount] = autoUpdate;
                             singleTextureCount++;
                         }
+                        if (usesPointLutProjection && index == 0) pointLutUsesFirstSingleTexture = true;
                         if (usesAreaCookieProjection) {
                             _customSingleTextureAreaCookies[index] = true;
                         }
@@ -1043,6 +1047,7 @@ namespace VRCLightVolumes {
                             _customSingleMaterialAutoUpdates[singleMaterialCount] = autoUpdate;
                             singleMaterialCount++;
                         }
+                        if (usesPointLutProjection && index == 0) pointLutUsesFirstSingleMaterial = true;
                         if (usesAreaCookieProjection) {
                             _customSingleMaterialAreaCookies[index] = true;
                         }
@@ -1062,7 +1067,8 @@ namespace VRCLightVolumes {
             _customSingleMaterialCount = singleMaterialCount;
             int cubemapsCount = cubemapTextureCount + cubemapMaterialCount;
             CubemapsCount = cubemapsCount;
-            _customTextureArrayDepth = cubemapsCount * 6 + singleTextureCount + singleMaterialCount;
+            int singleSourceIDOffset = cubemapsCount == 0 && (pointLutUsesFirstSingleTexture || singleTextureCount == 0 && pointLutUsesFirstSingleMaterial) ? 1 : 0; // v2 point LUT shaders treat custom ID 0 as parametric.
+            _customTextureArrayDepth = cubemapsCount * 6 + singleSourceIDOffset + singleTextureCount + singleMaterialCount;
 
             // Convert local source indices into final texture-array source IDs and refresh area-cookie fallback source cache after final counts are known
             for (int i = 0; i < count; i++) {
@@ -1081,8 +1087,8 @@ namespace VRCLightVolumes {
                 int sourceType = _customSourceTypes[i];
                 // SourceType 1 already uses the local cubemap texture index as the final ID; 2/3/4 need offsets.
                 if (sourceType == 2) index += cubemapTextureCount; // 2: cubemap materials follow cubemap textures
-                else if (sourceType == 3) index += cubemapsCount; // 3: single textures follow every six-slice cubemap source
-                else if (sourceType == 4) index += cubemapsCount + singleTextureCount; // 4: single materials follow single textures
+                else if (sourceType == 3) index += cubemapsCount + singleSourceIDOffset; // 3: single textures follow every six-slice cubemap source
+                else if (sourceType == 4) index += cubemapsCount + singleSourceIDOffset + singleTextureCount; // 4: single materials follow single textures
                 _pointLightCustomIDs[i] = index;
 
                 if ((sourceType != 3 && sourceType != 4) || instance.LightType != 2 || instance.ProjectionMode != 2) { // 2: area light, 2: custom cookie, 3/4: single texture/material
@@ -1090,7 +1096,7 @@ namespace VRCLightVolumes {
                     continue;
                 }
 
-                int singleSourceIndex = index - cubemapsCount;
+                int singleSourceIndex = index - cubemapsCount - singleSourceIDOffset;
                 if (singleSourceIndex >= 0 && singleSourceIndex < _customSingleAreaCookieReceivers.Length && _customSingleAreaCookieReceivers[singleSourceIndex] == null) _customSingleAreaCookieReceivers[singleSourceIndex] = instance;
 
                 if (sourceType == 3) CacheAreaCookieAverageSource(i, instance, index, instance.CustomTexture, null); // 3: single texture
@@ -1116,8 +1122,9 @@ namespace VRCLightVolumes {
             }
 
             // Blit each 1-slice texture source into 1 array slice after cubemap sources
-            int singleBaseSlice = CubemapsCount * 6;
             int singleTextureCount = _customSingleTextureCount;
+            int singleMaterialCount = _customSingleMaterialCount;
+            int singleBaseSlice = _customTextureArrayDepth - singleTextureCount - singleMaterialCount;
             for (int i = 0; i < singleTextureCount; i++) {
                 if (autoUpdatePass && !_customSingleTextureAutoUpdates[i]) continue;
                 Texture sourceTexture = _customSingleTextures[i];
@@ -1127,7 +1134,6 @@ namespace VRCLightVolumes {
             }
 
             // Blit each 1-slice material source into 1 array slice after texture sources
-            int singleMaterialCount = _customSingleMaterialCount;
             for (int i = 0; i < singleMaterialCount; i++) {
                 if (autoUpdatePass && !_customSingleMaterialAutoUpdates[i]) continue;
                 Material sourceMaterial = _customSingleMaterials[i];
@@ -1142,12 +1148,12 @@ namespace VRCLightVolumes {
 #endif
             for (int i = 0; i < singleTextureCount; i++) {
                 if (autoUpdatePass && !_customSingleTextureAutoUpdates[i]) continue;
-                if (_customSingleTextureAreaCookies[i]) RequestAreaCookieAverageReadback(i, _customSingleAreaCookieReceivers[i]);
+                if (_customSingleTextureAreaCookies[i]) RequestAreaCookieAverageReadback(i, _customSingleAreaCookieReceivers[i], autoUpdatePass);
             }
 
             for (int i = 0; i < singleMaterialCount; i++) {
                 if (autoUpdatePass && !_customSingleMaterialAutoUpdates[i]) continue;
-                if (_customSingleMaterialAreaCookies[i]) RequestAreaCookieAverageReadback(singleTextureCount + i, _customSingleAreaCookieReceivers[singleTextureCount + i]);
+                if (_customSingleMaterialAreaCookies[i]) RequestAreaCookieAverageReadback(singleTextureCount + i, _customSingleAreaCookieReceivers[singleTextureCount + i], autoUpdatePass);
             }
         }
 
@@ -1182,12 +1188,24 @@ namespace VRCLightVolumes {
         }
 
         // Requests one area cookie average from the final texture array slice used for old-shader fallback
-        private void RequestAreaCookieAverageReadback(int sourceIndex, PointLightVolumeInstance receiver) {
+        private void RequestAreaCookieAverageReadback(int sourceIndex, PointLightVolumeInstance receiver, bool forceReadback) {
             if (!_customTexturesUseMipMap || CustomTextures == null || receiver == null) return;
-            int singleBaseSlice = CubemapsCount * 6;
+            int singleBaseSlice = _customTextureArrayDepth - _customSingleTextureCount - _customSingleMaterialCount;
+            int singleSourceIDOffset = singleBaseSlice - CubemapsCount * 6;
             int targetSlice = singleBaseSlice + sourceIndex;
             int mipIndex = CustomTextures.mipmapCount - 1;
-            int customId = CubemapsCount + sourceIndex;
+            int customId = CubemapsCount + singleSourceIDOffset + sourceIndex;
+
+            if (!forceReadback) {
+                int receiverIndex = -1;
+                for (int i = 0; i < PointLightVolumeInstances.Length; i++) {
+                    if (PointLightVolumeInstances[i] == receiver) {
+                        receiverIndex = i;
+                        break;
+                    }
+                }
+                if (receiverIndex >= 0 && receiverIndex < _pointLightAreaCookieAverageColors.Length && _pointLightAreaCookieAverageColors[receiverIndex].a > 0f) return;
+            }
 
             if (receiver.AreaCookieAverageReadbackPending) {
                 if (receiver.AreaCookieAverageCustomId == customId) return;
@@ -2006,7 +2024,8 @@ namespace VRCLightVolumes {
 
             float shaderCustomId = 0;
             if (resolvedCustomId >= 0) {
-                if (isLut) shaderCustomId = resolvedCustomId + 1;
+                // Match the v2 shader ABI: point LUT uses the positive ID directly, while spot LUT subtracts one in shader.
+                if (isLut) shaderCustomId = isSpot ? resolvedCustomId + 1 : resolvedCustomId;
                 else if (isCustomCookie) shaderCustomId = -resolvedCustomId - 1;
             }
 

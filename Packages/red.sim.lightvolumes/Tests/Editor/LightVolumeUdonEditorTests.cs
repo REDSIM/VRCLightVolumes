@@ -95,6 +95,12 @@ namespace VRCLightVolumes.Tests {
             point.Position = new Vector3(9, 9, 9);
             Assert.That(InvokeLegacyPointLightMigration(point, serializedBlock), Is.False);
             AssertVectorClose(new Vector4(9, 9, 9, 0), point.Position);
+
+            GameObject currentGameObject = CreateGameObject("Current Point Migration", false);
+            PointLightVolumeInstance currentPoint = currentGameObject.AddComponent<PointLightVolumeInstance>();
+            currentPoint.Position = new Vector3(4, 5, 6);
+            Assert.That(InvokeLegacyPointLightMigration(currentPoint, serializedBlock + "  Position: {x: 9, y: 9, z: 9}\n"), Is.False);
+            AssertVectorClose(new Vector4(4, 5, 6, 0), currentPoint.Position);
         }
 
         // Verifies 2.x regular volume fallback fields restore rotation rows and compact bounds scale.
@@ -2463,6 +2469,48 @@ namespace VRCLightVolumes.Tests {
             AssertPointCustomData(4, cookieSpotADuplicate, -2, 0);
         }
 
+        // Verifies point LUTs use the 2.x-compatible positive ID convention without overlapping later cookie slices.
+        [Test]
+        public void PointLutSourceUsesV2IdBeforeLaterCookies() {
+            LightVolumeManager manager = CreateManager("Point LUT V2 Compatibility Manager", false);
+            Texture2D lut = CreateTexture2D("Shared Point LUT");
+            Material areaCookie = CreateMaterial("Hidden/CubeFace");
+            manager.CustomTexturesWidth = 4;
+            manager.CustomTexturesHeight = 4;
+
+            PointLightVolumeInstance area = CreatePointLight(manager, "Area Material Cookie", true);
+            area.transform.localScale = new Vector3(2, 3, 1);
+            area.SetCustomTexture();
+            area.SetAreaLight();
+            area.CustomTextureMaterial = areaCookie;
+            area.ProjectionType = 2; // 2: material
+            area.AutoUpdateCustomTexture = true;
+
+            PointLightVolumeInstance spot = CreatePointLight(manager, "Spot LUT", true);
+            spot.SetLut();
+            spot.SetSpotLight(60, 0.5f);
+            spot.CustomTexture = lut;
+            spot.ProjectionType = 1; // 1: texture
+
+            PointLightVolumeInstance point = CreatePointLight(manager, "Point LUT", true);
+            point.SetLut();
+            point.CustomTexture = lut;
+            point.ProjectionType = 1; // 1: texture
+
+            manager.PointLightVolumeInstances = new[] { area, spot, point };
+            manager.ReinitializeCustomTextures();
+            manager.UpdateVolumes();
+
+            Assert.That(manager.CustomTextures, Is.Not.Null);
+            Assert.That(manager.CustomTextures.volumeDepth, Is.EqualTo(3));
+            Assert.That(GetManagerField<int>(manager, _customSingleTextureCountField), Is.EqualTo(1));
+            Assert.That(GetManagerField<int>(manager, _customSingleMaterialCountField), Is.EqualTo(1));
+            Assert.That(GetManagerField<int[]>(manager, _pointLightCustomIDsField), Is.EqualTo(new[] { 2, 1, 1 }));
+            AssertPointCustomData(0, area, -3, 0);
+            AssertPointCustomData(1, spot, 2, 0);
+            AssertPointCustomData(2, point, 1, 0);
+        }
+
         // Verifies inactive point lights do not keep custom projection sources allocated.
         [Test]
         public void InactiveCustomTextureUsersReleaseRuntimeArrayUntilReactivated() {
@@ -2736,6 +2784,8 @@ namespace VRCLightVolumes.Tests {
         private Texture2D CreateTexture2D(string name) {
             Texture2D texture = new Texture2D(1, 1, TextureFormat.RGBA32, false);
             texture.name = name;
+            texture.SetPixel(0, 0, Color.white);
+            texture.Apply(false);
             _createdObjects.Add(texture);
             return texture;
         }

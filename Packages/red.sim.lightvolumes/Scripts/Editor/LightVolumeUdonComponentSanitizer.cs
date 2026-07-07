@@ -24,6 +24,7 @@ namespace VRCLightVolumes {
         private static Type _programSourceFieldOwner = null;
         private static bool _needsAuthoringSyncAfterMigration = false;
         private static readonly Dictionary<string, string> _sceneYamlCache = new Dictionary<string, string>();
+        private static readonly HashSet<int> _migratedLegacyPointLightInstanceIds = new HashSet<int>();
 
         // Registers delayed cleanup so duplicated UdonSharp proxy components are removed after editor reloads and hierarchy edits
         static LightVolumeUdonComponentSanitizer() {
@@ -253,7 +254,8 @@ namespace VRCLightVolumes {
             if (!hasAngleData) angleData = 0f;
             if (!hasShadowmaskIndex) shadowmaskIndex = -1;
             if (!HasLegacyPackedPointLightData(positionData, directionData, customID, angleData, shadowmaskIndex)) return false;
-            if (!CanApplyLegacyPointLightData(pointLight)) return false;
+            if (HasCurrentPointLightData(serializedBlock)) return false;
+            if (_migratedLegacyPointLightInstanceIds.Contains(pointLight.GetInstanceID())) return false;
 
             Undo.RecordObject(pointLight, UndoName);
             pointLight.Position = new Vector3(positionData.x, positionData.y, positionData.z);
@@ -291,6 +293,7 @@ namespace VRCLightVolumes {
             pointLight.AutoUpdateCustomTexture = false;
             pointLight.ShadowMapID = -1f;
             pointLight.IsRangeDirty = true;
+            _migratedLegacyPointLightInstanceIds.Add(pointLight.GetInstanceID());
             return true;
         }
 
@@ -299,21 +302,17 @@ namespace VRCLightVolumes {
             return positionData != Vector4.zero || directionData != Vector4.zero || customID != 0f || angleData != 0f || shadowmaskIndex >= 0;
         }
 
-        // Prevents repeated scene YAML migration from overwriting runtime data that already moved to explicit fields.
-        private static bool CanApplyLegacyPointLightData(PointLightVolumeInstance pointLight) {
-            return pointLight.Position == Vector3.zero
-                && pointLight.LightType == 0
-                && Mathf.Approximately(pointLight.LightSourceSize, 1f)
-                && Mathf.Approximately(pointLight.InverseSquaredRange, 1f)
-                && Mathf.Approximately(pointLight.Width, 1f)
-                && pointLight.Direction == Vector3.forward
-                && pointLight.Rotation == Quaternion.identity
-                && Mathf.Approximately(pointLight.ConeFalloff, 1f)
-                && Mathf.Approximately(pointLight.OuterAngleCos, 1f)
-                && Mathf.Approximately(pointLight.OuterAngleTan, 0f)
-                && Mathf.Approximately(pointLight.Height, 1f)
-                && pointLight.ProjectionType == 0
-                && pointLight.ProjectionMode == 0;
+        // Returns true when the scene YAML already contains the explicit 3.x point light layout.
+        private static bool HasCurrentPointLightData(string serializedBlock) {
+            string line;
+            return TryReadYamlLine(serializedBlock, "LightType", out line)
+                || TryReadYamlLine(serializedBlock, "Position", out line)
+                || TryReadYamlLine(serializedBlock, "InverseSquaredRange", out line)
+                || TryReadYamlLine(serializedBlock, "Direction", out line)
+                || TryReadYamlLine(serializedBlock, "Rotation", out line)
+                || TryReadYamlLine(serializedBlock, "OuterAngleCos", out line)
+                || TryReadYamlLine(serializedBlock, "ProjectionType", out line)
+                || TryReadYamlLine(serializedBlock, "ProjectionMode", out line);
         }
 
         // Resolves the old packed type from PositionData.w and AngleData.

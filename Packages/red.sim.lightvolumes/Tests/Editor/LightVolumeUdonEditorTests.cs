@@ -1185,6 +1185,48 @@ namespace VRCLightVolumes.Tests {
             AssertVectorClose(ExpectedAreaCookieFallbackColor(point, replacementAverageColor), Shader.GetGlobalVectorArray(_pointLightColorID)[0]);
         }
 
+        // Verifies an existing area-cookie fallback average is shared with later area lights deduped to the same cookie source.
+        [Test]
+        public void SharedAreaCookieFallbackAveragePropagatesAfterDedupe() {
+            LightVolumeManager manager = CreateManager("Shared Area Cookie Fallback Manager", false);
+            Texture2D source = CreateTexture2D("Shared Area Cookie Source");
+            Color averageColor = new Color(0.25f, 0.5f, 0.75f, 1f);
+            manager.CustomTexturesWidth = 4;
+            manager.CustomTexturesHeight = 4;
+
+            PointLightVolumeInstance firstPoint = CreatePointLight(manager, "Shared Area Cookie A", true);
+            firstPoint.transform.localScale = new Vector3(2, 3, 1);
+            firstPoint.Color = new Color(0.25f, 0.5f, 1f, 1f);
+            firstPoint.Intensity = 2f;
+            firstPoint.SetCustomTexture();
+            firstPoint.SetAreaLight();
+            firstPoint.CustomTexture = source;
+            firstPoint.ProjectionType = 1; // 1: texture
+            manager.PointLightVolumeInstances = new[] { firstPoint };
+
+            manager.ReinitializeCustomTextures();
+            UploadAreaCookieAverageColor(manager, 0, averageColor);
+
+            PointLightVolumeInstance secondPoint = CreatePointLight(manager, "Shared Area Cookie B", true);
+            secondPoint.transform.localScale = new Vector3(2, 3, 1);
+            secondPoint.Color = new Color(1f, 0.5f, 0.25f, 1f);
+            secondPoint.Intensity = 2f;
+            secondPoint.SetCustomTexture();
+            secondPoint.SetAreaLight();
+            secondPoint.CustomTexture = source;
+            secondPoint.ProjectionType = 1; // 1: texture
+            manager.PointLightVolumeInstances = new[] { firstPoint, secondPoint };
+
+            manager.ReinitializeCustomTextures();
+            manager.UpdateVolumes();
+
+            Assert.That(GetManagerField<int>(manager, _customSingleTextureCountField), Is.EqualTo(1));
+            Assert.That(GetManagerField<int[]>(manager, _pointLightCustomIDsField), Is.EqualTo(new[] { 0, 0 }));
+            Vector4[] colors = Shader.GetGlobalVectorArray(_pointLightColorID);
+            AssertVectorClose(ExpectedAreaCookieFallbackColor(firstPoint, averageColor), colors[0]);
+            AssertVectorClose(ExpectedAreaCookieFallbackColor(secondPoint, averageColor), colors[1]);
+        }
+
         // Verifies an invalidated async area cookie readback cannot patch the current fallback color through a reused custom ID.
         [Test]
         public void InvalidatedAreaCookieReadbackDoesNotPatchReusedCustomId() {

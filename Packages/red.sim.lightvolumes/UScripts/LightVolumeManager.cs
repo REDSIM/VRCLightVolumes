@@ -1204,7 +1204,10 @@ namespace VRCLightVolumes {
                         break;
                     }
                 }
-                if (receiverIndex >= 0 && receiverIndex < _pointLightAreaCookieAverageColors.Length && _pointLightAreaCookieAverageColors[receiverIndex].a > 0f) return;
+                if (receiverIndex >= 0 && receiverIndex < _pointLightAreaCookieAverageColors.Length && _pointLightAreaCookieAverageColors[receiverIndex].a > 0f) {
+                    UploadAreaCookieAverageColor(customId, _pointLightAreaCookieAverageColors[receiverIndex]);
+                    return;
+                }
             }
 
             if (receiver.AreaCookieAverageReadbackPending) {

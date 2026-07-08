@@ -342,13 +342,10 @@ namespace VRCLightVolumes {
                 int runtimeShadowResolution = GetRuntimeShadowResolution();
                 float nearClip = GetShadowNearClip();
                 float farClip = GetShadowFarClip();
-                bool proxyCustomTexturesChanged = false;
-                bool proxyShadowTexturesChanged = false;
-                if (syncTextureSources) proxyCustomTexturesChanged = SyncTextureSourcesToUdon(currentShadowMapTexture, authoringShadowMapTexture, useRuntimeShadowMapSource, hasRuntimeShadowMapSource, out proxyShadowTexturesChanged);
-                SyncRuntimeSettingsToUdonAndInstance(shadingStrength, spotCookieAspect, shadowMapID, bakeInGame, runtimeShadowResolution, nearClip, farClip, shadowBakePosition, shadowBakeRotation, notifyManager);
+                if (syncTextureSources) SyncTextureSourcesToUdon(currentShadowMapTexture, authoringShadowMapTexture, useRuntimeShadowMapSource, hasRuntimeShadowMapSource);
+                SyncRuntimeSettingsToUdonAndInstance(shadingStrength, spotCookieAspect, shadowMapID, bakeInGame, runtimeShadowResolution, nearClip, farClip, shadowBakePosition, shadowBakeRotation, false);
                 PointLightVolumeInstance.IsActive = gameObject.activeInHierarchy && Intensity != 0 && Color != UnityEngine.Color.black;
                 LightVolumeManager manager = LightVolumeSetup != null ? LightVolumeSetup.LightVolumeManager : PointLightVolumeInstance.LightVolumeManager;
-                if (notifyManager && manager != null && gameObject.activeInHierarchy) manager.NotifyPointLightVolumeChanged(PointLightVolumeInstance, false, proxyCustomTexturesChanged, proxyShadowTexturesChanged);
                 // Udon does not support parameterized methods, so the values are passed through temporary program variables
                 // Set the parameters first, then execute a parameterless method
                 bool hasProjectionSource = HasProjectionSource();
@@ -369,6 +366,10 @@ namespace VRCLightVolumes {
                         _pointLightVolumeBehaviour.SetProgramVariable("__0_falloff__param", Falloff);
                         _pointLightVolumeBehaviour.SendCustomEvent("__0_SetSpotLight");
                     }
+                }
+                if (notifyManager && manager != null && gameObject.activeInHierarchy) {
+                    UdonBehaviour managerBehaviour = manager.GetComponent<UdonBehaviour>();
+                    if (managerBehaviour != null) managerBehaviour.SendCustomEvent("RequestUpdateVolumes");
                 }
 
             } else {
@@ -632,6 +633,9 @@ namespace VRCLightVolumes {
                 PointLightVolumeInstance.Intensity = Intensity;
                 PointLightVolumeInstance.ShadingStrength = shadingStrength;
                 PointLightVolumeInstance.SpotCookieAspect = spotCookieAspect;
+#if UNITY_EDITOR
+                PointLightVolumeInstance.CacheEditorObservedValues();
+#endif
             }
             PointLightVolumeInstance.IsRangeDirty = true;
             PointLightVolumeInstance.ShadowMapID = shadowMapID;
@@ -653,7 +657,7 @@ namespace VRCLightVolumes {
         }
 
         // Copies projection and shadow texture sources into the Udon behaviour and mirrors them to the C# proxy in play mode
-        private bool SyncTextureSourcesToUdon(Texture currentShadowMapTexture, Texture authoringShadowMapTexture, bool useRuntimeShadowMapSource, bool hasRuntimeShadowMapSource, out bool shadowTexturesChanged) {
+        private void SyncTextureSourcesToUdon(Texture currentShadowMapTexture, Texture authoringShadowMapTexture, bool useRuntimeShadowMapSource, bool hasRuntimeShadowMapSource) {
             Texture customTexture = GetCustomTexture();
             Material customTextureMaterial = GetCustomTextureMaterial();
             int projectionType = GetProjectionType();
@@ -680,8 +684,6 @@ namespace VRCLightVolumes {
                 shadowMapTextureIsCubemap = IsCubemapTexture(shadowMapTexture);
                 shadowMapTextureHasDepthSlices = shadowMapUsesCubemap && TextureHasDepthSlices(shadowMapTexture);
             }
-            bool customTexturesChanged = PointLightVolumeInstance.CustomTexture != customTexture || PointLightVolumeInstance.CustomTextureMaterial != customTextureMaterial || PointLightVolumeInstance.ProjectionType != projectionType || PointLightVolumeInstance.ProjectionMode != projectionMode || PointLightVolumeInstance.AutoUpdateCustomTexture != autoUpdateCustomTexture || PointLightVolumeInstance.CustomTextureIsCubemap != customTextureIsCubemap || PointLightVolumeInstance.CustomTextureHasDepthSlices != customTextureHasDepthSlices;
-            shadowTexturesChanged = PointLightVolumeInstance.ShadowMapTexture != shadowMapTexture || PointLightVolumeInstance.ShadowMapMaterial != shadowMapMaterial || PointLightVolumeInstance.AutoUpdateShadowMap != autoUpdateShadowMap || PointLightVolumeInstance.ShadowMapTextureIsCubemap != shadowMapTextureIsCubemap || PointLightVolumeInstance.ShadowMapTextureHasDepthSlices != shadowMapTextureHasDepthSlices || PointLightVolumeInstance.ShadowMapUsesCubemap != shadowMapUsesCubemap;
             _pointLightVolumeBehaviour.SetProgramVariable("CustomTexture", customTexture);
             _pointLightVolumeBehaviour.SetProgramVariable("CustomTextureMaterial", customTextureMaterial);
             _pointLightVolumeBehaviour.SetProgramVariable("ProjectionType", projectionType);
@@ -708,7 +710,6 @@ namespace VRCLightVolumes {
             PointLightVolumeInstance.ShadowMapTextureIsCubemap = shadowMapTextureIsCubemap;
             PointLightVolumeInstance.ShadowMapTextureHasDepthSlices = shadowMapTextureHasDepthSlices;
             PointLightVolumeInstance.ShadowMapUsesCubemap = shadowMapUsesCubemap;
-            return customTexturesChanged;
         }
 #endif
 
@@ -798,6 +799,15 @@ namespace VRCLightVolumes {
 
         private void OnEnable() {
             SetupDependencies();
+#if UDONSHARP
+            if (Application.isPlaying) {
+                SyncUdonScript(true, true);
+#if UNITY_EDITOR
+                CacheEditorState();
+#endif
+                return;
+            }
+#endif
             LightVolumeSetup.RefreshVolumesList();
             LightVolumeSetup.SyncUdonScript();
 #if UNITY_EDITOR
@@ -806,6 +816,7 @@ namespace VRCLightVolumes {
         }
 
         private void OnDisable() {
+            if (Application.isPlaying) return;
             if (LightVolumeSetup != null) {
                 LightVolumeSetup.RefreshVolumesList();
                 LightVolumeSetup.SyncUdonScript();
@@ -813,6 +824,7 @@ namespace VRCLightVolumes {
         }
 
         private void OnDestroy() {
+            if (Application.isPlaying) return;
             if (LightVolumeSetup != null) {
                 FalloffLUT = null;
                 Cookie = null;

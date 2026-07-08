@@ -140,16 +140,15 @@ namespace VRCLightVolumes {
         private bool[] _customCubemapMaterialAutoUpdates = new bool[0];
         private bool[] _customSingleTextureAutoUpdates = new bool[0];
         private bool[] _customSingleMaterialAutoUpdates = new bool[0];
-        private bool[] _customSingleTextureAreaCookies = new bool[0];
-        private bool[] _customSingleMaterialAreaCookies = new bool[0];
         private PointLightVolumeInstance[] _customSingleAreaCookieReceivers = new PointLightVolumeInstance[0];
+        private int[] _customSingleAreaCookieReceiverIndices = new int[0];
 
         private int[] _customCubemapTextureModes = new int[0]; // Texture layouts: 0 = single 2D texture copied to all faces, 1 = Texture2DArray slices 0..5, 2 = native Cubemap faces
         private int[] _pointLightCustomIDs = new int[0];
         private int[] _customSourceTypes = new int[0]; // Source types per point light: 0 = none, 1 = cubemap texture, 2 = cubemap material, 3 = single texture, 4 = single material
         private Color[] _pointLightAreaCookieAverageColors = new Color[0];
-        private Texture[] _pointLightAreaCookieAverageTextures = new Texture[0];
-        private Material[] _pointLightAreaCookieAverageMaterials = new Material[0];
+        private bool _areaCookieAverageReadbackScheduled = false;
+        private bool _areaCookieAverageReadbackForceAll = false;
         [HideInInspector] public bool HasAutoCustomTextureUpdates = false;
 
         // SHADOW TEXTURES
@@ -410,8 +409,18 @@ namespace VRCLightVolumes {
 
 #region Change Notifications
 
+#if !COMPILER_UDONSHARP && UDONSHARP && UNITY_EDITOR
+        // Returns true when the editor C# proxy must not write runtime shader data while backed Udon drives Play Mode.
+        private bool ShouldSkipEditorProxyRuntimeUpdate() {
+            return Application.isPlaying && GetComponent("VRC.Udon.UdonBehaviour") != null;
+        }
+#endif
+
         // Used by LightVolumeInstance runtime methods
         public void NotifyLightVolumeChanged(LightVolumeInstance lightVolume, bool rebuildFinalData) {
+#if !COMPILER_UDONSHARP && UDONSHARP && UNITY_EDITOR
+            if (ShouldSkipEditorProxyRuntimeUpdate()) return;
+#endif
             // Checking, initializing...
             if (lightVolume == null) return;
             if (LightVolumeInstances == null) LightVolumeInstances = new LightVolumeInstance[0];
@@ -440,6 +449,9 @@ namespace VRCLightVolumes {
 
         // Used by PointLightVolumeInstance runtime methods
         public void NotifyPointLightVolumeChanged(PointLightVolumeInstance pointLightVolume, bool rebuildFinalData, bool customTexturesChanged, bool shadowTexturesChanged) {
+#if !COMPILER_UDONSHARP && UDONSHARP && UNITY_EDITOR
+            if (ShouldSkipEditorProxyRuntimeUpdate()) return;
+#endif
             // Checking, initializing...
             if (pointLightVolume == null) return;
             if (PointLightVolumeInstances == null) PointLightVolumeInstances = new PointLightVolumeInstance[0];
@@ -820,6 +832,7 @@ namespace VRCLightVolumes {
             int count = PointLightVolumeInstances.Length;
             int index = Array.IndexOf((Array)PointLightVolumeInstances, pointLightVolume, 0, count);
             if (index < 0) return;
+            if (pointLightVolume.LightType == 2 && pointLightVolume.ProjectionMode == 2 && (pointLightVolume.CustomTexture != null || pointLightVolume.CustomTextureMaterial != null)) pointLightVolume.AreaLightFallbackColor = index < _pointLightAreaCookieAverageColors.Length ? _pointLightAreaCookieAverageColors[index] : Color.clear;
             PointLightVolumeInstances[index] = null;
             if (customTexturesChanged) _customTexturesInitialized = false;
             if (shadowTexturesChanged) _shadowTexturesInitialized = false;
@@ -884,7 +897,7 @@ namespace VRCLightVolumes {
             int count = PointLightVolumeInstances.Length;
 
             // Prepare reusable custom texture source cache arrays for a full rebuild
-            if (_pointLightCustomIDs.Length < count || _customSourceTypes.Length < count || _customSingleMaterialAreaCookies.Length < count || _customSingleAreaCookieReceivers.Length < count || _pointLightAreaCookieAverageColors.Length < count || _pointLightAreaCookieAverageTextures.Length < count || _pointLightAreaCookieAverageMaterials.Length < count) {
+            if (_pointLightCustomIDs.Length < count || _customSourceTypes.Length < count || _customSingleAreaCookieReceivers.Length < count || _customSingleAreaCookieReceiverIndices.Length < count || _pointLightAreaCookieAverageColors.Length < count) {
                 _customCubemapTextures = new Texture[count];
                 _customCubemapMaterials = new Material[count];
                 _customSingleTextures = new Texture[count];
@@ -894,37 +907,25 @@ namespace VRCLightVolumes {
                 _customCubemapMaterialAutoUpdates = new bool[count];
                 _customSingleTextureAutoUpdates = new bool[count];
                 _customSingleMaterialAutoUpdates = new bool[count];
-                _customSingleTextureAreaCookies = new bool[count];
-                _customSingleMaterialAreaCookies = new bool[count];
                 _customSingleAreaCookieReceivers = new PointLightVolumeInstance[count];
+                _customSingleAreaCookieReceiverIndices = new int[count];
                 _pointLightCustomIDs = new int[count];
                 _customSourceTypes = new int[count];
                 Color[] oldAreaCookieAverageColors = _pointLightAreaCookieAverageColors;
-                Texture[] oldAreaCookieAverageTextures = _pointLightAreaCookieAverageTextures;
-                Material[] oldAreaCookieAverageMaterials = _pointLightAreaCookieAverageMaterials;
                 _pointLightAreaCookieAverageColors = new Color[count];
-                _pointLightAreaCookieAverageTextures = new Texture[count];
-                _pointLightAreaCookieAverageMaterials = new Material[count];
                 int averageCopyCount = Mathf.Min(oldAreaCookieAverageColors.Length, count);
                 for (int i = 0; i < averageCopyCount; i++) _pointLightAreaCookieAverageColors[i] = oldAreaCookieAverageColors[i];
-                int textureCopyCount = Mathf.Min(oldAreaCookieAverageTextures.Length, count);
-                for (int i = 0; i < textureCopyCount; i++) _pointLightAreaCookieAverageTextures[i] = oldAreaCookieAverageTextures[i];
-                int materialCopyCount = Mathf.Min(oldAreaCookieAverageMaterials.Length, count);
-                for (int i = 0; i < materialCopyCount; i++) _pointLightAreaCookieAverageMaterials[i] = oldAreaCookieAverageMaterials[i];
             } else {
                 for (int i = 0; i < _customCubemapTextureCount; i++) _customCubemapTextures[i] = null;
                 for (int i = 0; i < _customCubemapMaterialCount; i++) _customCubemapMaterials[i] = null;
-                for (int i = 0; i < _customSingleTextureCount; i++) {
-                    _customSingleTextures[i] = null;
-                    _customSingleTextureAreaCookies[i] = false;
-                }
-                for (int i = 0; i < _customSingleMaterialCount; i++) {
-                    _customSingleMaterials[i] = null;
-                    _customSingleMaterialAreaCookies[i] = false;
-                }
+                for (int i = 0; i < _customSingleTextureCount; i++) _customSingleTextures[i] = null;
+                for (int i = 0; i < _customSingleMaterialCount; i++) _customSingleMaterials[i] = null;
             }
             int previousSingleSourceCount = _customSingleTextureCount + _customSingleMaterialCount;
-            for (int i = 0; i < previousSingleSourceCount; i++) _customSingleAreaCookieReceivers[i] = null;
+            for (int i = 0; i < previousSingleSourceCount; i++) {
+                _customSingleAreaCookieReceivers[i] = null;
+                _customSingleAreaCookieReceiverIndices[i] = -1;
+            }
             HasAutoCustomTextureUpdates = false;
             _customTexturesUseMipMap = false;
 
@@ -998,9 +999,6 @@ namespace VRCLightVolumes {
                             singleTextureCount++;
                         }
                         if (usesPointLutProjection && index == 0) pointLutUsesFirstSingleTexture = true;
-                        if (usesAreaCookieProjection) {
-                            _customSingleTextureAreaCookies[index] = true;
-                        }
                         _pointLightCustomIDs[i] = index;
                         _customSourceTypes[i] = 3; // 3: single texture source, offset after all cubemap sources during final ID assignment
 
@@ -1048,9 +1046,6 @@ namespace VRCLightVolumes {
                             singleMaterialCount++;
                         }
                         if (usesPointLutProjection && index == 0) pointLutUsesFirstSingleMaterial = true;
-                        if (usesAreaCookieProjection) {
-                            _customSingleMaterialAreaCookies[index] = true;
-                        }
                         _pointLightCustomIDs[i] = index;
                         _customSourceTypes[i] = 4; // 4: single material source, offset after cubemap and single texture sources during final ID assignment
 
@@ -1074,14 +1069,18 @@ namespace VRCLightVolumes {
             for (int i = 0; i < count; i++) {
                 PointLightVolumeInstance instance = PointLightVolumeInstances[i];
                 if (instance == null) {
-                    ClearAreaCookieAverageSource(i, null);
+                    if (i < _pointLightAreaCookieAverageColors.Length) _pointLightAreaCookieAverageColors[i] = Color.clear;
                     continue;
                 }
                 if (!instance.IsActive) continue;
 
                 int index = _pointLightCustomIDs[i];
                 if (index < 0) {
-                    ClearAreaCookieAverageSource(i, instance);
+                    if (i < _pointLightAreaCookieAverageColors.Length) _pointLightAreaCookieAverageColors[i] = Color.clear;
+                    if (instance.AreaCookieAverageReadbackPending) {
+                        instance.AreaCookieAverageCustomId = -1;
+                        instance.AreaCookieAverageReadbackDirty = true;
+                    }
                     continue;
                 }
                 int sourceType = _customSourceTypes[i];
@@ -1092,15 +1091,22 @@ namespace VRCLightVolumes {
                 _pointLightCustomIDs[i] = index;
 
                 if ((sourceType != 3 && sourceType != 4) || instance.LightType != 2 || instance.ProjectionMode != 2) { // 2: area light, 2: custom cookie, 3/4: single texture/material
-                    ClearAreaCookieAverageSource(i, instance);
+                    if (i < _pointLightAreaCookieAverageColors.Length) _pointLightAreaCookieAverageColors[i] = Color.clear;
+                    if (instance.AreaCookieAverageReadbackPending) {
+                        instance.AreaCookieAverageCustomId = -1;
+                        instance.AreaCookieAverageReadbackDirty = true;
+                    }
                     continue;
                 }
 
                 int singleSourceIndex = index - cubemapsCount - singleSourceIDOffset;
-                if (singleSourceIndex >= 0 && singleSourceIndex < _customSingleAreaCookieReceivers.Length && _customSingleAreaCookieReceivers[singleSourceIndex] == null) _customSingleAreaCookieReceivers[singleSourceIndex] = instance;
+                if (singleSourceIndex >= 0 && singleSourceIndex < _customSingleAreaCookieReceivers.Length && _customSingleAreaCookieReceivers[singleSourceIndex] == null) {
+                    _customSingleAreaCookieReceivers[singleSourceIndex] = instance;
+                    _customSingleAreaCookieReceiverIndices[singleSourceIndex] = i;
+                }
 
-                if (sourceType == 3) CacheAreaCookieAverageSource(i, instance, index, instance.CustomTexture, null); // 3: single texture
-                else CacheAreaCookieAverageSource(i, instance, index, null, instance.CustomTextureMaterial); // 4: single material
+                if (i < _pointLightAreaCookieAverageColors.Length && _pointLightAreaCookieAverageColors[i].a <= 0f) _pointLightAreaCookieAverageColors[i] = instance.AreaLightFallbackColor;
+                instance.AreaCookieAverageReadbackDirty = true;
             }
 
         }
@@ -1145,50 +1151,58 @@ namespace VRCLightVolumes {
 #if !COMPILER_UDONSHARP && UNITY_EDITOR
             // Edit-mode fallback readbacks need the freshly blitted last mip immediately.
             if (_customTexturesUseMipMap && CustomTextures != null && !Application.isPlaying && !CustomTextures.autoGenerateMips) CustomTextures.GenerateMips();
+            if (!Application.isPlaying) {
+                RequestAreaCookieAverageReadbacks(autoUpdatePass);
+                return;
+            }
 #endif
+            if (!_customTexturesUseMipMap || CustomTextures == null) return;
+            if (!autoUpdatePass) _areaCookieAverageReadbackForceAll = true;
+            if (_areaCookieAverageReadbackScheduled) return;
+            _areaCookieAverageReadbackScheduled = true;
+#if UDONSHARP
+            SendCustomEventDelayedFrames(nameof(_RequestAreaCookieAverageReadbacks), 1);
+#else
+            StartCoroutine(DelayedAreaCookieAverageReadbacks());
+#endif
+        }
+
+#if !UDONSHARP
+        // Delays runtime readbacks by one frame in regular MonoBehaviour builds.
+        private IEnumerator DelayedAreaCookieAverageReadbacks() {
+            yield return null;
+            _RequestAreaCookieAverageReadbacks();
+        }
+#endif
+
+        // Runs delayed area-cookie fallback readbacks.
+        public void _RequestAreaCookieAverageReadbacks() {
+            _areaCookieAverageReadbackScheduled = false;
+            bool autoUpdatePass = !_areaCookieAverageReadbackForceAll;
+            _areaCookieAverageReadbackForceAll = false;
+            RequestAreaCookieAverageReadbacks(autoUpdatePass);
+        }
+
+        // Requests area-cookie fallback readbacks for all slices touched by the last custom texture blit pass.
+        private void RequestAreaCookieAverageReadbacks(bool autoUpdatePass) {
+            int singleTextureCount = _customSingleTextureCount;
+            int singleMaterialCount = _customSingleMaterialCount;
             for (int i = 0; i < singleTextureCount; i++) {
                 if (autoUpdatePass && !_customSingleTextureAutoUpdates[i]) continue;
-                if (_customSingleTextureAreaCookies[i]) RequestAreaCookieAverageReadback(i, _customSingleAreaCookieReceivers[i], autoUpdatePass);
+                PointLightVolumeInstance receiver = _customSingleAreaCookieReceivers[i];
+                if (receiver != null) RequestAreaCookieAverageReadback(i, receiver, _customSingleAreaCookieReceiverIndices[i], autoUpdatePass);
             }
 
             for (int i = 0; i < singleMaterialCount; i++) {
                 if (autoUpdatePass && !_customSingleMaterialAutoUpdates[i]) continue;
-                if (_customSingleMaterialAreaCookies[i]) RequestAreaCookieAverageReadback(singleTextureCount + i, _customSingleAreaCookieReceivers[singleTextureCount + i], autoUpdatePass);
-            }
-        }
-
-        // Stores the source identity that owns one point light's cached area-cookie average.
-        private void CacheAreaCookieAverageSource(int index, PointLightVolumeInstance instance, int customId, Texture texture, Material material) {
-            if (index < 0 || index >= _pointLightAreaCookieAverageColors.Length) return;
-            bool sameSource = _pointLightAreaCookieAverageTextures[index] == texture && _pointLightAreaCookieAverageMaterials[index] == material;
-            if (!sameSource) {
-                _pointLightAreaCookieAverageColors[index] = Color.clear;
-                if (instance != null && instance.AreaCookieAverageReadbackPending) {
-                    instance.AreaCookieAverageCustomId = -1;
-                    instance.AreaCookieAverageReadbackDirty = true;
-                }
-            } else if (instance != null && instance.AreaCookieAverageReadbackPending && instance.AreaCookieAverageCustomId != customId) {
-                instance.AreaCookieAverageCustomId = -1;
-                instance.AreaCookieAverageReadbackDirty = true;
-            }
-            _pointLightAreaCookieAverageTextures[index] = texture;
-            _pointLightAreaCookieAverageMaterials[index] = material;
-        }
-
-        // Clears the source identity for one point light's cached area-cookie average.
-        private void ClearAreaCookieAverageSource(int index, PointLightVolumeInstance instance) {
-            if (index < 0 || index >= _pointLightAreaCookieAverageColors.Length) return;
-            _pointLightAreaCookieAverageColors[index] = Color.clear;
-            _pointLightAreaCookieAverageTextures[index] = null;
-            _pointLightAreaCookieAverageMaterials[index] = null;
-            if (instance != null && instance.AreaCookieAverageReadbackPending) {
-                instance.AreaCookieAverageCustomId = -1;
-                instance.AreaCookieAverageReadbackDirty = true;
+                int sourceIndex = singleTextureCount + i;
+                PointLightVolumeInstance receiver = _customSingleAreaCookieReceivers[sourceIndex];
+                if (receiver != null) RequestAreaCookieAverageReadback(sourceIndex, receiver, _customSingleAreaCookieReceiverIndices[sourceIndex], autoUpdatePass);
             }
         }
 
         // Requests one area cookie average from the final texture array slice used for old-shader fallback
-        private void RequestAreaCookieAverageReadback(int sourceIndex, PointLightVolumeInstance receiver, bool forceReadback) {
+        private void RequestAreaCookieAverageReadback(int sourceIndex, PointLightVolumeInstance receiver, int receiverIndex, bool forceReadback) {
             if (!_customTexturesUseMipMap || CustomTextures == null || receiver == null) return;
             int singleBaseSlice = _customTextureArrayDepth - _customSingleTextureCount - _customSingleMaterialCount;
             int singleSourceIDOffset = singleBaseSlice - CubemapsCount * 6;
@@ -1196,14 +1210,7 @@ namespace VRCLightVolumes {
             int mipIndex = CustomTextures.mipmapCount - 1;
             int customId = CubemapsCount + singleSourceIDOffset + sourceIndex;
 
-            if (!forceReadback) {
-                int receiverIndex = -1;
-                for (int i = 0; i < PointLightVolumeInstances.Length; i++) {
-                    if (PointLightVolumeInstances[i] == receiver) {
-                        receiverIndex = i;
-                        break;
-                    }
-                }
+            if (!forceReadback && !receiver.AreaCookieAverageReadbackDirty) {
                 if (receiverIndex >= 0 && receiverIndex < _pointLightAreaCookieAverageColors.Length && _pointLightAreaCookieAverageColors[receiverIndex].a > 0f) {
                     UploadAreaCookieAverageColor(customId, _pointLightAreaCookieAverageColors[receiverIndex]);
                     return;
@@ -1212,7 +1219,6 @@ namespace VRCLightVolumes {
 
             if (receiver.AreaCookieAverageReadbackPending) {
                 if (receiver.AreaCookieAverageCustomId == customId) return;
-                receiver.AreaCookieAverageCustomId = -1;
                 receiver.AreaCookieAverageReadbackDirty = true;
                 return;
             }
@@ -1244,13 +1250,13 @@ namespace VRCLightVolumes {
             receiver.AreaCookieAverageReadbackDirty = false;
             receiver.AreaCookieAverageCustomId = -1;
 
-            if (success && customId >= 0) UploadAreaCookieAverageColor(customId, color);
+            if (success && customId >= 0 && !UploadAreaCookieAverageColor(customId, color)) RequestUpdateVolumes();
             if (retry && enabled && gameObject.activeInHierarchy) ReinitializeCustomTextures();
         }
 
-        // Caches the readback color and patches the live shader buffer; no volume update is guaranteed after async readback
-        private void UploadAreaCookieAverageColor(int customId, Color color) {
-            if (customId < 0) return;
+        // Caches the readback color and patches the live shader buffer. Returns true when a live shader slot was found.
+        private bool UploadAreaCookieAverageColor(int customId, Color color) {
+            if (customId < 0) return false;
 
             float alpha = color.a;
             color.r *= alpha;
@@ -1269,6 +1275,7 @@ namespace VRCLightVolumes {
             int pointLightCount = _pointLightCount;
             PointLightVolumeInstance[] pointInstances = PointLightVolumeInstances;
             int pointInstanceCount = pointInstances.Length;
+            bool foundLiveTarget = false;
             bool updatedColor = false;
             for (int shaderIndex = 0; shaderIndex < pointLightCount; shaderIndex++) {
                 int sourceIndex = _enabledPointIDs[shaderIndex];
@@ -1277,6 +1284,7 @@ namespace VRCLightVolumes {
                 if (sourceIndex >= pointInstanceCount) continue;
                 PointLightVolumeInstance sourceInstance = pointInstances[sourceIndex];
                 if (sourceInstance == null || sourceInstance.LightType != 2 || sourceInstance.ProjectionMode != 2) continue; // 2: area light, 2: custom cookie
+                foundLiveTarget = true;
                 Vector4 shaderColor = _pointLightColor[shaderIndex];
                 Vector4 extraData = _pointLightExtraData[shaderIndex];
                 float fallbackR = extraData.x * color.r;
@@ -1290,6 +1298,7 @@ namespace VRCLightVolumes {
                 updatedColor = true;
             }
             if (updatedColor) VRCShader.SetGlobalVectorArray(_pointLightColorID, _pointLightColor);
+            return foundLiveTarget;
         }
 
         // Rebuilds the runtime shadow texture array and assigns stable shader-side IDs to all shadowed point light instances
@@ -1772,6 +1781,9 @@ namespace VRCLightVolumes {
 
         // Requests to update volumes next frame
         public void RequestUpdateVolumes() {
+#if !COMPILER_UDONSHARP && UDONSHARP && UNITY_EDITOR
+            if (ShouldSkipEditorProxyRuntimeUpdate()) return;
+#endif
             if (_isUpdatingVolumes) return;
             _volumeDataUpdateRequested = true;
             ScheduleUpdateProcess();
@@ -1779,6 +1791,9 @@ namespace VRCLightVolumes {
 
         // Schedules the unified delayed update process when it is not already running
         private void ScheduleUpdateProcess() {
+#if !COMPILER_UDONSHARP && UDONSHARP && UNITY_EDITOR
+            if (ShouldSkipEditorProxyRuntimeUpdate()) return;
+#endif
 #if UDONSHARP
             if (_isUpdateProcessRunning) return;
             _isUpdateProcessRunning = true;
@@ -2069,6 +2084,9 @@ namespace VRCLightVolumes {
         // Recalculates all volume data immediately. Automatic runtime paths should call RequestUpdateVolumes instead
         public void UpdateVolumes() {
 
+#if !COMPILER_UDONSHARP && UDONSHARP && UNITY_EDITOR
+            if (ShouldSkipEditorProxyRuntimeUpdate()) return;
+#endif
             if (_isUpdatingVolumes) return;
             _isUpdatingVolumes = true;
 #if !COMPILER_UDONSHARP

@@ -612,6 +612,17 @@ namespace VRCLightVolumes {
 
             SetupDependencies();
             SetupBakeryDependencies();
+#if UDONSHARP
+            if (Application.isPlaying) {
+                SyncUdonScript();
+                if (LightVolumeSetup != null && LightVolumeSetup.LightVolumeManager != null) {
+                    UdonBehaviour managerBehaviour = LightVolumeSetup.LightVolumeManager.GetComponent<UdonBehaviour>();
+                    if (managerBehaviour != null) managerBehaviour.SendCustomEvent("RequestUpdateVolumes");
+                }
+                CacheEditorState();
+                return;
+            }
+#endif
             SyncUdonScript();
             LightVolumeSetup.RefreshVolumesList();
             LightVolumeSetup.SyncUdonScript();
@@ -619,6 +630,7 @@ namespace VRCLightVolumes {
         }
 
         private void OnDisable() {
+            if (Application.isPlaying) return;
             if (LightVolumeSetup != null) {
                 LightVolumeSetup.RefreshVolumesList();
                 LightVolumeSetup.SyncUdonScript();
@@ -626,6 +638,7 @@ namespace VRCLightVolumes {
         }
 
         private void OnDestroy() {
+            if (Application.isPlaying) return;
             if (LightVolumeSetup != null) {
                 LightVolumeSetup.RefreshVolumesList();
                 LightVolumeSetup.SyncUdonScript();

@@ -160,6 +160,7 @@ namespace VRCLightVolumes {
         private float _old_Intensity = 100f;
         private float _old_ShadingStrength = 1;
         private bool _isRegisteredWithManager = false;
+        [NonSerialized] public Color AreaLightFallbackColor = Color.clear;
         [NonSerialized] public int AreaCookieAverageCustomId = -1;
         [NonSerialized] public bool AreaCookieAverageReadbackPending = false;
         [NonSerialized] public bool AreaCookieAverageReadbackDirty = false;
@@ -250,6 +251,13 @@ namespace VRCLightVolumes {
 #endif
 
 #if !UDONSHARP || UNITY_EDITOR
+        // Caches editor-observed scalar values after an authoring helper mirrors them without notifying the C# proxy manager.
+        public void CacheEditorObservedValues() {
+            _old_Color = Color;
+            _old_Intensity = Intensity;
+            _old_ShadingStrength = ShadingStrength;
+        }
+
         // To make it work when changing values on UdonSharpBehaviour in the editor
         private void Update() {
             if (_old_Color != Color || _old_Intensity != Intensity) {

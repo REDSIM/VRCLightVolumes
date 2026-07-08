@@ -88,6 +88,8 @@ namespace VRCLightVolumes {
         [Header("Debug")]
         [Tooltip("Removes all Light Volume scripts in play mode, except Udon components. Useful for testing in a clean setup, just like in VRChat. For example, Auto Update Volumes and Dynamic Light Volumes will work just like in VRChat.")]
         public bool DestroyInPlayMode = false;
+        // Blocks authoring lifecycle sync while DestroyInPlayMode removes helper components.
+        internal static bool IsDestroyingPlayModeAuthoringComponents = false;
 
         [SerializeField] public List<LightVolumeData> LightVolumeDataList = new List<LightVolumeData>();
 
@@ -400,11 +402,6 @@ namespace VRCLightVolumes {
                 _lightVolumeManagerBehaviour.SetProgramVariable("PointLightVolumeInstances", pointLightVolumeInstances);
                 _lightVolumeManagerBehaviour.SendCustomEvent(customTextures ? "ReinitializeCustomTextures" : "ReinitializeShadowTextures");
                 _lightVolumeManagerBehaviour.SendCustomEvent("UpdateVolumes");
-#if UNITY_EDITOR
-                if (customTextures) LightVolumeManager.ReinitializeCustomTextures();
-                else LightVolumeManager.ReinitializeShadowTextures();
-                LightVolumeManager.UpdateVolumes();
-#endif
                 return;
             }
 #endif
@@ -487,6 +484,7 @@ namespace VRCLightVolumes {
 
         // Avoids adding manager components from Unity lifecycle validation callbacks.
         private bool CanSyncFromLifecycle() {
+            if (Application.isPlaying && IsDestroyingPlayModeAuthoringComponents) return false;
 #if UNITY_EDITOR
             if (!Application.isPlaying && LightVolumeManager == null && !TryGetComponent(out LightVolumeManager)) return false;
 #endif
@@ -1224,16 +1222,11 @@ namespace VRCLightVolumes {
                     pointLightVolumeInstances[i] = pointInstances[i].GetComponent<UdonBehaviour>();
                 }
                 _lightVolumeManagerBehaviour.SetProgramVariable("PointLightVolumeInstances", pointLightVolumeInstances);
+                _lightVolumeManagerBehaviour.SendCustomEvent("ReinitializeCustomTextures");
+                _lightVolumeManagerBehaviour.SendCustomEvent("ReinitializeShadowTextures");
 #if UNITY_EDITOR
-                _lightVolumeManagerBehaviour.SendCustomEvent("ReinitializeCustomTextures");
-                _lightVolumeManagerBehaviour.SendCustomEvent("ReinitializeShadowTextures");
                 _lightVolumeManagerBehaviour.SendCustomEvent("UpdateVolumes");
-                LightVolumeManager.ReinitializeCustomTextures();
-                LightVolumeManager.ReinitializeShadowTextures();
-                LightVolumeManager.UpdateVolumes();
 #else
-                _lightVolumeManagerBehaviour.SendCustomEvent("ReinitializeCustomTextures");
-                _lightVolumeManagerBehaviour.SendCustomEvent("ReinitializeShadowTextures");
                 // General setup changes are applied by the manager on the next scheduled Udon update frame
                 _lightVolumeManagerBehaviour.SendCustomEvent("RequestUpdateVolumes");
 #endif
@@ -1278,6 +1271,7 @@ namespace VRCLightVolumes {
         private static void CommitSudoku() {
             if (Application.isPlaying) {
 
+                IsDestroyingPlayModeAuthoringComponents = false;
                 bool isDestroy = false;
                 var s = FindObjectsByType<LightVolumeSetup>(FindObjectsInactive.Include, FindObjectsSortMode.None);
                 for (int i = 0; i < s.Length; i++) {
@@ -1288,6 +1282,7 @@ namespace VRCLightVolumes {
                     }
                 }
                 if(!isDestroy) return;
+                IsDestroyingPlayModeAuthoringComponents = true;
 
                 // Killing Light Volumes
                 var lvs = FindObjectsByType<LightVolume>(FindObjectsInactive.Include, FindObjectsSortMode.None);

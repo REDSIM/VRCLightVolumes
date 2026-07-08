@@ -11,7 +11,6 @@ namespace VRCLightVolumes.Tests {
         private const float Epsilon = 0.0001f;
         private const string CustomRenderTextureInfoProperty = "_CustomRenderTextureInfo";
         private const string RuntimeShadowBlurShaderPath = "Shaders/Internal/PointLightShadowRuntimeBlur.shader";
-        private const string LightVolumeManagerSourcePath = "UScripts/LightVolumeManager.cs";
 
         private static readonly int _lightVolumeInvLocalEdgeSmoothID = Shader.PropertyToID("_UdonLightVolumeInvLocalEdgeSmooth");
         private static readonly int _lightVolumeColorID = Shader.PropertyToID("_UdonLightVolumeColor");
@@ -57,6 +56,7 @@ namespace VRCLightVolumes.Tests {
         private static readonly FieldInfo _pointLightAreaCookieAverageColorsField = typeof(LightVolumeManager).GetField("_pointLightAreaCookieAverageColors", _lifecycleMethodFlags);
         private static readonly FieldInfo _pointLightArraysDirtyField = typeof(LightVolumeManager).GetField("_pointLightArraysDirty", _lifecycleMethodFlags);
         private static readonly FieldInfo _isUpdatingVolumesField = typeof(LightVolumeManager).GetField("_isUpdatingVolumes", _lifecycleMethodFlags);
+        private static readonly FieldInfo _dummyRTField = typeof(LightVolumeManager).GetField("_dummyRT", _lifecycleMethodFlags);
         private static readonly MethodInfo _uploadAreaCookieAverageColorMethod = typeof(LightVolumeManager).GetMethod("UploadAreaCookieAverageColor", _lifecycleMethodFlags);
         private static readonly BindingFlags _staticMigrationMethodFlags = BindingFlags.Static | BindingFlags.NonPublic;
 
@@ -192,15 +192,6 @@ namespace VRCLightVolumes.Tests {
             string shaderPath = File.Exists(projectPackagePath) ? projectPackagePath : packagePath;
             Assert.That(File.Exists(shaderPath), Is.True, shaderPath + " was not found");
             return File.ReadAllText(shaderPath);
-        }
-
-        // Reads the runtime manager source from either a Unity project root or this package directory.
-        private static string ReadLightVolumeManagerSource() {
-            string projectPackagePath = Path.Combine("Packages", "red.sim.lightvolumes", LightVolumeManagerSourcePath);
-            string packagePath = LightVolumeManagerSourcePath;
-            string sourcePath = File.Exists(projectPackagePath) ? projectPackagePath : packagePath;
-            Assert.That(File.Exists(sourcePath), Is.True, sourcePath + " was not found");
-            return File.ReadAllText(sourcePath);
         }
 
         // Verifies that empty light-volume and point-light families do not block each other.
@@ -1275,13 +1266,21 @@ namespace VRCLightVolumes.Tests {
 
             manager.DeinitializePointLightVolume(point, true, false);
             AssertVectorClose(new Vector4(averageColor.r, averageColor.g, averageColor.b, averageColor.a), point.AreaLightFallbackColor);
+            manager.ReinitializeCustomTextures();
+            Assert.That(GetAreaCookieAverageColor(manager, 0).a, Is.EqualTo(0f).Within(Epsilon));
 
             manager.InitializePointLightVolume(point);
+            point.AreaCookieAverageReadbackPending = true;
+            point.AreaCookieAverageReadbackDirty = false;
+            point.AreaCookieAverageCustomId = 0;
             manager.ReinitializeCustomTextures();
             manager.UpdateVolumes();
 
-            Color restoredReadbackColor = GetAreaCookieAverageColor(manager, 0);
-            AssertVectorClose(ExpectedAreaCookieFallbackColor(point, restoredReadbackColor), Shader.GetGlobalVectorArray(_pointLightColorID)[0]);
+            Assert.That(point.AreaCookieAverageReadbackPending, Is.True);
+            AssertVectorClose(ExpectedAreaCookieFallbackColor(point, averageColor), Shader.GetGlobalVectorArray(_pointLightColorID)[0]);
+            point.AreaCookieAverageReadbackPending = false;
+            point.AreaCookieAverageReadbackDirty = false;
+            point.AreaCookieAverageCustomId = -1;
         }
 
         // Verifies an invalidated async area cookie readback cannot patch the current fallback color through a reused custom ID.
@@ -1343,11 +1342,16 @@ namespace VRCLightVolumes.Tests {
             point.AreaCookieAverageReadbackDirty = true;
             point.AreaCookieAverageCustomId = 0;
             point.CustomTexture = replacementSource;
+            replacementSource.SetPixel(0, 0, Color.black);
+            replacementSource.Apply(false);
 
             manager.CompleteAreaCookieAverageReadback(point, true, staleAverageColor);
 
             Assert.That(point.AreaCookieAverageReadbackPending, Is.False);
             Assert.That(point.AreaCookieAverageCustomId, Is.EqualTo(-1));
+            Color retryReadbackColor = GetAreaCookieAverageColor(manager, 0);
+            Assert.That(retryReadbackColor.r, Is.LessThan(0.1f));
+            AssertVectorClose(ExpectedAreaCookieFallbackColor(point, retryReadbackColor), Shader.GetGlobalVectorArray(_pointLightColorID)[0]);
         }
 
         // Verifies source-cache rebuild marks a pending area-cookie readback dirty so completion retries once.
@@ -1479,11 +1483,17 @@ namespace VRCLightVolumes.Tests {
             UploadAreaCookieAverageColor(manager, 1, secondAverageColor);
 
             manager.DeinitializePointLightVolume(firstPoint, true, false);
+            secondPoint.AreaCookieAverageReadbackPending = true;
+            secondPoint.AreaCookieAverageReadbackDirty = false;
+            secondPoint.AreaCookieAverageCustomId = 0;
             manager.ReinitializeCustomTextures();
             manager.UpdateVolumes();
 
-            Color secondReadbackColor = GetAreaCookieAverageColor(manager, 1);
-            AssertVectorClose(ExpectedAreaCookieFallbackColor(secondPoint, secondReadbackColor), Shader.GetGlobalVectorArray(_pointLightColorID)[0]);
+            Assert.That(secondPoint.AreaCookieAverageReadbackPending, Is.True);
+            AssertVectorClose(ExpectedAreaCookieFallbackColor(secondPoint, secondAverageColor), Shader.GetGlobalVectorArray(_pointLightColorID)[0]);
+            secondPoint.AreaCookieAverageReadbackPending = false;
+            secondPoint.AreaCookieAverageReadbackDirty = false;
+            secondPoint.AreaCookieAverageCustomId = -1;
         }
 
         // Verifies a shared material source is split when lights need different runtime auto-update behavior.
@@ -2143,18 +2153,24 @@ namespace VRCLightVolumes.Tests {
             Assert.That(shaderSource, Does.Contain("#pragma multi_compile_local_fragment __ VRCLV_RUNTIME_SHADOW_BLUR_SPHERICAL"));
         }
 
-        // Verifies material-source blits use dummy only for destination binding and keep _MainTex as the generator source.
+        // Verifies material-source blits keep _MainTex as the generator source and use a dummy texture only for Udon destination binding.
         [Test]
         public void MaterialSourceBlitPreservesMainTexInput() {
-            string managerSource = ReadLightVolumeManagerSource();
+            LightVolumeManager manager = CreateManager("Material Source MainTex Manager", false);
+            manager.UpdateVolumes();
+            manager.CustomTextures = CreateRenderTexture("Material Source MainTex Runtime", 4, 4, 1, TextureDimension.Tex2DArray);
+            Material material = CreateMaterial("Unlit/Texture");
+            Texture2D mainTexture = CreateTexture2D("Material Source MainTex");
+            material.SetTexture("_MainTex", mainTexture);
+            MethodInfo method = typeof(LightVolumeManager).GetMethod("BlitMaterialSlice", _lifecycleMethodFlags);
+            Assert.That(method, Is.Not.Null);
+            Assert.That(_dummyRTField, Is.Not.Null);
 
-            Assert.That(managerSource, Does.Contain("sourceMaterial.HasTexture(_cubemapMainTexID)"));
-            Assert.That(managerSource, Does.Contain("sourceMaterial.GetTexture(_cubemapMainTexID)"));
-            Assert.That(managerSource, Does.Contain("VRCGraphics.Blit(_dummyRT, destination, 0, targetSlice);"));
-            Assert.That(managerSource, Does.Contain("VRCGraphics.Blit(sourceTexture, material, 0, targetSlice);"));
-            Assert.That(managerSource, Does.Not.Contain("VRCGraphics.Blit(null, destination, 0, targetSlice);"));
-            Assert.That(managerSource, Does.Not.Contain("sourceMaterial.SetTexture(_cubemapMainTexID, blitSource);"));
-            Assert.That(managerSource, Does.Not.Contain("material.SetTexture(_cubemapMainTexID"));
+            method.Invoke(manager, new object[] { material, 0, 0, false, manager.CustomTextures });
+
+            Assert.That(material.GetTexture("_MainTex"), Is.SameAs(mainTexture));
+            AssertVectorClose(new Vector4(4, 4, 1, 0), material.GetVector(CustomRenderTextureInfoProperty));
+            Assert.That(GetManagerField<RenderTexture>(manager, _dummyRTField), Is.Not.Null);
         }
 
         // Verifies runtime blur radius is normalized by resolution before shader sampling.

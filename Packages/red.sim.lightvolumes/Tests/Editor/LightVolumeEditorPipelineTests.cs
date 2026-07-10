@@ -164,6 +164,59 @@ namespace VRCLightVolumes.Tests {
             Assert.That(instance.LightType, Is.EqualTo(2)); // 2: area
         }
 
+        // Verifies lifecycle validation defers creation of a missing Light Volume UdonSharp proxy.
+        [Test]
+        public void SetupLifecycleSyncDefersMissingLightVolumeInstance() {
+            GameObject setupObject = CreateGameObject("Deferred Light Volume Setup", false);
+            LightVolumeSetup setup = setupObject.AddComponent<LightVolumeSetup>();
+            LightVolumeManager manager = setupObject.AddComponent<LightVolumeManager>();
+            setup.LightVolumeManager = manager;
+
+            GameObject lightObject = CreateGameObject("Deferred Light Volume", false);
+            LightVolume lightVolume = lightObject.AddComponent<LightVolume>();
+            lightVolume.LightVolumeSetup = setup;
+            setup.LightVolumes.Clear();
+            setup.LightVolumesWeights.Clear();
+            setup.LightVolumes.Add(lightVolume);
+            setup.LightVolumesWeights.Add(0f);
+
+            MethodInfo canSyncFromLifecycle = typeof(LightVolumeSetup).GetMethod("CanSyncFromLifecycle", _nonPublicInstanceFlags);
+            Assert.That(canSyncFromLifecycle, Is.Not.Null);
+            bool canSync = (bool)canSyncFromLifecycle.Invoke(setup, null);
+
+            Assert.That(canSync, Is.False);
+            Assert.That(lightObject.GetComponent<LightVolumeInstance>(), Is.Null);
+        }
+
+        // Verifies lifecycle validation defers creation of a missing Point Light Volume UdonSharp proxy.
+        [Test]
+        public void SetupLifecycleSyncDefersMissingPointLightVolumeInstance() {
+            GameObject setupObject = CreateGameObject("Deferred Point Light Setup", false);
+            LightVolumeSetup setup = setupObject.AddComponent<LightVolumeSetup>();
+            LightVolumeManager manager = setupObject.AddComponent<LightVolumeManager>();
+            setup.LightVolumeManager = manager;
+            setupObject.SetActive(true);
+
+            GameObject lightObject = CreateGameObject("Deferred Point Light Volume", false);
+            PointLightVolume pointLightVolume = lightObject.AddComponent<PointLightVolume>();
+            PointLightVolumeInstance generatedInstance = pointLightVolume.PointLightVolumeInstance;
+            if (generatedInstance == null) generatedInstance = lightObject.GetComponent<PointLightVolumeInstance>();
+            Assert.That(generatedInstance, Is.Not.Null);
+            DestroyTestObject(generatedInstance);
+            pointLightVolume.PointLightVolumeInstance = null;
+            Assert.That(lightObject.GetComponent<PointLightVolumeInstance>(), Is.Null);
+            pointLightVolume.LightVolumeSetup = setup;
+            setup.PointLightVolumes.Clear();
+            setup.PointLightVolumes.Add(pointLightVolume);
+
+            MethodInfo canSyncFromLifecycle = typeof(LightVolumeSetup).GetMethod("CanSyncFromLifecycle", _nonPublicInstanceFlags);
+            Assert.That(canSyncFromLifecycle, Is.Not.Null);
+            bool canSync = (bool)canSyncFromLifecycle.Invoke(setup, null);
+
+            Assert.That(canSync, Is.False);
+            Assert.That(lightObject.GetComponent<PointLightVolumeInstance>(), Is.Null);
+        }
+
         // Verifies no-op LightVolume sync does not dirty the runtime Udon instance after scene load.
         [Test]
         public void LightVolumeNoOpSyncDoesNotDirtyRuntimeInstance() {

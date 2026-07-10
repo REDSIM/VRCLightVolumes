@@ -258,18 +258,24 @@ namespace VRCLightVolumes {
             SceneView.RepaintAll();
         }
 
-        // Queues setup synchronization until Unity finishes Undo and Transform access is valid again.
+        // Queues setup synchronization until Unity finishes validation, scene restoration or Undo.
         public void QueuePostUndoSync(bool reinitializePointLightTextures) {
+            if (EditorApplication.isPlayingOrWillChangePlaymode) return;
             _postUndoReinitializePointLightTextures |= reinitializePointLightTextures;
             if (_postUndoSyncQueued) return;
             _postUndoSyncQueued = true;
             EditorApplication.delayCall += ApplyPostUndoSync;
         }
 
-        // Applies deferred setup synchronization requested by component lifecycle callbacks during Undo.
+        // Applies deferred setup synchronization requested while immediate component creation is unsafe.
         private void ApplyPostUndoSync() {
             if (this == null) return;
-            if (Undo.isProcessing) {
+            if (EditorApplication.isPlayingOrWillChangePlaymode) {
+                _postUndoSyncQueued = false;
+                _postUndoReinitializePointLightTextures = false;
+                return;
+            }
+            if (Undo.isProcessing || EditorApplication.isCompiling || EditorApplication.isUpdating) {
                 EditorApplication.delayCall += ApplyPostUndoSync;
                 return;
             }
@@ -447,7 +453,7 @@ namespace VRCLightVolumes {
             _shadowTextureFormatPrev = ShadowTextureFormat;
             if (shadowTextureFormatChanged) RebuildShadowsAfterTextureFormatChange();
 #endif
-            SyncUdonScript();
+            if (CanSyncFromLifecycle()) SyncUdonScript();
         }
 
         // Unsubscribing from OnBaked events
@@ -482,11 +488,30 @@ namespace VRCLightVolumes {
             if (CanSyncFromLifecycle()) SyncUdonScript();
         }
 
-        // Avoids adding manager components from Unity lifecycle validation callbacks.
+        // Defers lifecycle synchronization while any required UdonSharp proxy is still missing during scene restoration.
         private bool CanSyncFromLifecycle() {
             if (Application.isPlaying && IsDestroyingPlayModeAuthoringComponents) return false;
 #if UNITY_EDITOR
-            if (!Application.isPlaying && LightVolumeManager == null && !TryGetComponent(out LightVolumeManager)) return false;
+            if (!Application.isPlaying) {
+                if (LightVolumeManager == null && !TryGetComponent(out LightVolumeManager)) {
+                    QueuePostUndoSync(false);
+                    return false;
+                }
+
+                for (int i = 0; i < LightVolumes.Count; i++) {
+                    LightVolume lightVolume = LightVolumes[i];
+                    if (lightVolume == null || lightVolume.LightVolumeInstance != null || lightVolume.GetComponent<LightVolumeInstance>() != null) continue;
+                    QueuePostUndoSync(false);
+                    return false;
+                }
+
+                for (int i = 0; i < PointLightVolumes.Count; i++) {
+                    PointLightVolume pointLightVolume = PointLightVolumes[i];
+                    if (pointLightVolume == null || pointLightVolume.PointLightVolumeInstance != null || pointLightVolume.GetComponent<PointLightVolumeInstance>() != null) continue;
+                    QueuePostUndoSync(false);
+                    return false;
+                }
+            }
 #endif
             return true;
         }

@@ -132,6 +132,44 @@ namespace VRCLightVolumes.Tests {
             volume.BoundsUvwMin0.w = 0.25f;
             Assert.That(InvokeLegacyLightVolumeMigration(volume, serializedBlock), Is.False);
             Assert.That(volume.BoundsUvwMin0.w, Is.EqualTo(0.25f).Within(Epsilon));
+
+            GameObject negativeIdentityObject = CreateGameObject("Legacy Negative Identity Rotation", false);
+            LightVolumeInstance negativeIdentityVolume = negativeIdentityObject.AddComponent<LightVolumeInstance>();
+            string negativeIdentityBlock = "  RelativeRotation: {x: 0, y: 0, z: 0, w: -1}\n";
+            Assert.That(InvokeLegacyLightVolumeMigration(negativeIdentityVolume, negativeIdentityBlock), Is.True);
+            Assert.That(negativeIdentityVolume.IsRotated, Is.False);
+        }
+
+        // Verifies scene YAML extraction cannot confuse a file ID with a longer ID that shares its numeric prefix.
+        [Test]
+        public void LegacyYamlBlockExtractionMatchesExactFileId() {
+            string sceneYaml =
+                "--- !u!114 &1234\n" +
+                "  PositionData: wrong\n" +
+                "--- !u!114 &123 stripped\n" +
+                "  PositionData: expected\n" +
+                "--- !u!1 &99\n";
+
+            string serializedBlock;
+            Assert.That(InvokeLegacyYamlBlockExtraction(sceneYaml, 123, out serializedBlock), Is.True);
+            Assert.That(serializedBlock, Does.Contain("PositionData: expected"));
+            Assert.That(serializedBlock, Does.Not.Contain("PositionData: wrong"));
+        }
+
+        // Verifies reference repair preserves an existing keeper's order and removes duplicate registry entries.
+        [Test]
+        public void SanitizerReferenceCompactionPreservesExistingKeeperOrder() {
+            Texture2D duplicate = CreateTexture2D("Duplicate Registry Reference");
+            Texture2D middle = CreateTexture2D("Middle Registry Reference");
+            Texture2D keeper = CreateTexture2D("Keeper Registry Reference");
+            Texture2D[] references = { duplicate, middle, keeper, keeper, duplicate };
+
+            MethodInfo method = typeof(LightVolumeUdonComponentSanitizer).GetMethod("ReplaceAndDeduplicateReferences", _staticMigrationMethodFlags);
+            Assert.That(method, Is.Not.Null);
+            MethodInfo genericMethod = method.MakeGenericMethod(typeof(Texture2D));
+            Texture2D[] compacted = (Texture2D[])genericMethod.Invoke(null, new object[] { references, duplicate, keeper });
+
+            Assert.That(compacted, Is.EqualTo(new[] { middle, keeper }));
         }
 
         // Destroys all temporary scene and texture objects created by a test case.
@@ -183,6 +221,16 @@ namespace VRCLightVolumes.Tests {
             MethodInfo method = typeof(LightVolumeUdonComponentSanitizer).GetMethod("MigrateLegacyLightVolumeData", _staticMigrationMethodFlags, null, new[] { typeof(LightVolumeInstance), typeof(string) }, null);
             Assert.That(method, Is.Not.Null);
             return (bool)method.Invoke(null, new object[] { volume, serializedBlock });
+        }
+
+        // Extracts one serialized scene document through the sanitizer's pure YAML lookup helper.
+        private static bool InvokeLegacyYamlBlockExtraction(string sceneYaml, ulong targetObjectId, out string serializedBlock) {
+            MethodInfo method = typeof(LightVolumeUdonComponentSanitizer).GetMethod("TryExtractSceneObjectYamlBlock", _staticMigrationMethodFlags);
+            Assert.That(method, Is.Not.Null);
+            object[] arguments = { sceneYaml, targetObjectId, null };
+            bool result = (bool)method.Invoke(null, arguments);
+            serializedBlock = arguments[2] as string;
+            return result;
         }
 
         // Reads the runtime blur shader from either a Unity project root or this package directory.

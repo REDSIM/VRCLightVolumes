@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
@@ -13,160 +14,300 @@ namespace VRCLightVolumes {
     public static class LightVolumeUdonComponentSanitizer {
         private const string BackingUdonBehaviourFieldName = "_udonSharpBackingUdonBehaviour";
         private const string ProgramSourceFieldName = "programSource";
+        private const string SourceCsScriptPropertyName = "sourceCsScript";
         private const string UdonBehaviourTypeName = "VRC.Udon.UdonBehaviour";
         private const string UndoName = "Sanitize Light Volume Udon Components";
+        private const string LegacyMigrationSessionKeyPrefix = "VRCLightVolumes.LegacyMigration.";
+        private const string HasLegacyMigrationSessionKeys = LegacyMigrationSessionKeyPrefix + "Any";
 
         private static bool _isSanitizeQueued = false;
         private static bool _isSanitizing = false;
-        private static bool _isBackingUdonBehaviourFieldCached = false;
-        private static FieldInfo _backingUdonBehaviourField = null;
+        private static bool _queuedSanitizeIncludesMigration = false;
         private static FieldInfo _programSourceField = null;
         private static Type _programSourceFieldOwner = null;
         private static bool _needsAuthoringSyncAfterMigration = false;
+        private static readonly Dictionary<Type, FieldInfo> _backingUdonBehaviourFields = new Dictionary<Type, FieldInfo>();
         private static readonly Dictionary<string, string> _sceneYamlCache = new Dictionary<string, string>();
-        private static readonly HashSet<int> _migratedLegacyPointLightInstanceIds = new HashSet<int>();
+        private static readonly Dictionary<string, bool> _sceneHasLegacyDataCache = new Dictionary<string, bool>();
+        private static readonly Dictionary<int, Type> _programSourceTypeCache = new Dictionary<int, Type>();
+        private static readonly ConditionalWeakTable<Component, object> _legacyMigratedComponents = new ConditionalWeakTable<Component, object>();
+        private static readonly object _legacyMigrationMarker = new object();
+        private static readonly List<GameObject> _sanitizeCandidates = new List<GameObject>();
+        private static readonly HashSet<int> _sanitizeCandidateIds = new HashSet<int>();
+        private static readonly HashSet<int> _seenSystemComponentGameObjectIds = new HashSet<int>();
+        private static readonly HashSet<int> _checkedDuplicateGameObjectIds = new HashSet<int>();
 
         // Registers delayed cleanup so duplicated UdonSharp proxy components are removed after editor reloads and hierarchy edits
         static LightVolumeUdonComponentSanitizer() {
-            EditorApplication.delayCall += QueueSanitizeLoadedScenes;
-            EditorApplication.hierarchyChanged += QueueSanitizeLoadedScenes;
+            EditorApplication.delayCall += QueueInitialSanitizeLoadedScenes;
+            EditorApplication.hierarchyChanged += QueueHierarchySanitizeLoadedScenes;
             EditorSceneManager.sceneOpened += QueueSanitizeOpenedScene;
         }
 
         // Removes duplicated Light Volume system Udon components from every loaded scene object
         public static int SanitizeLoadedScenes() {
+            return SanitizeLoadedScenes(true);
+        }
+
+        private static int SanitizeLoadedScenes(bool migrateLegacyData) {
             if (_isSanitizing) return 0;
 
             _isSanitizing = true;
             try {
                 int removedCount = 0;
 
-                GameObject[] gameObjects = Resources.FindObjectsOfTypeAll<GameObject>();
-                for (int i = 0; i < gameObjects.Length; i++) {
-                    removedCount += SanitizeGameObject(gameObjects[i]);
+                bool duplicatesOnly = !migrateLegacyData;
+                CollectSanitizeCandidates(Resources.FindObjectsOfTypeAll<LightVolumeManager>(), duplicatesOnly);
+                CollectSanitizeCandidates(Resources.FindObjectsOfTypeAll<LightVolumeInstance>(), duplicatesOnly);
+                CollectSanitizeCandidates(Resources.FindObjectsOfTypeAll<PointLightVolumeInstance>(), duplicatesOnly);
+                for (int i = 0; i < _sanitizeCandidates.Count; i++) {
+                    removedCount += SanitizeGameObject(_sanitizeCandidates[i], migrateLegacyData);
                 }
 
-                if (_needsAuthoringSyncAfterMigration) {
-                    _needsAuthoringSyncAfterMigration = false;
-                    SyncAuthoringComponentsToMigratedRuntime();
-                }
+                if (SyncAuthoringAfterMigrationIfNeeded()) removedCount += SanitizeDuplicateCandidates();
 
                 return removedCount;
             } finally {
-                _sceneYamlCache.Clear();
+                ClearPassCaches();
                 _isSanitizing = false;
             }
         }
 
+        // Adds each loaded scene object once, optionally requiring a duplicate proxy of this runtime type.
+        private static void CollectSanitizeCandidates<T>(T[] components, bool duplicatesOnly) where T : Component {
+            if (duplicatesOnly) _seenSystemComponentGameObjectIds.Clear();
+            for (int i = 0; i < components.Length; i++) {
+                T component = components[i];
+                if (!ShouldSanitizeComponent(component)) continue;
+
+                GameObject gameObject = component.gameObject;
+                int instanceId = gameObject.GetInstanceID();
+                if (duplicatesOnly && _seenSystemComponentGameObjectIds.Add(instanceId)) continue;
+                if (!_sanitizeCandidateIds.Add(instanceId)) continue;
+                _sanitizeCandidates.Add(gameObject);
+            }
+            if (duplicatesOnly) _seenSystemComponentGameObjectIds.Clear();
+        }
+
         // Removes duplicated Light Volume system Udon components from one scene object
         public static int SanitizeGameObject(GameObject gameObject) {
+            if (_isSanitizing) return 0;
+
+            bool queuePostMigrationCleanup = false;
+            _isSanitizing = true;
+            try {
+                int removedCount = SanitizeGameObject(gameObject, true);
+                queuePostMigrationCleanup = SyncAuthoringAfterMigrationIfNeeded();
+                return removedCount;
+            } finally {
+                ClearPassCaches();
+                _isSanitizing = false;
+                if (queuePostMigrationCleanup) QueueSanitizeLoadedScenes(false);
+            }
+        }
+
+        private static int SanitizeGameObject(GameObject gameObject, bool migrateLegacyData) {
             if (!ShouldSanitizeGameObject(gameObject)) return 0;
 
+            LightVolumeSetup setup = gameObject.GetComponent<LightVolumeSetup>();
+            LightVolume lightVolume = gameObject.GetComponent<LightVolume>();
+            PointLightVolume pointLight = gameObject.GetComponent<PointLightVolume>();
+            LightVolumeManager[] managers = gameObject.GetComponents<LightVolumeManager>();
+            LightVolumeInstance[] lightVolumeInstances = gameObject.GetComponents<LightVolumeInstance>();
+            PointLightVolumeInstance[] pointLightInstances = gameObject.GetComponents<PointLightVolumeInstance>();
+
+            bool migrated = migrateLegacyData && MigrateLegacyRuntimeComponents(managers, lightVolumeInstances, pointLightInstances);
+            if (migrated) _needsAuthoringSyncAfterMigration = true;
+
             int removedCount = 0;
-            removedCount += SanitizeManagers(gameObject);
-            removedCount += SanitizeLightVolumeInstances(gameObject);
-            removedCount += SanitizePointLightVolumeInstances(gameObject);
-            bool migrated = MigrateLegacyRuntimeComponents(gameObject);
+            removedCount += SanitizeComponents(gameObject, managers, setup, setup != null ? setup.LightVolumeManager : null);
+            removedCount += SanitizeComponents(gameObject, lightVolumeInstances, lightVolume, lightVolume != null ? lightVolume.LightVolumeInstance : null);
+            removedCount += SanitizeComponents(gameObject, pointLightInstances, pointLight, pointLight != null ? pointLight.PointLightVolumeInstance : null);
 
             if (removedCount > 0 || migrated) MarkSceneDirty(gameObject);
-            if (migrated) _needsAuthoringSyncAfterMigration = true;
-            if (_needsAuthoringSyncAfterMigration && !_isSanitizing) {
-                _needsAuthoringSyncAfterMigration = false;
-                SyncAuthoringComponentsToMigratedRuntime();
-            }
             return removedCount;
+        }
+
+        // Runs one bounded duplicate-only pass after migration synchronization may have added or rewired proxies.
+        private static int SanitizeDuplicateCandidates() {
+            _sanitizeCandidates.Clear();
+            _sanitizeCandidateIds.Clear();
+            _seenSystemComponentGameObjectIds.Clear();
+            _checkedDuplicateGameObjectIds.Clear();
+            _programSourceTypeCache.Clear();
+
+            CollectSanitizeCandidates(Resources.FindObjectsOfTypeAll<LightVolumeManager>(), true);
+            CollectSanitizeCandidates(Resources.FindObjectsOfTypeAll<LightVolumeInstance>(), true);
+            CollectSanitizeCandidates(Resources.FindObjectsOfTypeAll<PointLightVolumeInstance>(), true);
+
+            int removedCount = 0;
+            for (int i = 0; i < _sanitizeCandidates.Count; i++) removedCount += SanitizeGameObject(_sanitizeCandidates[i], false);
+            return removedCount;
+        }
+
+        // Clears data cached only for the duration of one sanitizer pass.
+        private static void ClearPassCaches() {
+            _sceneYamlCache.Clear();
+            _sceneHasLegacyDataCache.Clear();
+            _programSourceTypeCache.Clear();
+            _sanitizeCandidates.Clear();
+            _sanitizeCandidateIds.Clear();
+            _seenSystemComponentGameObjectIds.Clear();
+            _checkedDuplicateGameObjectIds.Clear();
+        }
+
+        // Queues one full cleanup and legacy migration pass after editor assemblies load.
+        private static void QueueInitialSanitizeLoadedScenes() {
+            QueueSanitizeLoadedScenes(true);
         }
 
         // Queues cleanup after a scene is opened and all scene objects are available
         private static void QueueSanitizeOpenedScene(Scene scene, OpenSceneMode mode) {
-            QueueSanitizeLoadedScenes();
+            QueueSanitizeLoadedScenes(true);
+        }
+
+        // Queues a cheap duplicate-only pass only when a hierarchy edit actually produced duplicate system proxies.
+        private static void QueueHierarchySanitizeLoadedScenes() {
+            if (_isSanitizeQueued || _isSanitizing) return;
+            if (Application.isPlaying || EditorApplication.isPlayingOrWillChangePlaymode) return;
+            if (!HasDuplicateSystemComponents()) return;
+            QueueSanitizeLoadedScenes(false);
         }
 
         // Coalesces editor callbacks into one delayed cleanup pass
-        private static void QueueSanitizeLoadedScenes() {
-            if (_isSanitizeQueued || _isSanitizing) return;
+        private static void QueueSanitizeLoadedScenes(bool includeLegacyMigration) {
             if (Application.isPlaying || EditorApplication.isPlayingOrWillChangePlaymode) return;
+            if (_isSanitizing) return;
 
+            _queuedSanitizeIncludesMigration |= includeLegacyMigration;
+            if (_isSanitizeQueued) return;
             _isSanitizeQueued = true;
             EditorApplication.delayCall += RunQueuedSanitizeLoadedScenes;
         }
 
         // Runs a queued cleanup pass once Unity finishes the current editor event
         private static void RunQueuedSanitizeLoadedScenes() {
-            _isSanitizeQueued = false;
-            if (Application.isPlaying || EditorApplication.isPlayingOrWillChangePlaymode) return;
-            if (EditorApplication.isCompiling || EditorApplication.isUpdating) return;
+            if (Application.isPlaying || EditorApplication.isPlayingOrWillChangePlaymode) {
+                _isSanitizeQueued = false;
+                _queuedSanitizeIncludesMigration = false;
+                return;
+            }
+            if (EditorApplication.isCompiling || EditorApplication.isUpdating) {
+                EditorApplication.delayCall += RunQueuedSanitizeLoadedScenes;
+                return;
+            }
 
-            int removedCount = SanitizeLoadedScenes();
+            bool includeLegacyMigration = _queuedSanitizeIncludesMigration;
+            _isSanitizeQueued = false;
+            _queuedSanitizeIncludesMigration = false;
+            int removedCount = SanitizeLoadedScenes(includeLegacyMigration);
             if (removedCount > 0) Debug.Log($"[LightVolume] Removed {removedCount} duplicate system Udon component(s)");
         }
 
-        // Removes duplicated manager proxies and their matching extra backing UdonBehaviour components
-        private static int SanitizeManagers(GameObject gameObject) {
-            LightVolumeManager[] managers = gameObject.GetComponents<LightVolumeManager>();
-            if (managers.Length == 0) return 0;
+        // Returns true when at least two loaded proxies of one Light Volume runtime type share a GameObject.
+        private static bool HasDuplicateSystemComponents() {
+            _programSourceTypeCache.Clear();
+            try {
+                return HasDuplicateComponents(Resources.FindObjectsOfTypeAll<LightVolumeManager>())
+                    || HasDuplicateComponents(Resources.FindObjectsOfTypeAll<LightVolumeInstance>())
+                    || HasDuplicateComponents(Resources.FindObjectsOfTypeAll<PointLightVolumeInstance>());
+            } finally {
+                _seenSystemComponentGameObjectIds.Clear();
+                _checkedDuplicateGameObjectIds.Clear();
+                _programSourceTypeCache.Clear();
+            }
+        }
 
-            LightVolumeManager keeper = GetManagerKeeper(gameObject, managers);
-            if (keeper == null) return 0;
+        // Detects duplicate owners only when one candidate is ready for safe cleanup in the current UdonSharp state.
+        private static bool HasDuplicateComponents<T>(T[] components) where T : Component {
+            _seenSystemComponentGameObjectIds.Clear();
+            _checkedDuplicateGameObjectIds.Clear();
+            for (int i = 0; i < components.Length; i++) {
+                T component = components[i];
+                if (!ShouldSanitizeComponent(component)) continue;
+                int gameObjectId = component.gameObject.GetInstanceID();
+                if (_seenSystemComponentGameObjectIds.Add(gameObjectId)) continue;
+                if (!_checkedDuplicateGameObjectIds.Add(gameObjectId)) continue;
+                if (HasReadyCleanupCandidate(component.gameObject.GetComponents<T>())) return true;
+            }
+            _seenSystemComponentGameObjectIds.Clear();
+            _checkedDuplicateGameObjectIds.Clear();
+            return false;
+        }
 
-            LightVolumeSetup setup = gameObject.GetComponent<LightVolumeSetup>();
-            if (setup != null && setup.LightVolumeManager != keeper) {
+        // Requires a ready migrated keeper when legacy data was restored; otherwise any ready proxy can lead cleanup.
+        private static bool HasReadyCleanupCandidate<T>(T[] components) where T : Component {
+            bool preserveMigratedData = false;
+            for (int i = 0; i < components.Length; i++) {
+                if (!WasLegacyMigrated(components[i])) continue;
+                preserveMigratedData = true;
+                break;
+            }
+
+            for (int i = 0; i < components.Length; i++) {
+                T component = components[i];
+                if (component == null || (preserveMigratedData && !WasLegacyMigrated(component))) continue;
+                Component backingUdonBehaviour;
+                UnityEngine.Object programSource;
+                if (TryGetReadyProxy(component, out backingUdonBehaviour, out programSource)) return true;
+            }
+            return false;
+        }
+
+        // Keeps the healthiest proxy of one runtime type, repairs its authoring reference and removes safe duplicates.
+        private static int SanitizeComponents<T>(GameObject gameObject, T[] components, Component authoringComponent, T preferred) where T : Component {
+            if (components.Length == 0) return 0;
+
+            T keeper = GetBestKeeper(components, preferred);
+            Component keeperBackingUdonBehaviour;
+            UnityEngine.Object keeperProgramSource;
+            if (!TryGetReadyProxy(keeper, out keeperBackingUdonBehaviour, out keeperProgramSource)) return 0;
+
+            UpdateAuthoringReference(authoringComponent, keeper);
+            return RemoveDuplicateComponents(gameObject, components, keeper, keeperBackingUdonBehaviour, keeperProgramSource);
+        }
+
+        // Points the authoring component at the selected runtime proxy before any duplicate is destroyed.
+        private static void UpdateAuthoringReference(Component authoringComponent, Component keeper) {
+            LightVolumeManager manager = keeper as LightVolumeManager;
+            if (manager != null) {
+                LightVolumeSetup setup = authoringComponent as LightVolumeSetup;
+                if (setup == null || setup.LightVolumeManager == manager) return;
                 Undo.RecordObject(setup, UndoName);
-                setup.LightVolumeManager = keeper;
+                setup.LightVolumeManager = manager;
                 MarkObjectDirty(setup);
+                return;
             }
 
-            return RemoveDuplicateComponents(gameObject, managers, keeper);
-        }
-
-        // Removes duplicated light volume proxies and their matching extra backing UdonBehaviour components
-        private static int SanitizeLightVolumeInstances(GameObject gameObject) {
-            LightVolumeInstance[] instances = gameObject.GetComponents<LightVolumeInstance>();
-            if (instances.Length == 0) return 0;
-
-            LightVolumeInstance keeper = GetLightVolumeInstanceKeeper(gameObject, instances);
-            if (keeper == null) return 0;
-
-            LightVolume volume = gameObject.GetComponent<LightVolume>();
-            if (volume != null && volume.LightVolumeInstance != keeper) {
-                Undo.RecordObject(volume, UndoName);
-                volume.LightVolumeInstance = keeper;
-                MarkObjectDirty(volume);
+            LightVolumeInstance lightVolumeInstance = keeper as LightVolumeInstance;
+            if (lightVolumeInstance != null) {
+                LightVolume lightVolume = authoringComponent as LightVolume;
+                if (lightVolume == null || lightVolume.LightVolumeInstance == lightVolumeInstance) return;
+                Undo.RecordObject(lightVolume, UndoName);
+                lightVolume.LightVolumeInstance = lightVolumeInstance;
+                MarkObjectDirty(lightVolume);
+                return;
             }
 
-            return RemoveDuplicateComponents(gameObject, instances, keeper);
-        }
-
-        // Removes duplicated point light volume proxies and their matching extra backing UdonBehaviour components
-        private static int SanitizePointLightVolumeInstances(GameObject gameObject) {
-            PointLightVolumeInstance[] instances = gameObject.GetComponents<PointLightVolumeInstance>();
-            if (instances.Length == 0) return 0;
-
-            PointLightVolumeInstance keeper = GetPointLightVolumeInstanceKeeper(gameObject, instances);
-            if (keeper == null) return 0;
-
-            PointLightVolume pointLight = gameObject.GetComponent<PointLightVolume>();
-            if (pointLight != null && pointLight.PointLightVolumeInstance != keeper) {
-                Undo.RecordObject(pointLight, UndoName);
-                pointLight.PointLightVolumeInstance = keeper;
-                MarkObjectDirty(pointLight);
-            }
-
-            return RemoveDuplicateComponents(gameObject, instances, keeper);
+            PointLightVolumeInstance pointLightInstance = keeper as PointLightVolumeInstance;
+            if (pointLightInstance == null) return;
+            PointLightVolume pointLight = authoringComponent as PointLightVolume;
+            if (pointLight == null || pointLight.PointLightVolumeInstance == pointLightInstance) return;
+            Undo.RecordObject(pointLight, UndoName);
+            pointLight.PointLightVolumeInstance = pointLightInstance;
+            MarkObjectDirty(pointLight);
         }
 
         // Migrates serialized 2.x runtime component data after Unity loads the scene with 3.x scripts.
-        private static bool MigrateLegacyRuntimeComponents(GameObject gameObject) {
+        private static bool MigrateLegacyRuntimeComponents(LightVolumeManager[] managers, LightVolumeInstance[] lightVolumes, PointLightVolumeInstance[] pointLights) {
             bool migrated = false;
 
-            LightVolumeManager[] managers = gameObject.GetComponents<LightVolumeManager>();
             for (int i = 0; i < managers.Length; i++) {
                 LightVolumeManager manager = managers[i];
                 if (manager == null) continue;
                 if (MigrateLegacyManagerRuntimeTextures(manager)) migrated = true;
             }
 
-            LightVolumeInstance[] lightVolumes = gameObject.GetComponents<LightVolumeInstance>();
             for (int i = 0; i < lightVolumes.Length; i++) {
                 LightVolumeInstance lightVolume = lightVolumes[i];
                 if (lightVolume == null) continue;
@@ -175,7 +316,6 @@ namespace VRCLightVolumes {
                 migrated = true;
             }
 
-            PointLightVolumeInstance[] pointLights = gameObject.GetComponents<PointLightVolumeInstance>();
             for (int i = 0; i < pointLights.Length; i++) {
                 PointLightVolumeInstance pointLight = pointLights[i];
                 if (pointLight == null) continue;
@@ -196,6 +336,8 @@ namespace VRCLightVolumes {
 
         // Converts old scene YAML volume fields into the current runtime layout.
         private static bool MigrateLegacyLightVolumeData(LightVolumeInstance lightVolume, string serializedBlock) {
+            if (WasLegacyMigrated(lightVolume)) return false;
+
             bool changed = false;
 
             Vector4 legacyRelativeRotation;
@@ -205,7 +347,7 @@ namespace VRCLightVolumes {
                 Matrix4x4 rotationMatrix = Matrix4x4.Rotate(relativeRotation);
                 lightVolume.RelativeRotationRow0 = rotationMatrix.GetRow(0);
                 lightVolume.RelativeRotationRow1 = rotationMatrix.GetRow(1);
-                lightVolume.IsRotated = Quaternion.Dot(relativeRotation, Quaternion.identity) < 0.999999f;
+                lightVolume.IsRotated = Mathf.Abs(Quaternion.Dot(relativeRotation, Quaternion.identity)) < 0.999999f;
                 changed = true;
             }
 
@@ -214,6 +356,7 @@ namespace VRCLightVolumes {
             if (TryReadVector4(serializedBlock, "BoundsUvwMax1", "_legacyBoundsUvwMax1", out legacyBoundsUvwMax) && MigrateLegacyBoundsScale(ref lightVolume.BoundsUvwMin1, legacyBoundsUvwMax, 1, lightVolume, changed)) changed = true;
             if (TryReadVector4(serializedBlock, "BoundsUvwMax2", "_legacyBoundsUvwMax2", out legacyBoundsUvwMax) && MigrateLegacyBoundsScale(ref lightVolume.BoundsUvwMin2, legacyBoundsUvwMax, 2, lightVolume, changed)) changed = true;
 
+            if (changed) MarkLegacyMigrated(lightVolume);
             return changed;
         }
 
@@ -236,6 +379,8 @@ namespace VRCLightVolumes {
 
         // Converts old scene YAML packed point light fields into explicit 3.x fields.
         private static bool MigrateLegacyPointLightData(PointLightVolumeInstance pointLight, string serializedBlock) {
+            if (WasLegacyMigrated(pointLight)) return false;
+
             Vector4 positionData;
             Vector4 directionData;
             float customID;
@@ -255,7 +400,6 @@ namespace VRCLightVolumes {
             if (!hasShadowmaskIndex) shadowmaskIndex = -1;
             if (!HasLegacyPackedPointLightData(positionData, directionData, customID, angleData, shadowmaskIndex)) return false;
             if (HasCurrentPointLightData(serializedBlock)) return false;
-            if (_migratedLegacyPointLightInstanceIds.Contains(pointLight.GetInstanceID())) return false;
 
             Undo.RecordObject(pointLight, UndoName);
             pointLight.Position = new Vector3(positionData.x, positionData.y, positionData.z);
@@ -293,7 +437,43 @@ namespace VRCLightVolumes {
             pointLight.AutoUpdateCustomTexture = false;
             pointLight.ShadowMapID = -1f;
             pointLight.IsRangeDirty = true;
-            _migratedLegacyPointLightInstanceIds.Add(pointLight.GetInstanceID());
+            MarkLegacyMigrated(pointLight);
+            return true;
+        }
+
+        // Returns true when this exact component already received legacy data during the current loaded-scene session.
+        private static bool WasLegacyMigrated(Component component) {
+            object marker;
+            if (component == null) return false;
+            if (_legacyMigratedComponents.TryGetValue(component, out marker)) return true;
+            if (!SessionState.GetBool(HasLegacyMigrationSessionKeys, false)) return false;
+
+            string sessionKey;
+            if (!TryGetLegacyMigrationSessionKey(component, out sessionKey) || !SessionState.GetBool(sessionKey, false)) return false;
+            _legacyMigratedComponents.Add(component, _legacyMigrationMarker);
+            return true;
+        }
+
+        // Remembers a migrated component without retaining destroyed objects and persists saved-scene identity across domain reloads.
+        private static void MarkLegacyMigrated(Component component) {
+            object marker;
+            if (component == null || _legacyMigratedComponents.TryGetValue(component, out marker)) return;
+            _legacyMigratedComponents.Add(component, _legacyMigrationMarker);
+
+            string sessionKey;
+            if (!TryGetLegacyMigrationSessionKey(component, out sessionKey)) return;
+            SessionState.SetBool(HasLegacyMigrationSessionKeys, true);
+            SessionState.SetBool(sessionKey, true);
+        }
+
+        // Builds a reload-stable key for one component while keeping separate scene load instances independent.
+        private static bool TryGetLegacyMigrationSessionKey(Component component, out string sessionKey) {
+            sessionKey = null;
+            if (!ShouldSanitizeComponent(component)) return false;
+
+            GlobalObjectId globalObjectId = GlobalObjectId.GetGlobalObjectIdSlow(component);
+            if (globalObjectId.assetGUID.Equals(default(GUID)) || globalObjectId.targetObjectId == 0) return false;
+            sessionKey = LegacyMigrationSessionKeyPrefix + component.gameObject.scene.handle + "." + globalObjectId;
             return true;
         }
 
@@ -348,10 +528,52 @@ namespace VRCLightVolumes {
                 _sceneYamlCache.Add(scene.path, sceneYaml);
             }
 
+            bool hasLegacyData;
+            if (!_sceneHasLegacyDataCache.TryGetValue(scene.path, out hasLegacyData)) {
+                hasLegacyData = ContainsLegacyRuntimeData(sceneYaml);
+                _sceneHasLegacyDataCache.Add(scene.path, hasLegacyData);
+            }
+            if (!hasLegacyData) return false;
+
             GlobalObjectId globalObjectId = GlobalObjectId.GetGlobalObjectIdSlow(component);
-            string marker = "--- !u!114 &" + globalObjectId.targetObjectId;
-            int start = sceneYaml.IndexOf(marker, StringComparison.Ordinal);
-            if (start < 0) return false;
+            return TryExtractSceneObjectYamlBlock(sceneYaml, globalObjectId.targetObjectId, out serializedBlock);
+        }
+
+        // Rejects modern scene files before any per-component GlobalObjectId lookup or YAML document search.
+        private static bool ContainsLegacyRuntimeData(string sceneYaml) {
+            return sceneYaml.IndexOf("\n  RelativeRotation:", StringComparison.Ordinal) >= 0
+                || sceneYaml.IndexOf("\n  _legacyRelativeRotation:", StringComparison.Ordinal) >= 0
+                || sceneYaml.IndexOf("\n  BoundsUvwMax", StringComparison.Ordinal) >= 0
+                || sceneYaml.IndexOf("\n  _legacyBoundsUvwMax", StringComparison.Ordinal) >= 0
+                || sceneYaml.IndexOf("\n  PositionData:", StringComparison.Ordinal) >= 0
+                || sceneYaml.IndexOf("\n  _legacyPositionData:", StringComparison.Ordinal) >= 0
+                || sceneYaml.IndexOf("\n  DirectionData:", StringComparison.Ordinal) >= 0
+                || sceneYaml.IndexOf("\n  _legacyDirectionData:", StringComparison.Ordinal) >= 0
+                || sceneYaml.IndexOf("\n  CustomID:", StringComparison.Ordinal) >= 0
+                || sceneYaml.IndexOf("\n  _legacyCustomID:", StringComparison.Ordinal) >= 0
+                || sceneYaml.IndexOf("\n  AngleData:", StringComparison.Ordinal) >= 0
+                || sceneYaml.IndexOf("\n  _legacyAngleData:", StringComparison.Ordinal) >= 0
+                || sceneYaml.IndexOf("\n  ShadowmaskIndex:", StringComparison.Ordinal) >= 0
+                || sceneYaml.IndexOf("\n  _legacyShadowmaskIndex:", StringComparison.Ordinal) >= 0;
+        }
+
+        // Extracts one MonoBehaviour YAML document while requiring an exact file ID match instead of a numeric prefix.
+        private static bool TryExtractSceneObjectYamlBlock(string sceneYaml, ulong targetObjectId, out string serializedBlock) {
+            serializedBlock = null;
+            if (string.IsNullOrEmpty(sceneYaml)) return false;
+
+            string marker = "--- !u!114 &" + targetObjectId;
+            int start = 0;
+            while (true) {
+                start = sceneYaml.IndexOf(marker, start, StringComparison.Ordinal);
+                if (start < 0) return false;
+
+                int markerEnd = start + marker.Length;
+                bool startsLine = start == 0 || sceneYaml[start - 1] == '\n';
+                bool endsFileId = markerEnd == sceneYaml.Length || sceneYaml[markerEnd] == ' ' || sceneYaml[markerEnd] == '\r' || sceneYaml[markerEnd] == '\n';
+                if (startsLine && endsFileId) break;
+                start = markerEnd;
+            }
 
             int lineEnd = sceneYaml.IndexOf('\n', start);
             if (lineEnd < 0) return false;
@@ -461,6 +683,14 @@ namespace VRCLightVolumes {
             return true;
         }
 
+        // Re-syncs migrated runtime data once and keeps the request pending if synchronization throws.
+        private static bool SyncAuthoringAfterMigrationIfNeeded() {
+            if (!_needsAuthoringSyncAfterMigration) return false;
+            SyncAuthoringComponentsToMigratedRuntime();
+            _needsAuthoringSyncAfterMigration = false;
+            return true;
+        }
+
         // Re-syncs authoring MonoBehaviours into their runtime Udon components after legacy field migration.
         private static void SyncAuthoringComponentsToMigratedRuntime() {
             LightVolumeSetup[] setups = Resources.FindObjectsOfTypeAll<LightVolumeSetup>();
@@ -469,43 +699,40 @@ namespace VRCLightVolumes {
                 if (!ShouldSanitizeComponent(setup)) continue;
                 setup.SetupDependencies();
                 setup.RefreshVolumesList();
-                SyncPointLightAuthoringComponents(setup);
-                setup.SyncUdonScript();
                 MarkObjectDirty(setup);
             }
         }
 
-        // Copies authoring point light texture and shadow sources before the setup rebuilds manager runtime arrays.
-        private static void SyncPointLightAuthoringComponents(LightVolumeSetup setup) {
-            int count = setup.PointLightVolumes.Count;
-            for (int i = 0; i < count; i++) {
-                PointLightVolume pointLight = setup.PointLightVolumes[i];
-                if (pointLight != null) pointLight.SyncUdonScript();
-            }
+        // Resolves one complete proxy/backing/program tuple and rejects transient UdonSharp restore states.
+        private static bool TryGetReadyProxy(Component proxy, out Component backingUdonBehaviour, out UnityEngine.Object programSource) {
+            backingUdonBehaviour = GetBackingUdonBehaviour(proxy);
+            programSource = null;
+            if (proxy == null || backingUdonBehaviour == null || backingUdonBehaviour.gameObject != proxy.gameObject) return false;
+
+            programSource = GetProgramSource(backingUdonBehaviour);
+            return programSource != null && GetProgramSourceType(programSource) == proxy.GetType();
         }
 
-        // Returns the healthiest manager, preferring valid Udon backing and existing runtime data over possibly stale authoring references
-        private static LightVolumeManager GetManagerKeeper(GameObject gameObject, LightVolumeManager[] managers) {
-            LightVolumeSetup setup = gameObject.GetComponent<LightVolumeSetup>();
-            return GetBestKeeper(managers, setup != null ? setup.LightVolumeManager : null);
-        }
+        // Resolves and caches the source C# type once per Udon program asset during a sanitizer pass.
+        private static Type GetProgramSourceType(UnityEngine.Object programSource) {
+            if (programSource == null) return null;
 
-        // Returns the healthiest light volume instance, preferring valid Udon backing and existing runtime data over possibly stale authoring references
-        private static LightVolumeInstance GetLightVolumeInstanceKeeper(GameObject gameObject, LightVolumeInstance[] instances) {
-            LightVolume volume = gameObject.GetComponent<LightVolume>();
-            return GetBestKeeper(instances, volume != null ? volume.LightVolumeInstance : null);
-        }
+            int instanceId = programSource.GetInstanceID();
+            Type sourceType;
+            if (_programSourceTypeCache.TryGetValue(instanceId, out sourceType)) return sourceType;
 
-        // Returns the healthiest point light volume instance, preferring valid Udon backing and existing runtime data over possibly stale authoring references
-        private static PointLightVolumeInstance GetPointLightVolumeInstanceKeeper(GameObject gameObject, PointLightVolumeInstance[] instances) {
-            PointLightVolume pointLight = gameObject.GetComponent<PointLightVolume>();
-            return GetBestKeeper(instances, pointLight != null ? pointLight.PointLightVolumeInstance : null);
+            SerializedObject serializedProgramSource = new SerializedObject(programSource);
+            SerializedProperty sourceScriptProperty = serializedProgramSource.FindProperty(SourceCsScriptPropertyName);
+            MonoScript sourceScript = sourceScriptProperty != null ? sourceScriptProperty.objectReferenceValue as MonoScript : null;
+            sourceType = sourceScript != null ? sourceScript.GetClass() : null;
+            _programSourceTypeCache.Add(instanceId, sourceType);
+            return sourceType;
         }
 
         // Removes every component except the selected keeper and keeps the matching hidden UdonBehaviour backing component intact
-        private static int RemoveDuplicateComponents<T>(GameObject gameObject, T[] components, T keeper) where T : Component {
+        private static int RemoveDuplicateComponents<T>(GameObject gameObject, T[] components, T keeper, Component keeperBackingUdonBehaviour, UnityEngine.Object keeperProgramSource) where T : Component {
             int removedCount = 0;
-            Component keeperBackingUdonBehaviour = GetBackingUdonBehaviour(keeper);
+            Component[] allComponents = gameObject.GetComponents<Component>();
 
             for (int i = 0; i < components.Length; i++) {
                 T duplicate = components[i];
@@ -514,17 +741,39 @@ namespace VRCLightVolumes {
                 ReplaceReferences(duplicate, keeper);
 
                 Component duplicateBackingUdonBehaviour = GetBackingUdonBehaviour(duplicate);
+                bool destroyDuplicateBacking = CanDestroyDuplicateBacking(gameObject, allComponents, duplicate, duplicateBackingUdonBehaviour, keeperBackingUdonBehaviour, keeperProgramSource);
+                DetachBackingUdonBehaviour(duplicate);
                 Undo.DestroyObjectImmediate(duplicate);
                 removedCount++;
 
-                if (duplicateBackingUdonBehaviour != null && duplicateBackingUdonBehaviour != keeperBackingUdonBehaviour) {
+                if (destroyDuplicateBacking && duplicateBackingUdonBehaviour != null) {
                     Undo.DestroyObjectImmediate(duplicateBackingUdonBehaviour);
                     removedCount++;
                 }
             }
 
-            removedCount += RemoveExtraBackingUdonBehaviours(gameObject, keeper);
+            removedCount += RemoveExtraBackingUdonBehaviours(gameObject, keeperBackingUdonBehaviour, keeperProgramSource);
             return removedCount;
+        }
+
+        // Allows explicit backing deletion only for an exclusive local hidden UdonBehaviour of the keeper's program.
+        private static bool CanDestroyDuplicateBacking(GameObject gameObject, Component[] components, Component duplicate, Component duplicateBackingUdonBehaviour, Component keeperBackingUdonBehaviour, UnityEngine.Object keeperProgramSource) {
+            if (duplicateBackingUdonBehaviour == null || duplicateBackingUdonBehaviour == keeperBackingUdonBehaviour) return false;
+            if (duplicateBackingUdonBehaviour.gameObject != gameObject || EditorUtility.IsPersistent(duplicateBackingUdonBehaviour)) return false;
+            if (!IsUdonBehaviour(duplicateBackingUdonBehaviour) || (duplicateBackingUdonBehaviour.hideFlags & HideFlags.HideInInspector) == 0) return false;
+            if (GetProgramSource(duplicateBackingUdonBehaviour) != keeperProgramSource) return false;
+            return !IsBackingOwnedByProxy(components, duplicateBackingUdonBehaviour, duplicate);
+        }
+
+        // Detaches the serialized backing reference so UdonSharp destruction callbacks cannot delete a shared or foreign backing.
+        private static void DetachBackingUdonBehaviour(Component proxy) {
+            Component backingUdonBehaviour = GetBackingUdonBehaviour(proxy);
+            if (backingUdonBehaviour == null) return;
+
+            FieldInfo field = GetBackingUdonBehaviourField(proxy.GetType());
+            if (field == null) return;
+            Undo.RegisterCompleteObjectUndo(proxy, UndoName);
+            field.SetValue(proxy, null);
         }
 
         // Replaces scene references before a duplicated component is destroyed
@@ -594,15 +843,11 @@ namespace VRCLightVolumes {
             for (int i = 0; i < managers.Length; i++) {
                 LightVolumeManager manager = managers[i];
                 if (!ShouldSanitizeComponent(manager) || manager.LightVolumeInstances == null) continue;
+                if (!ContainsReference(manager.LightVolumeInstances, duplicate)) continue;
 
-                bool changed = false;
-                for (int j = 0; j < manager.LightVolumeInstances.Length; j++) {
-                    if (manager.LightVolumeInstances[j] != duplicate) continue;
-                    if (!changed) Undo.RecordObject(manager, UndoName);
-                    manager.LightVolumeInstances[j] = keeper;
-                    changed = true;
-                }
-                if (changed) MarkObjectDirty(manager);
+                Undo.RecordObject(manager, UndoName);
+                manager.LightVolumeInstances = ReplaceAndDeduplicateReferences(manager.LightVolumeInstances, duplicate, keeper);
+                MarkObjectDirty(manager);
             }
 
             LightVolumeSetup[] setups = Resources.FindObjectsOfTypeAll<LightVolumeSetup>();
@@ -611,15 +856,55 @@ namespace VRCLightVolumes {
                 if (!ShouldSanitizeComponent(setup) || setup.LightVolumeDataList == null) continue;
 
                 bool changed = false;
+                bool hasExistingKeeper = false;
+                for (int j = 0; j < setup.LightVolumeDataList.Count; j++) {
+                    if (setup.LightVolumeDataList[j].LightVolumeInstance == keeper) {
+                        hasExistingKeeper = true;
+                        break;
+                    }
+                }
+
+                bool keeperAdded = false;
                 for (int j = 0; j < setup.LightVolumeDataList.Count; j++) {
                     LightVolumeData data = setup.LightVolumeDataList[j];
-                    if (data.LightVolumeInstance != duplicate) continue;
+                    bool isDuplicate = data.LightVolumeInstance == duplicate;
+                    bool isKeeper = data.LightVolumeInstance == keeper;
+                    if (!isDuplicate && !isKeeper) continue;
+                    if (isKeeper && !keeperAdded) {
+                        keeperAdded = true;
+                        continue;
+                    }
                     if (!changed) Undo.RecordObject(setup, UndoName);
+                    if (hasExistingKeeper || keeperAdded) {
+                        setup.LightVolumeDataList.RemoveAt(j);
+                        j--;
+                        changed = true;
+                        continue;
+                    }
                     data.LightVolumeInstance = keeper;
                     setup.LightVolumeDataList[j] = data;
+                    keeperAdded = true;
                     changed = true;
                 }
                 if (changed) MarkObjectDirty(setup);
+            }
+
+            LightVolumeAudioLink[] audioLinks = Resources.FindObjectsOfTypeAll<LightVolumeAudioLink>();
+            for (int i = 0; i < audioLinks.Length; i++) {
+                LightVolumeAudioLink audioLink = audioLinks[i];
+                if (!ShouldSanitizeComponent(audioLink) || audioLink.TargetLightVolumes == null || !ContainsReference(audioLink.TargetLightVolumes, duplicate)) continue;
+                Undo.RecordObject(audioLink, UndoName);
+                audioLink.TargetLightVolumes = ReplaceAndDeduplicateReferences(audioLink.TargetLightVolumes, duplicate, keeper);
+                MarkObjectDirty(audioLink);
+            }
+
+            LightVolumeTVGI[] tvgiComponents = Resources.FindObjectsOfTypeAll<LightVolumeTVGI>();
+            for (int i = 0; i < tvgiComponents.Length; i++) {
+                LightVolumeTVGI tvgi = tvgiComponents[i];
+                if (!ShouldSanitizeComponent(tvgi) || tvgi.TargetLightVolumes == null || !ContainsReference(tvgi.TargetLightVolumes, duplicate)) continue;
+                Undo.RecordObject(tvgi, UndoName);
+                tvgi.TargetLightVolumes = ReplaceAndDeduplicateReferences(tvgi.TargetLightVolumes, duplicate, keeper);
+                MarkObjectDirty(tvgi);
             }
         }
 
@@ -640,24 +925,79 @@ namespace VRCLightVolumes {
             for (int i = 0; i < managers.Length; i++) {
                 LightVolumeManager manager = managers[i];
                 if (!ShouldSanitizeComponent(manager) || manager.PointLightVolumeInstances == null) continue;
+                if (!ContainsReference(manager.PointLightVolumeInstances, duplicate)) continue;
 
-                bool changed = false;
-                for (int j = 0; j < manager.PointLightVolumeInstances.Length; j++) {
-                    if (manager.PointLightVolumeInstances[j] != duplicate) continue;
-                    if (!changed) Undo.RecordObject(manager, UndoName);
-                    manager.PointLightVolumeInstances[j] = keeper;
-                    changed = true;
-                }
-                if (changed) MarkObjectDirty(manager);
+                Undo.RecordObject(manager, UndoName);
+                manager.PointLightVolumeInstances = ReplaceAndDeduplicateReferences(manager.PointLightVolumeInstances, duplicate, keeper);
+                MarkObjectDirty(manager);
+            }
+
+            LightVolumeAudioLink[] audioLinks = Resources.FindObjectsOfTypeAll<LightVolumeAudioLink>();
+            for (int i = 0; i < audioLinks.Length; i++) {
+                LightVolumeAudioLink audioLink = audioLinks[i];
+                if (!ShouldSanitizeComponent(audioLink) || audioLink.TargetPointLightVolumes == null || !ContainsReference(audioLink.TargetPointLightVolumes, duplicate)) continue;
+                Undo.RecordObject(audioLink, UndoName);
+                audioLink.TargetPointLightVolumes = ReplaceAndDeduplicateReferences(audioLink.TargetPointLightVolumes, duplicate, keeper);
+                MarkObjectDirty(audioLink);
+            }
+
+            LightVolumeTVGI[] tvgiComponents = Resources.FindObjectsOfTypeAll<LightVolumeTVGI>();
+            for (int i = 0; i < tvgiComponents.Length; i++) {
+                LightVolumeTVGI tvgi = tvgiComponents[i];
+                if (!ShouldSanitizeComponent(tvgi) || tvgi.TargetPointLightVolumes == null || !ContainsReference(tvgi.TargetPointLightVolumes, duplicate)) continue;
+                Undo.RecordObject(tvgi, UndoName);
+                tvgi.TargetPointLightVolumes = ReplaceAndDeduplicateReferences(tvgi.TargetPointLightVolumes, duplicate, keeper);
+                MarkObjectDirty(tvgi);
+            }
+
+            PointLightShadowRuntimeBaker[] shadowBakers = Resources.FindObjectsOfTypeAll<PointLightShadowRuntimeBaker>();
+            for (int i = 0; i < shadowBakers.Length; i++) {
+                PointLightShadowRuntimeBaker shadowBaker = shadowBakers[i];
+                if (!ShouldSanitizeComponent(shadowBaker) || shadowBaker.TargetPointLightVolume != duplicate) continue;
+                Undo.RecordObject(shadowBaker, UndoName);
+                shadowBaker.TargetPointLightVolume = keeper;
+                MarkObjectDirty(shadowBaker);
             }
         }
 
-        // Removes orphaned or duplicated hidden UdonBehaviour components with the same program source as the kept proxy
-        private static int RemoveExtraBackingUdonBehaviours(GameObject gameObject, Component keeper) {
-            Component keeperBackingUdonBehaviour = GetBackingUdonBehaviour(keeper);
-            UnityEngine.Object keeperProgramSource = GetProgramSource(keeperBackingUdonBehaviour);
-            if (keeperBackingUdonBehaviour == null || keeperProgramSource == null) return 0;
+        // Returns true when an object-reference array contains the requested component.
+        private static bool ContainsReference<T>(T[] references, T target) where T : UnityEngine.Object {
+            for (int i = 0; i < references.Length; i++) {
+                if (references[i] == target) return true;
+            }
+            return false;
+        }
 
+        // Preserves an existing keeper's registry position, or replaces only the first duplicate when no keeper exists.
+        private static T[] ReplaceAndDeduplicateReferences<T>(T[] references, T duplicate, T keeper) where T : UnityEngine.Object {
+            int writeIndex = 0;
+            int existingKeeperIndex = -1;
+            for (int i = 0; i < references.Length; i++) {
+                if (references[i] != keeper) continue;
+                existingKeeperIndex = i;
+                break;
+            }
+            bool keeperAdded = false;
+
+            for (int i = 0; i < references.Length; i++) {
+                T reference = references[i];
+                if (reference == duplicate || reference == keeper) {
+                    if (existingKeeperIndex >= 0 && i != existingKeeperIndex) continue;
+                    if (keeperAdded) continue;
+                    reference = keeper;
+                    keeperAdded = true;
+                }
+                references[writeIndex++] = reference;
+            }
+
+            if (writeIndex == references.Length) return references;
+            T[] compactedReferences = new T[writeIndex];
+            Array.Copy(references, compactedReferences, writeIndex);
+            return compactedReferences;
+        }
+
+        // Removes orphaned or duplicated hidden UdonBehaviour components with the same program source as the kept proxy
+        private static int RemoveExtraBackingUdonBehaviours(GameObject gameObject, Component keeperBackingUdonBehaviour, UnityEngine.Object keeperProgramSource) {
             int removedCount = 0;
             Component[] components = gameObject.GetComponents<Component>();
             for (int i = 0; i < components.Length; i++) {
@@ -665,6 +1005,7 @@ namespace VRCLightVolumes {
                 if (component == null || component == keeperBackingUdonBehaviour || !IsUdonBehaviour(component)) continue;
                 if ((component.hideFlags & HideFlags.HideInInspector) == 0) continue;
                 if (GetProgramSource(component) != keeperProgramSource) continue;
+                if (IsBackingOwnedByProxy(components, component, null)) continue;
 
                 Undo.DestroyObjectImmediate(component);
                 removedCount++;
@@ -673,32 +1014,46 @@ namespace VRCLightVolumes {
             return removedCount;
         }
 
+        // Returns true when a hidden UdonBehaviour is still explicitly paired with any live UdonSharp proxy on this object.
+        private static bool IsBackingOwnedByProxy(Component[] components, Component backingUdonBehaviour, Component excludedProxy) {
+            for (int i = 0; i < components.Length; i++) {
+                Component component = components[i];
+                if (component == null || ReferenceEquals(component, excludedProxy)) continue;
+                FieldInfo field = GetBackingUdonBehaviourField(component.GetType());
+                if (field == null || field.DeclaringType == null || !field.DeclaringType.IsAssignableFrom(component.GetType())) continue;
+                if (field.GetValue(component) as Component == backingUdonBehaviour) return true;
+            }
+            return false;
+        }
+
         // Returns the hidden UdonBehaviour assigned to a UdonSharp proxy component
         private static Component GetBackingUdonBehaviour(Component component) {
             if (component == null) return null;
 
             FieldInfo field = GetBackingUdonBehaviourField(component.GetType());
-            if (field == null) return null;
+            if (field == null || field.DeclaringType == null || !field.DeclaringType.IsAssignableFrom(component.GetType())) return null;
 
             return field.GetValue(component) as Component;
         }
 
         // Finds the private UdonSharp backing field without a hard dependency on UdonSharp.Editor
         private static FieldInfo GetBackingUdonBehaviourField(Type componentType) {
-            if (_isBackingUdonBehaviourFieldCached) return _backingUdonBehaviourField;
+            FieldInfo cachedField;
+            if (_backingUdonBehaviourFields.TryGetValue(componentType, out cachedField)) return cachedField;
 
             Type type = componentType;
+            FieldInfo backingField = null;
             while (type != null) {
                 FieldInfo field = type.GetField(BackingUdonBehaviourFieldName, BindingFlags.Instance | BindingFlags.NonPublic);
                 if (field != null) {
-                    _backingUdonBehaviourField = field;
+                    backingField = field;
                     break;
                 }
                 type = type.BaseType;
             }
 
-            _isBackingUdonBehaviourFieldCached = true;
-            return _backingUdonBehaviourField;
+            _backingUdonBehaviourFields.Add(componentType, backingField);
+            return backingField;
         }
 
         // Reads UdonBehaviour.programSource through reflection so this utility can avoid Udon editor assembly dependencies
@@ -722,7 +1077,11 @@ namespace VRCLightVolumes {
         // Returns true when this scene object can be safely sanitized
         private static bool ShouldSanitizeGameObject(GameObject gameObject) {
             if (gameObject == null || EditorUtility.IsPersistent(gameObject)) return false;
-            if (!gameObject.scene.IsValid()) return false;
+            if (!gameObject.scene.IsValid() || !gameObject.scene.isLoaded) return false;
+            if (EditorSceneManager.IsPreviewSceneObject(gameObject)) {
+                var prefabStage = PrefabStageUtility.GetCurrentPrefabStage();
+                if (prefabStage == null || prefabStage.scene != gameObject.scene) return false;
+            }
             return (gameObject.hideFlags & HideFlags.DontSaveInEditor) == 0;
         }
 
@@ -733,12 +1092,22 @@ namespace VRCLightVolumes {
 
         // Returns the best keeper candidate from duplicated components using Udon health first and authoring references only as a tie-breaker
         private static T GetBestKeeper<T>(T[] components, T preferred) where T : Component {
+            if (components.Length == 1) return components[0];
+
             T best = null;
             int bestScore = -1;
+            bool preserveMigratedData = false;
+
+            for (int i = 0; i < components.Length; i++) {
+                if (!WasLegacyMigrated(components[i])) continue;
+                preserveMigratedData = true;
+                break;
+            }
 
             for (int i = 0; i < components.Length; i++) {
                 T component = components[i];
                 if (component == null) continue;
+                if (preserveMigratedData && !WasLegacyMigrated(component)) continue;
 
                 int score = GetKeeperScore(component, component == preferred);
                 if (score <= bestScore) continue;
@@ -756,12 +1125,14 @@ namespace VRCLightVolumes {
 
             Component backingUdonBehaviour = GetBackingUdonBehaviour(component);
             bool hasLocalBacking = backingUdonBehaviour != null && backingUdonBehaviour.gameObject == component.gameObject;
-            if (hasLocalBacking && GetProgramSource(backingUdonBehaviour) != null) score += 100000; // Best signal that the UdonSharp proxy is wired to a real Udon program
+            UnityEngine.Object programSource = hasLocalBacking ? GetProgramSource(backingUdonBehaviour) : null;
+            bool isReady = programSource != null && GetProgramSourceType(programSource) == component.GetType();
+            if (isReady) score += 100000; // Best signal that the UdonSharp proxy is wired to its resolved Udon program
             else if (hasLocalBacking) score += 10000; // Still better than a proxy with no backing UdonBehaviour at all
-            if (hasLocalBacking && IsBackingImmediatelyAfterProxy(component, backingUdonBehaviour)) score += 50000; // UdonSharp places the hidden UdonBehaviour directly after its proxy
 
             score += GetRuntimeDataScore(component) * 100;
             if (isPreferred) score += 10; // Authoring references can be stale after duplication, so they only break close ties
+            if (hasLocalBacking && IsBackingImmediatelyAfterProxy(component, backingUdonBehaviour)) score += 1; // Component order is only a weak tie-breaker on prefab instances
 
             return score;
         }
@@ -779,28 +1150,43 @@ namespace VRCLightVolumes {
         private static int GetRuntimeDataScore(Component component) {
             LightVolumeManager manager = component as LightVolumeManager;
             if (manager != null) {
+                SerializedObject serializedManager = new SerializedObject(manager);
                 int score = 0;
-                if (SafeHasSerializedObjectReference(manager, "LightVolumeAtlas", null) || SafeHasSerializedObjectReference(manager, "LightVolumeAtlasBase", typeof(Texture3D))) score += 4;
-                if (SafeHasSerializedObjectReference(manager, "CustomTextures", typeof(RenderTexture))) score += 2;
-                if (SafeHasSerializedObjectReference(manager, "ShadowTextures", typeof(RenderTexture))) score += 2;
-                if (SafeSerializedArraySize(manager, "LightVolumeInstances") > 0) score += 1;
-                if (SafeSerializedArraySize(manager, "PointLightVolumeInstances") > 0) score += 1;
+                if (SafeHasSerializedObjectReference(serializedManager.FindProperty(nameof(LightVolumeManager.LightVolumeAtlas)), null) || SafeHasSerializedObjectReference(serializedManager.FindProperty(nameof(LightVolumeManager.LightVolumeAtlasBase)), typeof(Texture3D))) score += 4;
+                if (SafeHasSerializedObjectReference(serializedManager.FindProperty(nameof(LightVolumeManager.CustomTextures)), typeof(RenderTexture))) score += 2;
+                if (SafeHasSerializedObjectReference(serializedManager.FindProperty(nameof(LightVolumeManager.ShadowTextures)), typeof(RenderTexture))) score += 2;
+                if (SafeSerializedArraySize(serializedManager.FindProperty(nameof(LightVolumeManager.LightVolumeInstances))) > 0) score += 1;
+                if (SafeSerializedArraySize(serializedManager.FindProperty(nameof(LightVolumeManager.PointLightVolumeInstances))) > 0) score += 1;
                 return score;
             }
 
             LightVolumeInstance lightVolume = component as LightVolumeInstance;
-            if (lightVolume != null) return lightVolume.LightVolumeManager != null ? 1 : 0;
+            if (lightVolume != null) {
+                int score = lightVolume.LightVolumeManager != null ? 1 : 0;
+                if (lightVolume.BoundsUvwMin0 != Vector4.zero || lightVolume.BoundsUvwMin1 != Vector4.zero || lightVolume.BoundsUvwMin2 != Vector4.zero) score += 4;
+                if (lightVolume.InvLocalEdgeSmoothing != Vector4.zero) score += 2;
+                if (lightVolume.InvWorldMatrix != Matrix4x4.identity || lightVolume.RelativeRotationRow0 != Vector3.zero || lightVolume.RelativeRotationRow1 != Vector3.zero) score += 2;
+                if (lightVolume.IsDynamic || lightVolume.IsAdditive || lightVolume.Color != Color.white || lightVolume.Intensity != 1f || lightVolume.RegistryWeight != 0f) score++;
+                return score;
+            }
 
             PointLightVolumeInstance pointLight = component as PointLightVolumeInstance;
-            if (pointLight != null) return pointLight.LightVolumeManager != null ? 1 : 0;
+            if (pointLight != null) {
+                int score = pointLight.LightVolumeManager != null ? 1 : 0;
+                if (pointLight.Position != Vector3.zero || pointLight.LightType != 0) score += 2;
+                if (pointLight.ProjectionMode != 0 || pointLight.ProjectionType != 0 || pointLight.CustomTexture != null || pointLight.CustomTextureMaterial != null) score += 4;
+                if (pointLight.ShadowMapID >= 0f || pointLight.ShadowMapTexture != null || pointLight.ShadowMapMaterial != null) score += 4;
+                if (pointLight.Direction != Vector3.forward || pointLight.Rotation != Quaternion.identity || pointLight.LightSourceSize != 0.025f || pointLight.Width != 1f || pointLight.Height != 1f) score += 2;
+                if (pointLight.Color != Color.white || pointLight.Intensity != 100f || pointLight.ShadingStrength != 1f || pointLight.RegistryWeight != 0f) score++;
+                if (pointLight.BakeInGame) score += 2;
+                return score;
+            }
 
             return 0;
         }
 
         // Reads object references through SerializedObject so stale UdonSharp proxy variables cannot throw during migration.
-        private static bool SafeHasSerializedObjectReference(UnityEngine.Object target, string propertyName, Type expectedType) {
-            SerializedObject serializedTarget = new SerializedObject(target);
-            SerializedProperty property = serializedTarget.FindProperty(propertyName);
+        private static bool SafeHasSerializedObjectReference(SerializedProperty property, Type expectedType) {
             if (property == null) return false;
 
             try {
@@ -812,9 +1198,7 @@ namespace VRCLightVolumes {
         }
 
         // Reads serialized array size without touching UdonSharp proxy fields.
-        private static int SafeSerializedArraySize(UnityEngine.Object target, string propertyName) {
-            SerializedObject serializedTarget = new SerializedObject(target);
-            SerializedProperty property = serializedTarget.FindProperty(propertyName);
+        private static int SafeSerializedArraySize(SerializedProperty property) {
             if (property == null || !property.isArray) return 0;
             return property.arraySize;
         }

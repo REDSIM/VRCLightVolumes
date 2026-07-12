@@ -90,6 +90,10 @@ namespace VRCLightVolumes {
         public bool DestroyInPlayMode = false;
         // Blocks authoring lifecycle sync while DestroyInPlayMode removes helper components.
         internal static bool IsDestroyingPlayModeAuthoringComponents = false;
+#if UNITY_EDITOR
+        // Blocks authoring lifecycle sync while the build preprocessor strips the temporary scene copy.
+        public static bool IsBuildSceneCleanupInProgress = false;
+#endif
 
         [SerializeField] public List<LightVolumeData> LightVolumeDataList = new List<LightVolumeData>();
 
@@ -490,6 +494,9 @@ namespace VRCLightVolumes {
 
         // Defers lifecycle synchronization while any required UdonSharp proxy is still missing during scene restoration.
         private bool CanSyncFromLifecycle() {
+#if UNITY_EDITOR
+            if (IsBuildSceneCleanupInProgress) return false;
+#endif
             if (Application.isPlaying && IsDestroyingPlayModeAuthoringComponents) return false;
 #if UNITY_EDITOR
             if (!Application.isPlaying) {

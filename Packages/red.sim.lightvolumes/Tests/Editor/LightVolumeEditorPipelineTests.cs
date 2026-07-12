@@ -737,6 +737,43 @@ namespace VRCLightVolumes.Tests {
             clearMethod.Invoke(null, new object[] { new[] { setupObject, volumeObject, pointObject } });
         }
 
+        // Verifies stripping authoring components cannot replace a registered post processor output with the base atlas.
+        [Test]
+        public void BuildSceneCleanupPreservesPostProcessedAtlasAndRuntimeRegistry() {
+            GameObject setupObject = CreateGameObject("Build Post Processor Cleanup Setup", true);
+            LightVolumeSetup setup = setupObject.AddComponent<LightVolumeSetup>();
+            setup.SetupDependencies();
+            LightVolumeManager manager = setup.LightVolumeManager;
+            Assert.That(manager, Is.Not.Null);
+
+            Texture3D atlasBase = CreateAtlas("Build Post Processor Cleanup Atlas Base");
+            RenderTexture postProcessorTexture = CreateRenderTexture("Build Post Processor Cleanup Output", 4, 4, 1, TextureDimension.Tex3D);
+            Material postProcessorMaterial = CreateMaterial("Hidden/CubeFace");
+            manager.LightVolumeAtlasBase = atlasBase;
+            setup.AtlasPostProcessors = new[] {
+                new LightVolumeSetup.PostProcessor { RT = postProcessorTexture, Mat = postProcessorMaterial, TextureName = "_MainTex" }
+            };
+
+            LightVolumeInstance instance = CreateLightVolume(setup, manager, "Build Post Processor Cleanup Volume", false);
+            setup.SyncUdonScript();
+            Assert.That(manager.LightVolumeAtlas, Is.SameAs(postProcessorTexture));
+            Assert.That(manager.LightVolumeInstances, Has.Length.EqualTo(1));
+            Assert.That(manager.LightVolumeInstances[0], Is.SameAs(instance));
+
+            System.Type preprocessorType = GetLightVolumePreprocessorType();
+            MethodInfo method = preprocessorType.GetMethod("PrepareAndCleanupBuildScene", _nonPublicStaticFlags);
+            Assert.That(method, Is.Not.Null);
+
+            method.Invoke(null, new object[] { new[] { setupObject, instance.gameObject } });
+
+            Assert.That(setup == null, Is.True);
+            Assert.That(manager.LightVolumeAtlas, Is.SameAs(postProcessorTexture));
+            Assert.That(manager.LightVolumeAtlasBase, Is.SameAs(atlasBase));
+            Assert.That(manager.LightVolumeInstances, Has.Length.EqualTo(1));
+            Assert.That(manager.LightVolumeInstances[0], Is.SameAs(instance));
+            Assert.That(LightVolumeSetup.IsBuildSceneCleanupInProgress, Is.False);
+        }
+
         // Verifies zero Far Plane always recalculates from the current light range instead of reusing stale baked instance metadata.
         [Test]
         public void PointLightVolumeZeroFarPlaneRecalculatesFromCurrentRange() {

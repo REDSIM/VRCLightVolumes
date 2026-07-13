@@ -151,7 +151,7 @@ finalColor += diffuse + specular;
 For lightmapped shaders, use `LightVolumeAdditiveSHSpecular()` in the lightmap/additive lighting section and add its evaluated diffuse and specular result to the baked lighting.
 
 > [!NOTE]
-> For more advanced shading (e.g. anisotropic specular), implement your own model based on SH data.
+> For more advanced shading (e.g. anisotropic specular), implement your own model based on SH data.  
 > Alternatively you can provide your own Specular BRDF function as [described here](#custom-specular-brdf)
 
 ## Shader Functions

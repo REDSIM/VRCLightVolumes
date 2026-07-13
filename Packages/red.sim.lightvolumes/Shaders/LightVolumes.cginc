@@ -764,7 +764,11 @@ void LV_PointLightVolumeSHSpecular(float3 worldPos, float3 worldNormal, float3 s
                 L1r += l1 * l0.r;
                 L1g += l1 * l0.g;
                 L1b += l1 * l0.b;
+                #if defined(LV_CUSTOM_SPECULAR_BRDF)
+                specular += LV_SpecularBRDFDirection_Custom(f0, specularRoughness, specularRoughnessSq, specularNoV, worldNormal, specularViewDir, l0, lightDirNormal, specularSpreadSq);
+                #else
                 specular += LV_SpecularBRDFDirection(f0, specularRoughness, specularRoughnessSq, specularNoV, worldNormal, specularViewDir, l0, lightDirNormal, specularSpreadSq);
+                #endif
             }
             pcount += 1;
         }
@@ -799,7 +803,7 @@ void LV_PointLightVolumeSH(float3 worldPos, float3 worldNormal, float pointLight
 
 // Calculates L1 SH based on the world position from regular volumes only.
 void LV_LightVolumeRegularSH(float3 worldPos, inout float3 L0, inout float3 L1r, inout float3 L1g, inout float3 L1b) {
-    
+
     // Clamping global iteration counts
     uint volumesCount = min((uint) _UdonLightVolumeCount, VRCLV_MAX_VOLUMES_COUNT);
     [branch] if (volumesCount == 0) {

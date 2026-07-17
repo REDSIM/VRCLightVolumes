@@ -1,4 +1,4 @@
-[VRC Light Volumes](../README.md) | **How to Use** | [Best Practices](../Documentation/BestPractices.md) | [Udon Sharp API](../Documentation/UdonSharpAPI.md) | [For Shader Developers](../Documentation/ForShaderDevelopers.md) | [Compatible Shaders](../Documentation/CompatibleShaders.md)
+[VRC Light Volumes](../README.md) | **How to Use** | [Best Practices](../Documentation/BestPractices.md) | [Udon Sharp API](../Documentation/UdonSharpAPI.md) | [For Developers](../Documentation/ForDevelopers.md) | [Compatible Shaders](../Documentation/CompatibleShaders.md)
 
 # How to Use
 
@@ -44,6 +44,8 @@ If an Area Light has no Cookie assigned, it keeps the original fast parametric A
 7. Set `Cookie Resolution` in **Light Volume Setup** as low as acceptable for the visible result.
 8. Enable `Debug Range` to check how much scene area the light affects.
 
+Negative scale is supported for Area Light cookies. Width and height are always sent to shaders as positive physical dimensions, while a negative local or parent X/Y axis mirrors the cookie on the corresponding axis. This mirror behavior is available in current v3 shaders; v2-compatible shaders receive the average-color fallback and ignore cookie orientation.
+
 For static pictures, regular Texture assets are the cheapest source. For video screens, assign the same RenderTexture used by the video player, or use a Material that renders the desired emissive image.
 
 > [!IMPORTANT]
@@ -66,6 +68,8 @@ The same Texture, RenderTexture or Material source can be reused by several Area
 ## Runtime Updates
 
 Changing `Color`, `Intensity`, enable state or transform data does not require rebuilding the texture array. The manager updates the light data separately.
+
+Changing Area Light scale, including crossing an X/Y axis through zero into negative scale, updates both the positive physical size and the cookie mirror metadata. With `Dynamic` and `Auto Update Volumes` enabled this happens automatically; otherwise call the instance's `UpdateScale()` after changing the transform from Udon.
 
 Changing the `Cookie` source, changing `Cookie Resolution`, or adding/removing a light that uses a new source requires the custom texture array to be rebuilt. The editor does this automatically from the authoring component. In runtime scripts, call `ReinitializeCustomTextures()` after changing projection sources manually.
 

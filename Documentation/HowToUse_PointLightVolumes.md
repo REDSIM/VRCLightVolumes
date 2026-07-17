@@ -1,4 +1,4 @@
-[VRC Light Volumes](../README.md) | **How to Use** | [Best Practices](../Documentation/BestPractices.md) | [Udon Sharp API](../Documentation/UdonSharpAPI.md) | [For Shader Developers](../Documentation/ForShaderDevelopers.md) | [Compatible Shaders](../Documentation/CompatibleShaders.md)
+[VRC Light Volumes](../README.md) | **How to Use** | [Best Practices](../Documentation/BestPractices.md) | [Udon Sharp API](../Documentation/UdonSharpAPI.md) | [For Developers](../Documentation/ForDevelopers.md) | [Compatible Shaders](../Documentation/CompatibleShaders.md)
 
 # How to Use
 
@@ -39,6 +39,8 @@ If you just have a lot of point light sources that are static and don't change a
 Area Lights are a bit heavier than Point and Spot Lights, but they are not dramatically heavier anymore. You can safely use them for movable and scalable runtime soft boxes. If you assign a Cookie to an Area Light, it becomes a textured emitter for TV screens, signs, windows and similar panels. See [Area Light Emission](../Documentation/HowToUse_AreaLightEmission.md) for setup details. Just avoid excessive overlaps, and still prefer baking a regular Light Volume in a shape of an area light when the light is fully static.
 
 Note that more point lights you have active in your scene, the less performance you'll have. So, consider manually turning off unused point lights if you have a lot of them at your scene.
+
+The manager excludes a Point Light Volume from the shader-visible list when its `Intensity` is exactly `0`, its `Color` is black, its GameObject is inactive, or its instance is otherwise inactive. This is global light culling. A non-black shadowed light remains active because EVSM visibility is different for every receiver pixel; the Point/Spot shader paths skip their remaining contribution work locally when that per-pixel shadow visibility reaches zero.
 
 The **more** point light volumes overlap, the **less** performance you'll have! 
 

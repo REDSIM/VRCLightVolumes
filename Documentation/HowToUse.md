@@ -1,4 +1,4 @@
-[VRC Light Volumes](../README.md) | **How to Use** | [Best Practices](../Documentation/BestPractices.md) | [Udon Sharp API](../Documentation/UdonSharpAPI.md) | [For Shader Developers](../Documentation/ForShaderDevelopers.md) | [Compatible Shaders](../Documentation/CompatibleShaders.md)
+[VRC Light Volumes](../README.md) | **How to Use** | [Best Practices](../Documentation/BestPractices.md) | [Udon Sharp API](../Documentation/UdonSharpAPI.md) | [For Developers](../Documentation/ForDevelopers.md) | [Compatible Shaders](../Documentation/CompatibleShaders.md)
 
 # How to Use
 
@@ -12,6 +12,7 @@
 | [Area Light Emission](../Documentation/HowToUse_AreaLightEmission.md)|
 | [Audio Link Integration](../Documentation/HowToUse_AudioLinkIntegration.md)|
 | [TV Screens Integration](../Documentation/HowToUse_TVScreensIntegration.md)|
+| [Custom Lightmapper Integration](../Documentation/ForDevelopers.md#custom-lightmapper-integration)|
 | [How Light Volumes Work?](../Documentation/HowToUse_HowItWorks.md) |
 
 ## VRC Light Volumes System

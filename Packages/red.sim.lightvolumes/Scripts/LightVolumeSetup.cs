@@ -90,6 +90,10 @@ namespace VRCLightVolumes {
         public bool DestroyInPlayMode = false;
         // Blocks authoring lifecycle sync while DestroyInPlayMode removes helper components.
         internal static bool IsDestroyingPlayModeAuthoringComponents = false;
+#if UNITY_EDITOR
+        // Blocks authoring lifecycle sync while the build preprocessor strips the temporary scene copy.
+        public static bool IsBuildSceneCleanupInProgress = false;
+#endif
 
         [SerializeField] public List<LightVolumeData> LightVolumeDataList = new List<LightVolumeData>();
 
@@ -133,6 +137,7 @@ namespace VRCLightVolumes {
         private static bool _postUndoGlobalSyncQueued = false;
         private bool _postUndoSyncQueued = false;
         private bool _postUndoReinitializePointLightTextures = false;
+        private bool _customProbeAtlasGenerationQueued = false;
         private const string CubemapFaceShaderName = "Hidden/CubeFace";
 #endif
         public void RefreshVolumesList() {
@@ -201,6 +206,104 @@ namespace VRCLightVolumes {
         }
 
 #if UNITY_EDITOR
+
+        // Returns the number of Light Volumes addressable by the external lightmapper API.
+        public int GetCustomProbesCount() {
+            if (Application.isPlaying) {
+                Debug.LogError("[LightVolumeSetup] Custom probe baking API can only be used in edit mode.");
+                return 0;
+            }
+
+            RefreshVolumesList();
+            int count = 0;
+            for (int i = 0; i < LightVolumes.Count; i++)
+                if (IsCustomProbeVolume(LightVolumes[i])) count++;
+            return count;
+        }
+
+        // Returns world-space voxel centers for the Light Volume at the specified setup-list ID.
+        public Vector3[] GetCustomProbes(int id) {
+            LightVolume volume = GetCustomProbeVolume(id);
+            return volume != null ? volume.GetCustomProbes() : new Vector3[0];
+        }
+
+        // Stores externally baked L0/L1 SH data with optional Progressive dilation and denoise, then queues atlas finalization.
+        public void SetCustomProbesBaked(int id, Vector3[] l0, Vector3[] l1r, Vector3[] l1g, Vector3[] l1b) {
+            SetCustomProbesBaked(id, l0, l1r, l1g, l1b, null, Denoise);
+        }
+
+        public void SetCustomProbesBaked(int id, Vector3[] l0, Vector3[] l1r, Vector3[] l1g, Vector3[] l1b, bool denoise) {
+            SetCustomProbesBaked(id, l0, l1r, l1g, l1b, null, denoise);
+        }
+
+        public void SetCustomProbesBaked(int id, Vector3[] l0, Vector3[] l1r, Vector3[] l1g, Vector3[] l1b, float[] validity) {
+            SetCustomProbesBaked(id, l0, l1r, l1g, l1b, validity, Denoise);
+        }
+
+        public void SetCustomProbesBaked(int id, Vector3[] l0, Vector3[] l1r, Vector3[] l1g, Vector3[] l1b, float[] validity, bool denoise) {
+            LightVolume volume = GetCustomProbeVolume(id);
+            if (volume == null || !volume.SaveCustomProbesBaked(l0, l1r, l1g, l1b, validity, denoise)) return;
+
+            if (volume.LightVolumeInstance != null) {
+                volume.LightVolumeInstance.InvBakedRotation = Quaternion.Inverse(volume.GetRotation());
+                LVUtils.MarkDirty(volume.LightVolumeInstance);
+            }
+            QueueCustomProbeAtlasGeneration();
+        }
+
+        // Resolves one external lightmapper ID against the refreshed serialized Light Volume order.
+        private LightVolume GetCustomProbeVolume(int id) {
+            if (Application.isPlaying) {
+                Debug.LogError("[LightVolumeSetup] Custom probe baking API can only be used in edit mode.");
+                return null;
+            }
+
+            RefreshVolumesList();
+            int customId = 0;
+            for (int i = 0; i < LightVolumes.Count; i++) {
+                LightVolume volume = LightVolumes[i];
+                if (!IsCustomProbeVolume(volume)) continue;
+                if (customId == id) return volume;
+                customId++;
+            }
+
+            Debug.LogError($"[LightVolumeSetup] Custom probe Light Volume ID {id} is invalid. Available volume count: {customId}.");
+            return null;
+        }
+
+        // Checks if a Light Volume should be exposed to external lightmappers, matching Progressive bake eligibility.
+        private static bool IsCustomProbeVolume(LightVolume volume) {
+            return volume != null && volume.Bake && volume.gameObject.activeInHierarchy && !volume.CompareTag("EditorOnly");
+        }
+
+        // Debounces synchronous per-volume callbacks and finalizes the atlas after all supplied textures are available.
+        private void QueueCustomProbeAtlasGeneration() {
+            if (_customProbeAtlasGenerationQueued) return;
+            _customProbeAtlasGenerationQueued = true;
+            EditorApplication.delayCall += FinalizeCustomProbesBake;
+        }
+
+        // Bakes dependent shadow maps and generates the runtime atlas after a custom lightmapper submission batch.
+        private void FinalizeCustomProbesBake() {
+            EditorApplication.delayCall -= FinalizeCustomProbesBake;
+            _customProbeAtlasGenerationQueued = false;
+            if (this == null || Application.isPlaying || !CanGenerateCustomProbeAtlas()) return;
+
+            BakeShadowMaps();
+            GenerateAtlas();
+        }
+
+        // Checks that every non-reserved volume has source textures before atlas generation starts.
+        private bool CanGenerateCustomProbeAtlas() {
+            if (LightVolumes.Count == 0) return false;
+            for (int i = 0; i < LightVolumes.Count; i++) {
+                LightVolume volume = LightVolumes[i];
+                if (volume == null) return false;
+                if (!volume.Bake && volume.ReserveUVSpace) continue;
+                if (volume.Texture0 == null || volume.Texture1 == null || volume.Texture2 == null) return false;
+            }
+            return true;
+        }
 
 #if BAKERY_INCLUDED
         private bool _subscribedToBakery = false;
@@ -473,6 +576,9 @@ namespace VRCLightVolumes {
 
             }
 
+            EditorApplication.delayCall -= FinalizeCustomProbesBake;
+            _customProbeAtlasGenerationQueued = false;
+
             Selection.selectionChanged -= OnSelectionChanged;
             if (CanSyncFromLifecycle()) SyncUdonScript();
         }
@@ -490,6 +596,9 @@ namespace VRCLightVolumes {
 
         // Defers lifecycle synchronization while any required UdonSharp proxy is still missing during scene restoration.
         private bool CanSyncFromLifecycle() {
+#if UNITY_EDITOR
+            if (IsBuildSceneCleanupInProgress) return false;
+#endif
             if (Application.isPlaying && IsDestroyingPlayModeAuthoringComponents) return false;
 #if UNITY_EDITOR
             if (!Application.isPlaying) {
@@ -885,8 +994,6 @@ namespace VRCLightVolumes {
                 compute.SetFloat("_UdonPointLightVolumeCubeCount", customTextureArray != null && LightVolumeManager != null ? LightVolumeManager.CubemapsCount : 0f);
                 compute.SetFloat("_UdonPointLightVolumeShadowCubeCount", 0f);
                 compute.SetFloat("_UdonPointLightVolumeShadowCount", 0f);
-                compute.SetFloat("_UdonPointLightVolumeShadowBleedReduction", ShadowBleedReduction);
-                compute.SetFloat("_UdonPointLightVolumeShadowMinVariance", GetShadowMinVarianceValue());
                 compute.SetFloat("_UdonLightVolumeOcclusionCount", 0f);
                 compute.SetTexture(kernel, "_UdonLightVolume", GetProbeBakeDummyVolumeTexture());
                 compute.SetTexture(kernel, "_UdonPointLightVolumeTexture", customTextureArray != null ? customTextureArray : GetProbeBakeDummyTextureArray());
@@ -988,6 +1095,18 @@ namespace VRCLightVolumes {
             return true;
         }
 
+        // V2 declares CustomID as float3 and leaves W at zero. Non-zero W tags a v3 Area Cookie;
+        // its sign mirrors X and magnitude 2 mirrors Y without changing any legacy light data.
+        private static float GetAreaCookieShaderData(Transform lightTransform) {
+            Matrix4x4 localToWorldMatrix = lightTransform.localToWorldMatrix;
+            Quaternion transformRotation = lightTransform.rotation;
+            Vector3 matrixXAxis = new Vector3(localToWorldMatrix.m00, localToWorldMatrix.m10, localToWorldMatrix.m20);
+            Vector3 matrixYAxis = new Vector3(localToWorldMatrix.m01, localToWorldMatrix.m11, localToWorldMatrix.m21);
+            bool flipCookieX = Vector3.Dot(matrixXAxis, transformRotation * Vector3.right) < 0f;
+            bool flipCookieY = Vector3.Dot(matrixYAxis, transformRotation * Vector3.up) < 0f;
+            return (flipCookieY ? 2f : 1f) * (flipCookieX ? -1f : 1f);
+        }
+
         // Writes one Point Light Volume into compute shader uniform arrays
         private bool TryWriteProbeBakePointLightData(PointLightVolume pointLightVolume, int index, float customId, Vector4[] pointPositions, Vector4[] pointColors, Vector4[] pointExtraData, Vector4[] pointDirections, Vector4[] pointCustomIds) {
             Transform lightTransform = pointLightVolume.transform;
@@ -1009,9 +1128,9 @@ namespace VRCLightVolumes {
                 Vector3 scale = lightTransform.lossyScale;
                 float width = Mathf.Max(Mathf.Abs(scale.x), 0.001f);
                 float height = Mathf.Max(Mathf.Abs(scale.y), 0.001f);
-                Quaternion rotation = lightTransform.rotation;
                 position.w = width;
                 color.w = 2f + height;
+                Quaternion rotation = lightTransform.rotation;
                 direction = new Vector4(rotation.x, rotation.y, rotation.z, rotation.w);
             } else {
                 Vector3 scale = lightTransform.lossyScale;
@@ -1056,7 +1175,8 @@ namespace VRCLightVolumes {
             if (isSpot && isCustomProjection) extraData.x = Mathf.Max(Mathf.Abs(pointLightVolume.SpotCookieAspect), 0.001f);
             pointExtraData[index] = extraData;
             pointDirections[index] = direction;
-            pointCustomIds[index] = new Vector4(customId, DisabledProbeBakeShadowId, squaredRange, 0);
+            float customDataW = isArea && isCustomProjection ? GetAreaCookieShaderData(lightTransform) : 0f;
+            pointCustomIds[index] = new Vector4(customId, DisabledProbeBakeShadowId, squaredRange, customDataW);
             return true;
         }
 

@@ -40,8 +40,19 @@ namespace VRCLightVolumes {
             if (!BuildPipeline.isBuildingPlayer) return;
 
             GameObject[] roots = SceneManager.GetActiveScene().GetRootGameObjects();
-            PrepareRuntimeDependencies(roots, false);
-            CleanupEditorComponents(roots);
+            PrepareAndCleanupBuildScene(roots);
+        }
+
+        // Strips one temporary build scene without letting authoring lifecycle callbacks overwrite prepared runtime data.
+        static void PrepareAndCleanupBuildScene(GameObject[] roots) {
+            bool previousCleanupState = LightVolumeSetup.IsBuildSceneCleanupInProgress;
+            LightVolumeSetup.IsBuildSceneCleanupInProgress = true;
+            try {
+                PrepareRuntimeDependencies(roots, false);
+                CleanupEditorComponents(roots);
+            } finally {
+                LightVolumeSetup.IsBuildSceneCleanupInProgress = previousCleanupState;
+            }
         }
 
         // Mirrors build-scene dependency preparation for editor play mode and clears temporary editor-only copies afterwards

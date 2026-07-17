@@ -5,6 +5,7 @@ using NUnit.Framework;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.Rendering;
+using UnityEngine.TestTools;
 
 namespace VRCLightVolumes.Tests {
     [Category("Editor")]
@@ -99,6 +100,56 @@ namespace VRCLightVolumes.Tests {
             Assert.That(LVUtils.EscapeFileName(fileName), Is.EqualTo("%3C%3E%3A%22%2F%5C%7C%3F%2A%01"));
         }
 
+        // Verifies the external lightmapper API exposes setup-scoped volume IDs and transformed voxel centers.
+        [Test]
+        public void CustomProbeApiReturnsVolumeCountAndWorldSpaceVoxelCenters() {
+            GameObject setupObject = CreateGameObject("Custom Probe API Setup", true);
+            LightVolumeSetup setup = setupObject.AddComponent<LightVolumeSetup>();
+
+            GameObject volumeObject = CreateGameObject("Custom Probe API Volume", false);
+            LightVolumeInstance instance = volumeObject.AddComponent<LightVolumeInstance>();
+            LightVolume volume = volumeObject.AddComponent<LightVolume>();
+            volume.LightVolumeSetup = setup;
+            volume.LightVolumeInstance = instance;
+            volume.AdaptiveResolution = false;
+            volume.Resolution = new Vector3Int(2, 1, 1);
+            volumeObject.transform.SetPositionAndRotation(new Vector3(5f, 2f, -3f), Quaternion.Euler(0f, 90f, 0f));
+            volumeObject.transform.localScale = new Vector3(4f, 2f, 2f);
+            volumeObject.SetActive(true);
+
+            Assert.That(setup.GetCustomProbesCount(), Is.EqualTo(1));
+
+            Vector3[] probes = setup.GetCustomProbes(0);
+            Assert.That(probes, Has.Length.EqualTo(2));
+            AssertVector3Close(LVUtils.TransformPoint(new Vector3(-0.25f, 0f, 0f), volume.GetPosition(), volume.GetRotation(), volume.GetScale()), probes[0]);
+            AssertVector3Close(LVUtils.TransformPoint(new Vector3(0.25f, 0f, 0f), volume.GetPosition(), volume.GetRotation(), volume.GetScale()), probes[1]);
+
+            LogAssert.Expect(LogType.Error, "[LightVolumeSetup] Custom probe Light Volume ID -1 is invalid. Available volume count: 1.");
+            Assert.That(setup.GetCustomProbes(-1), Is.Empty);
+
+            GameObject secondSetupObject = CreateGameObject("Second Custom Probe API Setup", true);
+            LightVolumeSetup secondSetup = secondSetupObject.AddComponent<LightVolumeSetup>();
+            GameObject secondVolumeObject = CreateGameObject("Second Custom Probe API Volume", false);
+            LightVolume secondVolume = secondVolumeObject.AddComponent<LightVolume>();
+            secondVolume.LightVolumeSetup = secondSetup;
+            secondVolume.Resolution = Vector3Int.one;
+            secondVolume.LightVolumeInstance = secondVolumeObject.AddComponent<LightVolumeInstance>();
+            secondVolumeObject.SetActive(true);
+
+            Assert.That(setup.GetCustomProbesCount(), Is.EqualTo(1));
+            Assert.That(secondSetup.GetCustomProbesCount(), Is.EqualTo(1));
+
+            Vector3[] emptySH = new Vector3[2];
+            LogAssert.Expect(LogType.Error, "[LightVolume] Can't save custom bake for light volume Custom Probe API Volume. The validity array must contain exactly 2 elements.");
+            setup.SetCustomProbesBaked(0, emptySH, emptySH, emptySH, emptySH, new float[1], false);
+
+            volume.Bake = false;
+            Assert.That(setup.GetCustomProbesCount(), Is.Zero);
+            volume.Bake = true;
+            volumeObject.SetActive(false);
+            Assert.That(setup.GetCustomProbesCount(), Is.Zero);
+        }
+
         // Verifies asset path escaping changes only the final file-name segment.
         [Test]
         public void EscapeAssetPathFileNameEscapesOnlyFileNameSegment() {
@@ -162,6 +213,54 @@ namespace VRCLightVolumes.Tests {
             Assert.That(instance.ProjectionType, Is.EqualTo(1)); // 1: texture
             Assert.That(instance.ProjectionMode, Is.EqualTo(2)); // 2: cookie/cubemap
             Assert.That(instance.LightType, Is.EqualTo(2)); // 2: area
+        }
+
+        // Verifies probe baking keeps legacy Area data canonical and stores Cookie-only reflection in CustomID.w.
+        [Test]
+        public void ProbeBakeAreaCookieMirrorDataEncodesAxisSigns() {
+            MethodInfo getCookieData = typeof(LightVolumeSetup).GetMethod("GetAreaCookieShaderData", _nonPublicStaticFlags);
+            Assert.That(getCookieData, Is.Not.Null);
+            Vector3[] scales = {
+                new Vector3(2, 3, 1),
+                new Vector3(-2, 3, 1),
+                new Vector3(2, -3, 1),
+                new Vector3(-2, -3, -1)
+            };
+
+            for (int i = 0; i < scales.Length; i++) {
+                GameObject lightObject = CreateGameObject("Probe Mirrored Area " + i, true);
+                lightObject.transform.rotation = Quaternion.Euler(17, 31, 43);
+                lightObject.transform.localScale = scales[i];
+                float cookieData = (float)getCookieData.Invoke(null, new object[] { lightObject.transform });
+                float expected = (scales[i].y < 0f ? 2f : 1f) * (scales[i].x < 0f ? -1f : 1f);
+                Assert.That(cookieData, Is.EqualTo(expected).Within(Epsilon));
+            }
+        }
+
+        // Verifies probe-bake Area Cookie data includes aligned reflections inherited from a parent transform.
+        [Test]
+        public void ProbeBakeAreaCookieMirrorDataIncludesParentReflection() {
+            MethodInfo getCookieData = typeof(LightVolumeSetup).GetMethod("GetAreaCookieShaderData", _nonPublicStaticFlags);
+            Assert.That(getCookieData, Is.Not.Null);
+            Vector3[] parentScales = {
+                new Vector3(-1, 1, 1),
+                new Vector3(1, -1, 1),
+                new Vector3(-1, -1, 1)
+            };
+            float[] expectedMirrorTags = { -1f, 2f, -2f };
+
+            for (int i = 0; i < parentScales.Length; i++) {
+                GameObject parent = CreateGameObject("Probe Mirrored Area Parent " + i, true);
+                parent.transform.rotation = Quaternion.Euler(13, 29, 41);
+                parent.transform.localScale = parentScales[i];
+                GameObject lightObject = CreateGameObject("Probe Parent Mirrored Area " + i, true);
+                lightObject.transform.SetParent(parent.transform, false);
+                lightObject.transform.localRotation = Quaternion.identity;
+                lightObject.transform.localScale = new Vector3(2, 3, 1);
+
+                float cookieData = (float)getCookieData.Invoke(null, new object[] { lightObject.transform });
+                Assert.That(cookieData, Is.EqualTo(expectedMirrorTags[i]).Within(Epsilon));
+            }
         }
 
         // Verifies lifecycle validation defers creation of a missing Light Volume UdonSharp proxy.
@@ -737,6 +836,43 @@ namespace VRCLightVolumes.Tests {
             clearMethod.Invoke(null, new object[] { new[] { setupObject, volumeObject, pointObject } });
         }
 
+        // Verifies stripping authoring components cannot replace a registered post processor output with the base atlas.
+        [Test]
+        public void BuildSceneCleanupPreservesPostProcessedAtlasAndRuntimeRegistry() {
+            GameObject setupObject = CreateGameObject("Build Post Processor Cleanup Setup", true);
+            LightVolumeSetup setup = setupObject.AddComponent<LightVolumeSetup>();
+            setup.SetupDependencies();
+            LightVolumeManager manager = setup.LightVolumeManager;
+            Assert.That(manager, Is.Not.Null);
+
+            Texture3D atlasBase = CreateAtlas("Build Post Processor Cleanup Atlas Base");
+            RenderTexture postProcessorTexture = CreateRenderTexture("Build Post Processor Cleanup Output", 4, 4, 1, TextureDimension.Tex3D);
+            Material postProcessorMaterial = CreateMaterial("Hidden/CubeFace");
+            manager.LightVolumeAtlasBase = atlasBase;
+            setup.AtlasPostProcessors = new[] {
+                new LightVolumeSetup.PostProcessor { RT = postProcessorTexture, Mat = postProcessorMaterial, TextureName = "_MainTex" }
+            };
+
+            LightVolumeInstance instance = CreateLightVolume(setup, manager, "Build Post Processor Cleanup Volume", false);
+            setup.SyncUdonScript();
+            Assert.That(manager.LightVolumeAtlas, Is.SameAs(postProcessorTexture));
+            Assert.That(manager.LightVolumeInstances, Has.Length.EqualTo(1));
+            Assert.That(manager.LightVolumeInstances[0], Is.SameAs(instance));
+
+            System.Type preprocessorType = GetLightVolumePreprocessorType();
+            MethodInfo method = preprocessorType.GetMethod("PrepareAndCleanupBuildScene", _nonPublicStaticFlags);
+            Assert.That(method, Is.Not.Null);
+
+            method.Invoke(null, new object[] { new[] { setupObject, instance.gameObject } });
+
+            Assert.That(setup == null, Is.True);
+            Assert.That(manager.LightVolumeAtlas, Is.SameAs(postProcessorTexture));
+            Assert.That(manager.LightVolumeAtlasBase, Is.SameAs(atlasBase));
+            Assert.That(manager.LightVolumeInstances, Has.Length.EqualTo(1));
+            Assert.That(manager.LightVolumeInstances[0], Is.SameAs(instance));
+            Assert.That(LightVolumeSetup.IsBuildSceneCleanupInProgress, Is.False);
+        }
+
         // Verifies zero Far Plane always recalculates from the current light range instead of reusing stale baked instance metadata.
         [Test]
         public void PointLightVolumeZeroFarPlaneRecalculatesFromCurrentRange() {
@@ -1109,6 +1245,13 @@ namespace VRCLightVolumes.Tests {
             Assert.That(actual.g, Is.EqualTo(expected.g).Within(Epsilon));
             Assert.That(actual.b, Is.EqualTo(expected.b).Within(Epsilon));
             Assert.That(actual.a, Is.EqualTo(expected.a).Within(Epsilon));
+        }
+
+        // Asserts vectors with the shared editor-test tolerance.
+        private static void AssertVector3Close(Vector3 expected, Vector3 actual) {
+            Assert.That(actual.x, Is.EqualTo(expected.x).Within(Epsilon));
+            Assert.That(actual.y, Is.EqualTo(expected.y).Within(Epsilon));
+            Assert.That(actual.z, Is.EqualTo(expected.z).Within(Epsilon));
         }
 
         // Creates a temporary GameObject tracked by teardown.

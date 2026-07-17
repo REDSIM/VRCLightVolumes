@@ -7,6 +7,10 @@ using System.IO;
 using UnityEditor.SceneManagement;
 #endif
 
+#if UNITY_EDITOR
+[assembly: System.Runtime.CompilerServices.InternalsVisibleTo("red.sim.LightVolumesUdon.EditorTests")]
+#endif
+
 namespace VRCLightVolumes {
     public class LVUtils {
 
@@ -198,42 +202,166 @@ namespace VRCLightVolumes {
         public static Vector3[] BilateralDenoise3D(Vector3[] input, int w, int h, int d, float sigmaSpatial = 1f, float sigmaRange = 0.1f) {
             Vector3[] output = new Vector3[input.Length];
             int r = Mathf.CeilToInt(2f * sigmaSpatial);
+            float spatialDivisor = 2f * sigmaSpatial * sigmaSpatial;
+            float rangeDivisor = 2f * sigmaRange * sigmaRange;
+            int sliceSize = w * h;
 
-            for (int z = 0; z < d; z++)
-                for (int y = 0; y < h; y++)
-                    for (int x = 0; x < w; x++) {
-                        int centerIdx = x + y * w + z * w * h;
-                        Vector3 center = input[centerIdx];
-                        Vector3 sum = Vector3.zero;
-                        float weightSum = 0f;
+            System.Threading.Tasks.Parallel.For(0, input.Length, centerIdx => {
+                int z = centerIdx / sliceSize;
+                int sliceIndex = centerIdx - z * sliceSize;
+                int y = sliceIndex / w;
+                int x = sliceIndex - y * w;
+                Vector3 center = input[centerIdx];
+                Vector3 sum = Vector3.zero;
+                float weightSum = 0f;
 
-                        for (int dz = -r; dz <= r; dz++)
-                            for (int dy = -r; dy <= r; dy++)
-                                for (int dx = -r; dx <= r; dx++) {
-                                    int xx = x + dx;
-                                    int yy = y + dy;
-                                    int zz = z + dz;
-                                    if (xx < 0 || yy < 0 || zz < 0 || xx >= w || yy >= h || zz >= d) continue;
+                for (int dz = -r; dz <= r; dz++)
+                    for (int dy = -r; dy <= r; dy++)
+                        for (int dx = -r; dx <= r; dx++) {
+                            int xx = x + dx;
+                            int yy = y + dy;
+                            int zz = z + dz;
+                            if (xx < 0 || yy < 0 || zz < 0 || xx >= w || yy >= h || zz >= d) continue;
 
-                                    int nIdx = xx + yy * w + zz * w * h;
-                                    Vector3 neighbor = input[nIdx];
+                            int nIdx = xx + yy * w + zz * sliceSize;
+                            Vector3 neighbor = input[nIdx];
 
-                                    float spatialDist2 = dx * dx + dy * dy + dz * dz;
-                                    float rangeDist2 = (neighbor - center).sqrMagnitude;
+                            float spatialDist2 = dx * dx + dy * dy + dz * dz;
+                            float rangeDist2 = (neighbor - center).sqrMagnitude;
 
-                                    float spatialWeight = Mathf.Exp(-spatialDist2 / (2f * sigmaSpatial * sigmaSpatial));
-                                    float rangeWeight = Mathf.Exp(-rangeDist2 / (2f * sigmaRange * sigmaRange));
+                            float spatialWeight = Mathf.Exp(-spatialDist2 / spatialDivisor);
+                            float rangeWeight = Mathf.Exp(-rangeDist2 / rangeDivisor);
 
-                                    float weight = spatialWeight * rangeWeight;
-                                    sum += neighbor * weight;
-                                    weightSum += weight;
-                                }
+                            float weight = spatialWeight * rangeWeight;
+                            sum += neighbor * weight;
+                            weightSum += weight;
+                        }
 
-                        output[centerIdx] = weightSum > 0f ? sum / weightSum : center;
-                    }
+                output[centerIdx] = weightSum > 0f ? sum / weightSum : center;
+            });
 
             return output;
         }
+
+#if UNITY_EDITOR
+        // Validates, optionally postprocesses and packs external or Progressive L0/L1 probe arrays into Light Volume texture channels.
+        internal static bool TryPrepareLightVolumeProbeData(Vector3[] l0, Vector3[] l1r, Vector3[] l1g, Vector3[] l1b, float[] validity, int w, int h, int d, int dilationIterations, float dilationBackfaceBias, bool denoise, out Color[][] textureColors, out string error) {
+            textureColors = null;
+            error = null;
+
+            int voxelCount = GetVoxelCount(w, h, d);
+            if (voxelCount < 0) {
+                error = "Resolution is invalid or the voxel count is too large.";
+                return false;
+            }
+            if (l0 == null || l1r == null || l1g == null || l1b == null) {
+                error = "SH arrays cannot be null.";
+                return false;
+            }
+            if (l0.Length != voxelCount || l1r.Length != voxelCount || l1g.Length != voxelCount || l1b.Length != voxelCount) {
+                error = $"Every SH array must contain exactly {voxelCount} elements.";
+                return false;
+            }
+            if (validity != null && validity.Length != voxelCount) {
+                error = $"The validity array must contain exactly {voxelCount} elements.";
+                return false;
+            }
+
+            Vector3[] processedL0 = l0;
+            Vector3[] processedL1r = l1r;
+            Vector3[] processedL1g = l1g;
+            Vector3[] processedL1b = l1b;
+            if (validity != null && dilationIterations > 0) DilateLightVolumeProbes(ref processedL0, ref processedL1r, ref processedL1g, ref processedL1b, validity, w, h, d, dilationIterations, dilationBackfaceBias);
+            if (denoise) {
+                processedL0 = BilateralDenoise3D(processedL0, w, h, d, 1f, 0.05f);
+                processedL1r = BilateralDenoise3D(processedL1r, w, h, d, 1f, 0.05f);
+                processedL1g = BilateralDenoise3D(processedL1g, w, h, d, 1f, 0.05f);
+                processedL1b = BilateralDenoise3D(processedL1b, w, h, d, 1f, 0.05f);
+            }
+
+            const float coeff = 1.65f; // Preserves the existing Bakery-compatible L1 scale used by Progressive.
+            textureColors = new[] { new Color[voxelCount], new Color[voxelCount], new Color[voxelCount] };
+            for (int i = 0; i < voxelCount; i++) {
+                textureColors[0][i] = new Color(processedL0[i].x, processedL0[i].y, processedL0[i].z, processedL1r[i].z * coeff);
+                textureColors[1][i] = new Color(processedL1r[i].x * coeff, processedL1g[i].x * coeff, processedL1b[i].x * coeff, processedL1g[i].z * coeff);
+                textureColors[2][i] = new Color(processedL1r[i].y * coeff, processedL1g[i].y * coeff, processedL1b[i].y * coeff, processedL1b[i].z * coeff);
+            }
+            return true;
+        }
+
+        // Calculates a safe positive voxel count for probe array validation.
+        private static int GetVoxelCount(int w, int h, int d) {
+            if (w <= 0 || h <= 0 || d <= 0 || w > int.MaxValue / h) return -1;
+            int sliceSize = w * h;
+            return sliceSize > int.MaxValue / d ? -1 : sliceSize * d;
+        }
+
+        // Dilates valid L0/L1 values into invalid voxels without mutating caller-owned arrays.
+        private static void DilateLightVolumeProbes(ref Vector3[] l0, ref Vector3[] l1r, ref Vector3[] l1g, ref Vector3[] l1b, float[] sourceValidity, int w, int h, int d, int iterations, float backfaceBias) {
+            int voxelCount = l0.Length;
+            int sliceSize = w * h;
+            float[] validity = (float[])sourceValidity.Clone();
+            float[] validityDilated = (float[])sourceValidity.Clone();
+            Vector3[] processedL0 = (Vector3[])l0.Clone();
+            Vector3[] processedL1r = (Vector3[])l1r.Clone();
+            Vector3[] processedL1g = (Vector3[])l1g.Clone();
+            Vector3[] processedL1b = (Vector3[])l1b.Clone();
+            Vector3[] l0Dilated = (Vector3[])l0.Clone();
+            Vector3[] l1rDilated = (Vector3[])l1r.Clone();
+            Vector3[] l1gDilated = (Vector3[])l1g.Clone();
+            Vector3[] l1bDilated = (Vector3[])l1b.Clone();
+
+            for (int iteration = 0; iteration < iterations; iteration++) {
+                System.Threading.Tasks.Parallel.For(0, voxelCount, centerIndex => {
+                    if (validity[centerIndex] < backfaceBias) return;
+
+                    int voxelZ = centerIndex / sliceSize;
+                    int sliceIndex = centerIndex - voxelZ * sliceSize;
+                    int voxelY = sliceIndex / w;
+                    int voxelX = sliceIndex - voxelY * w;
+                    Vector3 l0Sum = Vector3.zero;
+                    Vector3 l1rSum = Vector3.zero;
+                    Vector3 l1gSum = Vector3.zero;
+                    Vector3 l1bSum = Vector3.zero;
+                    int validCount = 0;
+                    for (int dz = -1; dz <= 1; dz++)
+                        for (int dy = -1; dy <= 1; dy++)
+                            for (int dx = -1; dx <= 1; dx++) {
+                                int x = voxelX + dx;
+                                int y = voxelY + dy;
+                                int z = voxelZ + dz;
+                                if (x < 0 || y < 0 || z < 0 || x >= w || y >= h || z >= d) continue;
+
+                                int neighborIndex = x + y * w + z * sliceSize;
+                                if (validity[neighborIndex] >= backfaceBias) continue;
+                                validCount++;
+                                l0Sum += processedL0[neighborIndex];
+                                l1rSum += processedL1r[neighborIndex];
+                                l1gSum += processedL1g[neighborIndex];
+                                l1bSum += processedL1b[neighborIndex];
+                            }
+
+                    if (validCount == 0) return;
+                    l0Dilated[centerIndex] = l0Sum / validCount;
+                    l1rDilated[centerIndex] = l1rSum / validCount;
+                    l1gDilated[centerIndex] = l1gSum / validCount;
+                    l1bDilated[centerIndex] = l1bSum / validCount;
+                    validityDilated[centerIndex] = 0f;
+                });
+
+                System.Array.Copy(validityDilated, validity, voxelCount);
+                System.Array.Copy(l0Dilated, processedL0, voxelCount);
+                System.Array.Copy(l1rDilated, processedL1r, voxelCount);
+                System.Array.Copy(l1gDilated, processedL1g, voxelCount);
+                System.Array.Copy(l1bDilated, processedL1b, voxelCount);
+            }
+
+            l0 = processedL0;
+            l1r = processedL1r;
+            l1g = processedL1g;
+            l1b = processedL1b;
+        }
+#endif
 
         // Bounds of a transformed 1x1x1 cube
         public static Bounds BoundsFromTRS(Matrix4x4 trs) {

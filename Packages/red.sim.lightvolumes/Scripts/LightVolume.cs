@@ -130,12 +130,15 @@ namespace VRCLightVolumes {
 
         // Returns volume voxel count. Returns -1 if a wrong voxels count
         public int GetVoxelCount(int padding = 0) {
-            ulong voxels = (ulong)(Resolution.x + padding * 2) * (ulong)(Resolution.y + padding * 2) * (ulong)(Resolution.z + padding * 2);
-            if (voxels > int.MaxValue || voxels < 0) {
-                return -1;
-            } else {
-                return (int)voxels;
-            }
+            long width = (long)Resolution.x + padding * 2L;
+            long height = (long)Resolution.y + padding * 2L;
+            long depth = (long)Resolution.z + padding * 2L;
+            if (width <= 0 || height <= 0 || depth <= 0) return -1;
+            if (width > int.MaxValue / height) return -1;
+
+            long sliceSize = width * height;
+            if (sliceSize > int.MaxValue / depth) return -1;
+            return (int)(sliceSize * depth);
         }
 
         // Looks for LightVolumeSetup and LightVolumeInstance udon script and setups them if needed
@@ -173,7 +176,14 @@ namespace VRCLightVolumes {
 
         // Recalculates probes world positions
         public void RecalculateProbesPositions() {
-            _probesPositions = new Vector3[GetVoxelCount()];
+            int voxelCount = GetVoxelCount();
+            if (voxelCount < 0) {
+                _probesPositions = new Vector3[0];
+                Debug.LogError($"[LightVolume] Can't calculate probes for light volume {gameObject.name}. Resolution is invalid or the voxel count is too large!");
+                return;
+            }
+
+            _probesPositions = new Vector3[voxelCount];
             Vector3 offset = new Vector3(0.5f, 0.5f, 0.5f);
             var pos = GetPosition();
             var rot = GetRotation();
@@ -190,6 +200,16 @@ namespace VRCLightVolumes {
                 }
             }
         }
+
+#if UNITY_EDITOR
+        // Returns freshly calculated world-space voxel centers for an external editor lightmapper.
+        internal Vector3[] GetCustomProbes() {
+            Recalculate();
+            RecalculateProbesPositions();
+            return _probesPositions;
+        }
+#endif
+
         // Recalculates resolution based on Adaptive Resolution
         public void RecalculateAdaptiveResolution() {
             Vector3 scl = GetScale();
@@ -209,25 +229,15 @@ namespace VRCLightVolumes {
 #if UNITY_EDITOR
         // Saves additional probes data baked with Progressive Lightmapper
         public void Save3DTexturesProgressive(int id) {
-
-            int vCount = GetVoxelCount();
-            if (vCount < 0) {
-                Debug.LogError($"[LightVolume] Can't save light volume {gameObject.name} 3D texture. Voxels count is too large!");
+            int voxelCount = GetVoxelCount();
+            if (voxelCount < 0) {
+                Debug.LogError($"[LightVolume] Can't save light volume {gameObject.name} 3D texture. Resolution is invalid or the voxel count is too large!");
                 return;
             }
 
             SetupDependencies();
-
-            // Atlas Sizes
-            int w = Resolution.x;
-            int h = Resolution.y;
-            int d = Resolution.z;
-
-            // SH data output
-            using (NativeArray<SphericalHarmonicsL2> probes = new NativeArray<SphericalHarmonicsL2>(vCount, Allocator.Temp))
-            using (NativeArray<float> probesValidity = new NativeArray<float>(vCount, Allocator.Temp)) {
-
-                // Checking data available
+            using (NativeArray<SphericalHarmonicsL2> probes = new NativeArray<SphericalHarmonicsL2>(voxelCount, Allocator.Temp))
+            using (NativeArray<float> probesValidity = new NativeArray<float>(voxelCount, Allocator.Temp)) {
 #pragma warning disable CS0618
                 if (!UnityEditor.Experimental.Lightmapping.GetAdditionalBakedProbes(id, probes, probesValidity)) {
                     Debug.LogError("[LightVolume] Can't grab light volume data. No additional baked probes found!");
@@ -235,13 +245,6 @@ namespace VRCLightVolumes {
                 }
 #pragma warning restore CS0618
 
-                // Creating Texture3D with specified format and dimensions
-                TextureFormat format = TextureFormat.RGBAHalf;
-                Texture3D tex0 = new Texture3D(w, h, d, format, false) { wrapMode = TextureWrapMode.Clamp, filterMode = FilterMode.Bilinear };
-                Texture3D tex1 = new Texture3D(w, h, d, format, false) { wrapMode = TextureWrapMode.Clamp, filterMode = FilterMode.Bilinear };
-                Texture3D tex2 = new Texture3D(w, h, d, format, false) { wrapMode = TextureWrapMode.Clamp, filterMode = FilterMode.Bilinear };
-
-                // Quick shortcuts to SH L1 components
                 const int r = 0;
                 const int g = 1;
                 const int b = 2;
@@ -249,127 +252,62 @@ namespace VRCLightVolumes {
                 const int x = 3;
                 const int y = 1;
                 const int z = 2;
-                const float coeff = 1.65f; // To transform to bakery non-linear data format. Should be 1.7699115f actually
 
-                // Separating data for dilation and denoising
-                Vector3[] L0 = new Vector3[vCount];
-                Vector3[] L1r = new Vector3[vCount];
-                Vector3[] L1g = new Vector3[vCount];
-                Vector3[] L1b = new Vector3[vCount];
-                for (int i = 0; i < vCount; i++) {
-                    L0[i] = new Vector3(probes[i][r, a], probes[i][g, a], probes[i][b, a]);
-                    L1r[i] = new Vector3(probes[i][r, x], probes[i][r, y], probes[i][r, z]);
-                    L1g[i] = new Vector3(probes[i][g, x], probes[i][g, y], probes[i][g, z]);
-                    L1b[i] = new Vector3(probes[i][b, x], probes[i][b, y], probes[i][b, z]);
-                }
-                
-                // Dilation
-                if (LightVolumeSetup.DilateInvalidProbes)
-                {
-                    float[] validity = probesValidity.ToArray();
-                    
-                    // Outputs
-                    float[] validityDilated = new float[vCount];
-                    Vector3[] L0Dilated = new Vector3[vCount];
-                    Vector3[] L1rDilated = new Vector3[vCount];
-                    Vector3[] L1gDilated = new Vector3[vCount];
-                    Vector3[] L1bDilated = new Vector3[vCount];
-                    
-                    // Initialize outputs with source data
-                    System.Array.Copy(validity, validityDilated, vCount);
-                    System.Array.Copy(L0, L0Dilated, vCount);
-                    System.Array.Copy(L1r, L1rDilated, vCount);
-                    System.Array.Copy(L1g, L1gDilated, vCount);
-                    System.Array.Copy(L1b, L1bDilated, vCount);
-                    
-                    for (int iter = 0; iter < LightVolumeSetup.DilationIterations; iter++) {
-                        for (int voxelZ = 0; voxelZ < d; voxelZ++)
-                            for (int voxelY = 0; voxelY < h; voxelY++)
-                                for (int voxelX = 0; voxelX < w; voxelX++) {
-                                    int centerIdx = voxelX + voxelY * w + voxelZ * w * h;
-
-                                    if (validity[centerIdx] < LightVolumeSetup.DilationBackfaceBias) continue;
-                                    
-                                    Vector3 L0Sum = Vector3.zero;
-                                    Vector3 L1rSum = Vector3.zero;
-                                    Vector3 L1gSum = Vector3.zero;
-                                    Vector3 L1bSum = Vector3.zero;
-                                    int validCount = 0;
-                                    for (int dz = -1; dz <= 1; dz++)
-                                        for (int dy = -1; dy <= 1; dy++)
-                                            for (int dx = -1; dx <= 1; dx++) {
-                                                int xx = voxelX + dx;
-                                                int yy = voxelY + dy;
-                                                int zz = voxelZ + dz;
-                                                if (xx < 0 || yy < 0 || zz < 0 || xx >= w || yy >= h || zz >= d) continue;
-
-                                                int nIdx = xx + yy * w + zz * w * h;
-                                                float neighborValidity = validity[nIdx];
-                                                if (neighborValidity < LightVolumeSetup.DilationBackfaceBias) {
-                                                    validCount++;
-                                                    L0Sum += L0[nIdx];
-                                                    L1rSum += L1r[nIdx];
-                                                    L1gSum += L1g[nIdx];
-                                                    L1bSum += L1b[nIdx];
-                                                }
-                                            }
-
-                                    if (validCount > 0) {
-                                        L0Dilated[centerIdx] = L0Sum / validCount;
-                                        L1rDilated[centerIdx] = L1rSum / validCount;
-                                        L1gDilated[centerIdx] = L1gSum / validCount;
-                                        L1bDilated[centerIdx] = L1bSum / validCount;
-                                        validityDilated[centerIdx] = 0.0f;
-                                    }
-                                }
-                        
-                        // Copy outputs back to source data after each iteration
-                        System.Array.Copy(validityDilated, validity, vCount);
-                        System.Array.Copy(L0Dilated, L0, vCount);
-                        System.Array.Copy(L1rDilated, L1r, vCount);
-                        System.Array.Copy(L1gDilated, L1g, vCount);
-                        System.Array.Copy(L1bDilated, L1b, vCount);
-                    }
+                Vector3[] l0 = new Vector3[voxelCount];
+                Vector3[] l1r = new Vector3[voxelCount];
+                Vector3[] l1g = new Vector3[voxelCount];
+                Vector3[] l1b = new Vector3[voxelCount];
+                for (int i = 0; i < voxelCount; i++) {
+                    l0[i] = new Vector3(probes[i][r, a], probes[i][g, a], probes[i][b, a]);
+                    l1r[i] = new Vector3(probes[i][r, x], probes[i][r, y], probes[i][r, z]);
+                    l1g[i] = new Vector3(probes[i][g, x], probes[i][g, y], probes[i][g, z]);
+                    l1b[i] = new Vector3(probes[i][b, x], probes[i][b, y], probes[i][b, z]);
                 }
 
-                // Denoising
-                if (LightVolumeSetup.Denoise) {
-                    L0 = LVUtils.BilateralDenoise3D(L0, w, h, d, 1, 0.05f);
-                    L1r = LVUtils.BilateralDenoise3D(L1r, w, h, d, 1, 0.05f);
-                    L1g = LVUtils.BilateralDenoise3D(L1g, w, h, d, 1, 0.05f);
-                    L1b = LVUtils.BilateralDenoise3D(L1b, w, h, d, 1, 0.05f);
-                }
+                float[] validity = LightVolumeSetup.DilateInvalidProbes ? probesValidity.ToArray() : null;
+                SaveCustomProbesBaked(l0, l1r, l1g, l1b, validity, LightVolumeSetup.Denoise);
+            }
+        }
 
-                // Setting voxel data
-                Color[] c0 = new Color[vCount];
-                Color[] c1 = new Color[vCount];
-                Color[] c2 = new Color[vCount];
-                for (int i = 0; i < vCount; i++) {
-                    c0[i] = new Color(L0[i].x, L0[i].y, L0[i].z, L1r[i].z * coeff);
-                    c1[i] = new Color(L1r[i].x * coeff, L1g[i].x * coeff, L1b[i].x * coeff, L1g[i].z * coeff);
-                    c2[i] = new Color(L1r[i].y * coeff, L1g[i].y * coeff, L1b[i].y * coeff, L1b[i].z * coeff);
-                }
-
-                // Apply Pixel Data to Texture
-                LVUtils.Apply3DTextureData(tex0, c0);
-                LVUtils.Apply3DTextureData(tex1, c1);
-                LVUtils.Apply3DTextureData(tex2, c2);
-
-                // Saving 3D Texture assets
-                string path = $"{Path.GetDirectoryName(SceneManager.GetActiveScene().path)}/{SceneManager.GetActiveScene().name}/VRCLightVolumes/Temp";
-                string escapedName = LVUtils.EscapeFileName(gameObject.name);
-                LVUtils.SaveAsAsset(tex0, $"{path}/{escapedName}_0.asset");
-                LVUtils.SaveAsAsset(tex1, $"{path}/{escapedName}_1.asset");
-                LVUtils.SaveAsAsset(tex2, $"{path}/{escapedName}_2.asset");
-
-                // Applying textures to volume
-                Texture0 = tex0;
-                Texture1 = tex1;
-                Texture2 = tex2;
-
+        // Validates, postprocesses and saves L0/L1 data supplied by an external editor lightmapper.
+        internal bool SaveCustomProbesBaked(Vector3[] l0, Vector3[] l1r, Vector3[] l1g, Vector3[] l1b, float[] validity, bool denoise) {
+            SetupDependencies();
+            int w = Resolution.x;
+            int h = Resolution.y;
+            int d = Resolution.z;
+            if (!LVUtils.TryPrepareLightVolumeProbeData(l0, l1r, l1g, l1b, validity, w, h, d, LightVolumeSetup.DilationIterations, LightVolumeSetup.DilationBackfaceBias, denoise, out Color[][] textureColors, out string error)) {
+                Debug.LogError($"[LightVolume] Can't save custom bake for light volume {gameObject.name}. {error}");
+                return false;
             }
 
+            Scene scene = gameObject.scene;
+            if (!scene.IsValid() || string.IsNullOrEmpty(scene.path)) {
+                Debug.LogError($"[LightVolume] Can't save custom bake for light volume {gameObject.name}. Save the containing scene first!");
+                return false;
+            }
+
+            TextureFormat format = TextureFormat.RGBAHalf;
+            Texture3D tex0 = new Texture3D(w, h, d, format, false) { wrapMode = TextureWrapMode.Clamp, filterMode = FilterMode.Bilinear };
+            Texture3D tex1 = new Texture3D(w, h, d, format, false) { wrapMode = TextureWrapMode.Clamp, filterMode = FilterMode.Bilinear };
+            Texture3D tex2 = new Texture3D(w, h, d, format, false) { wrapMode = TextureWrapMode.Clamp, filterMode = FilterMode.Bilinear };
+            if (!LVUtils.Apply3DTextureData(tex0, textureColors[0]) || !LVUtils.Apply3DTextureData(tex1, textureColors[1]) || !LVUtils.Apply3DTextureData(tex2, textureColors[2])) {
+                DestroyImmediate(tex0);
+                DestroyImmediate(tex1);
+                DestroyImmediate(tex2);
+                return false;
+            }
+
+            string path = $"{Path.GetDirectoryName(scene.path)}/{scene.name}/VRCLightVolumes/Temp";
+            string escapedName = LVUtils.EscapeFileName(gameObject.name);
+            LVUtils.SaveAsAsset(tex0, $"{path}/{escapedName}_0.asset");
+            LVUtils.SaveAsAsset(tex1, $"{path}/{escapedName}_1.asset");
+            LVUtils.SaveAsAsset(tex2, $"{path}/{escapedName}_2.asset");
+
+            Texture0 = tex0;
+            Texture1 = tex1;
+            Texture2 = tex2;
             LVUtils.MarkDirty(this);
+            return true;
         }
 #endif
         // Setups required game objects and components

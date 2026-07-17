@@ -1,4 +1,4 @@
-**VRC Light Volumes** | [How to Use](./Documentation/HowToUse.md) | [Best Practices](./Documentation/BestPractices.md) | [Udon Sharp API](./Documentation/UdonSharpAPI.md) | [For Shader Developers](./Documentation/ForShaderDevelopers.md) | [Compatible Shaders](./Documentation/CompatibleShaders.md)
+**VRC Light Volumes** | [How to Use](./Documentation/HowToUse.md) | [Best Practices](./Documentation/BestPractices.md) | [Udon Sharp API](./Documentation/UdonSharpAPI.md) | [For Developers](./Documentation/ForDevelopers.md) | [Compatible Shaders](./Documentation/CompatibleShaders.md)
 
 <p align="center"> <img src="./Documentation/LogoMain.png#gh-dark-mode-only" alt="VRC Light Volumes Main Logo" width="627" /></p>
 <p align="center"> <img src="./Documentation/LogoMainBright.png#gh-light-mode-only" alt="VRC Light Volumes Main Logo" width="627" /></p>

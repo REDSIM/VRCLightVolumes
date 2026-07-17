@@ -5,6 +5,7 @@ using NUnit.Framework;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.Rendering;
+using UnityEngine.TestTools;
 
 namespace VRCLightVolumes.Tests {
     [Category("Editor")]
@@ -97,6 +98,56 @@ namespace VRCLightVolumes.Tests {
             string fileName = "<>:\"/\\|?*\u0001";
 
             Assert.That(LVUtils.EscapeFileName(fileName), Is.EqualTo("%3C%3E%3A%22%2F%5C%7C%3F%2A%01"));
+        }
+
+        // Verifies the external lightmapper API exposes setup-scoped volume IDs and transformed voxel centers.
+        [Test]
+        public void CustomProbeApiReturnsVolumeCountAndWorldSpaceVoxelCenters() {
+            GameObject setupObject = CreateGameObject("Custom Probe API Setup", true);
+            LightVolumeSetup setup = setupObject.AddComponent<LightVolumeSetup>();
+
+            GameObject volumeObject = CreateGameObject("Custom Probe API Volume", false);
+            LightVolumeInstance instance = volumeObject.AddComponent<LightVolumeInstance>();
+            LightVolume volume = volumeObject.AddComponent<LightVolume>();
+            volume.LightVolumeSetup = setup;
+            volume.LightVolumeInstance = instance;
+            volume.AdaptiveResolution = false;
+            volume.Resolution = new Vector3Int(2, 1, 1);
+            volumeObject.transform.SetPositionAndRotation(new Vector3(5f, 2f, -3f), Quaternion.Euler(0f, 90f, 0f));
+            volumeObject.transform.localScale = new Vector3(4f, 2f, 2f);
+            volumeObject.SetActive(true);
+
+            Assert.That(setup.GetCustomProbesCount(), Is.EqualTo(1));
+
+            Vector3[] probes = setup.GetCustomProbes(0);
+            Assert.That(probes, Has.Length.EqualTo(2));
+            AssertVector3Close(LVUtils.TransformPoint(new Vector3(-0.25f, 0f, 0f), volume.GetPosition(), volume.GetRotation(), volume.GetScale()), probes[0]);
+            AssertVector3Close(LVUtils.TransformPoint(new Vector3(0.25f, 0f, 0f), volume.GetPosition(), volume.GetRotation(), volume.GetScale()), probes[1]);
+
+            LogAssert.Expect(LogType.Error, "[LightVolumeSetup] Custom probe Light Volume ID -1 is invalid. Available volume count: 1.");
+            Assert.That(setup.GetCustomProbes(-1), Is.Empty);
+
+            GameObject secondSetupObject = CreateGameObject("Second Custom Probe API Setup", true);
+            LightVolumeSetup secondSetup = secondSetupObject.AddComponent<LightVolumeSetup>();
+            GameObject secondVolumeObject = CreateGameObject("Second Custom Probe API Volume", false);
+            LightVolume secondVolume = secondVolumeObject.AddComponent<LightVolume>();
+            secondVolume.LightVolumeSetup = secondSetup;
+            secondVolume.Resolution = Vector3Int.one;
+            secondVolume.LightVolumeInstance = secondVolumeObject.AddComponent<LightVolumeInstance>();
+            secondVolumeObject.SetActive(true);
+
+            Assert.That(setup.GetCustomProbesCount(), Is.EqualTo(1));
+            Assert.That(secondSetup.GetCustomProbesCount(), Is.EqualTo(1));
+
+            Vector3[] emptySH = new Vector3[2];
+            LogAssert.Expect(LogType.Error, "[LightVolume] Can't save custom bake for light volume Custom Probe API Volume. The validity array must contain exactly 2 elements.");
+            setup.SetCustomProbesBaked(0, emptySH, emptySH, emptySH, emptySH, new float[1], false);
+
+            volume.Bake = false;
+            Assert.That(setup.GetCustomProbesCount(), Is.Zero);
+            volume.Bake = true;
+            volumeObject.SetActive(false);
+            Assert.That(setup.GetCustomProbesCount(), Is.Zero);
         }
 
         // Verifies asset path escaping changes only the final file-name segment.
@@ -1194,6 +1245,13 @@ namespace VRCLightVolumes.Tests {
             Assert.That(actual.g, Is.EqualTo(expected.g).Within(Epsilon));
             Assert.That(actual.b, Is.EqualTo(expected.b).Within(Epsilon));
             Assert.That(actual.a, Is.EqualTo(expected.a).Within(Epsilon));
+        }
+
+        // Asserts vectors with the shared editor-test tolerance.
+        private static void AssertVector3Close(Vector3 expected, Vector3 actual) {
+            Assert.That(actual.x, Is.EqualTo(expected.x).Within(Epsilon));
+            Assert.That(actual.y, Is.EqualTo(expected.y).Within(Epsilon));
+            Assert.That(actual.z, Is.EqualTo(expected.z).Within(Epsilon));
         }
 
         // Creates a temporary GameObject tracked by teardown.

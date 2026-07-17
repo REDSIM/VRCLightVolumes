@@ -892,8 +892,6 @@ namespace VRCLightVolumes {
                 compute.SetFloat("_UdonPointLightVolumeCubeCount", customTextureArray != null && LightVolumeManager != null ? LightVolumeManager.CubemapsCount : 0f);
                 compute.SetFloat("_UdonPointLightVolumeShadowCubeCount", 0f);
                 compute.SetFloat("_UdonPointLightVolumeShadowCount", 0f);
-                compute.SetFloat("_UdonPointLightVolumeShadowBleedReduction", ShadowBleedReduction);
-                compute.SetFloat("_UdonPointLightVolumeShadowMinVariance", GetShadowMinVarianceValue());
                 compute.SetFloat("_UdonLightVolumeOcclusionCount", 0f);
                 compute.SetTexture(kernel, "_UdonLightVolume", GetProbeBakeDummyVolumeTexture());
                 compute.SetTexture(kernel, "_UdonPointLightVolumeTexture", customTextureArray != null ? customTextureArray : GetProbeBakeDummyTextureArray());
@@ -995,6 +993,18 @@ namespace VRCLightVolumes {
             return true;
         }
 
+        // V2 declares CustomID as float3 and leaves W at zero. Non-zero W tags a v3 Area Cookie;
+        // its sign mirrors X and magnitude 2 mirrors Y without changing any legacy light data.
+        private static float GetAreaCookieShaderData(Transform lightTransform) {
+            Matrix4x4 localToWorldMatrix = lightTransform.localToWorldMatrix;
+            Quaternion transformRotation = lightTransform.rotation;
+            Vector3 matrixXAxis = new Vector3(localToWorldMatrix.m00, localToWorldMatrix.m10, localToWorldMatrix.m20);
+            Vector3 matrixYAxis = new Vector3(localToWorldMatrix.m01, localToWorldMatrix.m11, localToWorldMatrix.m21);
+            bool flipCookieX = Vector3.Dot(matrixXAxis, transformRotation * Vector3.right) < 0f;
+            bool flipCookieY = Vector3.Dot(matrixYAxis, transformRotation * Vector3.up) < 0f;
+            return (flipCookieY ? 2f : 1f) * (flipCookieX ? -1f : 1f);
+        }
+
         // Writes one Point Light Volume into compute shader uniform arrays
         private bool TryWriteProbeBakePointLightData(PointLightVolume pointLightVolume, int index, float customId, Vector4[] pointPositions, Vector4[] pointColors, Vector4[] pointExtraData, Vector4[] pointDirections, Vector4[] pointCustomIds) {
             Transform lightTransform = pointLightVolume.transform;
@@ -1016,9 +1026,9 @@ namespace VRCLightVolumes {
                 Vector3 scale = lightTransform.lossyScale;
                 float width = Mathf.Max(Mathf.Abs(scale.x), 0.001f);
                 float height = Mathf.Max(Mathf.Abs(scale.y), 0.001f);
-                Quaternion rotation = lightTransform.rotation;
                 position.w = width;
                 color.w = 2f + height;
+                Quaternion rotation = lightTransform.rotation;
                 direction = new Vector4(rotation.x, rotation.y, rotation.z, rotation.w);
             } else {
                 Vector3 scale = lightTransform.lossyScale;
@@ -1063,7 +1073,8 @@ namespace VRCLightVolumes {
             if (isSpot && isCustomProjection) extraData.x = Mathf.Max(Mathf.Abs(pointLightVolume.SpotCookieAspect), 0.001f);
             pointExtraData[index] = extraData;
             pointDirections[index] = direction;
-            pointCustomIds[index] = new Vector4(customId, DisabledProbeBakeShadowId, squaredRange, 0);
+            float customDataW = isArea && isCustomProjection ? GetAreaCookieShaderData(lightTransform) : 0f;
+            pointCustomIds[index] = new Vector4(customId, DisabledProbeBakeShadowId, squaredRange, customDataW);
             return true;
         }
 

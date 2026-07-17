@@ -67,6 +67,7 @@ Optional:
 Configure `Object Mask` if needed. If not empty, only children of the listed objects are rendered during the bake.
 Increase `Near Plane` value if you want to clip the meshes near the light source.
 Keep `Far Clip Plane` at `0` in most cases. `0` automatically uses the current calculated culling range of the light, which is usually the correct distance and avoids clipping valid shadow casters. Set a manual value only when you intentionally want to limit how far the shadow bake camera can see.
+`Near Plane` and `Far Clip Plane` apply to both cubemap shadows and single-slice Spot Light shadows. The baker uses the resolved distances to encode EVSM depth, while the receiver is given the matching precomputed reciprocal depth range.
 Configure `Bias` if you have visible self-shadow artifacts.
 Use `Contact Hardening` if you want to increase shadow sharpness near the shadow casters. However it can cause visible artifacts, so use it carefully.
 `Use World Space` keeps the baked shadow projection fixed in world space instead of moving it with the light. This is useful for a light that changes color or intensity but should keep shadows attached to the room. It is less optimized than local-space shadows.
@@ -176,7 +177,7 @@ The native runtime bake method is `PointLightVolumeInstance.BakeShadows()`. It u
 - `RuntimeShadowFacesPerFrame`
 - `RuntimeShadowDirectOutput`
 
-Set those fields first, then call `BakeShadows()`. If `RuntimeShadowFacesPerFrame` is below the required slice count, repeated calls continue the current bake cycle. If resolution, direct output mode or slice count changes while a cycle is in progress, the light starts a new cycle.
+Set those fields first, then call `BakeShadows()`. If `RuntimeShadowFacesPerFrame` is below the required slice count, repeated calls continue the current bake cycle. If resolution, direct output mode, slice count, or the resolved Near/Far clip range changes while a cycle is in progress, the light starts a new cycle so every cubemap face uses matching depth encoding.
 
 `Bake In Game` calls `BakeShadows()` once from `Start()` with high runtime quality, spherical blur and full one-frame baking.
 

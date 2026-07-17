@@ -164,6 +164,54 @@ namespace VRCLightVolumes.Tests {
             Assert.That(instance.LightType, Is.EqualTo(2)); // 2: area
         }
 
+        // Verifies probe baking keeps legacy Area data canonical and stores Cookie-only reflection in CustomID.w.
+        [Test]
+        public void ProbeBakeAreaCookieMirrorDataEncodesAxisSigns() {
+            MethodInfo getCookieData = typeof(LightVolumeSetup).GetMethod("GetAreaCookieShaderData", _nonPublicStaticFlags);
+            Assert.That(getCookieData, Is.Not.Null);
+            Vector3[] scales = {
+                new Vector3(2, 3, 1),
+                new Vector3(-2, 3, 1),
+                new Vector3(2, -3, 1),
+                new Vector3(-2, -3, -1)
+            };
+
+            for (int i = 0; i < scales.Length; i++) {
+                GameObject lightObject = CreateGameObject("Probe Mirrored Area " + i, true);
+                lightObject.transform.rotation = Quaternion.Euler(17, 31, 43);
+                lightObject.transform.localScale = scales[i];
+                float cookieData = (float)getCookieData.Invoke(null, new object[] { lightObject.transform });
+                float expected = (scales[i].y < 0f ? 2f : 1f) * (scales[i].x < 0f ? -1f : 1f);
+                Assert.That(cookieData, Is.EqualTo(expected).Within(Epsilon));
+            }
+        }
+
+        // Verifies probe-bake Area Cookie data includes aligned reflections inherited from a parent transform.
+        [Test]
+        public void ProbeBakeAreaCookieMirrorDataIncludesParentReflection() {
+            MethodInfo getCookieData = typeof(LightVolumeSetup).GetMethod("GetAreaCookieShaderData", _nonPublicStaticFlags);
+            Assert.That(getCookieData, Is.Not.Null);
+            Vector3[] parentScales = {
+                new Vector3(-1, 1, 1),
+                new Vector3(1, -1, 1),
+                new Vector3(-1, -1, 1)
+            };
+            float[] expectedMirrorTags = { -1f, 2f, -2f };
+
+            for (int i = 0; i < parentScales.Length; i++) {
+                GameObject parent = CreateGameObject("Probe Mirrored Area Parent " + i, true);
+                parent.transform.rotation = Quaternion.Euler(13, 29, 41);
+                parent.transform.localScale = parentScales[i];
+                GameObject lightObject = CreateGameObject("Probe Parent Mirrored Area " + i, true);
+                lightObject.transform.SetParent(parent.transform, false);
+                lightObject.transform.localRotation = Quaternion.identity;
+                lightObject.transform.localScale = new Vector3(2, 3, 1);
+
+                float cookieData = (float)getCookieData.Invoke(null, new object[] { lightObject.transform });
+                Assert.That(cookieData, Is.EqualTo(expectedMirrorTags[i]).Within(Epsilon));
+            }
+        }
+
         // Verifies lifecycle validation defers creation of a missing Light Volume UdonSharp proxy.
         [Test]
         public void SetupLifecycleSyncDefersMissingLightVolumeInstance() {

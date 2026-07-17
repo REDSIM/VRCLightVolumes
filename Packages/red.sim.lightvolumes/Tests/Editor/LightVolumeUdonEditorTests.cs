@@ -39,8 +39,7 @@ namespace VRCLightVolumes.Tests {
         private static readonly int _pointLightShadowCubeCountID = Shader.PropertyToID("_UdonPointLightVolumeShadowCubeCount");
         private static readonly int _pointLightShadowCountID = Shader.PropertyToID("_UdonPointLightVolumeShadowCount");
         private static readonly int _pointLightShadowTextureID = Shader.PropertyToID("_UdonPointLightVolumeShadowTexture");
-        private static readonly int _pointLightShadowBleedReductionID = Shader.PropertyToID("_UdonPointLightVolumeShadowBleedReduction");
-        private static readonly int _pointLightShadowMinVarianceID = Shader.PropertyToID("_UdonPointLightVolumeShadowMinVariance");
+        private static readonly int _pointLightShadowReceiverParamsID = Shader.PropertyToID("_UdonPointLightVolumeShadowReceiverParams");
         private static readonly int _lightBrightnessCutoffID = Shader.PropertyToID("_UdonLightBrightnessCutoff");
         private static readonly BindingFlags _lifecycleMethodFlags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
         private static readonly FieldInfo _customTexturesDepthField = typeof(LightVolumeManager).GetField("_customTextureArrayDepth", _lifecycleMethodFlags);
@@ -55,9 +54,13 @@ namespace VRCLightVolumes.Tests {
         private static readonly FieldInfo _pointLightShadowIDsField = typeof(LightVolumeManager).GetField("_pointLightShadowIDs", _lifecycleMethodFlags);
         private static readonly FieldInfo _pointLightAreaCookieAverageColorsField = typeof(LightVolumeManager).GetField("_pointLightAreaCookieAverageColors", _lifecycleMethodFlags);
         private static readonly FieldInfo _pointLightArraysDirtyField = typeof(LightVolumeManager).GetField("_pointLightArraysDirty", _lifecycleMethodFlags);
+        private static readonly FieldInfo _enabledPointIDsField = typeof(LightVolumeManager).GetField("_enabledPointIDs", _lifecycleMethodFlags);
+        private static readonly FieldInfo _volumeDataUpdateRequestedField = typeof(LightVolumeManager).GetField("_volumeDataUpdateRequested", _lifecycleMethodFlags);
         private static readonly FieldInfo _isUpdatingVolumesField = typeof(LightVolumeManager).GetField("_isUpdatingVolumes", _lifecycleMethodFlags);
         private static readonly FieldInfo _dummyRTField = typeof(LightVolumeManager).GetField("_dummyRT", _lifecycleMethodFlags);
         private static readonly MethodInfo _uploadAreaCookieAverageColorMethod = typeof(LightVolumeManager).GetMethod("UploadAreaCookieAverageColor", _lifecycleMethodFlags);
+        private static readonly MethodInfo _updateAutoUpdatedVolumeChangesMethod = typeof(LightVolumeManager).GetMethod("UpdateAutoUpdatedVolumeChanges", _lifecycleMethodFlags);
+        private static readonly MethodInfo _uploadAutoUpdatedVolumeChangesMethod = typeof(LightVolumeManager).GetMethod("UploadAutoUpdatedVolumeChanges", _lifecycleMethodFlags);
         private static readonly BindingFlags _staticMigrationMethodFlags = BindingFlags.Static | BindingFlags.NonPublic;
 
         private readonly List<UnityEngine.Object> _createdObjects = new List<UnityEngine.Object>();
@@ -911,7 +914,7 @@ namespace VRCLightVolumes.Tests {
 
             AssertGlobalFloat(_pointLightShadowCountID, 1);
             AssertPointCustomData(point, 0, 1);
-            AssertVectorClose(new Vector4(5, 6, 7, 0), Shader.GetGlobalVectorArray(_pointLightShadowReprojectionDataID)[0]);
+            AssertVectorClose(new Vector4(5, 6, 7, ExpectedCubemapShadowInvDepthRange(point)), Shader.GetGlobalVectorArray(_pointLightShadowReprojectionDataID)[0]);
             AssertVectorClose(new Vector4(0, 0, 0, 1), Shader.GetGlobalVectorArray(_pointLightShadowRotationDataID)[0]);
 
             point.ShadingStrength = 0.5f;
@@ -932,7 +935,7 @@ namespace VRCLightVolumes.Tests {
 
             Quaternion expectedLocalSpaceRotation = Quaternion.Inverse(point.transform.rotation);
             AssertPointCustomData(point, 0, -1);
-            AssertVectorClose(new Vector4(5, 6, 7, 0), Shader.GetGlobalVectorArray(_pointLightShadowReprojectionDataID)[0]);
+            AssertVectorClose(new Vector4(5, 6, 7, ExpectedCubemapShadowInvDepthRange(point)), Shader.GetGlobalVectorArray(_pointLightShadowReprojectionDataID)[0]);
             AssertVectorClose(new Vector4(expectedLocalSpaceRotation.x, expectedLocalSpaceRotation.y, expectedLocalSpaceRotation.z, expectedLocalSpaceRotation.w), Shader.GetGlobalVectorArray(_pointLightShadowRotationDataID)[0]);
 
             point.CustomTexture = CreateTexture2D("Point Globals LUT");
@@ -1831,10 +1834,21 @@ namespace VRCLightVolumes.Tests {
             Assert.That(manager.ShadowTextures.format, Is.EqualTo(RenderTextureFormat.ARGBHalf));
             Assert.That(manager.ShadowTextures.useMipMap, Is.False);
             Assert.That(manager.ShadowTextures.autoGenerateMips, Is.False);
-            AssertGlobalFloat(_pointLightShadowBleedReductionID, 0.35f);
-            AssertGlobalFloat(_pointLightShadowMinVarianceID, 0.01f);
+            AssertVectorClose(new Vector4(0.0001f * 5.54f, -0.35f / 0.65f, 1f / 0.65f, 0.0001f * 5f), Shader.GetGlobalVector(_pointLightShadowReceiverParamsID));
             AssertPointCustomData(point, 0, 1);
             Assert.That(Shader.GetGlobalVectorArray(_pointLightExtraDataID)[0].w, Is.EqualTo(0.25f).Within(Epsilon));
+        }
+
+        // Keeps the precomputed EVSM constants finite even when authoring values are outside their supported range.
+        [Test]
+        public void DisabledManagerPublishesClampedShadowReceiverParams() {
+            LightVolumeManager manager = CreateManager("Clamped Shadow Receiver Params Manager", false);
+            manager.ShadowBleedReduction = 2f;
+            manager.ShadowMinVariance = -4f;
+
+            manager.UpdateVolumes();
+
+            AssertVectorClose(new Vector4(0f, -0.999f / (1f - 0.999f), 1f / (1f - 0.999f), 0f), Shader.GetGlobalVector(_pointLightShadowReceiverParamsID));
         }
 
         // Verifies EVSM Float shadows use an ARGBFloat texture array.
@@ -1883,9 +1897,46 @@ namespace VRCLightVolumes.Tests {
 
             AssertPointCustomData(point, 0, 1);
             Assert.That(Shader.GetGlobalVectorArray(_pointLightExtraDataID)[0].w, Is.EqualTo(4f).Within(Epsilon));
-            Assert.That(Shader.GetGlobalVectorArray(_pointLightCustomIdID)[0].w, Is.EqualTo(4.0001f).Within(Epsilon));
+            Assert.That(Shader.GetGlobalVectorArray(_pointLightCustomIdID)[0].w,
+                Is.EqualTo(ExpectedCustomShadowInvDepthRange(point)).Within(Epsilon));
+            Assert.That(Shader.GetGlobalVectorArray(_pointLightShadowReprojectionDataID)[0].w,
+                Is.EqualTo(ExpectedCubemapShadowInvDepthRange(point)).Within(Epsilon));
             Assert.That(point.NearClip, Is.EqualTo(4f).Within(Epsilon));
             Assert.That(point.FarClip, Is.EqualTo(1f).Within(Epsilon));
+        }
+
+        // Verifies a repeated runtime bake republishes the receiver depth range when only its clip planes changed.
+        [Test]
+        public void RuntimeShadowBakeClipChangeRefreshesReceiverMetadata() {
+            LightVolumeManager manager = CreateManager("Runtime Shadow Clip Refresh Manager", false);
+            manager.ShadowTexturesWidth = 16;
+            manager.ShadowTexturesHeight = 16;
+            PointLightVolumeInstance point = CreatePointLight(manager, "Runtime Shadow Clip Refresh Light", true);
+            point.SquaredRange = 64f;
+            point.IsRangeDirty = false;
+            point.NearClip = 0.25f;
+            point.FarClip = 4f;
+            point.RuntimeShadowResolution = 16;
+            point.RuntimeShadowDepthEncodeMaterial = CreateMaterial("Hidden/VRCLV/PointLightShadowDepthEncode");
+            AddRuntimeShadowCamera(point);
+
+            point.BakeShadows();
+            manager.UpdateVolumes();
+            Assert.That(Shader.GetGlobalVectorArray(_pointLightExtraDataID)[0].w, Is.EqualTo(0.25f).Within(Epsilon));
+            Assert.That(Shader.GetGlobalVectorArray(_pointLightShadowReprojectionDataID)[0].w,
+                Is.EqualTo(-1f / 3.75f).Within(Epsilon));
+
+            point.IsRangeDirty = false;
+            SetManagerField(manager, _volumeDataUpdateRequestedField, false);
+            point.NearClip = 0.5f;
+            point.FarClip = 8f;
+            point.BakeShadows();
+
+            Assert.That(GetManagerField<bool>(manager, _volumeDataUpdateRequestedField), Is.True);
+            manager.UpdateVolumes();
+            Assert.That(Shader.GetGlobalVectorArray(_pointLightExtraDataID)[0].w, Is.EqualTo(0.5f).Within(Epsilon));
+            Assert.That(Shader.GetGlobalVectorArray(_pointLightShadowReprojectionDataID)[0].w,
+                Is.EqualTo(-1f / 7.5f).Within(Epsilon));
         }
 
         // Verifies runtime shadow baking uses the target light far clip data.
@@ -1915,6 +1966,35 @@ namespace VRCLightVolumes.Tests {
 
             baker.BakeShadows();
             Assert.That(shadowCamera.farClipPlane, Is.EqualTo(3).Within(Epsilon));
+        }
+
+        // Verifies a dirty automatic range is resolved before runtime shadow depth is encoded and uploaded.
+        [Test]
+        public void RuntimeShadowBakerRefreshesDirtyAutomaticRangeBeforeEncoding() {
+            LightVolumeManager manager = CreateManager("Runtime Shadow Dirty Range Manager", false);
+            manager.ShadowTexturesWidth = 16;
+            manager.ShadowTexturesHeight = 16;
+            PointLightVolumeInstance point = CreatePointLight(manager, "Runtime Shadow Dirty Range Light", true);
+            point.SetLut();
+            point.SetLightSourceSize(8f);
+            point.SquaredRange = 1f; // Deliberately stale value from before the LUT range change.
+            point.IsRangeDirty = true;
+            point.NearClip = 0.25f;
+            point.FarClip = 0f;
+            point.RuntimeShadowResolution = 16;
+            point.RuntimeShadowDepthEncodeMaterial = CreateMaterial("Hidden/VRCLV/PointLightShadowDepthEncode");
+            Camera shadowCamera = AddRuntimeShadowCamera(point);
+
+            point.BakeShadows();
+
+            Assert.That(point.IsRangeDirty, Is.False);
+            Assert.That(point.SquaredRange, Is.EqualTo(64f).Within(Epsilon));
+            Assert.That(shadowCamera.farClipPlane, Is.EqualTo(8f).Within(Epsilon));
+            Assert.That(point.RuntimeShadowDepthEncodeMaterial.GetFloat("_ShadowFarClip"), Is.EqualTo(8f).Within(Epsilon));
+
+            manager.UpdateVolumes();
+            Assert.That(Shader.GetGlobalVectorArray(_pointLightShadowReprojectionDataID)[0].w,
+                Is.EqualTo(-1f / (8f - 0.25f)).Within(Epsilon));
         }
 
         // Verifies runtime shadow baking treats FarClip as an input setting and does not publish calculated range back to the target.
@@ -2132,6 +2212,35 @@ namespace VRCLightVolumes.Tests {
             Assert.That((int)faceIndexField.GetValue(baker), Is.EqualTo(1));
         }
 
+        // Verifies changing receiver clip planes restarts an unfinished cubemap cycle at face zero.
+        [Test]
+        public void RuntimeShadowBakerClipChangeRestartsPartialBake() {
+            LightVolumeManager manager = CreateManager("Runtime Shadow Clip Restart Manager", false);
+            PointLightVolumeInstance point = CreatePointLight(manager, "Runtime Shadow Clip Restart Light", true);
+            point.RuntimeShadowResolution = 16;
+            point.RuntimeShadowFacesPerFrame = 1;
+            point.RuntimeShadowDepthEncodeMaterial = CreateMaterial("Hidden/VRCLV/PointLightShadowDepthEncode");
+            Camera shadowCamera = AddRuntimeShadowCamera(point);
+            point.NearClip = 0.25f;
+            point.FarClip = 4f;
+
+            FieldInfo faceIndexField = typeof(PointLightVolumeInstance).GetField("_runtimeShadowFaceIndex", _lifecycleMethodFlags);
+            Assert.That(faceIndexField, Is.Not.Null);
+
+            point.BakeShadows();
+            Assert.That((int)faceIndexField.GetValue(point), Is.EqualTo(1));
+
+            point.NearClip = 0.5f;
+            point.FarClip = 8f;
+            point.BakeShadows();
+
+            Assert.That((int)faceIndexField.GetValue(point), Is.EqualTo(1));
+            Assert.That(shadowCamera.nearClipPlane, Is.EqualTo(0.5f).Within(Epsilon));
+            Assert.That(shadowCamera.farClipPlane, Is.EqualTo(8f).Within(Epsilon));
+            Assert.That(point.RuntimeShadowDepthEncodeMaterial.GetFloat("_ShadowNearClip"), Is.EqualTo(0.5f).Within(Epsilon));
+            Assert.That(point.RuntimeShadowDepthEncodeMaterial.GetFloat("_ShadowFarClip"), Is.EqualTo(8f).Within(Epsilon));
+        }
+
         // Verifies Bake In Game keeps a full-size generated shadow source instead of publishing a 1x1 direct-output registration texture.
         [Test]
         public void BakeInGameRuntimeShadowBakeUsesFullResolutionSourceTexture() {
@@ -2342,6 +2451,23 @@ namespace VRCLightVolumes.Tests {
             Assert.That(Quaternion.Dot(point.ShadowBakeRotation, bakeRotation), Is.EqualTo(1f).Within(Epsilon));
 
             Assert.That((bool)applyMethod.Invoke(baker, new object[] { bakePosition, bakeRotation, false, false, true }), Is.False);
+
+            // Unity's Vector3/Quaternion operators consider these distinct bake transforms equal.
+            // Receiver metadata must still match the exact transform used to render every world-space rebake.
+            Vector3 preciseBakePosition = new Vector3(bakePosition.x + 0.000001f, bakePosition.y, bakePosition.z);
+            Assert.That((bool)applyMethod.Invoke(baker, new object[] { preciseBakePosition, bakeRotation, false, false, true }), Is.True);
+            Assert.That(point.ShadowBakePosition.x, Is.EqualTo(preciseBakePosition.x));
+            Assert.That(point.ShadowBakePosition.y, Is.EqualTo(preciseBakePosition.y));
+            Assert.That(point.ShadowBakePosition.z, Is.EqualTo(preciseBakePosition.z));
+
+            Quaternion preciseBakeRotation = Quaternion.Euler(0f, 45.01f, 0f);
+            Assert.That((bool)applyMethod.Invoke(baker, new object[] { preciseBakePosition, preciseBakeRotation, false, false, true }), Is.True);
+            Assert.That(point.ShadowBakeRotation.x, Is.EqualTo(preciseBakeRotation.x));
+            Assert.That(point.ShadowBakeRotation.y, Is.EqualTo(preciseBakeRotation.y));
+            Assert.That(point.ShadowBakeRotation.z, Is.EqualTo(preciseBakeRotation.z));
+            Assert.That(point.ShadowBakeRotation.w, Is.EqualTo(preciseBakeRotation.w));
+            Assert.That((bool)applyMethod.Invoke(baker, new object[] { preciseBakePosition, preciseBakeRotation, false, false, true }), Is.False);
+
             Assert.That((bool)applyMethod.Invoke(baker, new object[] { bakePosition + Vector3.right, bakeRotation, false, false, true }), Is.True);
         }
 
@@ -2534,9 +2660,13 @@ namespace VRCLightVolumes.Tests {
             manager.ShadowTexturesHeight = 4;
 
             PointLightVolumeInstance point = CreatePointLight(manager, "Cubemap Shadow Point", true);
+            point.NearClip = 0.25f;
+            point.FarClip = 4f;
             ConfigureShadowTexture(point, cubemapSource, false, true, false);
             PointLightVolumeInstance spot = CreatePointLight(manager, "Single Shadow Spot", true);
             spot.SetSpotLight(60, 0.5f);
+            spot.NearClip = 0.5f;
+            spot.FarClip = 8f;
             ConfigureShadowTexture(spot, singleSource, false, false, false);
             spot.ShadowMapUsesCubemap = false;
             manager.PointLightVolumeInstances = new[] { point, spot };
@@ -2555,9 +2685,76 @@ namespace VRCLightVolumes.Tests {
             AssertGlobalFloat(_pointLightShadowCountID, 2);
             AssertPointCustomData(0, point, 0, -1);
             AssertPointCustomData(1, spot, 0, -2);
+            Vector4[] customData = Shader.GetGlobalVectorArray(_pointLightCustomIdID);
+            Assert.That(customData[0].w, Is.EqualTo(ExpectedCustomShadowInvDepthRange(point)).Within(Epsilon));
+            Assert.That(customData[1].w, Is.EqualTo(ExpectedCustomShadowInvDepthRange(spot)).Within(Epsilon));
             Vector4[] reprojectionData = Shader.GetGlobalVectorArray(_pointLightShadowReprojectionDataID);
-            AssertVectorClose(new Vector4(point.ShadowBakePosition.x, point.ShadowBakePosition.y, point.ShadowBakePosition.z, 0), reprojectionData[0]);
+            AssertVectorClose(new Vector4(point.ShadowBakePosition.x, point.ShadowBakePosition.y, point.ShadowBakePosition.z, ExpectedCubemapShadowInvDepthRange(point)), reprojectionData[0]);
             AssertVectorClose(new Vector4(spot.ShadowBakePosition.x, spot.ShadowBakePosition.y, spot.ShadowBakePosition.z, spot.OuterAngleTan), reprojectionData[1]);
+        }
+
+        // Keeps registry priority stable across shadow backends; final slots drive incremental dynamic updates.
+        [Test]
+        public void PointLightShaderRecordsPreserveRegistryOrderAndDynamicIndices() {
+            LightVolumeManager manager = CreateManager("Stable Point Registry Manager", false);
+            manager.ShadowTexturesWidth = 4;
+            manager.ShadowTexturesHeight = 4;
+
+            PointLightVolumeInstance unshadowed = CreatePointLight(manager, "Registry Unshadowed Point", true);
+            unshadowed.transform.position = new Vector3(30, 0, 0);
+
+            PointLightVolumeInstance single = CreatePointLight(manager, "Registry Single Shadow Spot", true);
+            single.SetSpotLight(60, 0.5f);
+            single.transform.position = new Vector3(20, 0, 0);
+            ConfigureShadowTexture(single, CreateTexture2D("Registry Single Shadow Source"), false, false, false);
+            single.ShadowMapUsesCubemap = false;
+
+            PointLightVolumeInstance cube = CreatePointLight(manager, "Registry Cubemap Shadow Point", true);
+            cube.transform.position = new Vector3(10, 0, 0);
+            ConfigureShadowTexture(cube, CreateCubemap("Registry Cubemap Shadow Source"), false, true, false);
+
+            // Mixed shadow backends must not reorder the user-visible overdraw priority.
+            manager.PointLightVolumeInstances = new[] { unshadowed, single, cube };
+            manager.ReinitializeShadowTextures();
+            manager.UpdateVolumes();
+
+            AssertGlobalFloat(_pointLightCountID, 3);
+            int[] enabledPointIDs = GetManagerField<int[]>(manager, _enabledPointIDsField);
+            Assert.That(enabledPointIDs[0], Is.EqualTo(0));
+            Assert.That(enabledPointIDs[1], Is.EqualTo(1));
+            Assert.That(enabledPointIDs[2], Is.EqualTo(2));
+            AssertPointCustomData(0, unshadowed, 0, 0);
+            AssertPointCustomData(1, single, 0, -2);
+            AssertPointCustomData(2, cube, 0, -1);
+            Vector4[] positions = Shader.GetGlobalVectorArray(_pointLightPositionID);
+            Assert.That(positions[0].x, Is.EqualTo(30).Within(Epsilon));
+            Assert.That(positions[1].x, Is.EqualTo(20).Within(Epsilon));
+            Assert.That(positions[2].x, Is.EqualTo(10).Within(Epsilon));
+
+            cube.transform.position = new Vector3(11, 0, 0);
+            single.transform.position = new Vector3(21, 0, 0);
+            unshadowed.transform.position = new Vector3(31, 0, 0);
+            Assert.That(_updateAutoUpdatedVolumeChangesMethod, Is.Not.Null);
+            Assert.That(_uploadAutoUpdatedVolumeChangesMethod, Is.Not.Null);
+            _updateAutoUpdatedVolumeChangesMethod.Invoke(manager, null);
+            _uploadAutoUpdatedVolumeChangesMethod.Invoke(manager, null);
+
+            positions = Shader.GetGlobalVectorArray(_pointLightPositionID);
+            Assert.That(positions[0].x, Is.EqualTo(31).Within(Epsilon));
+            Assert.That(positions[1].x, Is.EqualTo(21).Within(Epsilon));
+            Assert.That(positions[2].x, Is.EqualTo(11).Within(Epsilon));
+
+            // The per-pixel overdraw cap must not mutate upload order either.
+            manager.AdditiveMaxOverdraw = 2;
+            manager.UpdateVolumes();
+            enabledPointIDs = GetManagerField<int[]>(manager, _enabledPointIDsField);
+            Assert.That(enabledPointIDs[0], Is.EqualTo(0));
+            Assert.That(enabledPointIDs[1], Is.EqualTo(1));
+            Assert.That(enabledPointIDs[2], Is.EqualTo(2));
+            positions = Shader.GetGlobalVectorArray(_pointLightPositionID);
+            Assert.That(positions[0].x, Is.EqualTo(31).Within(Epsilon));
+            Assert.That(positions[1].x, Is.EqualTo(21).Within(Epsilon));
+            Assert.That(positions[2].x, Is.EqualTo(11).Within(Epsilon));
         }
 
         // Verifies spot lights can still force a six-slice cubemap shadow layout.
@@ -2570,6 +2767,8 @@ namespace VRCLightVolumes.Tests {
 
             PointLightVolumeInstance spot = CreatePointLight(manager, "Forced Cubemap Shadow Spot", true);
             spot.SetSpotLight(60, 0.5f);
+            spot.NearClip = 0.5f;
+            spot.FarClip = 8f;
             ConfigureShadowTexture(spot, source, false, false, false);
             spot.ShadowMapUsesCubemap = true;
             manager.PointLightVolumeInstances = new[] { spot };
@@ -2586,6 +2785,228 @@ namespace VRCLightVolumes.Tests {
             AssertGlobalFloat(_pointLightShadowCubeCountID, 1);
             AssertGlobalFloat(_pointLightShadowCountID, 1);
             AssertPointCustomData(spot, 0, -1);
+            Assert.That(Shader.GetGlobalVectorArray(_pointLightShadowReprojectionDataID)[0].w,
+                Is.EqualTo(ExpectedCubemapShadowInvDepthRange(spot)).Within(Epsilon));
+        }
+
+        // Verifies CustomID.W keeps the Spot reciprocal range while reprojection W preserves the legacy backend payload.
+        [Test]
+        public void SpotShadowBackendSwitchKeepsInvDepthRangeInCustomData() {
+            LightVolumeManager manager = CreateManager("Spot Shadow Backend Switch Manager", false);
+            manager.ShadowTexturesWidth = 4;
+            manager.ShadowTexturesHeight = 4;
+
+            PointLightVolumeInstance spot = CreatePointLight(manager, "Switchable Shadow Spot", true);
+            spot.SetSpotLight(60, 0.5f);
+            spot.NearClip = 0.5f;
+            spot.FarClip = 8f;
+            ConfigureShadowTexture(spot, CreateTexture2D("Switchable Spot Shadow Source"), false, false, false);
+            spot.ShadowMapUsesCubemap = false;
+            manager.PointLightVolumeInstances = new[] { spot };
+
+            manager.ReinitializeShadowTextures();
+            manager.UpdateVolumes();
+
+            Assert.That(manager.ShadowCubemapsCount, Is.EqualTo(0));
+            AssertPointCustomData(spot, 0, -1);
+            Assert.That(Shader.GetGlobalVectorArray(_pointLightCustomIdID)[0].w,
+                Is.EqualTo(ExpectedCustomShadowInvDepthRange(spot)).Within(Epsilon));
+            Assert.That(Shader.GetGlobalVectorArray(_pointLightShadowReprojectionDataID)[0].w,
+                Is.EqualTo(spot.OuterAngleTan).Within(Epsilon));
+
+            spot.ShadowMapUsesCubemap = true;
+            manager.ReinitializeShadowTextures();
+            manager.UpdateVolumes();
+
+            Assert.That(manager.ShadowCubemapsCount, Is.EqualTo(1));
+            AssertPointCustomData(spot, 0, -1);
+            Assert.That(Shader.GetGlobalVectorArray(_pointLightCustomIdID)[0].w,
+                Is.EqualTo(ExpectedCustomShadowInvDepthRange(spot)).Within(Epsilon));
+            Assert.That(Shader.GetGlobalVectorArray(_pointLightShadowReprojectionDataID)[0].w,
+                Is.EqualTo(ExpectedCubemapShadowInvDepthRange(spot)).Within(Epsilon));
+
+            spot.ShadowMapUsesCubemap = false;
+            manager.ReinitializeShadowTextures();
+            manager.UpdateVolumes();
+
+            Assert.That(manager.ShadowCubemapsCount, Is.EqualTo(0));
+            AssertPointCustomData(spot, 0, -1);
+            Assert.That(Shader.GetGlobalVectorArray(_pointLightCustomIdID)[0].w,
+                Is.EqualTo(ExpectedCustomShadowInvDepthRange(spot)).Within(Epsilon));
+            Assert.That(Shader.GetGlobalVectorArray(_pointLightShadowReprojectionDataID)[0].w,
+                Is.EqualTo(spot.OuterAngleTan).Within(Epsilon));
+        }
+
+        // The v3 fast-path marker must require exact component equality and follow incremental dynamic moves.
+        [Test]
+        public void WorldShadowSameOriginMarkerTracksExactDynamicPosition() {
+            LightVolumeManager manager = CreateManager("Exact Same Origin Shadow Manager", false);
+            manager.ShadowTexturesWidth = 4;
+            manager.ShadowTexturesHeight = 4;
+
+            PointLightVolumeInstance point = CreatePointLight(manager, "Exact Same Origin Shadow Point", true);
+            Vector3 bakePosition = new Vector3(2, 3, 4);
+            point.transform.position = bakePosition;
+            point.WorldSpaceShadows = true;
+            point.ShadowBakePosition = bakePosition;
+            point.ShadowBakeRotation = Quaternion.Euler(17, 29, 43); // Rotation may differ; the receiver keeps baked rotation.
+            ConfigureShadowTexture(point, CreateCubemap("Exact Same Origin Shadow Source"), false, true, false);
+            manager.PointLightVolumeInstances = new[] { point };
+
+            manager.ReinitializeShadowTextures();
+            manager.UpdateVolumes();
+
+            Vector4 customData = Shader.GetGlobalVectorArray(_pointLightCustomIdID)[0];
+            Assert.That(customData.y, Is.EqualTo(1f).Within(Epsilon)); // World-space shadow ID semantics stay positive.
+            Assert.That(customData.w, Is.EqualTo(-ExpectedShadowInvDepthRange(point)).Within(Epsilon));
+            Quaternion expectedBakeRotation = Quaternion.Inverse(point.ShadowBakeRotation);
+            AssertVectorClose(new Vector4(expectedBakeRotation.x, expectedBakeRotation.y, expectedBakeRotation.z, expectedBakeRotation.w),
+                Shader.GetGlobalVectorArray(_pointLightShadowRotationDataID)[0]);
+
+            // Moving only the live light makes the origins distinct; the incremental writer must clear the marker.
+            point.transform.position = new Vector3(2.25f, 3, 4);
+            Assert.That(_updateAutoUpdatedVolumeChangesMethod, Is.Not.Null);
+            Assert.That(_uploadAutoUpdatedVolumeChangesMethod, Is.Not.Null);
+            _updateAutoUpdatedVolumeChangesMethod.Invoke(manager, null);
+            _uploadAutoUpdatedVolumeChangesMethod.Invoke(manager, null);
+            customData = Shader.GetGlobalVectorArray(_pointLightCustomIdID)[0];
+            Assert.That(customData.y, Is.EqualTo(1f).Within(Epsilon));
+            Assert.That(customData.w, Is.EqualTo(ExpectedShadowInvDepthRange(point)).Within(Epsilon));
+
+            // Publishing a bake at the new exact origin restores the marker.
+            point.ShadowBakePosition = point.transform.position;
+            manager.UpdateVolumes();
+            customData = Shader.GetGlobalVectorArray(_pointLightCustomIdID)[0];
+            Assert.That(customData.w, Is.EqualTo(-ExpectedShadowInvDepthRange(point)).Within(Epsilon));
+
+            // Even a sub-Epsilon but representable component difference must not take the exact path.
+            point.ShadowBakePosition = new Vector3(point.Position.x + 0.000001f, point.Position.y, point.Position.z);
+            manager.UpdateVolumes();
+            customData = Shader.GetGlobalVectorArray(_pointLightCustomIdID)[0];
+            Assert.That(customData.w, Is.EqualTo(ExpectedShadowInvDepthRange(point)).Within(Epsilon));
+        }
+
+        // Spot single/cubemap backends share the sign marker while retaining their legacy reprojection W payloads.
+        [Test]
+        public void SpotSameOriginMarkerPreservesBackendReprojectionPayloads() {
+            LightVolumeManager manager = CreateManager("Same Origin Spot Backend Manager", false);
+            manager.ShadowTexturesWidth = 4;
+            manager.ShadowTexturesHeight = 4;
+
+            PointLightVolumeInstance spot = CreatePointLight(manager, "Same Origin Shadow Spot", true);
+            spot.SetSpotLight(60, 0.5f);
+            spot.transform.position = new Vector3(6, 7, 8);
+            spot.WorldSpaceShadows = true;
+            spot.ShadowBakePosition = spot.transform.position;
+            spot.ShadowBakeRotation = Quaternion.Euler(11, 23, 37);
+            spot.NearClip = 0.5f;
+            spot.FarClip = 8f;
+            ConfigureShadowTexture(spot, CreateTexture2D("Same Origin Spot Shadow Source"), false, false, false);
+            spot.ShadowMapUsesCubemap = false;
+            manager.PointLightVolumeInstances = new[] { spot };
+
+            manager.ReinitializeShadowTextures();
+            manager.UpdateVolumes();
+
+            Vector4 customData = Shader.GetGlobalVectorArray(_pointLightCustomIdID)[0];
+            Vector4 extraData = Shader.GetGlobalVectorArray(_pointLightExtraDataID)[0];
+            Vector4 reprojectionData = Shader.GetGlobalVectorArray(_pointLightShadowReprojectionDataID)[0];
+            Assert.That(customData.y, Is.EqualTo(1f).Within(Epsilon));
+            Assert.That(customData.w, Is.EqualTo(-ExpectedShadowInvDepthRange(spot)).Within(Epsilon));
+            Assert.That(extraData.y, Is.EqualTo(spot.OuterAngleTan).Within(Epsilon)); // Packed tangent used by the no-fetch arm.
+            Assert.That(reprojectionData.w, Is.EqualTo(spot.OuterAngleTan).Within(Epsilon)); // Legacy manager/shader ABI remains populated.
+
+            spot.ShadowMapUsesCubemap = true;
+            manager.ReinitializeShadowTextures();
+            manager.UpdateVolumes();
+
+            customData = Shader.GetGlobalVectorArray(_pointLightCustomIdID)[0];
+            reprojectionData = Shader.GetGlobalVectorArray(_pointLightShadowReprojectionDataID)[0];
+            Assert.That(customData.y, Is.EqualTo(1f).Within(Epsilon));
+            Assert.That(customData.w, Is.EqualTo(-ExpectedShadowInvDepthRange(spot)).Within(Epsilon));
+            Assert.That(reprojectionData.w, Is.EqualTo(ExpectedCubemapShadowInvDepthRange(spot)).Within(Epsilon));
+
+            spot.ShadowBakePosition = new Vector3(spot.Position.x, spot.Position.y, spot.Position.z + 0.000001f);
+            manager.UpdateVolumes();
+            Assert.That(Shader.GetGlobalVectorArray(_pointLightCustomIdID)[0].w,
+                Is.EqualTo(ExpectedShadowInvDepthRange(spot)).Within(Epsilon));
+        }
+
+        // Verifies malformed low-level Point/Area metadata cannot enter the single-slice shadow block used only by spots.
+        [Test]
+        public void PointAndAreaShadowMetadataIsCanonicalizedToCubemaps() {
+            LightVolumeManager manager = CreateManager("Non Spot Shadow Canonicalization Manager", false);
+            manager.ShadowTexturesWidth = 4;
+            manager.ShadowTexturesHeight = 4;
+
+            PointLightVolumeInstance point = CreatePointLight(manager, "Malformed Point Shadow", true);
+            ConfigureShadowTexture(point, CreateTexture2D("Malformed Point Shadow Source"), false, false, false);
+            point.ShadowMapUsesCubemap = false;
+
+            PointLightVolumeInstance area = CreatePointLight(manager, "Malformed Area Shadow", true);
+            area.SetCustomTexture();
+            area.SetAreaLight();
+            area.CustomTexture = CreateTexture2D("Area Shadow Cookie");
+            area.ProjectionType = 1; // 1: texture
+            area.transform.localScale = new Vector3(-2, 3, 1);
+            area.UpdateScale();
+            ConfigureShadowTexture(area, CreateTexture2D("Malformed Area Shadow Source"), false, false, false);
+            area.ShadowMapUsesCubemap = false;
+            manager.PointLightVolumeInstances = new[] { point, area };
+
+            manager.ReinitializeCustomTextures();
+            manager.ReinitializeShadowTextures();
+            manager.UpdateVolumes();
+
+            Assert.That(point.ShadowMapUsesCubemap, Is.True);
+            Assert.That(area.ShadowMapUsesCubemap, Is.True);
+            Assert.That(manager.ShadowCubemapsCount, Is.EqualTo(2));
+            Assert.That(manager.ShadowMapsCount, Is.EqualTo(2));
+            Assert.That(manager.ShadowTextures, Is.Not.Null);
+            Assert.That(manager.ShadowTextures.volumeDepth, Is.EqualTo(12));
+            Assert.That(GetManagerField<int>(manager, _shadowSingleTextureCountField), Is.EqualTo(0));
+            Assert.That(GetManagerField<int[]>(manager, _pointLightShadowIDsField), Is.EqualTo(new[] { 0, 1 }));
+            Vector4 areaCustomData = Shader.GetGlobalVectorArray(_pointLightCustomIdID)[1];
+            Assert.That(areaCustomData.x, Is.LessThan(0));
+            Assert.That(areaCustomData.w, Is.EqualTo(-1f).Within(Epsilon)); // X mirror tag replaces unused Area far clip.
+            Assert.That(Shader.GetGlobalVectorArray(_pointLightShadowReprojectionDataID)[1].w,
+                Is.EqualTo(ExpectedCubemapShadowInvDepthRange(area)).Within(Epsilon));
+        }
+
+        // Verifies a runtime Spot(single) -> Point transition rebuilds the atlas before the typed cubemap shader path is used.
+        [Test]
+        public void SpotSingleShadowSwitchingToPointRebuildsAsCubemap() {
+            LightVolumeManager manager = CreateManager("Spot To Point Shadow Transition Manager", false);
+            manager.ShadowTexturesWidth = 4;
+            manager.ShadowTexturesHeight = 4;
+
+            PointLightVolumeInstance light = CreatePointLight(manager, "Spot To Point Shadow", true);
+            light.SetSpotLight(60, 0.5f);
+            light.NearClip = 0.5f;
+            light.FarClip = 8f;
+            ConfigureShadowTexture(light, CreateTexture2D("Spot To Point Shadow Source"), false, false, false);
+            light.ShadowMapUsesCubemap = false;
+            manager.PointLightVolumeInstances = new[] { light };
+
+            manager.ReinitializeShadowTextures();
+            manager.UpdateVolumes();
+            Assert.That(manager.ShadowCubemapsCount, Is.EqualTo(0));
+            Assert.That(manager.ShadowTextures.volumeDepth, Is.EqualTo(1));
+            Assert.That(Shader.GetGlobalVectorArray(_pointLightCustomIdID)[0].w,
+                Is.EqualTo(ExpectedCustomShadowInvDepthRange(light)).Within(Epsilon));
+
+            light.SetPointLight();
+            manager.UpdateVolumes();
+
+            Assert.That(light.ShadowMapUsesCubemap, Is.True);
+            Assert.That(manager.ShadowCubemapsCount, Is.EqualTo(1));
+            Assert.That(manager.ShadowMapsCount, Is.EqualTo(1));
+            Assert.That(manager.ShadowTextures, Is.Not.Null);
+            Assert.That(manager.ShadowTextures.volumeDepth, Is.EqualTo(6));
+            Assert.That(GetManagerField<int>(manager, _shadowSingleTextureCountField), Is.EqualTo(0));
+            AssertPointCustomData(light, 0, -1);
+            Assert.That(Shader.GetGlobalVectorArray(_pointLightShadowReprojectionDataID)[0].w,
+                Is.EqualTo(ExpectedCubemapShadowInvDepthRange(light)).Within(Epsilon));
         }
 
         // Verifies enabling an already-registered shadowed light invalidates stale empty shadow caches.
@@ -2743,6 +3164,119 @@ namespace VRCLightVolumes.Tests {
             AssertPointCustomData(2, point, 1, 0);
         }
 
+        // Verifies Area Cookie mirror flags live only in the cookie descriptor while legacy size and rotation stay canonical.
+        [Test]
+        public void AreaCookieNegativeScaleKeepsLegacyDataPositiveAndPacksCookieFlags() {
+            LightVolumeManager manager = CreateManager("Area Cookie Mirror Manager", false);
+            Texture2D cookie = CreateTexture2D("Mirrored Area Cookie");
+            Vector3[] scales = {
+                new Vector3(2, 3, 1),
+                new Vector3(-2, 3, 1),
+                new Vector3(2, -3, 1),
+                new Vector3(-2, -3, -1)
+            };
+            PointLightVolumeInstance[] areas = new PointLightVolumeInstance[scales.Length];
+
+            for (int i = 0; i < areas.Length; i++) {
+                PointLightVolumeInstance area = CreatePointLight(manager, "Mirrored Area " + i, true);
+                area.transform.rotation = Quaternion.Euler(17, 31, 43);
+                area.transform.localScale = scales[i];
+                area.SetCustomTexture();
+                area.SetAreaLight();
+                area.CustomTexture = cookie;
+                area.ProjectionType = 1; // 1: texture
+                area.UpdateScale();
+                areas[i] = area;
+            }
+
+            manager.PointLightVolumeInstances = areas;
+            manager.ReinitializeCustomTextures();
+            manager.UpdateVolumes();
+
+            Assert.That(GetManagerField<int[]>(manager, _pointLightCustomIDsField), Is.EqualTo(new[] { 0, 0, 0, 0 }));
+            Vector4[] directions = Shader.GetGlobalVectorArray(_pointLightDirectionID);
+            Vector4[] colors = Shader.GetGlobalVectorArray(_pointLightColorID);
+            float expectedSquaredScale = 4f; // Average abs scale is 2 for every sign combination.
+            float expectedRange = areas[0].SquaredRange;
+            for (int i = 0; i < areas.Length; i++) {
+                AssertPointCustomData(i, areas[i], -1f, 0);
+                Assert.That(areas[i].Width, Is.EqualTo(2).Within(Epsilon));
+                Assert.That(areas[i].Height, Is.EqualTo(3).Within(Epsilon));
+                Assert.That(areas[i].SquaredScale, Is.EqualTo(expectedSquaredScale).Within(Epsilon));
+                Assert.That(areas[i].SquaredRange, Is.EqualTo(expectedRange).Within(Epsilon));
+                Vector4 encoded = directions[i];
+                Assert.That(colors[i].w, Is.EqualTo(5f).Within(Epsilon));
+                Quaternion expectedRotation = areas[i].transform.rotation;
+                Quaternion encodedRotation = new Quaternion(encoded.x, encoded.y, encoded.z, encoded.w);
+                Assert.That(Mathf.Abs(Quaternion.Dot(encodedRotation, expectedRotation)), Is.EqualTo(1f).Within(Epsilon));
+            }
+        }
+
+        // Verifies Area Cookie mirrors also follow aligned negative scale inherited from a parent transform.
+        [Test]
+        public void AreaCookieParentNegativeScalePacksCookieFlags() {
+            LightVolumeManager manager = CreateManager("Parent Area Cookie Mirror Manager", false);
+            Texture2D cookie = CreateTexture2D("Parent Mirrored Area Cookie");
+            Vector3[] parentScales = {
+                new Vector3(-1, 1, 1),
+                new Vector3(1, -1, 1),
+                new Vector3(-1, -1, 1)
+            };
+            float[] expectedMirrorTags = { -1f, 2f, -2f };
+            PointLightVolumeInstance[] areas = new PointLightVolumeInstance[parentScales.Length];
+
+            for (int i = 0; i < areas.Length; i++) {
+                GameObject parent = CreateGameObject("Mirrored Area Parent " + i, true);
+                parent.transform.rotation = Quaternion.Euler(13, 29, 41);
+                parent.transform.localScale = parentScales[i];
+                PointLightVolumeInstance area = CreatePointLight(manager, "Parent Mirrored Area " + i, true);
+                area.transform.SetParent(parent.transform, false);
+                area.transform.localRotation = Quaternion.identity;
+                area.transform.localScale = new Vector3(2, 3, 1);
+                area.SetCustomTexture();
+                area.SetAreaLight();
+                area.CustomTexture = cookie;
+                area.ProjectionType = 1; // 1: texture
+                areas[i] = area;
+            }
+
+            manager.PointLightVolumeInstances = areas;
+            manager.ReinitializeCustomTextures();
+            manager.UpdateVolumes();
+
+            Vector4[] customData = Shader.GetGlobalVectorArray(_pointLightCustomIdID);
+            for (int i = 0; i < areas.Length; i++) {
+                Assert.That(customData[i].w, Is.EqualTo(expectedMirrorTags[i]).Within(Epsilon));
+                Assert.That(areas[i].Width, Is.EqualTo(2f).Within(Epsilon));
+                Assert.That(areas[i].Height, Is.EqualTo(3f).Within(Epsilon));
+            }
+        }
+
+        // Verifies the explicit transform refresh API updates Area Cookie mirrors without a dynamic-manager pass.
+        [Test]
+        public void AreaCookieManualUpdateScaleRefreshesParentAndLocalMirrorTag() {
+            GameObject parent = CreateGameObject("Manual Area Cookie Mirror Parent", true);
+            parent.transform.rotation = Quaternion.Euler(13, 29, 41);
+            parent.transform.localScale = new Vector3(-1, 1, 1);
+            PointLightVolumeInstance area = CreatePointLight(null, "Manual Area Cookie Mirror", true);
+            area.IsDynamic = false;
+            area.transform.SetParent(parent.transform, false);
+            area.transform.localRotation = Quaternion.identity;
+            area.transform.localScale = new Vector3(2, 3, 1);
+            area.SetCustomTexture();
+            area.SetAreaLight();
+
+            Assert.That(area.AreaCookieMirror, Is.EqualTo(-1f).Within(Epsilon));
+
+            parent.transform.localScale = new Vector3(1, -1, 1);
+            area.UpdateScale();
+            Assert.That(area.AreaCookieMirror, Is.EqualTo(2f).Within(Epsilon));
+
+            area.transform.localScale = new Vector3(-2, 3, 1);
+            area.UpdateScale();
+            Assert.That(area.AreaCookieMirror, Is.EqualTo(-2f).Within(Epsilon));
+        }
+
         // Verifies inactive point lights do not keep custom projection sources allocated.
         [Test]
         public void InactiveCustomTextureUsersReleaseRuntimeArrayUntilReactivated() {
@@ -2784,6 +3318,16 @@ namespace VRCLightVolumes.Tests {
 
             manager.UpdateVolumes();
             Assert.That(GetManagerField<int[]>(manager, _pointLightShadowIDsField), Is.EqualTo(new[] { 0, 0 }));
+            AssertGlobalFloat(_pointLightCountID, 2);
+            AssertGlobalFloat(_pointLightShadowCountID, 1);
+
+            firstPoint.ShadingStrength = 0;
+            manager.UpdateVolumes();
+            AssertGlobalFloat(_pointLightCountID, 2);
+            AssertGlobalFloat(_pointLightShadowCountID, 1);
+
+            firstPoint.ShadingStrength = 1;
+            manager.UpdateVolumes();
 
             firstPoint.Intensity = 0;
             manager.UpdateVolumes();
@@ -2833,7 +3377,7 @@ namespace VRCLightVolumes.Tests {
             for (int i = 0; i < pointCount; i++) {
                 float expectedShadowState = points[i].WorldSpaceShadows ? i + 1 : -i - 1;
                 AssertPointCustomData(i, points[i], 0, expectedShadowState);
-                AssertVectorClose(new Vector4(points[i].ShadowBakePosition.x, points[i].ShadowBakePosition.y, points[i].ShadowBakePosition.z, 0), reprojectionData[i]);
+                AssertVectorClose(new Vector4(points[i].ShadowBakePosition.x, points[i].ShadowBakePosition.y, points[i].ShadowBakePosition.z, ExpectedCubemapShadowInvDepthRange(points[i])), reprojectionData[i]);
                 if (points[i].WorldSpaceShadows) {
                     Quaternion expectedRotation = Quaternion.Inverse(points[i].ShadowBakeRotation);
                     AssertVectorClose(new Vector4(expectedRotation.x, expectedRotation.y, expectedRotation.z, expectedRotation.w), rotationData[i]);
@@ -2865,6 +3409,12 @@ namespace VRCLightVolumes.Tests {
 
             manager.LightVolumeInstances = volumes;
             manager.PointLightVolumeInstances = points;
+            manager.AdditiveMaxOverdraw = 128;
+            manager.ShadowTexturesWidth = 4;
+            manager.ShadowTexturesHeight = 4;
+            // A shadowed record outside the selected prefix must not be promoted into the first 128.
+            ConfigureShadowTexture(points[129], CreateCubemap("Excluded Clamped Shadow"), false, true, false);
+            manager.ReinitializeShadowTextures();
 
             manager.UpdateVolumes();
 
@@ -3129,15 +3679,41 @@ namespace VRCLightVolumes.Tests {
 
         // Converts readable point light position data exactly like LightVolumeManager does.
         private static Vector4 ExpectedPointLightPosition(PointLightVolumeInstance instance) {
-            if (instance.LightType == 2) return new Vector4(instance.Position.x, instance.Position.y, instance.Position.z, instance.Width); // 2: area
+            if (instance.LightType == 2) return new Vector4(instance.Position.x, instance.Position.y, instance.Position.z, Mathf.Max(Mathf.Abs(instance.Width), 0.001f)); // 2: area
             float typeSign = instance.LightType == 1 ? -1f : 1f; // 1: spot
             float w = instance.ProjectionMode == 1 ? typeSign * instance.InverseSquaredRange / Mathf.Max(instance.SquaredScale, 0.000001f) : typeSign * instance.LightSourceSize * instance.LightSourceSize * instance.SquaredScale; // 1: LUT
             return new Vector4(instance.Position.x, instance.Position.y, instance.Position.z, w);
         }
 
+        // Computes the positive reciprocal shadow depth range precomputed by current managers.
+        private static float ExpectedShadowInvDepthRange(PointLightVolumeInstance instance) {
+            float nearClip = Mathf.Max(instance.NearClip, 0.0001f);
+            float farClip = instance.FarClip > 0f ? Mathf.Max(instance.FarClip, nearClip + 0.0001f) : Mathf.Sqrt(Mathf.Max(instance.SquaredRange, 0.000001f));
+            if (nearClip >= farClip) farClip = nearClip + 0.0001f;
+            return 1f / Mathf.Max(farClip - nearClip, 0.0001f);
+        }
+
+        // CustomID.W stores the reciprocal magnitude for every Point/Spot shadow. Its sign marks
+        // only exact same-origin world shadows; local and shifted-world shadows remain positive.
+        private static float ExpectedCustomShadowInvDepthRange(PointLightVolumeInstance instance) {
+            float invDepthRange = ExpectedShadowInvDepthRange(instance);
+            Vector3 bakePosition = instance.ShadowBakePosition;
+            Vector4 lightPosition = instance.Position;
+            bool reuseWorldShadowOrigin = instance.WorldSpaceShadows
+                && bakePosition.x == lightPosition.x
+                && bakePosition.y == lightPosition.y
+                && bakePosition.z == lightPosition.z;
+            return reuseWorldShadowOrigin ? -invDepthRange : invDepthRange;
+        }
+
+        // Cubemap reprojection stores the reciprocal depth range with a negative sign.
+        private static float ExpectedCubemapShadowInvDepthRange(PointLightVolumeInstance instance) {
+            return -ExpectedShadowInvDepthRange(instance);
+        }
+
         // Converts readable point light angle data exactly like LightVolumeManager does.
         private static float ExpectedPointLightAngleData(PointLightVolumeInstance instance) {
-            if (instance.LightType == 2) return 2f + instance.Height; // 2: area
+            if (instance.LightType == 2) return 2f + Mathf.Max(Mathf.Abs(instance.Height), 0.001f); // 2: area
             if (instance.LightType == 1 && instance.ProjectionMode == 2) return instance.OuterAngleTan; // 1: spot, 2: custom cookie
             return instance.OuterAngleCos;
         }
@@ -3153,13 +3729,15 @@ namespace VRCLightVolumes.Tests {
             Assert.That(data.x, Is.EqualTo(customId).Within(Epsilon));
             Assert.That(data.y, Is.EqualTo(shadowId).Within(Epsilon));
             Assert.That(data.z, Is.EqualTo(point.SquaredRange).Within(Epsilon));
-            float expectedShadowFarClip = 0f;
-            if (point.ShadowMapID >= 0) {
-                float expectedShadowNearClip = Mathf.Max(point.NearClip, 0.0001f);
-                expectedShadowFarClip = point.FarClip > 0f ? Mathf.Max(point.FarClip, expectedShadowNearClip + 0.0001f) : Mathf.Sqrt(Mathf.Max(point.SquaredRange, 0.000001f));
-                if (expectedShadowNearClip >= expectedShadowFarClip) expectedShadowFarClip = expectedShadowNearClip + 0.0001f;
+            float expectedCustomDataW = 0f;
+            if (point.LightType == 2) { // Area uses the v2-invisible W padding only as an optional Cookie mirror tag.
+                if (customId < 0) expectedCustomDataW = point.AreaCookieMirror;
+            } else {
+                float shadowIdAbs = Mathf.Abs(shadowId);
+                bool hasShadow = shadowIdAbs >= 1f && shadowIdAbs < 10000f;
+                if (hasShadow) expectedCustomDataW = ExpectedCustomShadowInvDepthRange(point);
             }
-            Assert.That(data.w, Is.EqualTo(expectedShadowFarClip).Within(Epsilon));
+            Assert.That(data.w, Is.EqualTo(expectedCustomDataW).Within(Epsilon));
         }
 
         // Asserts a global float with the shared tolerance.
@@ -3237,8 +3815,7 @@ namespace VRCLightVolumes.Tests {
             Shader.SetGlobalFloat(_pointLightCubeCountID, 0);
             Shader.SetGlobalFloat(_pointLightShadowCubeCountID, 0);
             Shader.SetGlobalFloat(_pointLightShadowCountID, 0);
-            Shader.SetGlobalFloat(_pointLightShadowBleedReductionID, 0.2f);
-            Shader.SetGlobalFloat(_pointLightShadowMinVarianceID, 1.0f);
+            Shader.SetGlobalVector(_pointLightShadowReceiverParamsID, Vector4.zero);
             Shader.SetGlobalFloat(_lightBrightnessCutoffID, 0);
         }
 

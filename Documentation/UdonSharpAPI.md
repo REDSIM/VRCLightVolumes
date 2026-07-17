@@ -63,6 +63,7 @@ Stores the Light Volume atlas, Point Light Volume texture arrays and references 
 |`void UpdateAutoShadowTextures()` | Updates only shadow sources marked for per-frame refresh. Usually called automatically when `AutoUpdateTextures` is enabled. |
 |`void UpdatePointLightShadowTextureSlice(PointLightVolumeInstance instance, int sourceSlice)` | Copies one shadow source slice into the shared shadow texture array. `PointLightVolumeInstance.BakeShadows()` uses this for local runtime output when it needs to publish completed slices. |
 |`int GetPointLightCustomID(PointLightVolumeInstance instance)` | Returns the resolved projection texture ID for a Point Light Volume instance, or `-1` if none is assigned. |
+|`void RecalculatePointLightRange(PointLightVolumeInstance instance)` | Immediately recalculates one Point Light Volume's canonical culling range. `BakeShadows()` calls this automatically before resolving an automatic `FarClip` when the range is dirty. |
 |`void RequestUpdateVolumes()` | Schedules a Light Volume data update on the next delayed update tick. Prefer this over calling `UpdateVolumes()` repeatedly. |
 |`void UpdateVolumes()` | Immediately rebuilds and uploads all Light Volume and Point Light Volume shader data. Useful when you intentionally manage updates manually instead of relying on delayed requests. |
 
@@ -128,6 +129,7 @@ When changing a Point Light Volume from another Udon script, prefer the setter m
 |`float OuterAngleTan` | Tangent of the spotlight outer angle used by cookie projection and single-slice spot shadows. |
 |`float SpotCookieAspect` | Width / height aspect used by custom Spot Light cookie projection. |
 |`float Height` | Area light height in meters. Affects textured Area Light emission and size-aware Area Light speculars in modern compatible shaders. |
+|`float AreaCookieMirror` | Internal Area Cookie X/Y reflection metadata derived from the transform, including reflected parent transforms. Do not set it manually; `UpdateRotation()`, `UpdateScale()` and the manager keep it synchronized. |
 |`float SquaredRange` | Squared range after which the light is culled. Recalculated by the manager when `IsRangeDirty` is true. |
 |`float SquaredScale` | Average squared lossy scale of the light. `LightSourceSize` gets multiplied by it at the end. |
 |`LightVolumeManager LightVolumeManager` | Reference to the Light Volume Manager. Needed for runtime registration and updates. Assigning it after `Start()` / `OnEnable()` also registers the instance automatically. |
@@ -149,9 +151,9 @@ When changing a Point Light Volume from another Udon script, prefer the setter m
 |`Vector3 ShadowBakePosition` | World-space position where the shadow map was baked. |
 |`Quaternion ShadowBakeRotation` | World-space rotation where the shadow map was baked. |
 |`int LayerMask` | Layers that can cast shadows when using a runtime shadow baker. |
-|`float NearClip` | Near clip plane used by the shadow bake camera. |
+|`float NearClip` | Near clip plane used by both cubemap and single-slice shadow bake cameras and by the matching EVSM receiver depth range. |
 |`float Bias` | World-space bias in meters applied while baking this light's shadow map. Larger values reduce self-shadow artifacts but can detach contact edges. |
-|`float FarClip` | Far clip distance used when the EVSM shadow map is baked. `0` recalculates it from this light's current culling range and is usually the recommended default. Use a manual value only to clip distant shadow casters or reduce the shadow depth range for a known bounded area. |
+|`float FarClip` | Far clip distance used by both cubemap and single-slice EVSM shadows. `0` recalculates it from this light's current culling range and is usually the recommended default. Use a manual value only to clip distant shadow casters or reduce the shadow depth range for a known bounded area. |
 |`float Blur` | Shadow blur radius applied after baking, normalized to 128x128 shadow resolution. Editor baking uses spherical shadow-space blur to reduce visible cubemap and Spot Light projection seams. Runtime baking uses `Planar Blur` unless `PointLightShadowRuntimeBaker.SphericalBlur` is enabled. `0` keeps the baked shadow map unblurred. |
 |`float ContactHardening` | Hardens shadows near contact areas. Can produce artifacts, so use it carefully. More performant when set to `0` in runtime shadow mode. Runtime baker spherical mode also applies to contact hardening samples. |
 |`bool BakeInGame` | Bakes this light's shadow once from `Start()` in Play Mode or VRChat. The editor can still use a baked preview texture, but build/upload preprocessing clears that texture reference so it does not enter the build or asset bundle for this light. |
@@ -176,15 +178,15 @@ When changing a Point Light Volume from another Udon script, prefer the setter m
 |`void SetCustomTexture(Texture texture, bool isCubemap, bool autoUpdate)` | Assigns a texture projection source, sets projection metadata and optionally marks it for automatic runtime updates. The manager shares one runtime slice for matching source/update-mode pairs. |
 |`void SetCustomMaterial(Material material, bool autoUpdate)` | Assigns a material projection source and optionally marks it for automatic runtime updates. The manager shares one runtime slice for matching material/update-mode pairs. |
 |`void SetParametric()` | Sets this light into parametric projection mode if it is not already parametric. |
-|`void SetPointLight()` | Sets this light into Point Light type and updates position/rotation data only when needed. |
+|`void SetPointLight()` | Sets this light into Point Light type, canonicalizes its shadow layout to cubemap, and updates position/rotation data only when needed. |
 |`void SetSpotLight(float angleDeg, float falloff)` | Sets this light into Spot Light type with angle and falloff, updating only changed shader data. |
 |`void SetSpotLight(float angleDeg)` | Sets this light into Spot Light type with angle only, updating only changed shader data. |
-|`void SetAreaLight()` | Sets this light into Area Light type and updates width, height and rotation data from the transform. |
+|`void SetAreaLight()` | Sets this light into Area Light type, canonicalizes its shadow layout to cubemap, and updates positive width/height, rotation and Area Cookie mirror data from the transform. |
 |`void SetSpotCookieAspect(float aspect)` | Sets custom Spot Light cookie projection aspect and updates shader data. |
 |`void SetColor(Color color)` | Sets light source color, updates the internal change cache and marks range dirty only when the value changes. |
 |`void SetIntensity(float intensity)` | Sets light source intensity, updates the internal change cache and marks range dirty only when the value changes. |
 |`void SetShadingStrength(float shadingStrength)` | Sets per-surface Point Light Volume shading and shadow strength in the `0..1` range, updating the internal change cache only when the value changes. |
-|`void BakeShadows()` | Runs one native runtime shadow bake trigger using the current runtime shadow bake fields. Full one-frame baking happens when the light uses a single-slice Spot Light shadow or `RuntimeShadowFacesPerFrame` covers all required cubemap faces. Lower face counts continue the current bake cycle across repeated calls. |
+|`void BakeShadows()` | Runs one native runtime shadow bake trigger using the current runtime shadow bake fields. It refreshes a dirty automatic range before resolving `FarClip`; changing the resolved Near/Far range restarts a partial cubemap cycle so all faces use identical depth encoding. Full one-frame baking happens when the light uses a single-slice Spot Light shadow or `RuntimeShadowFacesPerFrame` covers all required cubemap faces. |
 |`void UpdateTransform()` | Updates position, rotation and scale data only when transform values changed. |
 |`void UpdatePosition()` | Forces position data update and notifies the manager. |
 |`void UpdateRotation()` | Forces rotation or direction data update and notifies the manager. |

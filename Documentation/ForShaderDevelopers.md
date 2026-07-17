@@ -47,7 +47,7 @@ Evaluate the returned SH data using `LightVolumeEvaluate()` But you can use your
 
 Typically, the result color should be multiplied by the albedo and added to the final fragment color. You may also apply AO or other adjustments before combining it.
 
-If your shader has a reliable normalized world normal, pass it to `LightVolumeSH()` as the optional `worldNormal` argument. This provides the surface direction for Point Light Volume shading. Set `pointLightShading` to `0` if you do not want Point Light Volumes to be shaped by the surface normal.
+If your shader has a reliable normalized world normal, use the extended `LightVolumeSH()` overload and pass `worldPosOffset`, `worldNormal` and optionally `pointLightShading`. This provides the surface direction for Point Light Volume shading. Set `pointLightShading` to `0` if you do not want Point Light Volumes to be shaped by the surface normal.
 
 > [!TIP]
 > `LightVolumeSH()` automatically falls back to Unity’s built-in light probes if Light Volumes are not available. No need for a manual check.
@@ -67,11 +67,15 @@ Then evaluate the color with `LightVolumeEvaluate()` and **add** the resulting c
 
 `worldPosOffset` is useful when you want to sample voxel Light Volumes from a slightly different position, for example to reduce artifacts on custom vertex effects. This offset affects regular and additive voxel Light Volume sampling. Point Light Volumes still use the original `worldPos`, because their attenuation and shadows are based on the real fragment position.
 
-`worldNormal` has a default value for SH-only functions and is required for specular functions. When `pointLightShading` is greater than `0`, `worldNormal` is used as-is and must already be valid and normalized. If you do not pass a real normal to SH-only functions, set `pointLightShading` to `0`. `worldNormal` always means the surface normal direction and should not be scaled to control Point Light Volume shading anymore.
+`worldNormal` is required by the extended SH-only overloads and by all specular functions. When `pointLightShading` is greater than `0`, `worldNormal` is used as-is and must already be valid and normalized. The legacy v2-compatible SH overloads do not accept a normal and explicitly disable Point Light per-surface shading. `worldNormal` always means the surface normal direction and should not be scaled to control Point Light Volume shading anymore.
 
 `viewDir` and any custom light direction values passed to lower-level functions must also be normalized before calling Light Volumes helpers.
 
-`pointLightShading` controls how strongly Point Light Volume contribution is shaped by `worldNormal`: `0` disables the per-surface Point Light shading, `1` is the default smooth front-to-back gradient, and values above `1` make the shading sharper. `worldNormal = 0` does not disable this path by itself. Negative values are not supported. The mask is source-size aware, so larger Point, Spot and Area Light Volumes fade more smoothly near the normal horizon. In `LightVolumeSHSpecular()`, the same size-aware mask also attenuates individual Point Light speculars smoothly.
+`pointLightShading` controls how strongly Point Light Volume contribution is shaped by `worldNormal`: `0` disables the per-surface Point Light shading, `1` gives the standard smooth front-to-back gradient, and values above `1` make the shading sharper. The extended public functions currently default this argument to `3` when it is omitted; pass `1` explicitly when you want the standard smooth profile. `worldNormal = 0` does not disable this path by itself. Negative values are not supported. The mask is source-size aware, so larger Point, Spot and Area Light Volumes fade more smoothly near the normal horizon. In `LightVolumeSHSpecular()`, the same size-aware mask also attenuates individual Point Light speculars smoothly.
+
+### Public SH API compatibility
+
+The current cginc keeps the v2 call shapes as explicit overloads. Calls that provide only `worldPos`, SH outputs and optional `worldPosOffset` use the legacy overload and disable per-surface Point Light shading. Calls that need v3 shading must also provide a normalized `worldNormal`. A v3 manager continues publishing the legacy globals used by v2 shaders, while a current shader uses `_UdonLightVolumeVersion` to avoid entering the v3 EVSM path under a v2 manager.
 
 Point Light Volume shadows are already applied to the returned Point Light Volume `L0`/`L1` data. The public cginc API does not return a separate unshadowed Point Light Volume term.
 
@@ -163,7 +167,11 @@ Required to get the Spherical Harmonics components. Using the output values you 
 Also this values are required to calculate the final light you get from the light volume.
 
 ```hlsl
-void LightVolumeSH(float3 worldPos, out float3 L0, out float3 L1r, out float3 L1g, out float3 L1b, float3 worldPosOffset = 0, float3 worldNormal = 0, float pointLightShading = 1)
+// v2-compatible overload: Point Light per-surface shading is disabled
+void LightVolumeSH(float3 worldPos, out float3 L0, out float3 L1r, out float3 L1g, out float3 L1b, float3 worldPosOffset = 0)
+
+// extended v3 overload
+void LightVolumeSH(float3 worldPos, out float3 L0, out float3 L1r, out float3 L1g, out float3 L1b, float3 worldPosOffset, float3 worldNormal, float pointLightShading = 3)
 ```
 | Function argument | Description |
 | --- | --- |
@@ -171,23 +179,27 @@ void LightVolumeSH(float3 worldPos, out float3 L0, out float3 L1r, out float3 L1
 |`out float3 L0` | Outputs ambient color of the current fragment.|
 |`out float3 L1r`<br/>`out float3 L1g`<br/>`out float3 L1b` | Outputs vectors that stores the Red, Green and Blue light directions and power, as a magnitude of these vectors.|
 |`float3 worldPosOffset` | Optional offset applied only to regular and additive voxel Light Volume sampling. Point Light Volumes still use `worldPos`.|
-|`float3 worldNormal` | Optional normalized world normal direction used by Point Light Volumes for per-surface shading. When `pointLightShading` is greater than `0`, this value must be valid and normalized.|
-|`float pointLightShading` | Optional non-negative Point Light Volume shading strength. `0` disables per-surface Point Light shading, `1` is the default smooth gradient, and values above `1` make it sharper.|
+|`float3 worldNormal` | Normalized world normal direction required by the extended overload and used by Point Light Volumes for per-surface shading.|
+|`float pointLightShading` | Optional non-negative Point Light Volume shading strength in the extended overload. `0` disables per-surface Point Light shading, `1` gives the standard smooth gradient, values above `1` make it sharper, and the omitted-argument default is `3`.|
 
 ### float3 LightVolumeSH_L0()
 
 Returns ambient color L0, without calculating L1. Cheaper then LightVolumeSH(). Should be used where directionality is not important, like particles or volumetric fog.
 
 ```hlsl
-float3 LightVolumeSH_L0(float3 worldPos, float3 worldPosOffset = 0, float3 worldNormal = 0, float pointLightShading = 1)
+// v2-compatible overload
+float3 LightVolumeSH_L0(float3 worldPos, float3 worldPosOffset = 0)
+
+// extended v3 overload
+float3 LightVolumeSH_L0(float3 worldPos, float3 worldPosOffset, float3 worldNormal, float pointLightShading = 3)
 ```
 
 | Function argument | Description |
 | --- | --- |
 |`float3 worldPos` | World position of the current fragment.|
 |`float3 worldPosOffset` | Optional offset applied only to regular and additive voxel Light Volume sampling. Point Light Volumes still use `worldPos`.|
-|`float3 worldNormal` | Optional normalized world normal direction used by Point Light Volumes for per-surface shading. When `pointLightShading` is greater than `0`, this value must be valid and normalized.|
-|`float pointLightShading` | Optional non-negative Point Light Volume shading strength. `0` disables per-surface Point Light shading, `1` is the default smooth gradient, and values above `1` make it sharper.|
+|`float3 worldNormal` | Normalized world normal direction required by the extended overload and used by Point Light Volumes for per-surface shading.|
+|`float pointLightShading` | Optional non-negative Point Light Volume shading strength in the extended overload. `0` disables it, `1` gives the standard smooth gradient, and the omitted-argument default is `3`.|
 
 ### void LightVolumeAdditiveSH()
 Returns Spherical Harmonics components, just as LightVolumeSH() does, but only for additive Light Volumes and Point Light Volumes. This function is much lighter than LightVolumeSH(), and useful for shaders that can be used in baked lightmaps mode.
@@ -195,7 +207,11 @@ Returns Spherical Harmonics components, just as LightVolumeSH() does, but only f
 Evaluate it and add to your lightmaps color if you want to implement the additive volumes support for the baked lightmaps.
 
 ```hlsl
-void LightVolumeAdditiveSH(float3 worldPos, out float3 L0, out float3 L1r, out float3 L1g, out float3 L1b, float3 worldPosOffset = 0, float3 worldNormal = 0, float pointLightShading = 1)
+// v2-compatible overload
+void LightVolumeAdditiveSH(float3 worldPos, out float3 L0, out float3 L1r, out float3 L1g, out float3 L1b, float3 worldPosOffset = 0)
+
+// extended v3 overload
+void LightVolumeAdditiveSH(float3 worldPos, out float3 L0, out float3 L1r, out float3 L1g, out float3 L1b, float3 worldPosOffset, float3 worldNormal, float pointLightShading = 3)
 ```
 
 | Function argument | Description |
@@ -204,8 +220,8 @@ void LightVolumeAdditiveSH(float3 worldPos, out float3 L0, out float3 L1r, out f
 |`out float3 L0` | Outputs ambient color of the current fragment.|
 |`out float3 L1r` <br/> `out float3 L1g` <br/> `out float3 L1b` | Outputs vectors that stores the Red, Green and Blue light directions and power, as a magnitude of these vectors.|
 |`float3 worldPosOffset` | Optional offset applied only to additive voxel Light Volume sampling. Point Light Volumes still use `worldPos`.|
-|`float3 worldNormal` | Optional normalized world normal direction used by Point Light Volumes for per-surface shading. When `pointLightShading` is greater than `0`, this value must be valid and normalized.|
-|`float pointLightShading` | Optional non-negative Point Light Volume shading strength. `0` disables per-surface Point Light shading, `1` is the default smooth gradient, and values above `1` make it sharper.|
+|`float3 worldNormal` | Normalized world normal direction required by the extended overload and used by Point Light Volumes for per-surface shading.|
+|`float pointLightShading` | Optional non-negative Point Light Volume shading strength in the extended overload. `0` disables it, `1` gives the standard smooth gradient, and the omitted-argument default is `3`.|
 
 ### float3 LightVolumeAdditiveSH_L0()
 
@@ -214,15 +230,19 @@ Returns ambient color L0, without calculating L1, just as LightVolumeSH_L0() doe
 Evaluate it and add to your lightmaps color if you want to implement the additive volumes support for the baked lightmaps.
 
 ```hlsl
-float3 LightVolumeAdditiveSH_L0(float3 worldPos, float3 worldPosOffset = 0, float3 worldNormal = 0, float pointLightShading = 1)
+// v2-compatible overload
+float3 LightVolumeAdditiveSH_L0(float3 worldPos, float3 worldPosOffset = 0)
+
+// extended v3 overload
+float3 LightVolumeAdditiveSH_L0(float3 worldPos, float3 worldPosOffset, float3 worldNormal, float pointLightShading = 3)
 ```
 
 | Function argument | Description |
 | --- | --- |
 |`float3 worldPos` | World position of the current fragment. |
 |`float3 worldPosOffset` | Optional offset applied only to additive voxel Light Volume sampling. Point Light Volumes still use `worldPos`.|
-|`float3 worldNormal` | Optional normalized world normal direction used by Point Light Volumes for per-surface shading. When `pointLightShading` is greater than `0`, this value must be valid and normalized.|
-|`float pointLightShading` | Optional non-negative Point Light Volume shading strength. `0` disables per-surface Point Light shading, `1` is the default smooth gradient, and values above `1` make it sharper.|
+|`float3 worldNormal` | Normalized world normal direction required by the extended overload and used by Point Light Volumes for per-surface shading.|
+|`float pointLightShading` | Optional non-negative Point Light Volume shading strength in the extended overload. `0` disables it, `1` gives the standard smooth gradient, and the omitted-argument default is `3`.|
 
 ### void LightVolumeSHSpecular()
 
@@ -235,7 +255,7 @@ The `L0`/`L1` outputs include the same shadowed Point Light Volume diffuse contr
 `LightVolumeSHSpecular()` falls back to Unity light probes if Light Volumes are not available, just like `LightVolumeSH()`.
 
 ```hlsl
-void LightVolumeSHSpecular(float3 worldPos, out float3 L0, out float3 L1r, out float3 L1g, out float3 L1b, out float3 specular, float3 albedo, float smoothness, float metallic, float3 worldNormal, float3 viewDir, float3 worldPosOffset = 0, float pointLightShading = 1)
+void LightVolumeSHSpecular(float3 worldPos, out float3 L0, out float3 L1r, out float3 L1g, out float3 L1b, out float3 specular, float3 albedo, float smoothness, float metallic, float3 worldNormal, float3 viewDir, float3 worldPosOffset = 0, float pointLightShading = 3)
 ```
 
 | Function argument | Description |
@@ -250,12 +270,12 @@ void LightVolumeSHSpecular(float3 worldPos, out float3 L0, out float3 L1r, out f
 |`float3 worldNormal` | Normalized world normal of the current fragment. Used for specular BRDF shading and as the direction for Point Light Volume per-surface shading.|
 |`float3 viewDir` | Normalized world space camera view direction.|
 |`float3 worldPosOffset` | Optional offset applied only to regular and additive voxel Light Volume sampling. Point Light Volumes still use `worldPos`.|
-|`float pointLightShading` | Optional non-negative Point Light Volume shading strength. `0` disables per-surface Point Light shading, `1` is the default smooth gradient, and values above `1` make it sharper. Individual speculars use the same size-aware mask and keep Point Light shadows/cookies.|
+|`float pointLightShading` | Optional non-negative Point Light Volume shading strength. `0` disables per-surface shading, `1` gives the standard smooth gradient, values above `1` make it sharper, and the omitted-argument default is `3`. Individual speculars use the same size-aware mask and keep Point Light shadows/cookies.|
 
 You can also provide the surface's specular F0 directly.
 
 ```hlsl
-void LightVolumeSHSpecular(float3 worldPos, out float3 L0, out float3 L1r, out float3 L1g, out float3 L1b, out float3 specular, float3 f0, float smoothness, float3 worldNormal, float3 viewDir, float3 worldPosOffset = 0, float pointLightShading = 1)
+void LightVolumeSHSpecular(float3 worldPos, out float3 L0, out float3 L1r, out float3 L1g, out float3 L1b, out float3 specular, float3 f0, float smoothness, float3 worldNormal, float3 viewDir, float3 worldPosOffset = 0, float pointLightShading = 3)
 ```
 
 ### void LightVolumeAdditiveSHSpecular()
@@ -267,7 +287,7 @@ This function returns zeroes if Light Volumes are not available in scene, just l
 The `L0`/`L1` outputs include shadowed Point Light Volume diffuse contribution. The `specular` output contains dominant SH specular for additive voxel Light Volumes plus individual shadowed Point Light Volume speculars.
 
 ```hlsl
-void LightVolumeAdditiveSHSpecular(float3 worldPos, out float3 L0, out float3 L1r, out float3 L1g, out float3 L1b, out float3 specular, float3 albedo, float smoothness, float metallic, float3 worldNormal, float3 viewDir, float3 worldPosOffset = 0, float pointLightShading = 1)
+void LightVolumeAdditiveSHSpecular(float3 worldPos, out float3 L0, out float3 L1r, out float3 L1g, out float3 L1b, out float3 specular, float3 albedo, float smoothness, float metallic, float3 worldNormal, float3 viewDir, float3 worldPosOffset = 0, float pointLightShading = 3)
 ```
 
 | Function argument | Description |
@@ -282,12 +302,12 @@ void LightVolumeAdditiveSHSpecular(float3 worldPos, out float3 L0, out float3 L1
 |`float3 worldNormal` | Normalized world normal of the current fragment. Used for specular BRDF shading and as the direction for Point Light Volume per-surface shading.|
 |`float3 viewDir` | Normalized world space camera view direction.|
 |`float3 worldPosOffset` | Optional offset applied only to additive voxel Light Volume sampling. Point Light Volumes still use `worldPos`.|
-|`float pointLightShading` | Optional non-negative Point Light Volume shading strength. `0` disables per-surface Point Light shading, `1` is the default smooth gradient, and values above `1` make it sharper. Individual speculars use the same size-aware mask and keep Point Light shadows/cookies.|
+|`float pointLightShading` | Optional non-negative Point Light Volume shading strength. `0` disables per-surface shading, `1` gives the standard smooth gradient, values above `1` make it sharper, and the omitted-argument default is `3`. Individual speculars use the same size-aware mask and keep Point Light shadows/cookies.|
 
 You can also provide the surface's specular F0 directly.
 
 ```hlsl
-void LightVolumeAdditiveSHSpecular(float3 worldPos, out float3 L0, out float3 L1r, out float3 L1g, out float3 L1b, out float3 specular, float3 f0, float smoothness, float3 worldNormal, float3 viewDir, float3 worldPosOffset = 0, float pointLightShading = 1)
+void LightVolumeAdditiveSHSpecular(float3 worldPos, out float3 L0, out float3 L1r, out float3 L1g, out float3 L1b, out float3 specular, float3 f0, float smoothness, float3 worldNormal, float3 viewDir, float3 worldPosOffset = 0, float pointLightShading = 3)
 ```
 
 ### float3 LightVolumeEvaluate()

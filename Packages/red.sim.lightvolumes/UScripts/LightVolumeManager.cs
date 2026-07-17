@@ -291,8 +291,7 @@ namespace VRCLightVolumes {
         private int _pointLightShadowCountID;
         private int _pointLightShadowCubeCountID;
         private int _pointLightShadowTextureID;
-        private int _pointLightShadowBleedReductionID;
-        private int _pointLightShadowMinVarianceID;
+        private int _pointLightShadowReceiverParamsID;
         private int _lightBrightnessCutoffID;
         // Other
         private int _forceSceneLightingID;
@@ -303,6 +302,23 @@ namespace VRCLightVolumes {
 #endregion
 
 #region Shared Data Helpers
+
+        // Precomputes the normalized EVSM receiver constants used by current shaders.
+        private Vector4 GetPointLightShadowReceiverParams() {
+            float varianceBias = Mathf.Max(ShadowMinVariance, 0f) * 0.01f;
+            float bleedReduction = Mathf.Min(Mathf.Clamp01(ShadowBleedReduction), 0.999f);
+            float bleedScale = 1f / (1f - bleedReduction);
+            return new Vector4(varianceBias * 5.54f, -bleedReduction * bleedScale, bleedScale, varianceBias * 5f);
+        }
+
+        // Resolves the Area Cookie X/Y reflection relative to the quaternion frame sent to shaders.
+        private float GetAreaCookieMirror(Matrix4x4 localToWorldMatrix, Quaternion transformRotation) {
+            Vector3 matrixXAxis = new Vector3(localToWorldMatrix.m00, localToWorldMatrix.m10, localToWorldMatrix.m20);
+            Vector3 matrixYAxis = new Vector3(localToWorldMatrix.m01, localToWorldMatrix.m11, localToWorldMatrix.m21);
+            bool flipCookieX = Vector3.Dot(matrixXAxis, transformRotation * Vector3.right) < 0f;
+            bool flipCookieY = Vector3.Dot(matrixYAxis, transformRotation * Vector3.up) < 0f;
+            return (flipCookieY ? 2f : 1f) * (flipCookieX ? -1f : 1f);
+        }
 
         // Computes a bounding sphere radius squared for area lights
         private float ComputeAreaLightSquaredBoundingSphere(float width, float height, Color color, float intensity, float cutoff) {
@@ -338,6 +354,11 @@ namespace VRCLightVolumes {
             instance.IsRangeDirty = false;
         }
 
+        // Makes the manager's canonical range math available to runtime shadow bakers before they encode depth.
+        public void RecalculatePointLightRange(PointLightVolumeInstance instance) {
+            ComputePointLightRange(instance);
+        }
+
         // Updates one regular volume instance fields from one Transform matrix read
         private void UpdateLightVolumeTransformData(LightVolumeInstance instance, Matrix4x4 localToWorldMatrix) {
             if (instance == null) return;
@@ -356,7 +377,7 @@ namespace VRCLightVolumes {
             instance.RelativeRotationRow1 = rotationMatrix.GetRow(1);
         }
 
-        // Updates one point light instance fields from one Transform matrix read
+        // Updates one point light instance from its current transform data
         private void UpdatePointLightTransformData(PointLightVolumeInstance instance, Matrix4x4 localToWorldMatrix, bool forceRangeUpdate) {
             if (instance == null) return;
             int lightType = instance.LightType;
@@ -369,11 +390,14 @@ namespace VRCLightVolumes {
             instance.Position = localToWorldMatrix.GetPosition();
 
             if (lightType != 0 || projectionMode != 0) { // 0: point, 0: parametric
-                Quaternion transformRotation = localToWorldMatrix.rotation;
+                // A reflected matrix has no quaternion representation. Keep the physical light rotation and
+                // carry Area Cookie-only X/Y reflection in its custom projection descriptor.
+                Quaternion transformRotation = instance.transform.rotation;
                 if (lightType == 2) { // 2: area
                     instance.Rotation = transformRotation;
                     instance.Width = Mathf.Max(scaleX, 0.001f);
                     instance.Height = Mathf.Max(scaleY, 0.001f);
+                    instance.AreaCookieMirror = GetAreaCookieMirror(localToWorldMatrix, transformRotation);
                 } else if (lightType == 1 && projectionMode != 2) { // 1: spot, 2: custom cookie
                     instance.Direction = transformRotation * Vector3.forward;
                 } else {
@@ -526,8 +550,7 @@ namespace VRCLightVolumes {
             _pointLightShadowCountID = VRCShader.PropertyToID("_UdonPointLightVolumeShadowCount");
             _pointLightShadowCubeCountID = VRCShader.PropertyToID("_UdonPointLightVolumeShadowCubeCount");
             _pointLightShadowTextureID = VRCShader.PropertyToID("_UdonPointLightVolumeShadowTexture");
-            _pointLightShadowBleedReductionID = VRCShader.PropertyToID("_UdonPointLightVolumeShadowBleedReduction");
-            _pointLightShadowMinVarianceID = VRCShader.PropertyToID("_UdonPointLightVolumeShadowMinVariance");
+            _pointLightShadowReceiverParamsID = VRCShader.PropertyToID("_UdonPointLightVolumeShadowReceiverParams");
             _lightBrightnessCutoffID = VRCShader.PropertyToID("_UdonLightBrightnessCutoff");
             // Other
             _forceSceneLightingID = VRCShader.PropertyToID("_UdonForceSceneLighting");
@@ -554,8 +577,7 @@ namespace VRCLightVolumes {
             VRCShader.SetGlobalVectorArray(_pointLightCustomIdID, _pointLightCustomId);
             VRCShader.SetGlobalVectorArray(_pointLightShadowReprojectionDataID, _pointLightShadowReprojectionData);
             VRCShader.SetGlobalVectorArray(_pointLightShadowRotationDataID, _pointLightShadowRotationData);
-            VRCShader.SetGlobalFloat(_pointLightShadowBleedReductionID, Mathf.Clamp01(ShadowBleedReduction));
-            VRCShader.SetGlobalFloat(_pointLightShadowMinVarianceID, Mathf.Max(ShadowMinVariance, 0f));
+            VRCShader.SetGlobalVector(_pointLightShadowReceiverParamsID, GetPointLightShadowReceiverParams());
             _isInitialized = true;
         }
 
@@ -567,8 +589,7 @@ namespace VRCLightVolumes {
             VRCShader.SetGlobalFloat(_pointLightCubeCountID, 0);
             VRCShader.SetGlobalFloat(_pointLightShadowCubeCountID, 0);
             VRCShader.SetGlobalFloat(_pointLightShadowCountID, 0);
-            VRCShader.SetGlobalFloat(_pointLightShadowBleedReductionID, Mathf.Clamp01(ShadowBleedReduction));
-            VRCShader.SetGlobalFloat(_pointLightShadowMinVarianceID, Mathf.Max(ShadowMinVariance, 0f));
+            VRCShader.SetGlobalVector(_pointLightShadowReceiverParamsID, GetPointLightShadowReceiverParams());
             VRCShader.SetGlobalFloat(_lightVolumeEnabledID, 0);
         }
 
@@ -1396,7 +1417,10 @@ namespace VRCLightVolumes {
                 }
 
                 Texture textureSource = instance.ShadowMapTexture;
-                bool usesCubemapShadow = instance.ShadowMapUsesCubemap;
+                // Point and area emitters are omnidirectional shadow receivers in the shader ABI.
+                // Canonicalize low-level/runtime data here so only spot lights may occupy a single slice.
+                bool usesCubemapShadow = instance.LightType != 1 || instance.ShadowMapUsesCubemap;
+                instance.ShadowMapUsesCubemap = usesCubemapShadow;
 
                 if (textureSource != null) { // Texture shadows mode
 
@@ -1997,11 +2021,12 @@ namespace VRCLightVolumes {
             bool isLut = projectionMode == 1; // 1: LUT projection
             bool isCustomCookie = projectionMode == 2; // 2: custom cookie or cubemap projection
             int resolvedCustomId = sourceIndex < _pointLightCustomIDs.Length ? _pointLightCustomIDs[sourceIndex] : -1;
+            bool hasAreaCookie = isArea && isCustomCookie && resolvedCustomId >= 0;
 
             float angleData;
             if (isArea) {
-                float height = instance.Height;
-                pos.w = instance.Width;
+                float height = Mathf.Max(Mathf.Abs(instance.Height), 0.001f);
+                pos.w = Mathf.Max(Mathf.Abs(instance.Width), 0.001f);
                 angleData = 2f + height;
             } else {
                 float typeSign = isSpot ? -1f : 1f;
@@ -2046,22 +2071,22 @@ namespace VRCLightVolumes {
                 if (isLut) shaderCustomId = isSpot ? resolvedCustomId + 1 : resolvedCustomId;
                 else if (isCustomCookie) shaderCustomId = -resolvedCustomId - 1;
             }
-
             int resolvedShadowId = sourceIndex < _pointLightShadowIDs.Length ? _pointLightShadowIDs[sourceIndex] : -1;
             float shadingStrength = Mathf.Clamp01(instance.ShadingStrength);
             bool hasShading = shadingStrength > 0f;
             bool hasShadow = hasShading && ShadowMapsCount > 0 && resolvedShadowId >= 0 && resolvedShadowId < ShadowMapsCount;
             if (countActiveShadow && hasShadow) _activeShadowCount++;
-            float shadowFarClip = 0;
             float shadowNearClip = 0;
+            float shadowInvDepthRange = 0;
             if (hasShadow) {
                 shadowNearClip = Mathf.Max(instance.NearClip, 0.0001f);
-                float farClip = instance.FarClip;
-                shadowFarClip = farClip > 0f ? Mathf.Max(farClip, shadowNearClip + 0.0001f) : Mathf.Sqrt(Mathf.Max(squaredRange, 0.000001f));
-                if (shadowNearClip >= shadowFarClip) shadowFarClip = shadowNearClip + 0.0001f;
+                float requestedFarClip = instance.FarClip;
+                float resolvedFarClip = requestedFarClip > 0f ? Mathf.Max(requestedFarClip, shadowNearClip + 0.0001f) : Mathf.Sqrt(Mathf.Max(squaredRange, 0.000001f));
+                if (shadowNearClip >= resolvedFarClip) resolvedFarClip = shadowNearClip + 0.0001f;
+                // Far is needed by the bake/encoder, but the receiver only needs its precomputed reciprocal range.
+                shadowInvDepthRange = 1f / Mathf.Max(resolvedFarClip - shadowNearClip, 0.0001f);
             }
             extraData.w = shadowNearClip;
-            _pointLightExtraData[shaderIndex] = extraData;
             bool useLocalSpaceShadows = hasShadow && !instance.WorldSpaceShadows;
             float shadowMapID = DisabledShadingShadowId;
             if (hasShading) {
@@ -2069,12 +2094,37 @@ namespace VRCLightVolumes {
                 float shadingFade = 1f - shadingStrength;
                 if (shadingFade > 0f) shadowMapID += shadowMapID < 0f ? -shadingFade : shadingFade;
             }
-            _pointLightCustomId[shaderIndex] = new Vector4(shaderCustomId, shadowMapID, squaredRange, shadowFarClip);
-
+            bool usesCubemapShadow = hasShadow && resolvedShadowId < ShadowCubemapsCount;
             Vector3 shadowBakePosition = instance.ShadowBakePosition;
+            // A negative reciprocal range is a v3-only fast-path marker: the baked world-space
+            // shadow origin exactly matches the current Point/Spot origin, so the receiver can
+            // reuse its raw light vector and distance. Compare components directly; Unity's
+            // Vector3 == is approximate and could incorrectly select this exact path.
+            bool reuseWorldShadowOrigin = hasShadow && !isArea && !useLocalSpaceShadows && shadowInvDepthRange > 0f
+                && shadowBakePosition.x == pos.x
+                && shadowBakePosition.y == pos.y
+                && shadowBakePosition.z == pos.z;
+            // V2 declares CustomID as float3 and ignores W. Keep the full reciprocal range for
+            // every v3 Point/Spot shadow; abs(W) is the value and sign(W) is the fast-path marker.
+            float customDataW = hasShadow && !isArea
+                ? (reuseWorldShadowOrigin ? -shadowInvDepthRange : shadowInvDepthRange)
+                : 0f;
+            if (isArea) customDataW = hasAreaCookie
+                ? (Mathf.Abs(instance.AreaCookieMirror) >= 0.5f ? instance.AreaCookieMirror : 1f)
+                : 0f;
+            _pointLightCustomId[shaderIndex] = new Vector4(shaderCustomId, shadowMapID, squaredRange, customDataW);
+
             float shadowTanAngle = isSpot ? instance.OuterAngleTan : 0f;
             if (isSpot && shadowTanAngle <= 0f) shadowTanAngle = Mathf.Tan(instance.Angle);
-            _pointLightShadowReprojectionData[shaderIndex] = new Vector4(shadowBakePosition.x, shadowBakePosition.y, shadowBakePosition.z, shadowTanAngle);
+            // V3 local single-slice Spot receivers already fetch ExtraData for NearClip in W.
+            // Duplicate the projection tangent in the otherwise unused Spot Y component so
+            // they can skip fetching ShadowReprojectionData. Keep reprojection W unchanged
+            // for v2 shader + v3 manager compatibility and for world-space shadows.
+            if (hasShadow && isSpot && !usesCubemapShadow) extraData.y = shadowTanAngle;
+            _pointLightExtraData[shaderIndex] = extraData;
+            float shadowReprojectionW = shadowTanAngle;
+            if (usesCubemapShadow) shadowReprojectionW = -shadowInvDepthRange;
+            _pointLightShadowReprojectionData[shaderIndex] = new Vector4(shadowBakePosition.x, shadowBakePosition.y, shadowBakePosition.z, shadowReprojectionW);
 
             Quaternion shadowRotation = useLocalSpaceShadows ? Quaternion.Inverse(instance.transform.rotation) : Quaternion.Inverse(instance.ShadowBakeRotation);
             _pointLightShadowRotationData[shaderIndex] = new Vector4(shadowRotation.x, shadowRotation.y, shadowRotation.z, shadowRotation.w);
@@ -2191,8 +2241,8 @@ namespace VRCLightVolumes {
             _activeShadowCount = 0;
             _dynamicPointLightVolumeCount = 0;
             int pointLightRegistryCount = PointLightVolumeInstances.Length;
-            for (int i = 0; i < pointLightRegistryCount && _pointLightCount < MaxPointLightCount; i++) {
-                PointLightVolumeInstance instance = PointLightVolumeInstances[i];
+            for (int registryIndex = 0; registryIndex < pointLightRegistryCount && _pointLightCount < MaxPointLightCount; registryIndex++) {
+                PointLightVolumeInstance instance = PointLightVolumeInstances[registryIndex];
                 if (instance == null) continue;
                 instance.LightVolumeManager = this;
                 if (!instance.IsActive) continue;
@@ -2212,8 +2262,8 @@ namespace VRCLightVolumes {
                 else if (!Application.isPlaying) UpdatePointLightTransformData(instance, instance.transform.localToWorldMatrix, true);
 #endif
                 if (_isRangeDirty || instance.IsRangeDirty) ComputePointLightRange(instance);
-                _enabledPointIDs[_pointLightCount] = i;
-                WritePointLightShaderData(_pointLightCount, i, instance, true);
+                _enabledPointIDs[_pointLightCount] = registryIndex;
+                WritePointLightShaderData(_pointLightCount, registryIndex, instance, true);
                 _pointLightCount++;
             }
             _pointLightArraysDirty = false;
@@ -2251,8 +2301,7 @@ namespace VRCLightVolumes {
                 int shadowCount = _activeShadowCount > 0 ? ShadowMapsCount : 0;
                 VRCShader.SetGlobalFloat(_pointLightShadowCubeCountID, _activeShadowCount > 0 ? ShadowCubemapsCount : 0);
                 VRCShader.SetGlobalFloat(_pointLightShadowCountID, shadowCount);
-                VRCShader.SetGlobalFloat(_pointLightShadowBleedReductionID, Mathf.Clamp01(ShadowBleedReduction));
-                VRCShader.SetGlobalFloat(_pointLightShadowMinVarianceID, Mathf.Max(ShadowMinVariance, 0f));
+                VRCShader.SetGlobalVector(_pointLightShadowReceiverParamsID, GetPointLightShadowReceiverParams());
                 if (_pointLightCount != 0) {
                     VRCShader.SetGlobalVectorArray(_pointLightColorID, _pointLightColor);
                     VRCShader.SetGlobalVectorArray(_pointLightExtraDataID, _pointLightExtraData);

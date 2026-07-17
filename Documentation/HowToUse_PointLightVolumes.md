@@ -40,6 +40,8 @@ Area Lights are a bit heavier than Point and Spot Lights, but they are not drama
 
 Note that more point lights you have active in your scene, the less performance you'll have. So, consider manually turning off unused point lights if you have a lot of them at your scene.
 
+The manager excludes a Point Light Volume from the shader-visible list when its `Intensity` is exactly `0`, its `Color` is black, its GameObject is inactive, or its instance is otherwise inactive. This is global light culling. A non-black shadowed light remains active because EVSM visibility is different for every receiver pixel; the Point/Spot shader paths skip their remaining contribution work locally when that per-pixel shadow visibility reaches zero.
+
 The **more** point light volumes overlap, the **less** performance you'll have! 
 
 **Point light Volumes** calculates the **range** automatically based on their `Light Source Size` value, their scale, `Intensity` and `Color`. You can also configure the `Brightness Cutoff` value in the **Light Volume Setup** to limit the effective range of the light and improve performance. Higher values reduce the light's visible radius, which generally increases performance, but results in less realistic light attenuation.

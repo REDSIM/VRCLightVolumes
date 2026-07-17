@@ -161,6 +161,7 @@ namespace VRCLightVolumes {
         private float _old_ShadingStrength = 1;
         private bool _isRegisteredWithManager = false;
         [NonSerialized] public Color AreaLightFallbackColor = Color.clear;
+        [HideInInspector] public float AreaCookieMirror = 1f;
         [NonSerialized] public int AreaCookieAverageCustomId = -1;
         [NonSerialized] public bool AreaCookieAverageReadbackPending = false;
         [NonSerialized] public bool AreaCookieAverageReadbackDirty = false;
@@ -183,6 +184,8 @@ namespace VRCLightVolumes {
         private bool _inGameBakeStarted = false;
         private bool _runtimeShadowSourceInitialized = false;
         private bool _runtimeShadowShaderPropertiesInitialized = false;
+        private float _runtimeShadowReceiverNearClip = 0f;
+        private float _runtimeShadowReceiverFarClip = 0f;
 
         // Incremental runtime bake progress for the current face cycle.
         private int _runtimeShadowFaceIndex = 0;
@@ -472,11 +475,13 @@ namespace VRCLightVolumes {
         // Sets the light into the point light type
         public void SetPointLight() {
             Vector3 position = transform.position;
-            if (LightType == 0 && Position == position) return;
+            if (LightType == 0 && Position == position && ShadowMapUsesCubemap) return;
+            bool shadowTexturesChanged = !ShadowMapUsesCubemap && (ShadowMapID >= 0 || ShadowMapTexture != null || ShadowMapMaterial != null);
             LightType = 0; // 0: point
+            ShadowMapUsesCubemap = true;
             Position = position;
             UpdateRotation();
-            MarkRangeDirtyAndNotify(false, false, false);
+            MarkRangeDirtyAndNotify(false, false, shadowTexturesChanged);
         }
 
         // Sets the light into the spotlight type with both angle and falloff because angle is required to determine falloff
@@ -523,12 +528,14 @@ namespace VRCLightVolumes {
         
         // Sets the light into the area light type
         public void SetAreaLight() {
+            bool shadowTexturesChanged = !ShadowMapUsesCubemap && (ShadowMapID >= 0 || ShadowMapTexture != null || ShadowMapMaterial != null);
             LightType = 2; // 2: area
+            ShadowMapUsesCubemap = true;
             Position = transform.position;
             Width = Mathf.Max(Mathf.Abs(transform.lossyScale.x), 0.001f);
             Height = Mathf.Max(Mathf.Abs(transform.lossyScale.y), 0.001f);
             UpdateRotation();
-            MarkRangeDirtyAndNotify(true, CustomTexture != null || CustomTextureMaterial != null, false);
+            MarkRangeDirtyAndNotify(true, CustomTexture != null || CustomTextureMaterial != null, shadowTexturesChanged);
         }
 
         // Sets light source color
@@ -596,6 +603,7 @@ namespace VRCLightVolumes {
             }
             Transform runtimeShadowCameraTransform = runtimeShadowCamera.transform;
             if (!_runtimeShadowShaderPropertiesInitialized) InitializeRuntimeShadowShaderProperties();
+            if (rangeChanged) manager.RecalculatePointLightRange(this);
 
             // Prepare render targets for the selected runtime shadow output path.
             RenderTextureFormat format = manager.ShadowTextureFormat == ShadowTextureFormatHalf ? RenderTextureFormat.ARGBHalf : RenderTextureFormat.ARGBFloat;
@@ -627,19 +635,24 @@ namespace VRCLightVolumes {
                 _runtimeShadowBlurTempTexture = null;
             }
 
-            // Select the face range rendered by this bake trigger.
-            bool instantBake = !useCubemapShadow || bakeFacesPerFrame >= bakeSliceCount;
-            int firstFace = instantBake ? 0 : _runtimeShadowFaceIndex;
-            int faceCount = instantBake ? bakeSliceCount : bakeFacesPerFrame;
-            int remainingFaces = bakeSliceCount - firstFace;
-            if (faceCount > remainingFaces) faceCount = remainingFaces;
-
             // Read current light transform and safe bake parameters.
             Vector3 bakePosition = transform.position;
             Quaternion bakeRotation = transform.rotation;
             float bakeNearClip = Mathf.Max(NearClip, 0.0001f);
             float bakeFarClip = FarClip > 0f ? Mathf.Max(FarClip, bakeNearClip + 0.0001f) : Mathf.Sqrt(Mathf.Max(SquaredRange, 0.000001f));
             if (bakeNearClip >= bakeFarClip) bakeFarClip = bakeNearClip + 0.0001f;
+            bool receiverClipChanged = _runtimeShadowReceiverNearClip != bakeNearClip || _runtimeShadowReceiverFarClip != bakeFarClip;
+            _runtimeShadowReceiverNearClip = bakeNearClip;
+            _runtimeShadowReceiverFarClip = bakeFarClip;
+            if (receiverClipChanged) _runtimeShadowFaceIndex = 0;
+
+            // Select the face range only after clip changes have restarted a partial cubemap cycle.
+            bool instantBake = !useCubemapShadow || bakeFacesPerFrame >= bakeSliceCount;
+            int firstFace = instantBake ? 0 : _runtimeShadowFaceIndex;
+            int faceCount = instantBake ? bakeSliceCount : bakeFacesPerFrame;
+            int remainingFaces = bakeSliceCount - firstFace;
+            if (faceCount > remainingFaces) faceCount = remainingFaces;
+
             float bakeBias = Mathf.Max(Bias, 0f);
             float bakeFieldOfView;
             float bakeTanHalfFov;
@@ -655,7 +668,7 @@ namespace VRCLightVolumes {
             bool blurUsesUniformRadius = Mathf.Clamp01(ContactHardening) <= 0f;
 
             // Publish runtime shadow metadata before writing pixels into the selected output.
-            bool shadowDataChanged = ApplyRuntimeShadowSourceInternal(bakePosition, bakeRotation, rangeChanged, useDirectOutput, useCubemapShadow);
+            bool shadowDataChanged = ApplyRuntimeShadowSourceInternal(bakePosition, bakeRotation, rangeChanged || receiverClipChanged, useDirectOutput, useCubemapShadow);
             bool rebuildShadowArray = !_runtimeShadowSourceInitialized || manager.ShadowTextures == null || manager.ShadowMapsCount <= 0;
             if (rebuildShadowArray) {
                 manager.InitializePointLightVolume(this);
@@ -803,8 +816,16 @@ namespace VRCLightVolumes {
             bool sourceIsCubemap = sourceTexture != null && sourceTexture.dimension == TextureDimension.Cube;
             bool sourceHasSlices = sourceTexture != null && sourceTexture.dimension == TextureDimension.Tex2DArray && useCubemapShadow;
             bool sourceChanged = ShadowMapID < 0 || ShadowMapTexture != sourceTexture || ShadowMapMaterial != null || AutoUpdateShadowMap || ShadowMapTextureIsCubemap != sourceIsCubemap || ShadowMapTextureHasDepthSlices != sourceHasSlices || ShadowMapUsesCubemap != useCubemapShadow;
-            bool bakePositionChanged = ShadowBakePosition != bakePosition;
-            bool bakeRotationChanged = ShadowBakeRotation != bakeRotation;
+            // Runtime shadow metadata must match the exact transform used by this bake. Unity's
+            // Vector3/Quaternion operators are approximate, which can otherwise retain a nearby
+            // stale origin/rotation and prevent the exact same-origin receiver path from engaging.
+            bool bakePositionChanged = ShadowBakePosition.x != bakePosition.x
+                || ShadowBakePosition.y != bakePosition.y
+                || ShadowBakePosition.z != bakePosition.z;
+            bool bakeRotationChanged = ShadowBakeRotation.x != bakeRotation.x
+                || ShadowBakeRotation.y != bakeRotation.y
+                || ShadowBakeRotation.z != bakeRotation.z
+                || ShadowBakeRotation.w != bakeRotation.w;
             bool metadataChanged = sourceChanged || rangeChanged || (WorldSpaceShadows && (bakePositionChanged || bakeRotationChanged));
 
             if (ShadowMapID < 0) ShadowMapID = 0f;
@@ -1087,12 +1108,23 @@ namespace VRCLightVolumes {
             Position = transform.position;
             NotifyManager(false, false, false);
         }
+
+        // Resolves the Area Cookie X/Y reflection relative to the quaternion frame sent to shaders.
+        private void RefreshAreaCookieMirror(Quaternion transformRotation) {
+            Matrix4x4 localToWorldMatrix = transform.localToWorldMatrix;
+            Vector3 matrixXAxis = new Vector3(localToWorldMatrix.m00, localToWorldMatrix.m10, localToWorldMatrix.m20);
+            Vector3 matrixYAxis = new Vector3(localToWorldMatrix.m01, localToWorldMatrix.m11, localToWorldMatrix.m21);
+            bool flipCookieX = Vector3.Dot(matrixXAxis, transformRotation * Vector3.right) < 0f;
+            bool flipCookieY = Vector3.Dot(matrixYAxis, transformRotation * Vector3.up) < 0f;
+            AreaCookieMirror = (flipCookieY ? 2f : 1f) * (flipCookieX ? -1f : 1f);
+        }
         
         // Force update rotation
         public void UpdateRotation() {
             Quaternion rot = transform.rotation;
             if (LightType == 2) { // 2: area
                 Rotation = rot;
+                RefreshAreaCookieMirror(rot);
             } else if (LightType == 1 && ProjectionMode != 2) { // 1: spot, 2: custom cookie
                 Direction = transform.forward;
             } else if (ProjectionMode != 0) { // 0: parametric; non-parametric point/cookie uses inverse rotation
@@ -1110,8 +1142,8 @@ namespace VRCLightVolumes {
                 Height = Mathf.Max(Mathf.Abs(lscale.y), 0.001f);
                 UpdateRotation();
             }
-            SquaredScale = (lscale.x + lscale.y + lscale.z) / 3;
-            SquaredScale *= SquaredScale;
+            float averageScale = (Mathf.Abs(lscale.x) + Mathf.Abs(lscale.y) + Mathf.Abs(lscale.z)) / 3;
+            SquaredScale = averageScale * averageScale;
             MarkRangeDirtyAndNotify(false, false, false);
         }
 

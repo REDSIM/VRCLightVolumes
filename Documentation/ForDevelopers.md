@@ -4,7 +4,7 @@
 
 | Menu |
 | --- |
-| **Shader Integration**<br />• [Integrating Light Volumes with Amplify Shader Editor (ASE)](#integrating-light-volumes-with-amplify-shader-editor-ase)<br />• [Light Volume integration through shader code](#light-volume-integration-through-shader-code)<br />• [Shader Functions](#shader-functions) |
+| **Shader Integration**<br />• [Integrating Light Volumes with Amplify Shader Editor (ASE)](#integrating-light-volumes-with-amplify-shader-editor-ase)<br />• [Light Volume integration through shader code](#light-volume-integration-through-shader-code)<br />• [Shader Functions](#shader-functions)<br />• [Custom Specular BRDF](#custom-specular-brdf) |
 | **Custom Lightmapper Integration**<br />• [Overview](#custom-lightmapper-integration)<br />• [Recommended workflow](#recommended-workflow)<br />• [Editor API](#editor-api)<br />• [SH data layout](#sh-data-layout)<br />• [Validity, dilation and denoise](#validity-dilation-and-denoise)<br />• [Saving and atlas finalization](#saving-and-atlas-finalization)<br />• [Threading and failure handling](#threading-and-failure-handling) |
 
 This page documents integration points intended for shader developers and editor tool developers.
@@ -156,7 +156,8 @@ finalColor += diffuse + specular;
 For lightmapped shaders, use `LightVolumeAdditiveSHSpecular()` in the lightmap/additive lighting section and add its evaluated diffuse and specular result to the baked lighting.
 
 > [!NOTE]
-> For more advanced shading (e.g. anisotropic specular), implement your own model based on SH data.
+> For more advanced shading (e.g. anisotropic specular), implement your own model based on SH data.<br/>
+> Alternatively, you can provide your own Specular BRDF function as [described here](#custom-specular-brdf)
 
 ## Shader Functions
 
@@ -406,6 +407,24 @@ It's not mandatory to check the light volumes support by yourself for the regula
 ### float LightVolumesVersion()
 
 Returns the light volumes version. `0` means that light volumes are not presented in the scene. `2`, `3` or any other values in future, shows the global light volumes version presented in the scene.
+
+## Custom Specular BRDF
+
+In stylized shaders a custom specular BRDF is often used instead of a regular PBR implementation. In that case you might want to provide your own custom specular function to replace the built-in `LV_SpecularBRDFDirection`.
+
+To override the built-in function:
+
+1. Place `#define LV_CUSTOM_SPECULAR_BRDF` before you import `LightVolumes.cginc`
+2. Define a specular function with the following signature
+
+```hlsl
+float3 LV_SpecularBRDFDirection_Custom(float3 f0, float roughness, float roughnessSq, float NoV, float3 worldNormal, float3 viewDir, float3 l0, float3 lightDirNormal, float lightSpreadSq)
+```
+
+You can use the existing `LV_SpecularBRDFDirection` as a starting point for your implementation.
+
+> [!NOTE]
+> This function is invoked for each point light source. If you have some data that is going to be shared between calls, you should precompute it and place it in a static variable to make it accessible within the body of the function and avoid repeated calculations.
 
 ## Custom Lightmapper Integration
 

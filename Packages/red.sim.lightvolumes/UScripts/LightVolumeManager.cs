@@ -79,7 +79,7 @@ namespace VRCLightVolumes {
         public bool AutoUpdateTextures = true;
         [Tooltip("Limits the maximum number of additive volumes and Point Light Volumes that can affect a single pixel. This also limits individual Point Light Volume speculars in modern compatible shaders. Lower values improve worst-case performance in overlap-heavy areas.")]
         public int AdditiveMaxOverdraw = 4;
-        [Tooltip("Disables min/max brightness limits for modern avatar shaders such as lilToon or Poiyomi. This feature prevents avatars from standing out from the scene due to their brightness. Check this only if you're sure your scene lighting is properly configured.")]
+        [Tooltip("Enables the Force Scene Lighting shader override on startup, disabling min/max brightness limits in compatible avatar shaders. When disabled, the existing global override is left unchanged. Use SetForceSceneLighting for manual runtime control.")]
         public bool ForceSceneLighting = false;
 
         [Header("Runtime Registries")]
@@ -509,6 +509,17 @@ namespace VRCLightVolumes {
             ScheduleUpdateProcess();
         }
 
+        // Sets the Force Scene Lighting shader override explicitly for manual runtime control.
+        public void SetForceSceneLighting(bool enabled) {
+#if !COMPILER_UDONSHARP && UDONSHARP && UNITY_EDITOR
+            if (ShouldSkipEditorProxyRuntimeUpdate()) return;
+#endif
+            ForceSceneLighting = enabled;
+            TryInitialize();
+            // Lore: https://x.com/lil_xyzw/status/1961487430256922928?s=20
+            VRCShader.SetGlobalInteger(_forceSceneLightingID, enabled ? 1 : 0);
+        }
+
 #endregion
 
 #region Initialization
@@ -600,6 +611,7 @@ namespace VRCLightVolumes {
         // Clears runtime state and schedules the first shader data upload
         private void Start() {
             _isInitialized = false;
+            if (ForceSceneLighting) SetForceSceneLighting(true);
             RequestUpdateVolumes();
         }
 
@@ -2143,10 +2155,6 @@ namespace VRCLightVolumes {
             try {
 #endif
             TryInitialize();
-
-            // Defines whether Force Scene Lighting Feature is enabled in the scene. 0 if disabled.
-            // Lore: https://x.com/lil_xyzw/status/1961487430256922928?s=20
-            VRCShader.SetGlobalInteger(_forceSceneLightingID, ForceSceneLighting ? 1 : 0);
 
             if (!enabled || !gameObject.activeInHierarchy) {
                 SetDisabledShaderState();

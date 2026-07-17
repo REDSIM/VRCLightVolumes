@@ -83,7 +83,7 @@ namespace VRCLightVolumes {
         public bool AutoUpdateTextures = true;
         [Tooltip("Limits the maximum number of additive volumes and Point Light Volumes that can affect a single pixel. This also limits individual Point Light Volume speculars in modern compatible shaders. Lower values improve worst-case performance in overlap-heavy areas.")]
         [Min(1)]public int AdditiveMaxOverdraw = 4;
-        [Tooltip("Disables min/max brightness limits for modern avatar shaders such as lilToon or Poiyomi. This feature prevents avatars from standing out from the scene due to their brightness. Check this only if you're sure your scene lighting is properly configured.")]
+        [Tooltip("Enables the Force Scene Lighting shader override on startup, disabling min/max brightness limits in compatible avatar shaders. When disabled, the existing global override is left unchanged. Use LightVolumeManager.SetForceSceneLighting for manual runtime control.")]
         public bool ForceSceneLighting = false;
         [Header("Debug")]
         [Tooltip("Removes all Light Volume scripts in play mode, except Udon components. Useful for testing in a clean setup, just like in VRChat. For example, Auto Update Volumes and Dynamic Light Volumes will work just like in VRChat.")]

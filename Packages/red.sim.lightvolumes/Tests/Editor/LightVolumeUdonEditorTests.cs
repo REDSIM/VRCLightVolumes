@@ -41,6 +41,7 @@ namespace VRCLightVolumes.Tests {
         private static readonly int _pointLightShadowTextureID = Shader.PropertyToID("_UdonPointLightVolumeShadowTexture");
         private static readonly int _pointLightShadowReceiverParamsID = Shader.PropertyToID("_UdonPointLightVolumeShadowReceiverParams");
         private static readonly int _lightBrightnessCutoffID = Shader.PropertyToID("_UdonLightBrightnessCutoff");
+        private static readonly int _forceSceneLightingID = Shader.PropertyToID("_UdonForceSceneLighting");
         private static readonly BindingFlags _lifecycleMethodFlags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
         private static readonly FieldInfo _customTexturesDepthField = typeof(LightVolumeManager).GetField("_customTextureArrayDepth", _lifecycleMethodFlags);
         private static readonly FieldInfo _shadowTexturesDepthField = typeof(LightVolumeManager).GetField("_shadowTextureArrayDepth", _lifecycleMethodFlags);
@@ -284,6 +285,50 @@ namespace VRCLightVolumes.Tests {
             AssertGlobalFloat(_lightVolumeCountID, 1);
             AssertGlobalFloat(_pointLightCountID, 0);
             AssertVectorClose(ExpectedLightVolumeColor(volume), Shader.GetGlobalVectorArray(_lightVolumeColorID)[0]);
+        }
+
+        // Verifies a disabled startup option and regular volume uploads preserve another system's global override.
+        [Test]
+        public void DisabledForceSceneLightingDoesNotOverrideExistingGlobal() {
+            LightVolumeManager manager = CreateManager("Disabled Force Scene Lighting Manager", true);
+            manager.ForceSceneLighting = false;
+            Shader.SetGlobalFloat(_forceSceneLightingID, 1);
+
+            InvokeLifecycleMethod(manager, "Start");
+            manager.UpdateVolumes();
+
+            AssertGlobalFloat(_forceSceneLightingID, 1);
+            Assert.That(manager.ForceSceneLighting, Is.False);
+        }
+
+        // Verifies the enabled inspector option explicitly enables the shader override on startup.
+        [Test]
+        public void EnabledForceSceneLightingSetsGlobalOnStart() {
+            LightVolumeManager manager = CreateManager("Enabled Force Scene Lighting Manager", true);
+            manager.ForceSceneLighting = true;
+            Shader.SetGlobalFloat(_forceSceneLightingID, 0);
+
+            InvokeLifecycleMethod(manager, "Start");
+
+            AssertGlobalFloat(_forceSceneLightingID, 1);
+        }
+
+        // Verifies the public runtime API can set either state without UpdateVolumes continuously reasserting it.
+        [Test]
+        public void SetForceSceneLightingControlsGlobalManually() {
+            LightVolumeManager manager = CreateManager("Manual Force Scene Lighting Manager", true);
+
+            manager.SetForceSceneLighting(true);
+            AssertGlobalFloat(_forceSceneLightingID, 1);
+            Assert.That(manager.ForceSceneLighting, Is.True);
+
+            Shader.SetGlobalFloat(_forceSceneLightingID, 0);
+            manager.UpdateVolumes();
+            AssertGlobalFloat(_forceSceneLightingID, 0);
+
+            manager.SetForceSceneLighting(false);
+            AssertGlobalFloat(_forceSceneLightingID, 0);
+            Assert.That(manager.ForceSceneLighting, Is.False);
         }
 
         // Verifies editor update errors do not leave the manager permanently locked until domain reload.
@@ -3817,6 +3862,7 @@ namespace VRCLightVolumes.Tests {
             Shader.SetGlobalFloat(_pointLightShadowCountID, 0);
             Shader.SetGlobalVector(_pointLightShadowReceiverParamsID, Vector4.zero);
             Shader.SetGlobalFloat(_lightBrightnessCutoffID, 0);
+            Shader.SetGlobalFloat(_forceSceneLightingID, 0);
         }
 
         // Destroys a temporary Unity object immediately when the editor runtime allows it.

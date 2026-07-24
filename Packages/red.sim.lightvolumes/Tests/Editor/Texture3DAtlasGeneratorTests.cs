@@ -30,7 +30,7 @@ namespace VRCLightVolumes.Tests {
         // Verifies a single valid baked volume produces an atlas and readable bounds for all three texture slots.
         [Test]
         public void CreateAtlasPacksValidBakedVolume() {
-            LightVolume volume = CreateBakedLightVolume("Valid Baked Volume", new Color(0.25f, 0.5f, 0.75f, 0), Color.clear, Color.clear, 2, 2, 2);
+            LightVolumeInstance volume = CreateBakedLightVolume("Valid Baked Volume", new Color(0.25f, 0.5f, 0.75f, 0), Color.clear, Color.clear, 2, 2, 2);
 
             Atlas3D atlas = RunAtlas(new[] { volume });
 
@@ -49,7 +49,7 @@ namespace VRCLightVolumes.Tests {
                 new Color(1, 0, 0, 0), new Color(0, 1, 0, 0), new Color(0, 0, 1, 0), new Color(1, 1, 0, 0),
                 new Color(1, 0, 1, 0), new Color(0, 1, 1, 0), new Color(1, 1, 1, 0), new Color(0, 0, 0, 0)
             };
-            LightVolume volume = CreateBakedLightVolume("Downscale Volume", CreateTexture3D("Downscale Tex0", 2, 2, 2, TextureFormat.RGBAHalf, tex0Pixels), CreateSolidTexture3D("Downscale Tex1", 2, 2, 2, TextureFormat.RGBAHalf, Color.clear), CreateSolidTexture3D("Downscale Tex2", 2, 2, 2, TextureFormat.RGBAHalf, Color.clear));
+            LightVolumeInstance volume = CreateBakedLightVolume("Downscale Volume", CreateTexture3D("Downscale Tex0", 2, 2, 2, TextureFormat.RGBAHalf, tex0Pixels), CreateSolidTexture3D("Downscale Tex1", 2, 2, 2, TextureFormat.RGBAHalf, Color.clear), CreateSolidTexture3D("Downscale Tex2", 2, 2, 2, TextureFormat.RGBAHalf, Color.clear));
 
             Atlas3D atlas = RunAtlas(new[] { volume }, 1);
 
@@ -59,7 +59,7 @@ namespace VRCLightVolumes.Tests {
         // Verifies oversized baked source textures can still pass when downscale makes the packed island valid.
         [Test]
         public void CreateAtlasDownscalesLargeBakedTextureBeforeSizeValidation() {
-            LightVolume volume = CreateBakedLightVolume("Downscaled Large Baked Texture", new Color(0.25f, 0.25f, 0.25f, 0), Color.clear, Color.clear, MaxAtlasSize - 1, 1, 1);
+            LightVolumeInstance volume = CreateBakedLightVolume("Downscaled Large Baked Texture", new Color(0.25f, 0.25f, 0.25f, 0), Color.clear, Color.clear, MaxAtlasSize - 1, 1, 1);
 
             Atlas3D atlas = RunAtlas(new[] { volume }, 1);
 
@@ -71,8 +71,8 @@ namespace VRCLightVolumes.Tests {
         // Verifies identical baked texture data shares atlas bounds across different volumes.
         [Test]
         public void CreateAtlasDeduplicatesIdenticalBakedTextures() {
-            LightVolume first = CreateBakedLightVolume("Dedup Volume A", new Color(0.2f, 0.3f, 0.4f, 0), new Color(0.05f, 0.01f, 0.02f, 0), new Color(0.03f, 0.04f, 0.01f, 0), 2, 2, 2);
-            LightVolume second = CreateBakedLightVolume("Dedup Volume B", new Color(0.2f, 0.3f, 0.4f, 0), new Color(0.05f, 0.01f, 0.02f, 0), new Color(0.03f, 0.04f, 0.01f, 0), 2, 2, 2);
+            LightVolumeInstance first = CreateBakedLightVolume("Dedup Volume A", new Color(0.2f, 0.3f, 0.4f, 0), new Color(0.05f, 0.01f, 0.02f, 0), new Color(0.03f, 0.04f, 0.01f, 0), 2, 2, 2);
+            LightVolumeInstance second = CreateBakedLightVolume("Dedup Volume B", new Color(0.2f, 0.3f, 0.4f, 0), new Color(0.05f, 0.01f, 0.02f, 0), new Color(0.03f, 0.04f, 0.01f, 0), 2, 2, 2);
 
             Atlas3D atlas = RunAtlas(new[] { first, second });
 
@@ -85,8 +85,8 @@ namespace VRCLightVolumes.Tests {
         // Verifies different texture data remains unique instead of being merged by dimensions alone.
         [Test]
         public void CreateAtlasKeepsDifferentBakedTexturesUnique() {
-            LightVolume first = CreateBakedLightVolume("Unique Volume A", new Color(0.2f, 0.3f, 0.4f, 0), Color.clear, Color.clear, 2, 2, 2);
-            LightVolume second = CreateBakedLightVolume("Unique Volume B", new Color(0.6f, 0.3f, 0.4f, 0), Color.clear, Color.clear, 2, 2, 2);
+            LightVolumeInstance first = CreateBakedLightVolume("Unique Volume A", new Color(0.2f, 0.3f, 0.4f, 0), Color.clear, Color.clear, 2, 2, 2);
+            LightVolumeInstance second = CreateBakedLightVolume("Unique Volume B", new Color(0.6f, 0.3f, 0.4f, 0), Color.clear, Color.clear, 2, 2, 2);
 
             Atlas3D atlas = RunAtlas(new[] { first, second });
 
@@ -98,8 +98,8 @@ namespace VRCLightVolumes.Tests {
         // Verifies reserved UV space is intentionally force-unique even when two reserved volumes have identical data.
         [Test]
         public void CreateAtlasDoesNotDeduplicateReservedUvSpace() {
-            LightVolume first = CreateReservedLightVolume("Reserved Volume A", new Vector3Int(2, 2, 2));
-            LightVolume second = CreateReservedLightVolume("Reserved Volume B", new Vector3Int(2, 2, 2));
+            LightVolumeInstance first = CreateReservedLightVolume("Reserved Volume A", new Vector3Int(2, 2, 2));
+            LightVolumeInstance second = CreateReservedLightVolume("Reserved Volume B", new Vector3Int(2, 2, 2));
 
             Atlas3D atlas = RunAtlas(new[] { first, second });
 
@@ -113,7 +113,7 @@ namespace VRCLightVolumes.Tests {
         // Verifies invalid reserved dimensions are clamped to one voxel instead of producing zero-sized islands.
         [Test]
         public void CreateAtlasClampsInvalidReservedResolution() {
-            LightVolume volume = CreateReservedLightVolume("Invalid Reserved Resolution", new Vector3Int(-4, 0, 2));
+            LightVolumeInstance volume = CreateReservedLightVolume("Invalid Reserved Resolution", new Vector3Int(-4, 0, 2));
 
             Atlas3D atlas = RunAtlas(new[] { volume }, 1);
 
@@ -126,19 +126,19 @@ namespace VRCLightVolumes.Tests {
         // Verifies null or empty inputs fail without invoking the completion callback.
         [Test]
         public void CreateAtlasRejectsNullAndEmptyVolumeLists() {
-            LogAssert.Expect(LogType.Error, "[LightVolumeSetup] No light volumes were provided for atlas generation!");
+            LogAssert.Expect(LogType.Error, "[LightVolume] No light volumes were provided for atlas generation!");
             Assert.That(RunAtlasExpectingNoResult(null), Is.False);
 
-            LogAssert.Expect(LogType.Error, "[LightVolumeSetup] No light volumes were provided for atlas generation!");
-            Assert.That(RunAtlasExpectingNoResult(new LightVolume[0]), Is.False);
+            LogAssert.Expect(LogType.Error, "[LightVolume] No light volumes were provided for atlas generation!");
+            Assert.That(RunAtlasExpectingNoResult(new LightVolumeInstance[0]), Is.False);
         }
 
         // Verifies missing baked textures fail cleanly before worker tasks are started.
         [Test]
         public void CreateAtlasRejectsMissingBakedTextures() {
-            LightVolume volume = CreateSceneLightVolume("Missing Baked Textures");
+            LightVolumeInstance volume = CreateSceneLightVolume("Missing Baked Textures");
             volume.Bake = true;
-            LogAssert.Expect(LogType.Error, $"[LightVolumeSetup] Light volume \"{volume.gameObject.name}\" is not baked!");
+            LogAssert.Expect(LogType.Error, $"[LightVolume] Light volume \"{volume.gameObject.name}\" is not baked!");
 
             Assert.That(RunAtlasExpectingNoResult(new[] { volume }), Is.False);
         }
@@ -146,8 +146,8 @@ namespace VRCLightVolumes.Tests {
         // Verifies mismatched Texture3D dimensions fail cleanly with a deterministic error.
         [Test]
         public void CreateAtlasRejectsMismatchedTextureDimensions() {
-            LightVolume volume = CreateBakedLightVolume("Mismatched Dimensions", CreateSolidTexture3D("Mismatch Tex0", 2, 2, 2, TextureFormat.RGBAHalf, Color.white), CreateSolidTexture3D("Mismatch Tex1", 1, 2, 2, TextureFormat.RGBAHalf, Color.clear), CreateSolidTexture3D("Mismatch Tex2", 2, 2, 2, TextureFormat.RGBAHalf, Color.clear));
-            LogAssert.Expect(LogType.Error, $"[LightVolumeSetup] Light volume \"{volume.gameObject.name}\" has mismatched Texture3D dimensions.");
+            LightVolumeInstance volume = CreateBakedLightVolume("Mismatched Dimensions", CreateSolidTexture3D("Mismatch Tex0", 2, 2, 2, TextureFormat.RGBAHalf, Color.white), CreateSolidTexture3D("Mismatch Tex1", 1, 2, 2, TextureFormat.RGBAHalf, Color.clear), CreateSolidTexture3D("Mismatch Tex2", 2, 2, 2, TextureFormat.RGBAHalf, Color.clear));
+            LogAssert.Expect(LogType.Error, $"[LightVolume] Light volume \"{volume.gameObject.name}\" has mismatched Texture3D dimensions.");
 
             Assert.That(RunAtlasExpectingNoResult(new[] { volume }), Is.False);
         }
@@ -155,8 +155,8 @@ namespace VRCLightVolumes.Tests {
         // Verifies unsupported source formats fail before GetPixels can produce ambiguous packed SH data.
         [Test]
         public void CreateAtlasRejectsUnsupportedTextureFormats() {
-            LightVolume volume = CreateBakedLightVolume("Unsupported Format", CreateEmptyTexture3D("Unsupported RGB24 Tex0", 2, 2, 2, TextureFormat.RGB24), CreateSolidTexture3D("Unsupported Tex1", 2, 2, 2, TextureFormat.RGBAHalf, Color.clear), CreateSolidTexture3D("Unsupported Tex2", 2, 2, 2, TextureFormat.RGBAHalf, Color.clear));
-            LogAssert.Expect(LogType.Error, $"[LightVolumeSetup] Light volume \"{volume.gameObject.name}\" has unsupported texture format. Light Volume textures must use RGBAHalf, RGBAFloat, RGBA32 or ARGB32.");
+            LightVolumeInstance volume = CreateBakedLightVolume("Unsupported Format", CreateEmptyTexture3D("Unsupported RGB24 Tex0", 2, 2, 2, TextureFormat.RGB24), CreateSolidTexture3D("Unsupported Tex1", 2, 2, 2, TextureFormat.RGBAHalf, Color.clear), CreateSolidTexture3D("Unsupported Tex2", 2, 2, 2, TextureFormat.RGBAHalf, Color.clear));
+            LogAssert.Expect(LogType.Error, $"[LightVolume] Light volume \"{volume.gameObject.name}\" has unsupported texture format. Light Volume textures must use RGBAHalf, RGBAFloat, RGBA32 or ARGB32.");
 
             Assert.That(RunAtlasExpectingNoResult(new[] { volume }), Is.False);
         }
@@ -164,8 +164,8 @@ namespace VRCLightVolumes.Tests {
         // Verifies oversized baked textures fail before pixel processing or atlas allocation.
         [Test]
         public void CreateAtlasRejectsTooLargeBakedTextureDimensions() {
-            LightVolume volume = CreateBakedLightVolume("Too Large Baked Texture", CreateSolidTexture3D("Too Large Tex0", MaxAtlasSize - 1, 1, 1, TextureFormat.RGBAHalf, Color.clear), CreateSolidTexture3D("Too Large Tex1", MaxAtlasSize - 1, 1, 1, TextureFormat.RGBAHalf, Color.clear), CreateSolidTexture3D("Too Large Tex2", MaxAtlasSize - 1, 1, 1, TextureFormat.RGBAHalf, Color.clear));
-            LogAssert.Expect(LogType.Error, $"[LightVolumeSetup] Light volume \"{volume.gameObject.name}\" texture dimensions are too large for the atlas.");
+            LightVolumeInstance volume = CreateBakedLightVolume("Too Large Baked Texture", CreateSolidTexture3D("Too Large Tex0", MaxAtlasSize - 1, 1, 1, TextureFormat.RGBAHalf, Color.clear), CreateSolidTexture3D("Too Large Tex1", MaxAtlasSize - 1, 1, 1, TextureFormat.RGBAHalf, Color.clear), CreateSolidTexture3D("Too Large Tex2", MaxAtlasSize - 1, 1, 1, TextureFormat.RGBAHalf, Color.clear));
+            LogAssert.Expect(LogType.Error, $"[LightVolume] Light volume \"{volume.gameObject.name}\" texture dimensions are too large for the atlas.");
 
             Assert.That(RunAtlasExpectingNoResult(new[] { volume }), Is.False);
         }
@@ -173,8 +173,8 @@ namespace VRCLightVolumes.Tests {
         // Verifies oversized reserved UV space fails before creating a managed voxel buffer.
         [Test]
         public void CreateAtlasRejectsTooLargeReservedVolumeDimensions() {
-            LightVolume volume = CreateReservedLightVolume("Too Large Reserved Volume", new Vector3Int(MaxAtlasSize - 1, 1, 1));
-            LogAssert.Expect(LogType.Error, $"[LightVolumeSetup] Reserved UV space for light volume \"{volume.gameObject.name}\" is too large!");
+            LightVolumeInstance volume = CreateReservedLightVolume("Too Large Reserved Volume", new Vector3Int(MaxAtlasSize - 1, 1, 1));
+            LogAssert.Expect(LogType.Error, $"[LightVolume] Reserved UV space for light volume \"{volume.gameObject.name}\" is too large!");
 
             Assert.That(RunAtlasExpectingNoResult(new[] { volume }), Is.False);
         }
@@ -197,7 +197,7 @@ namespace VRCLightVolumes.Tests {
         }
 
         // Runs atlas generation and returns the generated atlas.
-        private Atlas3D RunAtlas(LightVolume[] volumes, int downscaleCount = 0, TexturePackingStrategy packingStrategy = TexturePackingStrategy.MinimumVRAM) {
+        private Atlas3D RunAtlas(LightVolumeInstance[] volumes, int downscaleCount = 0, TexturePackingStrategy packingStrategy = TexturePackingStrategy.MinimumVRAM) {
             bool completed = false;
             Atlas3D result = new Atlas3D();
             IEnumerator routine = Texture3DAtlasGenerator.CreateAtlas(volumes, atlas => {
@@ -211,7 +211,7 @@ namespace VRCLightVolumes.Tests {
         }
 
         // Runs atlas generation and returns whether the completion callback was invoked.
-        private bool RunAtlasExpectingNoResult(LightVolume[] volumes) {
+        private bool RunAtlasExpectingNoResult(LightVolumeInstance[] volumes) {
             bool completed = false;
             IEnumerator routine = Texture3DAtlasGenerator.CreateAtlas(volumes, atlas => {
                 completed = true;
@@ -231,13 +231,13 @@ namespace VRCLightVolumes.Tests {
         }
 
         // Creates a baked volume from three solid textures.
-        private LightVolume CreateBakedLightVolume(string name, Color tex0Color, Color tex1Color, Color tex2Color, int width, int height, int depth) {
+        private LightVolumeInstance CreateBakedLightVolume(string name, Color tex0Color, Color tex1Color, Color tex2Color, int width, int height, int depth) {
             return CreateBakedLightVolume(name, CreateSolidTexture3D(name + " Tex0", width, height, depth, TextureFormat.RGBAHalf, tex0Color), CreateSolidTexture3D(name + " Tex1", width, height, depth, TextureFormat.RGBAHalf, tex1Color), CreateSolidTexture3D(name + " Tex2", width, height, depth, TextureFormat.RGBAHalf, tex2Color));
         }
 
         // Creates a baked volume from explicit textures.
-        private LightVolume CreateBakedLightVolume(string name, Texture3D tex0, Texture3D tex1, Texture3D tex2) {
-            LightVolume volume = CreateSceneLightVolume(name);
+        private LightVolumeInstance CreateBakedLightVolume(string name, Texture3D tex0, Texture3D tex1, Texture3D tex2) {
+            LightVolumeInstance volume = CreateSceneLightVolume(name);
             volume.Bake = true;
             volume.Texture0 = tex0;
             volume.Texture1 = tex1;
@@ -249,8 +249,8 @@ namespace VRCLightVolumes.Tests {
         }
 
         // Creates a reserve-only volume with a requested resolution.
-        private LightVolume CreateReservedLightVolume(string name, Vector3Int resolution) {
-            LightVolume volume = CreateSceneLightVolume(name);
+        private LightVolumeInstance CreateReservedLightVolume(string name, Vector3Int resolution) {
+            LightVolumeInstance volume = CreateSceneLightVolume(name);
             volume.Bake = false;
             volume.ReserveUVSpace = true;
             volume.Resolution = resolution;
@@ -261,10 +261,10 @@ namespace VRCLightVolumes.Tests {
         }
 
         // Creates a scene Light Volume component tracked by teardown.
-        private LightVolume CreateSceneLightVolume(string name) {
+        private LightVolumeInstance CreateSceneLightVolume(string name) {
             GameObject gameObject = new GameObject(name);
             _createdObjects.Add(gameObject);
-            return gameObject.AddComponent<LightVolume>();
+            return gameObject.AddComponent<LightVolumeInstance>();
         }
 
         // Creates a solid Texture3D tracked by teardown.

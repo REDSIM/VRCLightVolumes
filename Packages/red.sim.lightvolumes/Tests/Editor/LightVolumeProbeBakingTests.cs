@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Reflection;
 using NUnit.Framework;
 using UnityEngine;
@@ -9,9 +10,11 @@ namespace VRCLightVolumes.Tests {
         private const float Epsilon = 0.0001f;
         private const float L1Coefficient = 1.65f;
 
-        // Verifies every supported public custom bake overload remains available to external lightmappers.
+        // The editor integration type may move files, but its public manager-oriented contract stays stable.
         [Test]
-        public void CustomProbeApiExposesRawDenoiseValidityAndCombinedOverloads() {
+        public void ManagerEditorApiExposesProbeAndBakeSurface() {
+            Type manager = typeof(LightVolumeManager);
+            Type api = typeof(LightVolumeManagerTools);
             Type vectorArray = typeof(Vector3[]);
             Type[] baseParameters = { typeof(int), vectorArray, vectorArray, vectorArray, vectorArray };
             Type[] denoiseParameters = { typeof(int), vectorArray, vectorArray, vectorArray, vectorArray, typeof(bool) };
@@ -22,6 +25,123 @@ namespace VRCLightVolumes.Tests {
             Assert.That(GetCustomBakeMethod(denoiseParameters), Is.Not.Null);
             Assert.That(GetCustomBakeMethod(validityParameters), Is.Not.Null);
             Assert.That(GetCustomBakeMethod(combinedParameters), Is.Not.Null);
+            Assert.That(api.GetMethod("GetCustomProbesCount", new[] { manager }), Is.Not.Null);
+            Assert.That(api.GetMethod("GetCustomProbes", new[] { manager, typeof(int) }), Is.Not.Null);
+            Assert.That(api.GetMethod("GenerateAtlas", new[] { manager }), Is.Not.Null);
+            Assert.That(api.GetMethod("BakeShadowMaps", new[] { manager }), Is.Not.Null);
+            Assert.That(api.GetMethod("RegisterPostProcessorCRT", new[] { manager, typeof(CustomRenderTexture) }), Is.Not.Null);
+            Assert.That(api.GetMethod("RegisterPostProcessor", new[] { manager, typeof(LightVolumeManager.PostProcessor) }), Is.Not.Null);
+            Assert.That(api.GetMethod("UnregisterPostProcessorCRT", new[] { manager, typeof(CustomRenderTexture) }), Is.Not.Null);
+            Assert.That(api.GetMethod("UnregisterPostProcessor", new[] { manager, typeof(RenderTexture) }), Is.Not.Null);
+            Assert.That(api.GetMethod("UnregisterPostProcessor", new[] { manager, typeof(LightVolumeManager.PostProcessor) }), Is.Not.Null);
+        }
+
+        // Registration keeps the serializable processor projection aligned and unregister removes it atomically.
+        [Test]
+        public void ManagerEditorApiPersistsUpdatesAndRemovesPostProcessor() {
+            GameObject gameObject = new GameObject("Post Processor Manager");
+            RenderTexture target = new RenderTexture(4, 4, 0);
+            RenderTexture replacementTarget = new RenderTexture(4, 4, 0);
+            Material material = null;
+            try {
+                Shader shader = Shader.Find("Hidden/InternalErrorShader");
+                Assert.That(shader, Is.Not.Null);
+                material = new Material(shader);
+                LightVolumeManager manager = gameObject.AddComponent<LightVolumeManager>();
+                Action update = () => { };
+                LightVolumeManager.PostProcessor processor = new LightVolumeManager.PostProcessor {
+                    RT = target,
+                    Mat = material,
+                    TextureName = "_AtlasInput",
+                    Update = update
+                };
+
+                manager.RegisterPostProcessor(processor);
+
+                Assert.That(manager.AtlasPostProcessorTargets, Is.EqualTo(new[] { target }));
+                Assert.That(manager.AtlasPostProcessorMaterials, Is.EqualTo(new[] { material }));
+                Assert.That(manager.AtlasPostProcessorTextureNames, Is.EqualTo(new[] { "_AtlasInput" }));
+
+                processor.RT = replacementTarget;
+                manager.RegisterPostProcessor(processor);
+
+                Assert.That(manager.AtlasPostProcessorTargets, Is.EqualTo(new[] { replacementTarget }));
+                Assert.That(manager.AtlasPostProcessorMaterials, Is.EqualTo(new[] { material }));
+                Assert.That(manager.AtlasPostProcessorTextureNames, Is.EqualTo(new[] { "_AtlasInput" }));
+
+                processor.TextureName = "_UpdatedInput";
+                manager.RegisterPostProcessor(processor);
+
+                Assert.That(manager.AtlasPostProcessorTargets, Has.Length.EqualTo(1));
+                Assert.That(manager.AtlasPostProcessorMaterials, Has.Length.EqualTo(1));
+                Assert.That(manager.AtlasPostProcessorTextureNames, Is.EqualTo(new[] { "_UpdatedInput" }));
+
+                manager.UnregisterPostProcessor(new LightVolumeManager.PostProcessor { Update = update });
+
+                Assert.That(manager.AtlasPostProcessorTargets, Is.Empty);
+                Assert.That(manager.AtlasPostProcessorMaterials, Is.Empty);
+                Assert.That(manager.AtlasPostProcessorTextureNames, Is.Empty);
+            } finally {
+                target.Release();
+                replacementTarget.Release();
+                UnityEngine.Object.DestroyImmediate(target);
+                UnityEngine.Object.DestroyImmediate(replacementTarget);
+                UnityEngine.Object.DestroyImmediate(material);
+                UnityEngine.Object.DestroyImmediate(gameObject);
+            }
+        }
+
+        // A recycled instance ID cannot inherit callbacks registered by a different manager owner.
+        [Test]
+        public void ManagerEditorApiRejectsTransientProcessorsOwnedByAnotherManager() {
+            GameObject staleOwnerObject = new GameObject("Stale Post Processor Owner");
+            GameObject managerObject = new GameObject("Current Post Processor Owner");
+            RenderTexture staleTarget = new RenderTexture(4, 4, 0);
+            RenderTexture currentTarget = new RenderTexture(4, 4, 0);
+            Dictionary<int, LightVolumeManager.PostProcessor[]> processors = null;
+            Dictionary<int, LightVolumeManager> owners = null;
+            int managerId = 0;
+            try {
+                LightVolumeManager staleOwner = staleOwnerObject.AddComponent<LightVolumeManager>();
+                LightVolumeManager manager = managerObject.AddComponent<LightVolumeManager>();
+                managerId = manager.GetInstanceID();
+                processors = (Dictionary<int, LightVolumeManager.PostProcessor[]>)typeof(LightVolumeManagerTools)
+                    .GetField("_atlasPostProcessors", BindingFlags.Static | BindingFlags.NonPublic)
+                    .GetValue(null);
+                owners = (Dictionary<int, LightVolumeManager>)typeof(LightVolumeManagerTools)
+                    .GetField("_atlasPostProcessorOwners", BindingFlags.Static | BindingFlags.NonPublic)
+                    .GetValue(null);
+                Action staleUpdate = () => { };
+                Action currentUpdate = () => { };
+                processors[managerId] = new[] {
+                    new LightVolumeManager.PostProcessor { RT = staleTarget, Update = staleUpdate }
+                };
+                owners[managerId] = staleOwner;
+
+                manager.RegisterPostProcessor(new LightVolumeManager.PostProcessor {
+                    RT = currentTarget,
+                    Update = currentUpdate
+                });
+
+                Assert.That(owners[managerId], Is.SameAs(manager));
+                Assert.That(processors[managerId], Has.Length.EqualTo(1));
+                Assert.That(processors[managerId][0].RT, Is.SameAs(currentTarget));
+
+                manager.UnregisterPostProcessor(new LightVolumeManager.PostProcessor { Update = currentUpdate });
+                Assert.That(processors.ContainsKey(managerId), Is.False);
+                Assert.That(owners.ContainsKey(managerId), Is.False);
+            } finally {
+                if (managerId != 0) {
+                    processors?.Remove(managerId);
+                    owners?.Remove(managerId);
+                }
+                staleTarget.Release();
+                currentTarget.Release();
+                UnityEngine.Object.DestroyImmediate(staleTarget);
+                UnityEngine.Object.DestroyImmediate(currentTarget);
+                UnityEngine.Object.DestroyImmediate(staleOwnerObject);
+                UnityEngine.Object.DestroyImmediate(managerObject);
+            }
         }
 
         // Verifies invalid dimensions, null SH, mismatched SH and mismatched validity fail without partial output.
@@ -228,7 +348,10 @@ namespace VRCLightVolumes.Tests {
 
         // Resolves one exact public SetCustomProbesBaked overload.
         private static MethodInfo GetCustomBakeMethod(Type[] parameters) {
-            return typeof(LightVolumeSetup).GetMethod(nameof(LightVolumeSetup.SetCustomProbesBaked), parameters);
+            Type[] extensionParameters = new Type[parameters.Length + 1];
+            extensionParameters[0] = typeof(LightVolumeManager);
+            Array.Copy(parameters, 0, extensionParameters, 1, parameters.Length);
+            return typeof(LightVolumeManagerTools).GetMethod("SetCustomProbesBaked", extensionParameters);
         }
 
         // Asserts colors with the shared test tolerance.

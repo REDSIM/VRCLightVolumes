@@ -1,9 +1,9 @@
 using UnityEngine;
-using UnityEditor;
 using UnityEngine.Rendering;
 
 #if UNITY_EDITOR
 using System.IO;
+using UnityEditor;
 using UnityEditor.SceneManagement;
 #endif
 
@@ -245,7 +245,7 @@ namespace VRCLightVolumes {
 
 #if UNITY_EDITOR
         // Validates, optionally postprocesses and packs external or Progressive L0/L1 probe arrays into Light Volume texture channels.
-        internal static bool TryPrepareLightVolumeProbeData(Vector3[] l0, Vector3[] l1r, Vector3[] l1g, Vector3[] l1b, float[] validity, int w, int h, int d, int dilationIterations, float dilationBackfaceBias, bool denoise, out Color[][] textureColors, out string error) {
+        public static bool TryPrepareLightVolumeProbeData(Vector3[] l0, Vector3[] l1r, Vector3[] l1g, Vector3[] l1b, float[] validity, int w, int h, int d, int dilationIterations, float dilationBackfaceBias, bool denoise, out Color[][] textureColors, out string error) {
             textureColors = null;
             error = null;
 

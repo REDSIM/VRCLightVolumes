@@ -1,26 +1,55 @@
 using UnityEngine;
 using UnityEditor;
+using UnityEditorInternal;
+using UdonSharpEditor;
 using System.Collections.Generic;
 
 namespace VRCLightVolumes {
+    public static class PointLightVolumeEditorUtility {
+        public const int CustomTexturesChanged = 1;
+        public const int ShadowTexturesChanged = 2;
+
+        // Applies derived data once, copies the proxy once, and optionally rebuilds shared arrays once.
+        public static int Sync(PointLightVolumeInstance pointLightVolume, bool recordUndo = false, bool rebuildTextureArrays = true) {
+            if (pointLightVolume == null) return 0;
+
+            bool customTexturesChanged = pointLightVolume.HasEditorCustomTextureChanges();
+            bool shadowTexturesChanged = pointLightVolume.HasEditorShadowTextureChanges();
+            if (recordUndo) Undo.RecordObject(pointLightVolume, "Sync Point Light Volume");
+
+            pointLightVolume.EditorApplyAuthoringData(customTexturesChanged, shadowTexturesChanged);
+            UdonSharpEditorUtility.CopyProxyToUdon(pointLightVolume);
+
+            int changes = (customTexturesChanged ? CustomTexturesChanged : 0)
+                | (shadowTexturesChanged ? ShadowTexturesChanged : 0);
+            LightVolumeManager manager = pointLightVolume.LightVolumeManager;
+            if (rebuildTextureArrays && manager != null) {
+                if (customTexturesChanged) manager.ReinitializeCustomTextures();
+                if (shadowTexturesChanged) manager.ReinitializeShadowTextures();
+            }
+            return changes;
+        }
+    }
 
     [CanEditMultipleObjects]
-    [CustomEditor(typeof(PointLightVolume))]
+    [CustomEditor(typeof(PointLightVolumeInstance))]
     public class PointLightVolumeEditor : Editor {
+        private PointLightVolumeInstance PointLightVolume;
 
-        PointLightVolume PointLightVolume;
         private static readonly GUIContent _bakeShadowsButtonContent = new GUIContent("Bake Shadows", "Bakes or re-bakes shadow maps for all selected lights with Shadows enabled.");
         private static readonly GUIContent _emptyContent = GUIContent.none;
         private static readonly string _textureMaterialHint = "None (Texture/Material)";
         private static readonly string _cubemapMaterialHint = "None (Texture/Material)";
         private static readonly string _projectionSourceObjectPickerFilter = "t:Texture t:Material";
+        private static readonly string[] _lightTypeNames = { "Point Light", "Spot Light", "Area Light" };
+        private static readonly string[] _projectionNames = { "Parametric", "LUT", "Custom" };
         private const float ObjectSelectorButtonWidth = 19f;
         private static readonly Color _shadowClipVisibleColor = new Color(0.2f, 0.65f, 1f, 0.75f);
         private static readonly Color _shadowClipHiddenColor = new Color(0.2f, 0.65f, 1f, 0.18f);
-        private static GUIStyle _projectionSourceHintStyle = null;
+        private static GUIStyle _projectionSourceHintStyle;
 
         private void OnEnable() {
-            PointLightVolume = (PointLightVolume)target;
+            PointLightVolume = target as PointLightVolumeInstance;
             Undo.undoRedoPerformed += OnUndoRedoPerformed;
         }
 
@@ -29,86 +58,56 @@ namespace VRCLightVolumes {
         }
 
         public override void OnInspectorGUI() {
-
             serializedObject.Update();
             int undoGroup = Undo.GetCurrentGroup();
+            SerializedProperty lightTypeProperty = serializedObject.FindProperty("LightType");
+            SerializedProperty projectionProperty = serializedObject.FindProperty("Projection");
+            int lightType = Mathf.Clamp(lightTypeProperty.intValue, 0, 2);
+            int projection = Mathf.Clamp(projectionProperty.intValue, 0, 2);
 
-            List<string> hiddenFields = new List<string> { "m_Script", "PointLightVolumeInstance", "LightVolumeSetup" };
-            hiddenFields.Add("ShadowMap");
-            hiddenFields.Add("RebakeShadows");
-            hiddenFields.Add("Bias");
-            hiddenFields.Add("LayerMask");
-            hiddenFields.Add("ObjectMask");
-            hiddenFields.Add("NearPlane");
-            hiddenFields.Add("FarPlane");
-            hiddenFields.Add("BakeInGame");
-            hiddenFields.Add("DebugClipPlanes");
-            hiddenFields.Add("Blur");
-            hiddenFields.Add("ContactHardening");
-            hiddenFields.Add("UseWorldSpace");
-            hiddenFields.Add("ForceCubemapShadows");
-            hiddenFields.Add("FalloffLUT");
-            hiddenFields.Add("Cubemap");
-            hiddenFields.Add("Cookie");
-            hiddenFields.Add("Shadows");
-            hiddenFields.Add("ShadingStrength");
-            hiddenFields.Add("BakeIntoProbes");
-            hiddenFields.Add("DebugRange");
+            DrawProperty("IsDynamic", "Dynamic");
+            DrawPopup(lightTypeProperty, new GUIContent("Type", "Point Light is the most performant type. For static lighting, prefer baked additive Light Volumes."), _lightTypeNames);
+            lightType = Mathf.Clamp(lightTypeProperty.intValue, 0, 2);
 
-            if (PointLightVolume.Type != PointLightVolume.LightType.SpotLight || PointLightVolume.Projection != PointLightVolume.LightProjection.Custom) {
-                hiddenFields.Add("SpotCookieAspect");
+            if (lightType != 2) {
+                if (projection == 1) DrawProperty("Range");
+                else DrawProperty("LightSourceSize", "Light Source Size");
             }
-            
-            if(PointLightVolume.Type == PointLightVolume.LightType.PointLight) {
-                hiddenFields.Add("Angle");
-                hiddenFields.Add("Falloff");
-            }
+            DrawProperty("Color");
+            DrawProperty("Intensity");
+            DrawProperty("ShadingStrength", "Shading Strength");
 
-            if (PointLightVolume.Type == PointLightVolume.LightType.AreaLight) {
-                hiddenFields.Add("Angle");
-                hiddenFields.Add("Falloff");
-                hiddenFields.Add("Projection");
-                hiddenFields.Add("Range");
-                hiddenFields.Add("FalloffLUT");
-                hiddenFields.Add("Cubemap");
-                hiddenFields.Add("LightSourceSize");
+            if (lightType != 2) {
+                DrawPopup(projectionProperty, new GUIContent("Projection", "Parametric computes falloff; LUT, Cookie and Cubemap use a texture or material source."), _projectionNames);
+                projection = Mathf.Clamp(projectionProperty.intValue, 0, 2);
             }
+            if (lightType == 1) DrawAngleDegrees();
+            if (lightType == 1 && projection == 0) DrawProperty("Falloff");
+            if (lightType == 1 && projection == 2) DrawProperty("SpotCookieAspect", "Spot Cookie Aspect");
 
-            if (PointLightVolume.Projection == PointLightVolume.LightProjection.Parametric) {
-                hiddenFields.Add("Range");
-            } else if (PointLightVolume.Projection == PointLightVolume.LightProjection.Custom) {
-                hiddenFields.Add("Falloff");
-                hiddenFields.Add("Range");
-            } else if (PointLightVolume.Projection == PointLightVolume.LightProjection.LUT) {
-                hiddenFields.Add("Falloff");
-                hiddenFields.Add("LightSourceSize");
-            }
+            DrawProperty("BakeIntoProbes", "Bake Into Probes");
+            DrawProperty("DebugRange", "Debug Range");
+            DrawActiveProjectionSourceField(lightType, projection);
 
-            DrawPropertiesExcluding(serializedObject, hiddenFields.ToArray());
-            EditorGUILayout.PropertyField(serializedObject.FindProperty("ShadingStrength"));
-            EditorGUILayout.PropertyField(serializedObject.FindProperty("BakeIntoProbes"));
-            EditorGUILayout.PropertyField(serializedObject.FindProperty("DebugRange"));
-            DrawActiveProjectionSourceField();
             SerializedProperty shadowsProperty = serializedObject.FindProperty("Shadows");
             EditorGUILayout.PropertyField(shadowsProperty);
             bool drawShadowFields = shadowsProperty.hasMultipleDifferentValues || shadowsProperty.boolValue;
-
             bool propertiesChanged = serializedObject.ApplyModifiedProperties();
 
             if (drawShadowFields) {
                 DrawTextureMaterialField("ShadowMap", _cubemapMaterialHint, true);
-                EditorGUILayout.PropertyField(serializedObject.FindProperty("BakeInGame"));
-                EditorGUILayout.PropertyField(serializedObject.FindProperty("LayerMask"));
-                EditorGUILayout.PropertyField(serializedObject.FindProperty("ObjectMask"));
-                EditorGUILayout.PropertyField(serializedObject.FindProperty("NearPlane"));
-                EditorGUILayout.PropertyField(serializedObject.FindProperty("FarPlane"));
-                EditorGUILayout.PropertyField(serializedObject.FindProperty("DebugClipPlanes"));
-                EditorGUILayout.PropertyField(serializedObject.FindProperty("Bias"));
-                EditorGUILayout.PropertyField(serializedObject.FindProperty("Blur"));
-                EditorGUILayout.PropertyField(serializedObject.FindProperty("ContactHardening"));
-                EditorGUILayout.PropertyField(serializedObject.FindProperty("UseWorldSpace"));
-                if (PointLightVolume.Type == PointLightVolume.LightType.SpotLight) EditorGUILayout.PropertyField(serializedObject.FindProperty("ForceCubemapShadows"));
-                EditorGUILayout.PropertyField(serializedObject.FindProperty("RebakeShadows"));
+                DrawProperty("BakeInGame", "Bake In Game");
+                DrawLayerMask();
+                DrawProperty("ObjectMask", "Object Mask");
+                DrawProperty("NearClip", "Near Plane");
+                DrawProperty("FarClip", "Far Plane");
+                DrawProperty("DebugClipPlanes", "Debug Clip Planes");
+                DrawProperty("Bias");
+                DrawProperty("Blur");
+                DrawProperty("ContactHardening", "Contact Hardening");
+                DrawProperty("WorldSpaceShadows", "Use World Space");
+                if (lightType == 1) DrawProperty("ForceCubemapShadows", "Force Cubemap Shadows");
+                DrawProperty("RebakeShadows", "Rebake Shadows");
 
                 if (GUILayout.Button(_bakeShadowsButtonContent)) {
                     propertiesChanged |= serializedObject.ApplyModifiedProperties();
@@ -118,92 +117,117 @@ namespace VRCLightVolumes {
             }
 
             propertiesChanged |= serializedObject.ApplyModifiedProperties();
-            if (propertiesChanged) {
-                SyncTargets(true);
-                Undo.CollapseUndoOperations(undoGroup);
-            }
+            if (!propertiesChanged) return;
 
+            SyncTargets(true);
+            Undo.CollapseUndoOperations(undoGroup);
         }
 
-        // Bakes shadows for selected point light volumes and rebuilds each touched shadow array once.
+        private void DrawProperty(string propertyName, string label = null) {
+            SerializedProperty property = serializedObject.FindProperty(propertyName);
+            GUIContent content = label == null ? EditorGUIUtility.TrTextContent(property.displayName, property.tooltip) : new GUIContent(label, property.tooltip);
+            EditorGUILayout.PropertyField(property, content, true);
+        }
+
+        private static void DrawPopup(SerializedProperty property, GUIContent label, string[] names) {
+            EditorGUI.showMixedValue = property.hasMultipleDifferentValues;
+            EditorGUI.BeginChangeCheck();
+            int value = EditorGUILayout.Popup(label, Mathf.Clamp(property.intValue, 0, names.Length - 1), names);
+            if (EditorGUI.EndChangeCheck()) property.intValue = value;
+            EditorGUI.showMixedValue = false;
+        }
+
+        private void DrawAngleDegrees() {
+            SerializedProperty angleProperty = serializedObject.FindProperty("Angle");
+            float angleDegrees = angleProperty.floatValue * Mathf.Rad2Deg * 2f;
+            EditorGUI.showMixedValue = angleProperty.hasMultipleDifferentValues;
+            EditorGUI.BeginChangeCheck();
+            angleDegrees = EditorGUILayout.Slider(new GUIContent("Angle", "Angle of a spotlight cone in degrees."), angleDegrees, 0.1f, 360f);
+            if (EditorGUI.EndChangeCheck()) angleProperty.floatValue = angleDegrees * Mathf.Deg2Rad * 0.5f;
+            EditorGUI.showMixedValue = false;
+        }
+
+        private void DrawLayerMask() {
+            SerializedProperty layerMaskProperty = serializedObject.FindProperty("LayerMask");
+            EditorGUI.showMixedValue = layerMaskProperty.hasMultipleDifferentValues;
+            EditorGUI.BeginChangeCheck();
+            int value = EditorGUILayout.MaskField(new GUIContent("Layer Mask", "Layers that can cast shadows."), layerMaskProperty.intValue, InternalEditorUtility.layers);
+            if (EditorGUI.EndChangeCheck()) layerMaskProperty.intValue = value;
+            EditorGUI.showMixedValue = false;
+        }
+
+        // Bakes selected lights and rebuilds each affected manager shadow array once.
         private bool BakeSelectedShadowMaps() {
             bool bakedAny = false;
-            HashSet<LightVolumeSetup> reinitializeSetups = null;
+            HashSet<LightVolumeManager> managers = null;
             for (int i = 0; i < targets.Length; i++) {
-                PointLightVolume pointLightVolume = targets[i] as PointLightVolume;
+                PointLightVolumeInstance pointLightVolume = targets[i] as PointLightVolumeInstance;
                 if (pointLightVolume == null || !pointLightVolume.Shadows) continue;
-                if (!pointLightVolume.BakeShadowMap($"| {pointLightVolume.gameObject.name} ({i + 1}/{targets.Length})", false)) continue;
+
+                PointLightVolumeEditorUtility.Sync(pointLightVolume, false, false);
+                if (!PointLightShadowBaker.BakeShadowMap(pointLightVolume, $"| {pointLightVolume.gameObject.name} ({i + 1}/{targets.Length})", false)) continue;
+
                 bakedAny = true;
-                if (pointLightVolume.LightVolumeSetup == null) continue;
-                if (reinitializeSetups == null) reinitializeSetups = new HashSet<LightVolumeSetup>();
-                reinitializeSetups.Add(pointLightVolume.LightVolumeSetup);
+                PointLightVolumeEditorUtility.Sync(pointLightVolume, false, false);
+                if (pointLightVolume.LightVolumeManager == null) continue;
+                if (managers == null) managers = new HashSet<LightVolumeManager>();
+                managers.Add(pointLightVolume.LightVolumeManager);
             }
-            if (reinitializeSetups != null) {
-                foreach (LightVolumeSetup lightVolumeSetup in reinitializeSetups) {
-                    if (lightVolumeSetup != null) lightVolumeSetup.ReinitializeShadowTextures();
+            if (managers != null) {
+                foreach (LightVolumeManager manager in managers) {
+                    if (manager != null) manager.ReinitializeShadowTextures();
                 }
             }
             return bakedAny;
         }
 
-        // Syncs changed inspector values into runtime instances and shader globals immediately.
+        // Applies all selected proxies first, then rebuilds each shared array at most once.
         private void SyncTargets(bool recordUndo) {
-            HashSet<LightVolumeSetup> textureUndoRecordedSetups = null;
+            Dictionary<LightVolumeManager, int> managerChanges = null;
             for (int i = 0; i < targets.Length; i++) {
-                PointLightVolume pointLightVolume = targets[i] as PointLightVolume;
+                PointLightVolumeInstance pointLightVolume = targets[i] as PointLightVolumeInstance;
                 if (pointLightVolume == null) continue;
-                bool customTexturesChanged = pointLightVolume.HasEditorCustomTextureChanges();
-                bool shadowTexturesChanged = pointLightVolume.HasEditorShadowTextureChanges();
-                if (recordUndo && (customTexturesChanged || shadowTexturesChanged) && pointLightVolume.LightVolumeSetup != null) {
-                    if (textureUndoRecordedSetups == null) textureUndoRecordedSetups = new HashSet<LightVolumeSetup>();
-                    if (textureUndoRecordedSetups.Add(pointLightVolume.LightVolumeSetup)) RecordTextureReinitializeUndo(pointLightVolume.LightVolumeSetup);
-                }
-                pointLightVolume.SyncEditorChanges(customTexturesChanged, shadowTexturesChanged, recordUndo);
-                if (pointLightVolume.LightVolumeSetup != null) {
-                    if (customTexturesChanged) pointLightVolume.LightVolumeSetup.ReinitializeCustomTextures();
-                    if (shadowTexturesChanged) pointLightVolume.LightVolumeSetup.ReinitializeShadowTextures();
-                }
+
+                int changes = PointLightVolumeEditorUtility.Sync(pointLightVolume, recordUndo, false);
+                LightVolumeManager manager = pointLightVolume.LightVolumeManager;
+                if (manager == null || changes == 0) continue;
+                if (managerChanges == null) managerChanges = new Dictionary<LightVolumeManager, int>();
+                int previous;
+                managerChanges.TryGetValue(manager, out previous);
+                managerChanges[manager] = previous | changes;
+            }
+
+            if (managerChanges == null) return;
+            foreach (KeyValuePair<LightVolumeManager, int> entry in managerChanges) {
+                LightVolumeManager manager = entry.Key;
+                if (manager == null) continue;
+                if (recordUndo) Undo.RecordObject(manager, "Sync Point Light Volume Textures");
+                if ((entry.Value & PointLightVolumeEditorUtility.CustomTexturesChanged) != 0) manager.ReinitializeCustomTextures();
+                if ((entry.Value & PointLightVolumeEditorUtility.ShadowTexturesChanged) != 0) manager.ReinitializeShadowTextures();
             }
         }
 
-        // Records objects that can be rewritten when point light texture arrays are reindexed.
-        private void RecordTextureReinitializeUndo(LightVolumeSetup lightVolumeSetup) {
-            if (lightVolumeSetup.LightVolumeManager != null) Undo.RecordObject(lightVolumeSetup.LightVolumeManager, "Sync Point Light Volume Textures");
-            for (int i = 0; i < lightVolumeSetup.PointLightVolumes.Count; i++) {
-                PointLightVolume pointLightVolume = lightVolumeSetup.PointLightVolumes[i];
-                if (pointLightVolume != null && pointLightVolume.PointLightVolumeInstance != null) Undo.RecordObject(pointLightVolume.PointLightVolumeInstance, "Sync Point Light Volume Textures");
-            }
-        }
-
-        // Restores runtime mirror data after Unity applies Undo or Redo to the authoring component.
         private void OnUndoRedoPerformed() {
             SyncTargets(false);
             Repaint();
         }
 
-        // Draws the projection source that matches the selected projection and light type.
-        private void DrawActiveProjectionSourceField() {
-            if (PointLightVolume.Type == PointLightVolume.LightType.AreaLight) {
+        private void DrawActiveProjectionSourceField(int lightType, int projection) {
+            if (lightType == 2) {
                 DrawTextureMaterialField("Cookie", _textureMaterialHint, false);
                 return;
             }
-            if (PointLightVolume.Projection == PointLightVolume.LightProjection.Parametric) return;
-            if (PointLightVolume.Projection == PointLightVolume.LightProjection.LUT) {
-                DrawTextureMaterialField("FalloffLUT", _textureMaterialHint, false);
-            } else if (PointLightVolume.Type == PointLightVolume.LightType.PointLight) {
-                DrawTextureMaterialField("Cubemap", _cubemapMaterialHint, false);
-            } else if (PointLightVolume.Type == PointLightVolume.LightType.SpotLight) {
-                DrawTextureMaterialField("Cookie", _textureMaterialHint, false);
-            }
+            if (projection == 0) return;
+            if (projection == 1) DrawTextureMaterialField("FalloffLUT", _textureMaterialHint, false);
+            else if (lightType == 0) DrawTextureMaterialField("Cubemap", _cubemapMaterialHint, false);
+            else if (lightType == 1) DrawTextureMaterialField("Cookie", _textureMaterialHint, false);
         }
 
-        // Draws a named texture/material source field using the original serialized label and tooltip.
         private void DrawTextureMaterialField(string propertyName, string acceptedTypesHint, bool isShadowSource) {
             SerializedProperty property = serializedObject.FindProperty(propertyName);
             DrawTextureMaterialField(property, EditorGUIUtility.TrTextContent(property.displayName, property.tooltip), acceptedTypesHint, isShadowSource);
         }
 
-        // Draws and validates a compact texture/material source object field.
         private void DrawTextureMaterialField(SerializedProperty property, GUIContent label, string acceptedTypesHint, bool isShadowSource) {
             Rect rect = EditorGUILayout.GetControlRect(true, EditorGUIUtility.singleLineHeight);
             EditorGUI.BeginProperty(rect, label, property);
@@ -219,16 +243,13 @@ namespace VRCLightVolumes {
             EditorGUI.BeginChangeCheck();
             UnityEngine.Object value = EditorGUI.ObjectField(fieldRect, _emptyContent, property.objectReferenceValue, typeof(UnityEngine.Object), false);
             if (hideNativeEmptyText) GUI.contentColor = contentColor;
-            if (EditorGUI.EndChangeCheck()) {
-                property.objectReferenceValue = IsSupportedTextureMaterialSource(value, isShadowSource) ? value : null;
-            }
+            if (EditorGUI.EndChangeCheck()) property.objectReferenceValue = IsSupportedTextureMaterialSource(value, isShadowSource) ? value : null;
             UpdateProjectionSourceFromPicker(property, controlID, isShadowSource);
             if (drawHint) DrawProjectionSourceHint(fieldRect, acceptedTypesHint);
             EditorGUI.showMixedValue = false;
             EditorGUI.EndProperty();
         }
 
-        // Opens a filtered native object picker when the selector button is clicked.
         private void ShowProjectionSourcePickerOnSelectorClick(SerializedProperty property, Rect fieldRect, int controlID) {
             Event currentEvent = Event.current;
             if (currentEvent.type != EventType.MouseDown || currentEvent.button != 0) return;
@@ -239,7 +260,6 @@ namespace VRCLightVolumes {
             currentEvent.Use();
         }
 
-        // Applies a valid value selected through the filtered projection source picker.
         private void UpdateProjectionSourceFromPicker(SerializedProperty property, int controlID, bool isShadowSource) {
             Event currentEvent = Event.current;
             if (currentEvent.type != EventType.ExecuteCommand) return;
@@ -253,7 +273,6 @@ namespace VRCLightVolumes {
             currentEvent.Use();
         }
 
-        // Draws an accepted-types hint over the native empty ObjectField text without covering the native frame or focus state.
         private void DrawProjectionSourceHint(Rect fieldRect, string acceptedTypesHint) {
             if (Event.current.type != EventType.Repaint) return;
             if (_projectionSourceHintStyle == null) {
@@ -270,37 +289,40 @@ namespace VRCLightVolumes {
             GUI.Label(hintRect, acceptedTypesHint, _projectionSourceHintStyle);
         }
 
-        // Checks if an object can be used by the selected texture/material source field.
         private bool IsSupportedTextureMaterialSource(UnityEngine.Object value, bool isShadowSource) {
             if (value == null) return true;
             if (isShadowSource) return value is Texture2DArray || value is Cubemap || value is RenderTexture || value is Material;
             if (value is RenderTexture || value is Material) return true;
-            if (PointLightVolume.Type == PointLightVolume.LightType.AreaLight) return value is Texture;
-            if (PointLightVolume.Projection == PointLightVolume.LightProjection.LUT) return value is Texture;
-            if (PointLightVolume.Projection == PointLightVolume.LightProjection.Custom && PointLightVolume.Type == PointLightVolume.LightType.PointLight) return value is Texture;
-            if (PointLightVolume.Projection == PointLightVolume.LightProjection.Custom && PointLightVolume.Type == PointLightVolume.LightType.SpotLight) return value is Texture;
-            return false;
+            if (!(value is Texture)) return false;
+
+            int lightType = Mathf.Clamp(serializedObject.FindProperty("LightType").intValue, 0, 2);
+            int projection = Mathf.Clamp(serializedObject.FindProperty("Projection").intValue, 0, 2);
+            return lightType == 2 || projection == 1 || projection == 2 && (lightType == 0 || lightType == 1);
         }
 
-        private void DrawVolumeGUI(PointLightVolume pointLightVolume) {
+        private static float GetBrightnessCutoff(PointLightVolumeInstance pointLightVolume) {
+            return pointLightVolume.LightVolumeManager != null ? pointLightVolume.LightVolumeManager.LightsBrightnessCutoff : 0.35f;
+        }
+
+        private void DrawVolumeGUI(PointLightVolumeInstance pointLightVolume) {
 
             Transform t = pointLightVolume.transform;
             Vector3 origin = t.position;
             Vector3 lscale = pointLightVolume.transform.lossyScale;
             float scale = (lscale.x + lscale.y + lscale.z) / 3;
-            float range = pointLightVolume.Type != PointLightVolume.LightType.AreaLight && (pointLightVolume.Projection != PointLightVolume.LightProjection.LUT || pointLightVolume.FalloffLUT == null) ? pointLightVolume.LightSourceSize : pointLightVolume.Range;
+            float range = pointLightVolume.LightType != 2 && (pointLightVolume.Projection != 1 || pointLightVolume.FalloffLUT == null) ? pointLightVolume.LightSourceSize : pointLightVolume.Range;
             range *= scale;
 
-            if (pointLightVolume.Type == PointLightVolume.LightType.PointLight) { // Point Light Visualization
+            if (pointLightVolume.LightType == 0) { // Point Light Visualization
 
                 // Calculating
 
                 float bounds = 0;
 
-                bool isDebug = pointLightVolume.DebugRange && (pointLightVolume.Projection != PointLightVolume.LightProjection.LUT || pointLightVolume.FalloffLUT == null);
+                bool isDebug = pointLightVolume.DebugRange && (pointLightVolume.Projection != 1 || pointLightVolume.FalloffLUT == null);
 
                 if (isDebug) {
-                    bounds = Mathf.Sqrt(ComputePointLightSquaredBoundingSphere(pointLightVolume.Color, pointLightVolume.Intensity, range, pointLightVolume.LightVolumeSetup.BrightnessCutoff));
+                    bounds = Mathf.Sqrt(ComputePointLightSquaredBoundingSphere(pointLightVolume.Color, pointLightVolume.Intensity, range, GetBrightnessCutoff(pointLightVolume)));
                 }
 
                 // Drawing
@@ -321,7 +343,7 @@ namespace VRCLightVolumes {
                 }
                 DrawShadowClipGUI(pointLightVolume, origin, t);
 
-            } else if (pointLightVolume.Type == PointLightVolume.LightType.SpotLight) { // Spot Light Visualization
+            } else if (pointLightVolume.LightType == 1) { // Spot Light Visualization
 
                 // Calculating
 
@@ -329,16 +351,15 @@ namespace VRCLightVolumes {
                 Vector3 right = t.right;
                 Vector3 up = t.up;
 
-                float spotAngle = Mathf.Clamp(pointLightVolume.Angle, 0f, 360f);
-                float halfAngleRad = spotAngle * 0.5f * Mathf.Deg2Rad;
+                float halfAngleRad = Mathf.Clamp(pointLightVolume.Angle, 0.05f * Mathf.Deg2Rad, Mathf.PI);
                 
                 Vector3[] dirs = new Vector3[] { right, -right, up, -up };
                 float bounds = 0;
 
-                bool isDebug = pointLightVolume.DebugRange && (pointLightVolume.Projection != PointLightVolume.LightProjection.LUT || pointLightVolume.FalloffLUT == null);
+                bool isDebug = pointLightVolume.DebugRange && (pointLightVolume.Projection != 1 || pointLightVolume.FalloffLUT == null);
 
                 if (isDebug) {
-                    bounds = Mathf.Sqrt(ComputePointLightSquaredBoundingSphere(pointLightVolume.Color, pointLightVolume.Intensity, range, pointLightVolume.LightVolumeSetup.BrightnessCutoff));
+                    bounds = Mathf.Sqrt(ComputePointLightSquaredBoundingSphere(pointLightVolume.Color, pointLightVolume.Intensity, range, GetBrightnessCutoff(pointLightVolume)));
                 }
 
                 // Drawing
@@ -370,7 +391,7 @@ namespace VRCLightVolumes {
                 DrawAreaLight(origin, t.rotation, x, y);
 
                 if(pointLightVolume.DebugRange)
-                    DrawAreaLightDebug(origin, t.rotation, x, y, pointLightVolume.Color, pointLightVolume.Intensity, pointLightVolume.LightVolumeSetup.BrightnessCutoff);
+                    DrawAreaLightDebug(origin, t.rotation, x, y, pointLightVolume.Color, pointLightVolume.Intensity, GetBrightnessCutoff(pointLightVolume));
                 DrawShadowClipGUI(pointLightVolume, origin, t);
 
                 Handles.zTest = UnityEngine.Rendering.CompareFunction.Greater;
@@ -378,7 +399,7 @@ namespace VRCLightVolumes {
                 DrawAreaLight(origin, t.rotation, x, y);
 
                 if (pointLightVolume.DebugRange)
-                    DrawAreaLightDebug(origin, t.rotation, x, y, pointLightVolume.Color, pointLightVolume.Intensity, pointLightVolume.LightVolumeSetup.BrightnessCutoff);
+                    DrawAreaLightDebug(origin, t.rotation, x, y, pointLightVolume.Color, pointLightVolume.Intensity, GetBrightnessCutoff(pointLightVolume));
                 DrawShadowClipGUI(pointLightVolume, origin, t);
 
             }
@@ -387,7 +408,7 @@ namespace VRCLightVolumes {
 
         void OnSceneGUI() {
             foreach (var obj in Selection.gameObjects) {
-                var volume = obj.GetComponent<PointLightVolume>();
+                var volume = obj.GetComponent<PointLightVolumeInstance>();
                 if (volume != null) {
                     DrawVolumeGUI(volume);
                 }
@@ -419,20 +440,20 @@ namespace VRCLightVolumes {
         }
 
         // Draws the manually controlled shadow bake near-far space.
-        private void DrawShadowClipGUI(PointLightVolume pointLightVolume, Vector3 origin, Transform transform) {
+        private void DrawShadowClipGUI(PointLightVolumeInstance pointLightVolume, Vector3 origin, Transform transform) {
             if (!pointLightVolume.Shadows || !pointLightVolume.DebugClipPlanes) return;
 
             Handles.color = Handles.zTest == UnityEngine.Rendering.CompareFunction.LessEqual ? _shadowClipVisibleColor : _shadowClipHiddenColor;
             float nearClip = pointLightVolume.GetShadowNearClip();
             float farClip = pointLightVolume.GetShadowFarClip();
-            bool drawSpotFrustum = pointLightVolume.Type == PointLightVolume.LightType.SpotLight && !pointLightVolume.ShouldBakeCubemapShadows();
+            bool drawSpotFrustum = pointLightVolume.LightType == 1 && !pointLightVolume.ShouldBakeCubemapShadows();
             if (!drawSpotFrustum) {
                 DrawPointLight(origin, nearClip);
                 DrawPointLight(origin, farClip);
                 return;
             }
 
-            float halfAngleRad = Mathf.Clamp(pointLightVolume.Angle, 0.1f, 179.9f) * 0.5f * Mathf.Deg2Rad;
+            float halfAngleRad = Mathf.Clamp(pointLightVolume.Angle, 0.05f * Mathf.Deg2Rad, 89.95f * Mathf.Deg2Rad);
             DrawSpotShadowClip(origin, transform.forward, transform.right, transform.up, halfAngleRad, nearClip, farClip);
         }
 

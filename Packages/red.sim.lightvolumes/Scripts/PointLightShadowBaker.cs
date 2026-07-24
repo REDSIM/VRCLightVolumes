@@ -21,24 +21,24 @@ namespace VRCLightVolumes {
         private static readonly bool[] _arrayToCubemapHorizontalFlip = { false, false, true, true, false, false };
 
         // Bakes this light through PointLightVolumeInstance, saves the result as an asset and assigns it back to the authoring light.
-        public static bool BakeShadowMap(PointLightVolume pointLightVolume, string infoString, bool regenerateArray) {
+        public static bool BakeShadowMap(PointLightVolumeInstance pointLightVolume, string infoString, bool regenerateArray) {
             if (pointLightVolume == null) return false;
 
-            pointLightVolume.SetupDependencies();
-            pointLightVolume.SyncUdonScript(false);
-
-            PointLightVolumeInstance pointLightInstance = pointLightVolume.PointLightVolumeInstance;
-            LightVolumeSetup lightVolumeSetup = pointLightVolume.LightVolumeSetup;
-            LightVolumeManager manager = lightVolumeSetup != null ? lightVolumeSetup.LightVolumeManager : null;
-            if (pointLightInstance == null || manager == null) {
-                Debug.LogError("[PointLightShadowBaker] Failed to resolve PointLightVolumeInstance or LightVolumeManager for editor shadow bake.", pointLightVolume);
+            PointLightVolumeInstance pointLightInstance = pointLightVolume;
+            LightVolumeManager manager = pointLightVolume.LightVolumeManager;
+            if (manager == null) {
+                Debug.LogError("[PointLightShadowBaker] Point Light Volume has no Light Volume Manager.", pointLightVolume);
                 return false;
             }
+
+            bool customTexturesChanged = pointLightVolume.HasEditorCustomTextureChanges();
+            bool shadowTexturesChanged = pointLightVolume.HasEditorShadowTextureChanges();
+            pointLightVolume.EditorApplyAuthoringData(customTexturesChanged, shadowTexturesChanged);
             if (!EnsureRuntimeShadowBakeDependencies(manager, pointLightVolume)) return false;
 
             bool cubemapShadows = pointLightVolume.ShouldBakeCubemapShadows();
-            int resolution = lightVolumeSetup != null ? Mathf.Max((int)lightVolumeSetup.ShadowResolution, 16) : 128;
-            TextureFormat textureFormat = lightVolumeSetup != null ? lightVolumeSetup.GetShadowMapBakeFormat() : TextureFormat.RGBAFloat;
+            int resolution = Mathf.Max(manager.ShadowTexturesWidth, 16);
+            TextureFormat textureFormat = GetManagerShadowMapBakeFormat(manager);
             TextureFormat safeTextureFormat = GetSafeShadowMomentFormat(textureFormat);
             float nearClip = pointLightVolume.GetShadowNearClip();
             float farClip = pointLightVolume.GetShadowFarClip();
@@ -74,7 +74,7 @@ namespace VRCLightVolumes {
                 pointLightInstance.ShadowMapTextureIsCubemap = false;
                 pointLightInstance.ShadowMapTextureHasDepthSlices = false;
                 pointLightInstance.ShadowMapUsesCubemap = cubemapShadows;
-                pointLightInstance.LayerMask = pointLightVolume.LayerMask.value;
+                pointLightInstance.LayerMask = pointLightVolume.LayerMask;
                 pointLightInstance.NearClip = nearClip;
                 pointLightInstance.FarClip = farClip;
                 pointLightInstance.Bias = pointLightVolume.Bias;
@@ -97,23 +97,22 @@ namespace VRCLightVolumes {
                 SaveShadowAsset(pointLightVolume, shadowAsset);
                 pointLightVolume.ShadowMap = shadowAsset;
                 LVUtils.MarkDirty(pointLightVolume);
-                LVUtils.MarkDirty(pointLightInstance);
                 baked = true;
                 return true;
             } finally {
                 RestoreObjectMaskFilter(objectMaskRendererStates);
                 manager.ShadowTextureFormat = oldShadowTextureFormat;
                 ResetManagerRuntimeShadowBlurState(manager);
-                pointLightVolume.SyncEditorChanges(false, true);
+                pointLightVolume.EditorApplyAuthoringData(false, true);
                 pointLightInstance.enabled = oldPointLightInstanceEnabled;
-                if (baked && regenerateArray && pointLightVolume.LightVolumeSetup != null) pointLightVolume.LightVolumeSetup.ReinitializeShadowTextures();
+                if (baked && regenerateArray) manager.ReinitializeShadowTextures();
                 ReleaseTemporaryRenderTexture(runtimeShadowTexture);
                 RenderTexture.active = oldActive;
             }
         }
 
         // Ensures the manager has the shared camera and materials required by PointLightVolumeInstance.BakeShadows().
-        private static bool EnsureRuntimeShadowBakeDependencies(LightVolumeManager manager, PointLightVolume pointLightVolume) {
+        private static bool EnsureRuntimeShadowBakeDependencies(LightVolumeManager manager, PointLightVolumeInstance pointLightVolume) {
             Shader shadowDepthEncodeShader = Shader.Find(ShadowDepthEncodeShaderName);
             if (shadowDepthEncodeShader == null) {
                 Debug.LogError($"[PointLightShadowBaker] Failed to find shadow depth encode shader '{ShadowDepthEncodeShaderName}'.", pointLightVolume);
@@ -172,16 +171,17 @@ namespace VRCLightVolumes {
         }
 
         // Saves the baked shadow asset into the scene-local VRCLightVolumes temp folder.
-        private static void SaveShadowAsset(PointLightVolume pointLightVolume, UnityEngine.Object shadowAsset) {
-            string scenePath = UnityEngine.SceneManagement.SceneManager.GetActiveScene().path;
+        private static void SaveShadowAsset(PointLightVolumeInstance pointLightVolume, UnityEngine.Object shadowAsset) {
+            UnityEngine.SceneManagement.Scene scene = pointLightVolume.gameObject.scene;
+            string scenePath = scene.path;
             string escapedName = LVUtils.EscapeFileName(pointLightVolume.gameObject.name);
-            string path = $"{System.IO.Path.GetDirectoryName(scenePath)}/{UnityEngine.SceneManagement.SceneManager.GetActiveScene().name}/VRCLightVolumes/Temp/{escapedName}_shadows.asset";
+            string path = $"{System.IO.Path.GetDirectoryName(scenePath)}/{scene.name}/VRCLightVolumes/Temp/{escapedName}_shadows.asset";
             if (AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(path) != null) AssetDatabase.DeleteAsset(path);
             LVUtils.SaveAsAsset(shadowAsset, path);
         }
 
         // Temporarily hides renderers outside the point light's object mask for this editor bake.
-        private static RendererState[] ApplyObjectMaskFilter(PointLightVolume pointLightVolume) {
+        private static RendererState[] ApplyObjectMaskFilter(PointLightVolumeInstance pointLightVolume) {
             if (!HasObjectMask(pointLightVolume)) return null;
 
             Renderer[] renderers = UnityEngine.Object.FindObjectsByType<Renderer>(FindObjectsInactive.Exclude, FindObjectsSortMode.None);
@@ -205,7 +205,7 @@ namespace VRCLightVolumes {
         }
 
         // Checks whether this point light has at least one valid object-mask root.
-        private static bool HasObjectMask(PointLightVolume pointLightVolume) {
+        private static bool HasObjectMask(PointLightVolumeInstance pointLightVolume) {
             if (pointLightVolume.ObjectMask == null) return false;
             for (int i = 0; i < pointLightVolume.ObjectMask.Length; i++) {
                 if (pointLightVolume.ObjectMask[i] != null) return true;
@@ -293,6 +293,11 @@ namespace VRCLightVolumes {
         // Resolves the persistent texture format used to store baked EVSM moments.
         private static TextureFormat GetSafeShadowMomentFormat(TextureFormat textureFormat) {
             return textureFormat == TextureFormat.RGBAHalf ? TextureFormat.RGBAHalf : TextureFormat.RGBAFloat;
+        }
+
+        // Resolves the persistent editor shadow format from the manager runtime format.
+        private static TextureFormat GetManagerShadowMapBakeFormat(LightVolumeManager manager) {
+            return manager != null && manager.ShadowTextureFormat == ShadowTextureFormatHalf ? TextureFormat.RGBAHalf : TextureFormat.RGBAFloat;
         }
 
         // Resolves the manager texture format value used by PointLightVolumeInstance.BakeShadows().

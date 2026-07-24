@@ -59,14 +59,14 @@ namespace VRCLightVolumes {
         }
 
         // Draws baked Light Volume data as camera-facing cards.
-        public void DrawVolume(LightVolume volume, Camera camera = null) {
+        public void DrawVolume(LightVolumeInstance volume, Camera camera = null) {
             if (volume == null) return;
             PreviewDrawData data = CreateVolumeDrawData(volume);
             Draw(volume, data, camera);
         }
 
         // Draws a neutral probe placement grid with the same card renderer.
-        public void DrawProbeGrid(LightVolume volume, Vector3Int resolution, Camera camera = null) {
+        public void DrawProbeGrid(LightVolumeInstance volume, Vector3Int resolution, Camera camera = null) {
             if (volume == null) return;
             PreviewDrawData data = CreateProbeGridDrawData(volume, resolution);
             Draw(volume, data, camera);
@@ -89,10 +89,9 @@ namespace VRCLightVolumes {
         }
 
         // Builds draw data for a baked Light Volume preview.
-        private static PreviewDrawData CreateVolumeDrawData(LightVolume volume) {
-            Quaternion volumeRotation = volume.GetRotation();
-            Quaternion shRotation = volumeRotation;
-            if (volume.LightVolumeInstance != null) shRotation *= volume.LightVolumeInstance.InvBakedRotation;
+        private static PreviewDrawData CreateVolumeDrawData(LightVolumeInstance volume) {
+            Quaternion volumeRotation = LightVolumeTools.GetRotation(volume);
+            Quaternion shRotation = volumeRotation * volume.InvBakedRotation;
 
             return new PreviewDrawData {
                 Resolution = volume.Resolution,
@@ -104,13 +103,13 @@ namespace VRCLightVolumes {
                 VolumeRotation = volumeRotation,
                 ShRotation = shRotation,
                 IsRotated = Quaternion.Dot(shRotation, Quaternion.identity) < 0.999999f,
-                Position = volume.GetPosition(),
-                Scale = volume.GetScale()
+                Position = LightVolumeTools.GetPosition(volume),
+                Scale = LightVolumeTools.GetScale(volume)
             };
         }
 
         // Builds draw data for the light probe placement preview.
-        private static PreviewDrawData CreateProbeGridDrawData(LightVolume volume, Vector3Int resolution) {
+        private static PreviewDrawData CreateProbeGridDrawData(LightVolumeInstance volume, Vector3Int resolution) {
             return new PreviewDrawData {
                 Resolution = resolution,
                 Texture0 = null,
@@ -118,16 +117,16 @@ namespace VRCLightVolumes {
                 Texture2 = null,
                 Color = Color.white,
                 Correction = new Vector4(0f, 1f, 1f, 0f),
-                VolumeRotation = volume.GetRotation(),
+                VolumeRotation = LightVolumeTools.GetRotation(volume),
                 ShRotation = Quaternion.identity,
                 IsRotated = false,
-                Position = volume.GetPosition(),
-                Scale = volume.GetScale()
+                Position = LightVolumeTools.GetPosition(volume),
+                Scale = LightVolumeTools.GetScale(volume)
             };
         }
 
         // Draws a card grid using optional Light Volume textures.
-        private void Draw(LightVolume volume, PreviewDrawData data, Camera camera) {
+        private void Draw(LightVolumeInstance volume, PreviewDrawData data, Camera camera) {
             if (volume == null || volume.gameObject == null) return;
 
             int voxelCount = GetVoxelCount(data.Resolution);
@@ -336,7 +335,7 @@ namespace VRCLightVolumes {
         private const double RepaintInterval = 1.0 / 30.0;
 
         private static LightVolumePreviewRenderer _renderer;
-        private static LightVolume[] _selectedVolumes = new LightVolume[8];
+        private static LightVolumeInstance[] _selectedVolumes = new LightVolumeInstance[8];
         private static int _selectedVolumeCount;
         private static double _nextRepaintTime;
         private static bool _previewModeActive;
@@ -397,7 +396,7 @@ namespace VRCLightVolumes {
             if (_renderer == null) _renderer = new LightVolumePreviewRenderer();
 
             for (int i = 0; i < _selectedVolumeCount; i++) {
-                LightVolume volume = _selectedVolumes[i];
+                LightVolumeInstance volume = _selectedVolumes[i];
                 if (volume == null) continue;
                 _renderer.DrawVolume(volume, camera);
             }
@@ -425,7 +424,7 @@ namespace VRCLightVolumes {
             for (int i = 0; i < gameObjects.Length; i++) {
                 GameObject go = gameObjects[i];
                 if (go == null) continue;
-                LightVolume volume = go.GetComponent<LightVolume>();
+                LightVolumeInstance volume = go.GetComponent<LightVolumeInstance>();
                 if (volume == null) continue;
 
                 EnsureSelectedVolumeCapacity(_selectedVolumeCount + 1);
@@ -441,7 +440,7 @@ namespace VRCLightVolumes {
             int newSize = _selectedVolumes.Length * 2;
             while (newSize < capacity) newSize *= 2;
 
-            LightVolume[] volumes = new LightVolume[newSize];
+            LightVolumeInstance[] volumes = new LightVolumeInstance[newSize];
             for (int i = 0; i < _selectedVolumeCount; i++) volumes[i] = _selectedVolumes[i];
             _selectedVolumes = volumes;
         }
@@ -462,8 +461,8 @@ namespace VRCLightVolumes {
             if (!_previewModeActive) return;
 
             for (int i = 0; i < _selectedVolumeCount; i++) {
-                LightVolume volume = _selectedVolumes[i];
-                if (volume != null) volume.Recalculate();
+                LightVolumeInstance volume = _selectedVolumes[i];
+                if (volume != null) LightVolumeTools.Recalculate(volume);
             }
         }
 

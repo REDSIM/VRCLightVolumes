@@ -1,9 +1,10 @@
-﻿using UnityEngine;
+using UnityEngine;
 #if UDONSHARP
 using UdonSharp;
 #endif
 
 namespace VRCLightVolumes {
+    [AddComponentMenu("VRC Light Volumes/Light Volume (U# Script)")]
     [DisallowMultipleComponent]
 #if UDONSHARP
     [UdonBehaviourSyncMode(BehaviourSyncMode.None)]
@@ -22,8 +23,42 @@ namespace VRCLightVolumes {
         [ColorUsage(showAlpha: false)] public Color Color = Color.white;
         [Tooltip("Brightness of the volume.")]
         public float Intensity = 1f;
+        [Tooltip("Size in meters of this Light Volume's overlapping regions for smooth blending with other volumes.")]
+        [Range(0, 1)] public float SmoothBlending = 0.25f;
         [Tooltip("Inversed edge smoothing in 3D atlas space. Recalculates via SetSmoothBlending(float radius) method.")]
         public Vector4 InvLocalEdgeSmoothing = new Vector4();
+
+        [Header("Baked Data")]
+        [Tooltip("Texture3D with baked SH data required for future atlas packing. It is removed from the build copy after the atlas is generated. (L0r, L0g, L0b, L1r.z)")]
+        public Texture3D Texture0;
+        [Tooltip("Texture3D with baked SH data required for future atlas packing. It is removed from the build copy after the atlas is generated. (L1r.x, L1g.x, L1b.x, L1g.z)")]
+        public Texture3D Texture1;
+        [Tooltip("Texture3D with baked SH data required for future atlas packing. It is removed from the build copy after the atlas is generated. (L1r.y, L1g.y, L1b.y, L1b.z)")]
+        public Texture3D Texture2;
+#if BAKERY_INCLUDED
+        [Tooltip("Editor-only Bakery helper reference. The build preprocessor clears it from the build scene.")]
+        [HideInInspector] public Component BakeryVolume;
+#endif
+
+        [Header("Color Correction")]
+        [Tooltip("Makes volume brighter or darker.")]
+        public float Exposure = 0f;
+        [Tooltip("Makes dark volume colors brighter or darker.")]
+        [Range(-1, 1)] public float Shadows = 0f;
+        [Tooltip("Makes bright volume colors brighter or darker.")]
+        [Range(-1, 1)] public float Highlights = 0f;
+
+        [Header("Baking Setup")]
+        [Tooltip("Uncheck it if you don't want to rebake this volume's textures.")]
+        public bool Bake = true;
+        [Tooltip("Reserves atlas UV space for this volume without baking its lighting data. Reserved voxels are written as white L0 and zero L1.")]
+        public bool ReserveUVSpace = false;
+        [Tooltip("Automatically sets the resolution based on the Voxels Per Unit value.")]
+        public bool AdaptiveResolution = true;
+        [Tooltip("Number of voxels used per meter, linearly. This value increases the Light Volume file size cubically.")]
+        public float VoxelsPerUnit = 3f;
+        [Tooltip("Manual Light Volume resolution in voxel count.")]
+        public Vector3Int Resolution = new Vector3Int(16, 16, 16);
 
         [Header("Atlas Data")]
         [Tooltip("Min bounds of Texture0 in 3D atlas space. W stores Scale X.)")]
@@ -57,6 +92,7 @@ namespace VRCLightVolumes {
         private Color _old_Color = Color.white;
         private float _old_Intensity = 1f;
         private bool _isRegisteredWithManager = false;
+        private LightVolumeManager _registeredManager;
 
 #if UDONSHARP
         // Low level Udon hacks:
@@ -84,8 +120,8 @@ namespace VRCLightVolumes {
         }
 #endif
 
-#if !UDONSHARP || UNITY_EDITOR
-        // To make it work when changing values on UdonSharpBehaviour in the editor
+#if !UDONSHARP
+        // Standalone Unity fallback when UdonSharp is not installed.
         private void Update() {
             if (_old_Color != Color || _old_Intensity != Intensity) {
                 _old_Color = Color;
@@ -98,16 +134,32 @@ namespace VRCLightVolumes {
         // Sends this instance change to the manager when it is active.
         private void NotifyManager(bool rebuildFinalData) {
             IsActive = gameObject.activeInHierarchy && Intensity != 0 && Color != Color.black;
-            if (LightVolumeManager == null || !gameObject.activeInHierarchy) return;
-            LightVolumeManager.NotifyLightVolumeChanged(this, rebuildFinalData);
+            if (!gameObject.activeInHierarchy) return;
+            RegisterWithManager();
+            if (_registeredManager == null) return;
+            _registeredManager.NotifyLightVolumeChanged(this, rebuildFinalData);
         }
 
-        // Registers this instance once for the current active lifecycle.
+        // Keeps the actual registry owner in sync when the public manager reference changes.
         private void RegisterWithManager() {
             IsActive = gameObject.activeInHierarchy && Intensity != 0 && Color != Color.black;
-            if (LightVolumeManager == null || _isRegisteredWithManager) return;
-            LightVolumeManager.InitializeLightVolume(this);
+            LightVolumeManager targetManager = LightVolumeManager;
+            if (_isRegisteredWithManager && _registeredManager != targetManager) UnregisterFromManager();
+            if (targetManager == null || !gameObject.activeInHierarchy || !enabled) return;
+            if (_isRegisteredWithManager && _registeredManager == targetManager) return;
+            _registeredManager = targetManager;
             _isRegisteredWithManager = true;
+            targetManager.InitializeLightVolume(this);
+        }
+
+        // Removes this instance from the manager that actually owns its registry slot.
+        private void UnregisterFromManager() {
+            // The private owner is runtime-only and can be empty after deserialization or when
+            // an editor/runtime integration registered this volume through the manager API.
+            LightVolumeManager registeredManager = _registeredManager != null ? _registeredManager : LightVolumeManager;
+            _registeredManager = null;
+            _isRegisteredWithManager = false;
+            if (registeredManager != null) registeredManager.DeinitializeLightVolume(this);
         }
 
         private void Start() {
@@ -125,10 +177,7 @@ namespace VRCLightVolumes {
 
         private void OnDisable() {
             IsActive = false;
-            if (LightVolumeManager != null) {
-                LightVolumeManager.DeinitializeLightVolume(this);
-            }
-            _isRegisteredWithManager = false;
+            UnregisterFromManager();
         }
 
         // Sets dynamic mode and rebuilds the manager volume list only when it changes
@@ -165,8 +214,8 @@ namespace VRCLightVolumes {
         public void SetWeight(float weight) {
             if (RegistryWeight == weight) return;
             RegistryWeight = weight;
-            if (LightVolumeManager == null) return;
-            LightVolumeManager.ReorderLightVolume(this);
+            RegisterWithManager();
+            if (_registeredManager != null) _registeredManager.ReorderLightVolume(this);
         }
 
         // Calculates and sets invLocalEdgeBlending
@@ -174,7 +223,8 @@ namespace VRCLightVolumes {
             Vector3 scl = transform.lossyScale;
             float safeRadius = Mathf.Max(radius, 0.00001f);
             Vector4 invLocalEdgeSmoothing = new Vector4(scl.x / safeRadius, scl.y / safeRadius, scl.z / safeRadius, 0f);
-            if (InvLocalEdgeSmoothing == invLocalEdgeSmoothing) return;
+            if (SmoothBlending == radius && InvLocalEdgeSmoothing == invLocalEdgeSmoothing) return;
+            SmoothBlending = radius;
             InvLocalEdgeSmoothing = invLocalEdgeSmoothing;
             NotifyManager(false);
         }

@@ -7,6 +7,13 @@
 #define VRCLV_MIN_SPECULAR_PERCEPTUAL_ROUGHNESS 0.089
 #define VRCLV_MIN_N_DOT_V 0.0001
 
+// The packed integer atlas requires native integers and texel Load. Lower targets and explicit opt-outs compile the exact unclustered loop.
+#if !defined(SHADER_TARGET_SURFACE_ANALYSIS) && !defined(VRCLV_DISABLE_CLUSTERING) && SHADER_TARGET >= 35 && (defined(SHADER_API_D3D11) || defined(SHADER_API_GLCORE) || defined(SHADER_API_VULKAN) || defined(SHADER_API_GLES3) || defined(SHADER_API_METAL))
+    #define VRCLV_CLUSTERING_SUPPORTED 1
+#else
+    #define VRCLV_CLUSTERING_SUPPORTED 0
+#endif
+
 #ifndef SHADER_TARGET_SURFACE_ANALYSIS
 cbuffer LightVolumeUniforms {
 #endif
@@ -49,6 +56,17 @@ uniform float4 _UdonLightVolumeColor[VRCLV_MAX_VOLUMES_COUNT];
 
 // Point Lights count
 uniform float _UdonPointLightVolumeCount;
+
+// Optional screen-camera Froxel Clustering. The flag is published only after a complete build.
+#if VRCLV_CLUSTERING_SUPPORTED
+uniform float _UdonClusteringEnabled;
+uniform float4 _UdonFroxelGrid;       // x: columns, y: depth slices, z: rows, w: atlas tile-column shift
+uniform float4 _UdonFroxelDepth;      // x: near, y: far, z: reciprocal near, w: depth slices / log2(far/near)
+uniform float4 _UdonFroxelProjection; // xy: tan half FOV, zw: stereo/frustum padding
+uniform float4 _UdonFroxelRight;      // xyz: axis, w: camera position x
+uniform float4 _UdonFroxelUp;         // xyz: axis, w: camera position y
+uniform float4 _UdonFroxelForward;    // xyz: axis, w: camera position z
+#endif
 
 // Cubemaps count in the custom textures array
 uniform float _UdonPointLightVolumeCubeCount;
@@ -122,6 +140,9 @@ uniform SamplerState sampler_UdonPointLightVolumeTexture;
 // First elements are baked shadow cubemap faces, 6 face textures per cubemap.
 uniform Texture2DArray _UdonPointLightVolumeShadowTexture;
 uniform SamplerState sampler_UdonPointLightVolumeShadowTexture;
+#if VRCLV_CLUSTERING_SUPPORTED
+uniform Texture2D<int4> _UdonClusterMask;
+#endif
 // Samples textures using mip 0. Shadow maps keep their own sampler state so they always use the shadow texture wrap mode.
 #define LV_SAMPLE(tex, uvw) tex.SampleLevel(sampler_UdonLightVolume, uvw, 0)
 #define LV_SAMPLE_POINT(uvw) _UdonPointLightVolumeTexture.SampleLevel(sampler_UdonPointLightVolumeTexture, uvw, 0)
@@ -160,6 +181,68 @@ inline float LV_FastLog2Positive(float x) {
     float y = mantissa + mantissa - 1.0;
     return exponent - 1.0 + y * (1.3465554 - 0.3465554 * y);
 }
+
+#if VRCLV_CLUSTERING_SUPPORTED
+// Loads the conservative candidate mask for a world point. loaded remains false outside the single camera volume.
+// The status is inout instead of a function return to avoid an incorrect uninitialized-return warning in GLES HLSLcc.
+inline void LV_LoadClusterMask(float3 worldPos, inout uint4 mask, inout bool loaded) {
+    mask = 0u;
+    loaded = false;
+    [branch] if (_UdonClusteringEnabled < 0.5) return;
+
+    float3 cameraPosition = float3(_UdonFroxelRight.w, _UdonFroxelUp.w, _UdonFroxelForward.w);
+    float3 cameraDelta = worldPos - cameraPosition;
+    float viewDepth = dot(cameraDelta, _UdonFroxelForward.xyz);
+    [branch] if (viewDepth < _UdonFroxelDepth.x || viewDepth > _UdonFroxelDepth.y) return;
+
+    float2 viewPosition = float2(dot(cameraDelta, _UdonFroxelRight.xyz), dot(cameraDelta, _UdonFroxelUp.xyz));
+    float2 halfExtent = viewDepth * _UdonFroxelProjection.xy + _UdonFroxelProjection.zw;
+    [branch] if (any(abs(viewPosition) > halfExtent)) return;
+
+    // Clamp both lower boundaries before float-to-uint conversion. Tiny negative round-off at
+    // the left/bottom/near planes would otherwise wrap to a large uint and select the last cell.
+    float2 screenUv = saturate(viewPosition * (0.5 / halfExtent) + 0.5);
+    float depthIndex = max(log2(viewDepth * _UdonFroxelDepth.z) * _UdonFroxelDepth.w, 0.0);
+    uint3 grid = (uint3)_UdonFroxelGrid.xyz;
+    uint column = min((uint)(screenUv.x * (float)grid.x), grid.x - 1u);
+    uint depthSlice = min((uint)depthIndex, grid.y - 1u);
+    uint row = min((uint)(screenUv.y * (float)grid.z), grid.z - 1u);
+    uint tileShift = (uint)_UdonFroxelGrid.w;
+    uint tileX = row & ((1u << tileShift) - 1u);
+    uint tileY = row >> tileShift;
+    int2 atlasTexel = int2(tileX * grid.x + column, tileY * grid.y + depthSlice);
+    mask = asuint(_UdonClusterMask.Load(int3(atlasTexel, 0)));
+    loaded = true;
+}
+
+// Returns one 32-bit word without relying on dynamically indexed vector writes on lower shader targets.
+inline uint LV_ClusterMaskWord(uint4 mask, uint word) {
+    return word == 0u ? mask.x : (word == 1u ? mask.y : (word == 2u ? mask.z : mask.w));
+}
+
+// Pops the next set bit in ascending compact light-ID order. Native firstbitlow is used where the shader target guarantees it.
+inline bool LV_NextClusteredLight(uint4 mask, uint pointCount, inout uint maskWord, inout uint maskBits, out uint pointLightId) {
+    [loop] while (maskBits == 0u) {
+        maskWord++;
+        if (maskWord >= 4u) {
+            pointLightId = 0u;
+            return false;
+        }
+        maskBits = LV_ClusterMaskWord(mask, maskWord);
+    }
+
+    uint lowestBit = maskBits & (0u - maskBits);
+    maskBits &= maskBits - 1u;
+    #if SHADER_TARGET >= 45
+        uint bitIndex = (uint)firstbitlow(lowestBit);
+    #else
+        // Exact for a power-of-two uint on SM3.5 / GLES3.0, where firstbitlow is unavailable.
+        uint bitIndex = ((asuint((float)lowestBit) >> 23u) & 255u) - 127u;
+    #endif
+    pointLightId = maskWord * 32u + bitIndex;
+    return pointLightId < pointCount;
+}
+#endif
 
 // Rotates vector by Quaternion
 inline float3 LV_MultiplyVectorByQuaternion(float3 v, float4 q) {
@@ -471,7 +554,8 @@ inline float4 LV_AreaLightCookie(float3 localPos, float2 size, uint textureId) {
 }
 
 // Resolves point-light normal shading and baked shadows. lightVector samples shadows, normalMaskLightDir attenuates by surface normal.
-// Returns true when the light remains visible enough to consume one overdraw slot.
+// Returns false only for a cheap normal-mask rejection performed before baked-shadow sampling.
+// Once shadow work starts, an exact-zero result still consumes the caller's performance budget.
 inline bool LV_PointLightVolumeShadowMask(uint id, float shadowIdData, float shadowInvDepthRange, float3 worldPos, float3 lightVector, float3 normalMaskLightDir, float distSq, float invDist, float3 pointLightShadingNormal, float pointLightShadingBias, const bool forceCubemapShadow, const bool packedPointCube, out float shadow) {
     shadow = 1;
     bool shadowVisible = true;
@@ -506,10 +590,13 @@ inline bool LV_PointLightVolumeShadowMask(uint id, float shadowIdData, float sha
             shadowVisible = shadow > 0;
         }
     }
+    // A normal-mask rejection before shadow sampling is a cheap early-out. Once baked-shadow work
+    // starts, the light consumes the performance budget even when EVSM resolves to exact zero.
     return shadowVisible;
 }
 
-// Samples one Point Light Volume. Returns true when this light consumes one overdraw slot
+// Samples one Point Light Volume. Returns true once the light reaches its expensive evaluation path.
+// Cheap range, cone, projected-cookie-bounds and backface rejects do not consume an overdraw slot.
 // Outputs: l0 = RGB irradiance, l1 = SH L1 direction term, lightDirNormal = center direction, specularSpreadSq = visible source size, shadow = normal mask and shadow
 bool LV_PointLightVolumeContribution(uint id, float3 worldPos, float3 pointLightShadingNormal, float pointLightShadingBias, out float3 l0, out float3 l1, out float3 lightDirNormal, out float specularSpreadSq, out float shadow) {
 
@@ -634,6 +721,9 @@ bool LV_PointLightVolumeContribution(uint id, float3 worldPos, float3 pointLight
                     float3 areaPointLightShadingDir;
                     float sourceSpreadSq = dot(areaSize, areaSize) * (0.25 * rcp(distSq));
                     float4 areaLightSH = LV_ProjectFastQuadLightIrradianceSH(lightToWorldPos, areaLocalPos, areaXAxis, areaYAxis, areaSize, areaPointLightShadingDir);
+                    // The exact quad projection has already paid the expensive Area-light cost. It
+                    // consumes the budget even if a later projection, cookie or shadow result is black.
+                    counted = true;
                     float areaAttenuation = saturate((rangeSq - distSq) * rcp(rangeSq));
 
                     [branch] if (areaLightSH.w > 0 && areaAttenuation > 0) { // Area projection has non-zero solid angle and remains inside its culling range
@@ -801,10 +891,54 @@ float3 LV_LightVolumeSpecular(float3 f0, float smoothness, float3 worldNormal, f
     return max(lerp(coloredSpecs + specs * L0, coloredSpecs * 3, smoothness) * 0.5, 0.0);
 }
 
+// Accumulates one Point Light Volume with the shared diffuse and custom-specular operations.
+inline bool LV_AccumulatePointLightVolumeSHSpecular(uint pid, float3 worldPos, float3 worldNormal, float3 specularViewDir, float3 f0, float3 pointLightShadingNormal, float pointLightShadingBias, float specularRoughness, float specularRoughnessSq, float specularNoV, inout float3 L0, inout float3 L1r, inout float3 L1g, inout float3 L1b, inout float3 specular) {
+    float3 l0, l1, lightDirNormal;
+    float specularSpreadSq, shadow;
+    if (!LV_PointLightVolumeContribution(pid, worldPos, pointLightShadingNormal, pointLightShadingBias, l0, l1, lightDirNormal, specularSpreadSq, shadow)) return false;
+
+    l0 *= shadow;
+    [branch] if (any(l0)) {
+        L0 += l0;
+        L1r += l1 * l0.r;
+        L1g += l1 * l0.g;
+        L1b += l1 * l0.b;
+        #if defined(LV_CUSTOM_SPECULAR_BRDF)
+        specular += LV_SpecularBRDFDirection_Custom(f0, specularRoughness, specularRoughnessSq, specularNoV, worldNormal, specularViewDir, l0, lightDirNormal, specularSpreadSq);
+        #else
+        specular += LV_SpecularBRDFDirection(f0, specularRoughness, specularRoughnessSq, specularNoV, worldNormal, specularViewDir, l0, lightDirNormal, specularSpreadSq);
+        #endif
+    }
+    return true;
+}
+
+// Accumulates one Point Light Volume with the shared diffuse SH operations.
+inline bool LV_AccumulatePointLightVolumeSH(uint pid, float3 worldPos, float3 pointLightShadingNormal, float pointLightShadingBias, inout float3 L0, inout float3 L1r, inout float3 L1g, inout float3 L1b) {
+    float3 l0, l1, unused_lightDirNormal;
+    float unused_specularSpreadSq, shadow;
+    if (!LV_PointLightVolumeContribution(pid, worldPos, pointLightShadingNormal, pointLightShadingBias, l0, l1, unused_lightDirNormal, unused_specularSpreadSq, shadow)) return false;
+
+    l0 *= shadow;
+    L0 += l0;
+    L1r += l1 * l0.r;
+    L1g += l1 * l0.g;
+    L1b += l1 * l0.b;
+    return true;
+}
+
 // Calculates L1 SH and individual speculars based on PBR parameters and custom f0. Only samples point lights, not volumes. Accumulates into L0/L1r/L1g/L1b/specular.
 void LV_PointLightVolumeSHSpecular(float3 worldPos, float3 worldNormal, float3 specularViewDir, float smoothness, float3 f0, float pointLightShading, inout float3 L0, inout float3 L1r, inout float3 L1g, inout float3 L1b, inout float3 specular) {
     uint pointCount = min((uint) _UdonPointLightVolumeCount, VRCLV_MAX_LIGHTS_COUNT);
     [branch] if (pointCount == 0) return;
+    uint maxOverdraw = min((uint) _UdonLightVolumeAdditiveMaxOverdraw, VRCLV_MAX_LIGHTS_COUNT);
+    [branch] if (maxOverdraw == 0) return;
+
+    #if VRCLV_CLUSTERING_SUPPORTED
+    uint4 clusterMask = 0u;
+    bool useClustering = false;
+    LV_LoadClusterMask(worldPos, clusterMask, useClustering);
+    [branch] if (useClustering && (clusterMask.x | clusterMask.y | clusterMask.z | clusterMask.w) == 0u) return;
+    #endif
 
     float pointLightShadingScale = pointLightShading * 0.5; // Half-strength scale for the normal-shading ramp
     float3 pointLightShadingNormal = worldNormal * pointLightShadingScale; // Pre-scaled normal for point-light shading
@@ -813,26 +947,24 @@ void LV_PointLightVolumeSHSpecular(float3 worldPos, float3 worldNormal, float3 s
     float specularRoughness = specularPerceptualRoughness * specularPerceptualRoughness; // GGX roughness
     float specularRoughnessSq = specularRoughness * specularRoughness; // Squared GGX roughness for BRDF widening
     float specularNoV = max(dot(worldNormal, specularViewDir), VRCLV_MIN_N_DOT_V); // Clamped NdotV for specular visibility
-    uint maxOverdraw = min((uint) _UdonLightVolumeAdditiveMaxOverdraw, VRCLV_MAX_LIGHTS_COUNT); // Max point lights to accumulate
     uint pcount = 0; // Accumulated point-light count
-    [loop] for (uint pid = 0; pid < pointCount && pcount < maxOverdraw; pid++) {
-        float3 l0, l1, lightDirNormal;
-        float specularSpreadSq, shadow;
-        if (LV_PointLightVolumeContribution(pid, worldPos, pointLightShadingNormal, pointLightShadingBias, l0, l1, lightDirNormal, specularSpreadSq, shadow)) {
-            l0 *= shadow;
-            [branch] if (any(l0)) {
-                L0 += l0;
-                L1r += l1 * l0.r;
-                L1g += l1 * l0.g;
-                L1b += l1 * l0.b;
-                #if defined(LV_CUSTOM_SPECULAR_BRDF)
-                specular += LV_SpecularBRDFDirection_Custom(f0, specularRoughness, specularRoughnessSq, specularNoV, worldNormal, specularViewDir, l0, lightDirNormal, specularSpreadSq);
-                #else
-                specular += LV_SpecularBRDFDirection(f0, specularRoughness, specularRoughnessSq, specularNoV, worldNormal, specularViewDir, l0, lightDirNormal, specularSpreadSq);
-                #endif
-            }
-            pcount += 1;
+
+    #if VRCLV_CLUSTERING_SUPPORTED
+    // Keep the clustered and unclustered loops separate so the hot loop does not branch once per candidate.
+    [branch] if (useClustering) {
+        uint maskWord = 0u;
+        uint maskBits = clusterMask.x;
+        [loop] while (pcount < maxOverdraw) {
+            uint pid;
+            if (!LV_NextClusteredLight(clusterMask, pointCount, maskWord, maskBits, pid)) break;
+            if (LV_AccumulatePointLightVolumeSHSpecular(pid, worldPos, worldNormal, specularViewDir, f0, pointLightShadingNormal, pointLightShadingBias, specularRoughness, specularRoughnessSq, specularNoV, L0, L1r, L1g, L1b, specular)) pcount++;
         }
+        return;
+    }
+    #endif
+
+    [loop] for (uint pid = 0u; pid < pointCount && pcount < maxOverdraw; pid++) {
+        if (LV_AccumulatePointLightVolumeSHSpecular(pid, worldPos, worldNormal, specularViewDir, f0, pointLightShadingNormal, pointLightShadingBias, specularRoughness, specularRoughnessSq, specularNoV, L0, L1r, L1g, L1b, specular)) pcount++;
     }
 }
 
@@ -840,25 +972,38 @@ void LV_PointLightVolumeSHSpecular(float3 worldPos, float3 worldNormal, float3 s
 void LV_PointLightVolumeSH(float3 worldPos, float3 worldNormal, float pointLightShading, inout float3 L0, inout float3 L1r, inout float3 L1g, inout float3 L1b) {
     uint pointCount = min((uint) _UdonPointLightVolumeCount, VRCLV_MAX_LIGHTS_COUNT);
     [branch] if (pointCount == 0) return;
+    uint maxOverdraw = min((uint) _UdonLightVolumeAdditiveMaxOverdraw, VRCLV_MAX_LIGHTS_COUNT);
+    [branch] if (maxOverdraw == 0) return;
+
+    #if VRCLV_CLUSTERING_SUPPORTED
+    uint4 clusterMask = 0u;
+    bool useClustering = false;
+    LV_LoadClusterMask(worldPos, clusterMask, useClustering);
+    [branch] if (useClustering && (clusterMask.x | clusterMask.y | clusterMask.z | clusterMask.w) == 0u) return;
+    #endif
 
     float pointLightShadingScale = pointLightShading * 0.5; // Half-strength scale for the normal-shading ramp
     float3 pointLightShadingNormal = worldNormal * pointLightShadingScale; // Pre-scaled normal for point-light shading
     float pointLightShadingBias = pointLightShading > 0 ? 0.5 + 0.5 * saturate(1 - pointLightShading) : -1; // Bias for normal-shading ramp, -1 disables it
-    uint maxOverdraw = min((uint) _UdonLightVolumeAdditiveMaxOverdraw, VRCLV_MAX_LIGHTS_COUNT); // Max point lights to accumulate
     uint pcount = 0; // Accumulated point-light count
-    [loop] for (uint pid = 0; pid < pointCount && pcount < maxOverdraw; pid++) {
-        float3 l0, l1, unused_lightDirNormal;
-        float unused_specularSpreadSq, shadow;
-        if (LV_PointLightVolumeContribution(pid, worldPos, pointLightShadingNormal, pointLightShadingBias, l0, l1, unused_lightDirNormal, unused_specularSpreadSq, shadow)) {
-            l0 *= shadow;
-            L0 += l0;
-            L1r += l1 * l0.r;
-            L1g += l1 * l0.g;
-            L1b += l1 * l0.b;
-            pcount += 1;
-        }
-    }
 
+    #if VRCLV_CLUSTERING_SUPPORTED
+    // Keep the clustered and unclustered loops separate so the hot loop does not branch once per candidate.
+    [branch] if (useClustering) {
+        uint maskWord = 0u;
+        uint maskBits = clusterMask.x;
+        [loop] while (pcount < maxOverdraw) {
+            uint pid;
+            if (!LV_NextClusteredLight(clusterMask, pointCount, maskWord, maskBits, pid)) break;
+            if (LV_AccumulatePointLightVolumeSH(pid, worldPos, pointLightShadingNormal, pointLightShadingBias, L0, L1r, L1g, L1b)) pcount++;
+        }
+        return;
+    }
+    #endif
+
+    [loop] for (uint pid = 0u; pid < pointCount && pcount < maxOverdraw; pid++) {
+        if (LV_AccumulatePointLightVolumeSH(pid, worldPos, pointLightShadingNormal, pointLightShadingBias, L0, L1r, L1g, L1b)) pcount++;
+    }
 }
 
 // Calculates L1 SH based on the world position from regular volumes only.

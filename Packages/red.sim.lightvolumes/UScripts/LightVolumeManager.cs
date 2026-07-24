@@ -20,6 +20,7 @@ using VRCShader = UnityEngine.Shader;
 #endif
 
 namespace VRCLightVolumes {
+    [AddComponentMenu("VRC Light Volumes/Light Volume Manager (U# Script)")]
     [DisallowMultipleComponent]
 #if UDONSHARP
     [UdonBehaviourSyncMode(BehaviourSyncMode.None)]
@@ -37,9 +38,23 @@ namespace VRCLightVolumes {
         private const int MaxLightVolumeUvwScaleVectors = MaxLightVolumeCount * 3;
         private const int MaxLightVolumeLegacyUvwVectors = MaxLightVolumeCount * 6;
         private const RenderTextureFormat FixedCustomTexturesFormat = RenderTextureFormat.ARGBHalf;
+        private const RenderTextureFormat ClusterMaskFormat = RenderTextureFormat.ARGBInt;
         private const float DisabledShadingShadowId = 10000f;
         private const int ShadowTextureFormatHalf = 0;
         private const string RuntimeShadowCameraName = "Runtime Shadow Camera";
+        private const string ClusteringShaderName = "Hidden/VRCLV/FroxelClusteringBuild";
+        private const int MaxFroxelTileShift = 4;
+        private const int MaxFroxelSize = 256;
+        private const int MaxFroxelAtlasSize = 4096;
+        private const int MinFroxelCoarse = 2;
+        private const int MaxFroxelCoarse = 8;
+        private const float DefaultFroxelFov = 90f;
+        private const float DefaultFroxelAspect = 1.7777778f;
+        private const int ClusterAxisScale = 255;
+        private const int ClusterAxisStride = 256;
+        private const int ClusterShapeStride = 65536;
+        private const float ClusterAxisPad = 0.020002667f; // tan(0.02 radians)
+        private const float ClusterMaxTangent = 254f;
 #endregion
 
 #region Inspector And Runtime References
@@ -68,6 +83,18 @@ namespace VRCLightVolumes {
         [Tooltip("EVSM variance bias used by the shadow receiver shader. Authoring setup stores this as a 0..1 logarithmic slider.")]
         public float ShadowMinVariance = 1.0f;
 
+        [Header("Froxel Clustering")]
+        [Tooltip("Builds camera-relative Coarse-to-Fine froxel clusters so shaders only evaluate Point Light Volumes that can affect the current pixel.")]
+        public bool Clustering = false;
+        [Tooltip("Fine froxels per camera degree on each screen axis. 1.0 = one froxel per degree; total count is multiplied by Slices Count.")]
+        [Range(0.05f, 3f)] public float FroxelDensity = 0.25f;
+        [Tooltip("Count of exponentially distributed depth slices between the main camera near and far clip planes. This does not change the angular resolution; memory and build cost scale with the slice count.")]
+        [Range(8, MaxFroxelSize)] public int FroxelSlices = 32;
+        [Tooltip("Power-of-two reduction of the intermediate Coarse grid relative to the Fine grid on every axis. Values are resolved to 2, 4 or 8 so every Fine froxel has one exact parent and the shader can use bit shifts instead of integer division.")]
+        [Range(MinFroxelCoarse, MaxFroxelCoarse)] public int FroxelCoarse = 4;
+        [Tooltip("Uses the non-clustered loop below this active Point Light Volume count because building and sampling the cluster mask is unlikely to amortize.")]
+        [Range(1, MaxPointLightCount)] public int ClusteringMinLights = 16;
+
         [Header("Visuals")]
         [Tooltip("When enabled, areas outside Light Volumes fall back to light probes. Otherwise, the Light Volume with the smallest weight is used as fallback. It also improves performance.")]
         public bool LightProbesBlending = true;
@@ -82,11 +109,45 @@ namespace VRCLightVolumes {
         [Tooltip("Enables the Force Scene Lighting shader override on startup, disabling min/max brightness limits in compatible avatar shaders. When disabled, the existing global override is left unchanged. Use SetForceSceneLighting for manual runtime control.")]
         public bool ForceSceneLighting = false;
 
+        // Persistent authoring settings live on the Udon proxy as well. Keeping them here removes
+        // the editor-only Setup component without adding runtime work; heavy asset references are
+        // cleared from the temporary build scene by the build preprocessor.
+        [HideInInspector] public int BakingMode = 0; // 0 = Progressive, 1 = Bakery
+        [HideInInspector] public int VolumeBitmask = 1;
+        [HideInInspector] public int ProbeBitmask = 1;
+        [HideInInspector] public bool Denoise = true;
+        [HideInInspector] public bool DilateInvalidProbes = true;
+        [HideInInspector] public int DilationIterations = 1;
+        [HideInInspector] public float DilationBackfaceBias = 0.1f;
+        [HideInInspector] public bool FixLightProbesL1 = true;
+        [HideInInspector] public int DownscaleVolumes = 0; // 0 = None, 1 = x2, 2 = x4, 3 = x8
+        // The mobile slider is authoring-only. ShadowMinVariance remains the resolved raw runtime value.
+        [HideInInspector] public float ShadowMinVarianceDesktop = 0f;
+        [HideInInspector] public float ShadowMinVarianceMobile = 1f;
+        // Serializable RT/material/name projection for editor atlas processors.
+        // Delegate callbacks remain in the transient Editor registry and must re-register after reload.
+        [HideInInspector] public RenderTexture[] AtlasPostProcessorTargets = new RenderTexture[0];
+        [HideInInspector] public Material[] AtlasPostProcessorMaterials = new Material[0];
+        [HideInInspector] public string[] AtlasPostProcessorTextureNames = new string[0];
+
         [Header("Runtime Registries")]
         [Tooltip("All Light Volume instances sorted in decreasing order by weight. You can enable or disable volume GameObjects at runtime. Manually disabling unnecessary volumes improves performance.")]
         public LightVolumeInstance[] LightVolumeInstances = new LightVolumeInstance[0];
         [Tooltip("All Point Light Volume instances. You can enable or disable point light volume GameObjects at runtime. Manually disabling unnecessary point light volumes improves performance.")]
         public PointLightVolumeInstance[] PointLightVolumeInstances = new PointLightVolumeInstance[0];
+
+#if UNITY_EDITOR && !COMPILER_UDONSHARP
+        [Serializable]
+        public struct PostProcessor {
+            public RenderTexture RT;
+            public Material Mat;
+            public string TextureName;
+            public Action Update;
+            public Action<Texture> UpdateWithInput;
+        }
+
+        public bool IsBakeryMode => BakingMode == 1;
+#endif
 
         [Header("Runtime Textures")]
         [Tooltip("Runtime texture array used for point light cubemaps, LUTs and cookies.")]
@@ -116,6 +177,8 @@ namespace VRCLightVolumes {
         [HideInInspector] public int RuntimeShadowBlurDirectKeyword = -1;
         // Cached spherical blur keyword state for the shared runtime shadow blur material
         [HideInInspector] public int RuntimeShadowBlurSphericalKeyword = -1;
+        // Shared material used to build the Coarse and Fine clustered-light masks in packed 2D integer atlases
+        [HideInInspector] public Material ClusteringMaterial;
 #endregion
 
 #region Runtime Texture Cache
@@ -173,6 +236,52 @@ namespace VRCLightVolumes {
         private int[] _pointLightShadowIDs = new int[0];
         private int[] _shadowSourceTypes = new int[0]; // Source types per point light: 0 = none, 1 = cubemap texture, 2 = cubemap material, 3 = single texture, 4 = single material
         [HideInInspector] public bool HasAutoShadowTextureUpdates = false;
+#if UNITY_EDITOR && !COMPILER_UDONSHARP
+        // UdonSharp's play-mode proxy formatter reflects every C# instance field, including
+        // non-serialized fields, while COMPILER_UDONSHARP excludes this state from the Udon heap.
+        // Keep all editor-only caches outside the behaviour instance layout so proxy copies stay exact.
+        private sealed class EditorState {
+            public PointLightVolumeInstance[] CustomSourceOwners = Array.Empty<PointLightVolumeInstance>();
+            public Texture[] CustomSourceTextures = Array.Empty<Texture>();
+            public Material[] CustomSourceMaterials = Array.Empty<Material>();
+            public int[] CustomSourceStates = Array.Empty<int>();
+            public int CustomTextureWidth = -1;
+            public int CustomTextureHeight = -1;
+            public PointLightVolumeInstance[] ShadowSourceOwners = Array.Empty<PointLightVolumeInstance>();
+            public Texture[] ShadowSourceTextures = Array.Empty<Texture>();
+            public Material[] ShadowSourceMaterials = Array.Empty<Material>();
+            public int[] ShadowSourceStates = Array.Empty<int>();
+            public int ShadowTextureWidth = -1;
+            public int ShadowTextureHeight = -1;
+            public int ShadowTextureFormat = -1;
+            public Material GeneratedClusteringMaterial;
+            public Vector4 FroxelDepthParams;
+
+            public EditorState() { }
+        }
+
+        private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<LightVolumeManager, EditorState> EditorStates
+            = new System.Runtime.CompilerServices.ConditionalWeakTable<LightVolumeManager, EditorState>();
+
+        private EditorState EditorData => EditorStates.GetOrCreateValue(this);
+
+        // Preserve the existing call sites while keeping these names out of the reflected instance-field layout.
+        private Material _generatedClusteringMaterial {
+            get => EditorData.GeneratedClusteringMaterial;
+            set => EditorData.GeneratedClusteringMaterial = value;
+        }
+
+        private Vector4 _editorFroxelDepthParams {
+            get => EditorData.FroxelDepthParams;
+            set => EditorData.FroxelDepthParams = value;
+        }
+
+#endif
+#if !UNITY_EDITOR && !COMPILER_UDONSHARP
+        // Standalone non-Udon execution still owns these runtime values directly.
+        private Material _generatedClusteringMaterial;
+        private Vector4 _editorFroxelDepthParams;
+#endif
 #if UDONSHARP
         private RenderTexture _dummyRT; // Small source texture used only for Udon destination-binding blits
 #endif
@@ -189,6 +298,7 @@ namespace VRCLightVolumes {
         private bool _pointLightArraysDirty = false;
         private bool _updateLightVolumeBuffers = false;
         private bool _updatePointLightBuffers = false;
+        private bool _updatePointLightPositionBuffer = false;
         private bool _updateNeedsVolumeRebuild = false;
 
         // Light Volume shader upload buffers
@@ -209,8 +319,10 @@ namespace VRCLightVolumes {
         private Vector4[] _pointLightExtraData = new Vector4[MaxPointLightCount];
         private Vector4[] _pointLightDirection = new Vector4[MaxPointLightCount];
         private Vector4[] _pointLightCustomId = new Vector4[MaxPointLightCount];
+        private Vector4[] _clusteringLights = new Vector4[MaxPointLightCount / 2];
         private Vector4[] _pointLightShadowReprojectionData = new Vector4[MaxPointLightCount];
         private Vector4[] _pointLightShadowRotationData = new Vector4[MaxPointLightCount];
+        private bool _clusteringLightsDirty = true;
 
         // Matrix upload buffer for active regular volumes
         private Matrix4x4[] _invWorldMatrix = new Matrix4x4[MaxLightVolumeCount];
@@ -238,6 +350,48 @@ namespace VRCLightVolumes {
         private float _prevLightsBrightnessCutoff = 0.35f;
         private Vector4 _customRenderTextureInfo;
 
+        // Froxel clustering resources are generated at runtime and never serialized into the world.
+        private RenderTexture _clusterMask;
+        private RenderTexture _coarseClusterMask;
+        private RenderTexture _clusteringSource;
+        private bool _clusteringActive = false;
+        private bool _clusteringUnsupported = false;
+        private bool _clusteringAllocationFailed = false;
+        private bool _froxelLayoutValid = false;
+        private bool _froxelDepthValid = false;
+        private bool _froxelProjectionValid = false;
+        private bool _clusterMaskDirty = true;
+        private bool _clusterMaskValid = false;
+        private bool _clusterGeometryUploadPending = false;
+        private float _froxelLayoutFov;
+        private float _froxelLayoutAspect;
+        private float _froxelLayoutDensity;
+        private int _froxelLayoutSlices;
+        private int _froxelLayoutCoarse;
+        private float _froxelNearClip;
+        private float _froxelFarClip;
+        private float _froxelHorizontalPadding;
+        private float _froxelVerticalPadding;
+        private float _froxelTanHalfHorizontal;
+        private float _froxelTanHalfVertical;
+        private int _fineAtlasWidth;
+        private int _fineAtlasHeight;
+        private int _coarseAtlasWidth;
+        private int _coarseAtlasHeight;
+        private Vector4 _fineGridParams;
+        private Vector4 _coarseGridParams;
+        private Vector4 _coarseReductionParams;
+        private Vector3 _froxelCameraPosition;
+        private Vector3 _froxelCameraRight;
+        private Vector3 _froxelCameraUp;
+        private Vector3 _froxelCameraForward;
+
+#if !COMPILER_UDONSHARP
+        // Exposes generated cluster masks to the custom Udon component inspector without serializing them into the world.
+        public RenderTexture FineClusterMaskPreview => _clusterMask;
+        public RenderTexture CoarseClusterMaskPreview => _coarseClusterMask;
+#endif
+
 #endregion
 
 #region Update Process State
@@ -245,10 +399,6 @@ namespace VRCLightVolumes {
         // Unified delayed update process state
         private bool _volumeDataUpdateRequested = false;
         private bool _isUpdatingVolumes = false;
-#if !UDONSHARP || UNITY_EDITOR
-        private bool _prevAutoUpdateVolumes = false;
-        private bool _prevAutoUpdateTextures = false;
-#endif
 #if UDONSHARP
         private bool _isUpdateProcessRunning = false; // True while the single delayed update process is scheduled or running
 #else
@@ -292,7 +442,23 @@ namespace VRCLightVolumes {
         private int _pointLightShadowCubeCountID;
         private int _pointLightShadowTextureID;
         private int _pointLightShadowReceiverParamsID;
+        private int _clusteringLightsID;
         private int _lightBrightnessCutoffID;
+        // Froxel Clustering
+        private int _clusteringEnabledID;
+        private int _clusterMaskID;
+        private int _froxelGridID;
+        private int _froxelDepthID;
+        private int _froxelDepthStepID;
+        private int _coarseClusterMaskID;
+        private int _froxelCoarseGridID;
+        private int _froxelFineGridID;
+        private int _froxelPassID;
+        private int _froxelCoarseID;
+        private int _froxelProjectionID;
+        private int _froxelRightID;
+        private int _froxelUpID;
+        private int _froxelForwardID;
         // Other
         private int _forceSceneLightingID;
         private int _cubemapMainTexID;
@@ -309,6 +475,62 @@ namespace VRCLightVolumes {
             float bleedReduction = Mathf.Min(Mathf.Clamp01(ShadowBleedReduction), 0.999f);
             float bleedScale = 1f / (1f - bleedReduction);
             return new Vector4(varianceBias * 5.54f, -bleedReduction * bleedScale, bleedScale, varianceBias * 5f);
+        }
+
+        // Octahedrally packs a shape axis and 8-bit shape code into one exactly representable 24-bit float integer.
+        private float EncodeClusterShape(Vector3 axis, int shapeCode) {
+            float axisLengthSq = axis.sqrMagnitude;
+            if (axisLengthSq < 0.000001f) axis = Vector3.forward;
+
+            // Oct projection is scale invariant; L1-normalize directly and avoid an Udon sqrt.
+            float inverseL1Length = 1f / (Mathf.Abs(axis.x) + Mathf.Abs(axis.y) + Mathf.Abs(axis.z));
+            float octX = axis.x * inverseL1Length;
+            float octY = axis.y * inverseL1Length;
+            float octZ = axis.z * inverseL1Length;
+            if (octZ < 0f) {
+                float unfoldedX = octX;
+                octX = (1f - Mathf.Abs(octY)) * (unfoldedX >= 0f ? 1f : -1f);
+                octY = (1f - Mathf.Abs(unfoldedX)) * (octY >= 0f ? 1f : -1f);
+            }
+
+            int encodedX = Mathf.Clamp(Mathf.RoundToInt((octX * 0.5f + 0.5f) * ClusterAxisScale), 0, ClusterAxisScale);
+            int encodedY = Mathf.Clamp(Mathf.RoundToInt((octY * 0.5f + 0.5f) * ClusterAxisScale), 0, ClusterAxisScale);
+            return encodedX + encodedY * ClusterAxisStride + shapeCode * ClusterShapeStride;
+        }
+
+        // Packs two lights per vector as radius + shape. Shape 0 is point, 1 is one-sided area and 2..255 is a conservative spot cone.
+        private void WriteClusteringLight(int shaderIndex, float squaredRange, int lightType, float outerTangent, Vector3 shapeAxis) {
+            int shapeCode = 0;
+            if (lightType == 1 && outerTangent > 0f) { // 1: spot; wider-than-hemisphere cones fall back to their range sphere
+                // tan(angle + padding) avoids two Udon transcendental calls while covering the packed-axis error.
+                float paddingDenominator = 1f - outerTangent * ClusterAxisPad;
+                if (paddingDenominator > 0f) {
+                    float expandedTangent = (outerTangent + ClusterAxisPad) / paddingDenominator;
+                    if (expandedTangent <= ClusterMaxTangent) {
+                        int tangentLevel = Mathf.Clamp(Mathf.CeilToInt(expandedTangent / (1f + expandedTangent) * 255f), 1, 254);
+                        shapeCode = tangentLevel + 1;
+                    }
+                }
+            } else if (lightType == 2) { // 2: one-sided area
+                shapeCode = 1;
+            }
+
+            float packedShape = shapeCode == 0 ? 0f : EncodeClusterShape(shapeAxis, shapeCode);
+            float range = Mathf.Sqrt(Mathf.Max(squaredRange, 0f));
+            int packedIndex = shaderIndex >> 1;
+            Vector4 packedData = _clusteringLights[packedIndex];
+            if ((shaderIndex & 1) == 0) {
+                if (packedData.x == range && packedData.y == packedShape) return;
+                packedData.x = range;
+                packedData.y = packedShape;
+            } else {
+                if (packedData.z == range && packedData.w == packedShape) return;
+                packedData.z = range;
+                packedData.w = packedShape;
+            }
+            _clusteringLights[packedIndex] = packedData;
+            _clusteringLightsDirty = true;
+            _clusterGeometryUploadPending = true;
         }
 
         // Resolves the Area Cookie X/Y reflection relative to the quaternion frame sent to shaders.
@@ -448,11 +670,11 @@ namespace VRCLightVolumes {
             // Checking, initializing...
             if (lightVolume == null) return;
             if (LightVolumeInstances == null) LightVolumeInstances = new LightVolumeInstance[0];
-            int registryIndex = Array.IndexOf((Array)LightVolumeInstances, lightVolume, 0, LightVolumeInstances.Length);
+            int registryIndex = FindLightVolumeRegistryIndex(lightVolume);
             if (registryIndex < 0) {
                 if (!lightVolume.IsActive) return;
                 InitializeLightVolume(lightVolume);
-                registryIndex = Array.IndexOf((Array)LightVolumeInstances, lightVolume, 0, LightVolumeInstances.Length);
+                registryIndex = FindLightVolumeRegistryIndex(lightVolume);
                 if (registryIndex < 0) return;
             }
 
@@ -479,11 +701,11 @@ namespace VRCLightVolumes {
             // Checking, initializing...
             if (pointLightVolume == null) return;
             if (PointLightVolumeInstances == null) PointLightVolumeInstances = new PointLightVolumeInstance[0];
-            int registryIndex = Array.IndexOf((Array)PointLightVolumeInstances, pointLightVolume, 0, PointLightVolumeInstances.Length);
+            int registryIndex = FindPointLightRegistryIndex(pointLightVolume);
             if (registryIndex < 0) {
                 if (!pointLightVolume.IsActive) return;
                 InitializePointLightVolume(pointLightVolume);
-                registryIndex = Array.IndexOf((Array)PointLightVolumeInstances, pointLightVolume, 0, PointLightVolumeInstances.Length);
+                registryIndex = FindPointLightRegistryIndex(pointLightVolume);
                 if (registryIndex < 0) return;
             }
 
@@ -520,15 +742,35 @@ namespace VRCLightVolumes {
             VRCShader.SetGlobalInteger(_forceSceneLightingID, enabled ? 1 : 0);
         }
 
+        // Enables or disables camera-relative froxel clustering at runtime.
+        public void SetClustering(bool enabled) {
+#if !COMPILER_UDONSHARP && UDONSHARP && UNITY_EDITOR
+            if (ShouldSkipEditorProxyRuntimeUpdate()) return;
+#endif
+            if (Clustering == enabled) {
+                // An explicit retry may recover from a layout-specific allocation failure.
+                if (enabled && (_clusteringUnsupported || _clusteringAllocationFailed)) {
+                    _clusteringUnsupported = false;
+                    _clusteringAllocationFailed = false;
+                    _froxelLayoutValid = false;
+                }
+                return;
+            }
+            Clustering = enabled;
+            _clusteringUnsupported = false;
+            _clusteringAllocationFailed = false;
+            _froxelLayoutValid = false;
+            TryInitialize();
+            DisableClustering();
+        }
+
 #endregion
 
 #region Initialization
 
         // Initializes shader property IDs and global shader arrays when needed
         private void TryInitialize() {
-#if !UNITY_EDITOR
             if (_isInitialized) return;
-#endif
             // Light Volumes
             _lightVolumeInvLocalEdgeSmoothID = VRCShader.PropertyToID("_UdonLightVolumeInvLocalEdgeSmooth");
             _lightVolumeInvWorldMatrixID = VRCShader.PropertyToID("_UdonLightVolumeInvWorldMatrix");
@@ -562,16 +804,29 @@ namespace VRCLightVolumes {
             _pointLightShadowCubeCountID = VRCShader.PropertyToID("_UdonPointLightVolumeShadowCubeCount");
             _pointLightShadowTextureID = VRCShader.PropertyToID("_UdonPointLightVolumeShadowTexture");
             _pointLightShadowReceiverParamsID = VRCShader.PropertyToID("_UdonPointLightVolumeShadowReceiverParams");
+            _clusteringLightsID = VRCShader.PropertyToID("_UdonClusteringLights");
             _lightBrightnessCutoffID = VRCShader.PropertyToID("_UdonLightBrightnessCutoff");
+            // Froxel Clustering
+            _clusteringEnabledID = VRCShader.PropertyToID("_UdonClusteringEnabled");
+            _clusterMaskID = VRCShader.PropertyToID("_UdonClusterMask");
+            _froxelGridID = VRCShader.PropertyToID("_UdonFroxelGrid");
+            _froxelDepthID = VRCShader.PropertyToID("_UdonFroxelDepth");
+            _froxelDepthStepID = VRCShader.PropertyToID("_UdonFroxelDepthStep");
+            _coarseClusterMaskID = VRCShader.PropertyToID("_UdonCoarseClusterMask");
+            _froxelCoarseGridID = VRCShader.PropertyToID("_UdonFroxelCoarseGrid");
+            _froxelFineGridID = VRCShader.PropertyToID("_UdonFroxelFineGrid");
+            _froxelPassID = VRCShader.PropertyToID("_UdonFroxelPass");
+            _froxelCoarseID = VRCShader.PropertyToID("_UdonFroxelCoarse");
+            _froxelProjectionID = VRCShader.PropertyToID("_UdonFroxelProjection");
+            _froxelRightID = VRCShader.PropertyToID("_UdonFroxelRight");
+            _froxelUpID = VRCShader.PropertyToID("_UdonFroxelUp");
+            _froxelForwardID = VRCShader.PropertyToID("_UdonFroxelForward");
             // Other
             _forceSceneLightingID = VRCShader.PropertyToID("_UdonForceSceneLighting");
             _cubemapMainTexID = VRCShader.PropertyToID("_MainTex");
             _cubemapSourceTexID = VRCShader.PropertyToID("_CubeTex");
             _cubemapFaceIndexID = VRCShader.PropertyToID("_FaceIndex");
 
-#if UNITY_EDITOR
-            if (_isInitialized) return;
-#endif
             // Light Volumes
             VRCShader.SetGlobalVectorArray(_lightVolumeInvLocalEdgeSmoothID, _invLocalEdgeSmooth);
             VRCShader.SetGlobalVectorArray(_lightVolumeColorID, _colors);
@@ -589,6 +844,8 @@ namespace VRCLightVolumes {
             VRCShader.SetGlobalVectorArray(_pointLightShadowReprojectionDataID, _pointLightShadowReprojectionData);
             VRCShader.SetGlobalVectorArray(_pointLightShadowRotationDataID, _pointLightShadowRotationData);
             VRCShader.SetGlobalVector(_pointLightShadowReceiverParamsID, GetPointLightShadowReceiverParams());
+            _clusteringLightsDirty = true;
+            VRCShader.SetGlobalFloat(_clusteringEnabledID, 0f);
             _isInitialized = true;
         }
 
@@ -601,6 +858,8 @@ namespace VRCLightVolumes {
             VRCShader.SetGlobalFloat(_pointLightShadowCubeCountID, 0);
             VRCShader.SetGlobalFloat(_pointLightShadowCountID, 0);
             VRCShader.SetGlobalVector(_pointLightShadowReceiverParamsID, GetPointLightShadowReceiverParams());
+            VRCShader.SetGlobalFloat(_clusteringEnabledID, 0f);
+            _clusteringActive = false;
             VRCShader.SetGlobalFloat(_lightVolumeEnabledID, 0);
         }
 
@@ -617,6 +876,14 @@ namespace VRCLightVolumes {
 
         // Requests a fresh volume update after this manager becomes active
         private void OnEnable() {
+            _isInitialized = false;
+            _clusteringUnsupported = false;
+            _clusteringAllocationFailed = false;
+            _froxelLayoutValid = false;
+            _froxelDepthValid = false;
+            _froxelProjectionValid = false;
+            _clusterMaskDirty = true;
+            _clusterMaskValid = false;
             RequestUpdateVolumes();
         }
 
@@ -631,25 +898,22 @@ namespace VRCLightVolumes {
                 _updateCoroutine = null;
             }
 #endif
+            DisableClustering();
             SetDisabledShaderState();
         }
 
-#if !UDONSHARP || UNITY_EDITOR
-        // To make it work when changing values on UdonSharpBehaviour in the editor
-        private void Update() {
-            if (_prevAutoUpdateVolumes != AutoUpdateVolumes) {
-                _prevAutoUpdateVolumes = AutoUpdateVolumes;
-                if (AutoUpdateVolumes) RequestUpdateVolumes();
-            }
-            if (_prevAutoUpdateTextures != AutoUpdateTextures) {
-                _prevAutoUpdateTextures = AutoUpdateTextures;
-                if (AutoUpdateTextures) ScheduleUpdateProcess();
-            }
-            if (Mathf.Abs(_prevLightsBrightnessCutoff - LightsBrightnessCutoff) > 0.0001f) {
-                _prevLightsBrightnessCutoff = LightsBrightnessCutoff;
-                _isRangeDirty = true;
-                RequestUpdateVolumes();
-            }
+#if UDONSHARP
+        // Rebuilds main-camera froxel clustering after camera and tracked-head motion have settled for this frame.
+        public override void PostLateUpdate() {
+            UpdateClustering();
+        }
+#else
+        // Rebuilds main-camera froxel clustering after ordinary standalone camera motion has settled for this frame.
+        private void LateUpdate() {
+            if (!Application.isPlaying) return;
+            Camera camera = Camera.main;
+            if (camera == null) camera = Camera.current;
+            UpdateClusteringFromCamera(camera);
         }
 #endif
 
@@ -664,6 +928,18 @@ namespace VRCLightVolumes {
                 ReleaseRuntimeRenderTexture(ShadowTextures);
                 ShadowTextures = null;
             }
+            if (_clusterMask != null) {
+                ReleaseRuntimeRenderTexture(_clusterMask);
+                _clusterMask = null;
+            }
+            if (_coarseClusterMask != null) {
+                ReleaseRuntimeRenderTexture(_coarseClusterMask);
+                _coarseClusterMask = null;
+            }
+            if (_clusteringSource != null) {
+                ReleaseRuntimeRenderTexture(_clusteringSource);
+                _clusteringSource = null;
+            }
 #if UDONSHARP
             if (_dummyRT != null) {
                 ReleaseRuntimeRenderTexture(_dummyRT);
@@ -671,6 +947,7 @@ namespace VRCLightVolumes {
             }
 #endif
             DestroyCubemapFaceRuntimeMaterial();
+            DestroyClusteringMaterial();
         }
 #endif
 
@@ -678,11 +955,36 @@ namespace VRCLightVolumes {
 
 #region Runtime Registries
 
+        // Uses the stable authoring order as an O(1) hint and falls back after runtime reordering.
+        private int FindLightVolumeRegistryIndex(LightVolumeInstance lightVolume) {
+            if (lightVolume == null || LightVolumeInstances == null) return -1;
+            int count = LightVolumeInstances.Length;
+            int hint = lightVolume.RegistryOrder;
+            if (hint >= 0 && hint < count && LightVolumeInstances[hint] == lightVolume) return hint;
+            return Array.IndexOf((Array)LightVolumeInstances, lightVolume, 0, count);
+        }
+
+        // Uses the stable authoring order as an O(1) hint and falls back after runtime reordering.
+        private int FindPointLightRegistryIndex(PointLightVolumeInstance pointLightVolume) {
+            if (pointLightVolume == null || PointLightVolumeInstances == null) return -1;
+            int count = PointLightVolumeInstances.Length;
+            int hint = pointLightVolume.RegistryOrder;
+            if (hint >= 0 && hint < count && PointLightVolumeInstances[hint] == pointLightVolume) return hint;
+            return Array.IndexOf((Array)PointLightVolumeInstances, pointLightVolume, 0, count);
+        }
+
         // Initializes a Light Volume by adding it to the light volume registry. Called automatically at runtime when the object spawns
         public void InitializeLightVolume(LightVolumeInstance lightVolume) {
             if (lightVolume == null) return;
+            if (LightVolumeInstances == null) LightVolumeInstances = new LightVolumeInstance[0];
             int count = LightVolumeInstances.Length;
-            int existingIndex = -1;
+            int existingIndex = FindLightVolumeRegistryIndex(lightVolume);
+            if (existingIndex >= 0 && lightVolume.RegistryOrder != DefaultRegistryOrder) {
+                lightVolume.LightVolumeManager = this;
+                RequestUpdateVolumes();
+                return;
+            }
+            existingIndex = -1;
             int nextRegistryOrder = -1;
             for (int i = 0; i < count; i++) {
                 LightVolumeInstance existingLightVolume = LightVolumeInstances[i];
@@ -745,20 +1047,17 @@ namespace VRCLightVolumes {
 
         // Deinitializes a Light Volume by removing its registry reference without resizing the array
         public void DeinitializeLightVolume(LightVolumeInstance lightVolume) {
-            if (lightVolume == null) return;
-            if (!enabled || !gameObject.activeInHierarchy) return;
-            int count = LightVolumeInstances.Length;
-            int index = Array.IndexOf((Array)LightVolumeInstances, lightVolume, 0, count);
+            if (lightVolume == null || LightVolumeInstances == null) return;
+            int index = FindLightVolumeRegistryIndex(lightVolume);
             if (index < 0) return;
             LightVolumeInstances[index] = null;
-            RequestUpdateVolumes();
+            if (enabled && gameObject.activeInHierarchy) RequestUpdateVolumes();
         }
 
         // Repositions a registered Light Volume after its runtime sort weight changes
         public void ReorderLightVolume(LightVolumeInstance lightVolume) {
             if (lightVolume == null) return;
-            int count = LightVolumeInstances.Length;
-            int index = Array.IndexOf((Array)LightVolumeInstances, lightVolume, 0, count);
+            int index = FindLightVolumeRegistryIndex(lightVolume);
             if (index < 0) {
                 if (lightVolume.IsActive) InitializeLightVolume(lightVolume);
                 return;
@@ -771,15 +1070,24 @@ namespace VRCLightVolumes {
         public void InitializePointLightVolume(PointLightVolumeInstance pointLightVolume) {
             if (pointLightVolume == null) return;
 #if !COMPILER_UDONSHARP
-            if (RuntimeShadowCamera == null) EnsureRuntimeShadowCamera();
+            if (RuntimeShadowCamera == null && pointLightVolume.BakeInGame) EnsureRuntimeShadowCamera();
 #endif
             if (pointLightVolume.RuntimeShadowCamera == null) pointLightVolume.RuntimeShadowCamera = RuntimeShadowCamera;
             if (pointLightVolume.RuntimeShadowDepthEncodeMaterial == null && RuntimeShadowDepthEncodeMaterial != null) pointLightVolume.RuntimeShadowDepthEncodeMaterial = RuntimeShadowDepthEncodeMaterial;
             if (pointLightVolume.RuntimeShadowBlurMaterial == null && RuntimeShadowBlurMaterial != null) pointLightVolume.RuntimeShadowBlurMaterial = RuntimeShadowBlurMaterial;
+            if (PointLightVolumeInstances == null) PointLightVolumeInstances = new PointLightVolumeInstance[0];
             int count = PointLightVolumeInstances.Length;
             bool invalidateCustomTextures = _customTexturesInitialized && pointLightVolume.IsActive && (pointLightVolume.CustomTexture != null || pointLightVolume.CustomTextureMaterial != null);
             bool invalidateShadowTextures = _shadowTexturesInitialized && pointLightVolume.IsActive && (pointLightVolume.ShadowMapTexture != null || pointLightVolume.ShadowMapMaterial != null || pointLightVolume.ShadowMapID >= 0);
-            int existingIndex = -1;
+            int existingIndex = FindPointLightRegistryIndex(pointLightVolume);
+            if (existingIndex >= 0 && pointLightVolume.RegistryOrder != DefaultRegistryOrder) {
+                pointLightVolume.LightVolumeManager = this;
+                if (invalidateCustomTextures) _customTexturesInitialized = false;
+                if (invalidateShadowTextures) _shadowTexturesInitialized = false;
+                RequestUpdateVolumes();
+                return;
+            }
+            existingIndex = -1;
             int nextRegistryOrder = -1;
             for (int i = 0; i < count; i++) {
                 PointLightVolumeInstance existingPointLightVolume = PointLightVolumeInstances[i];
@@ -860,23 +1168,22 @@ namespace VRCLightVolumes {
 
         // Deinitializes a Point Light Volume by removing its registry reference without resizing the array
         public void DeinitializePointLightVolume(PointLightVolumeInstance pointLightVolume, bool customTexturesChanged, bool shadowTexturesChanged) {
-            if (pointLightVolume == null) return;
-            if (!enabled || !gameObject.activeInHierarchy) return;
-            int count = PointLightVolumeInstances.Length;
-            int index = Array.IndexOf((Array)PointLightVolumeInstances, pointLightVolume, 0, count);
+            if (pointLightVolume == null || PointLightVolumeInstances == null) return;
+            int index = FindPointLightRegistryIndex(pointLightVolume);
             if (index < 0) return;
-            if (pointLightVolume.LightType == 2 && pointLightVolume.ProjectionMode == 2 && (pointLightVolume.CustomTexture != null || pointLightVolume.CustomTextureMaterial != null)) pointLightVolume.AreaLightFallbackColor = index < _pointLightAreaCookieAverageColors.Length ? _pointLightAreaCookieAverageColors[index] : Color.clear;
+            if (pointLightVolume.LightType == 2 && pointLightVolume.ProjectionMode == 2 && (pointLightVolume.CustomTexture != null || pointLightVolume.CustomTextureMaterial != null)) {
+                pointLightVolume.AreaLightFallbackColor = index < _pointLightAreaCookieAverageColors.Length ? _pointLightAreaCookieAverageColors[index] : Color.clear;
+            }
             PointLightVolumeInstances[index] = null;
             if (customTexturesChanged) _customTexturesInitialized = false;
             if (shadowTexturesChanged) _shadowTexturesInitialized = false;
-            RequestUpdateVolumes();
+            if (enabled && gameObject.activeInHierarchy) RequestUpdateVolumes();
         }
 
         // Repositions a registered Point Light Volume after its runtime sort weight changes
         public void ReorderPointLightVolume(PointLightVolumeInstance pointLightVolume) {
             if (pointLightVolume == null) return;
-            int count = PointLightVolumeInstances.Length;
-            int index = Array.IndexOf((Array)PointLightVolumeInstances, pointLightVolume, 0, count);
+            int index = FindPointLightRegistryIndex(pointLightVolume);
             if (index < 0) {
                 if (pointLightVolume.IsActive) InitializePointLightVolume(pointLightVolume);
                 return;
@@ -891,8 +1198,96 @@ namespace VRCLightVolumes {
 
 #region Runtime Texture Caches
 
+#if UNITY_EDITOR && !COMPILER_UDONSHARP
+        // Captures the effective custom source state and reports direct edits that bypassed the normal notify API.
+        private bool CaptureEditorCustomSourceState() {
+            EditorState editorState = EditorData;
+            int count = PointLightVolumeInstances.Length;
+            bool changed = editorState.CustomSourceOwners.Length != count || editorState.CustomTextureWidth != CustomTexturesWidth || editorState.CustomTextureHeight != CustomTexturesHeight;
+            editorState.CustomTextureWidth = CustomTexturesWidth;
+            editorState.CustomTextureHeight = CustomTexturesHeight;
+            if (changed) {
+                editorState.CustomSourceOwners = new PointLightVolumeInstance[count];
+                editorState.CustomSourceTextures = new Texture[count];
+                editorState.CustomSourceMaterials = new Material[count];
+                editorState.CustomSourceStates = new int[count];
+            }
+
+            for (int i = 0; i < count; i++) {
+                PointLightVolumeInstance instance = PointLightVolumeInstances[i];
+                Texture texture = null;
+                Material material = null;
+                int state = 0;
+                if (instance != null && instance.IsActive && instance.ProjectionMode != 0) {
+                    if (instance.ProjectionType == 1 && instance.CustomTexture != null) texture = instance.CustomTexture;
+                    else if (instance.ProjectionType == 2 && instance.CustomTextureMaterial != null) material = instance.CustomTextureMaterial;
+                    if (texture != null || material != null) {
+                        state = 1 | (instance.LightType & 3) << 1 | (instance.ProjectionMode & 3) << 3 | (instance.AutoUpdateCustomTexture ? 1 << 5 : 0);
+                        if (texture != null) {
+                            state |= 1 << 6;
+                            if (instance.CustomTextureIsCubemap) state |= 1 << 7;
+                            if (instance.CustomTextureHasDepthSlices) state |= 1 << 8;
+                        }
+                    }
+                }
+                if (editorState.CustomSourceOwners[i] != instance || editorState.CustomSourceTextures[i] != texture || editorState.CustomSourceMaterials[i] != material || editorState.CustomSourceStates[i] != state) changed = true;
+                editorState.CustomSourceOwners[i] = instance;
+                editorState.CustomSourceTextures[i] = texture;
+                editorState.CustomSourceMaterials[i] = material;
+                editorState.CustomSourceStates[i] = state;
+            }
+            return changed;
+        }
+
+        // Captures only source/layout inputs; shading and receiver metadata never rebuild the shared atlas.
+        private bool CaptureEditorShadowSourceState() {
+            EditorState editorState = EditorData;
+            int count = PointLightVolumeInstances.Length;
+            bool changed = editorState.ShadowSourceOwners.Length != count || editorState.ShadowTextureWidth != ShadowTexturesWidth || editorState.ShadowTextureHeight != ShadowTexturesHeight
+                || editorState.ShadowTextureFormat != ShadowTextureFormat;
+            editorState.ShadowTextureWidth = ShadowTexturesWidth;
+            editorState.ShadowTextureHeight = ShadowTexturesHeight;
+            editorState.ShadowTextureFormat = ShadowTextureFormat;
+            if (changed) {
+                editorState.ShadowSourceOwners = new PointLightVolumeInstance[count];
+                editorState.ShadowSourceTextures = new Texture[count];
+                editorState.ShadowSourceMaterials = new Material[count];
+                editorState.ShadowSourceStates = new int[count];
+            }
+
+            for (int i = 0; i < count; i++) {
+                PointLightVolumeInstance instance = PointLightVolumeInstances[i];
+                Texture texture = null;
+                Material material = null;
+                int state = 0;
+                if (instance != null && instance.IsActive && instance.ShadowMapID >= 0) {
+                    if (instance.ShadowMapTexture != null) texture = instance.ShadowMapTexture;
+                    else if (instance.ShadowMapMaterial != null) material = instance.ShadowMapMaterial;
+                    if (texture != null || material != null) {
+                        bool usesCubemap = instance.LightType != 1 || instance.ShadowMapUsesCubemap;
+                        state = 1 | (usesCubemap ? 1 << 1 : 0) | (instance.AutoUpdateShadowMap ? 1 << 2 : 0);
+                        if (texture != null) {
+                            state |= 1 << 3;
+                            if (instance.ShadowMapTextureIsCubemap) state |= 1 << 4;
+                            if (instance.ShadowMapTextureHasDepthSlices) state |= 1 << 5;
+                        }
+                    }
+                }
+                if (editorState.ShadowSourceOwners[i] != instance || editorState.ShadowSourceTextures[i] != texture || editorState.ShadowSourceMaterials[i] != material || editorState.ShadowSourceStates[i] != state) changed = true;
+                editorState.ShadowSourceOwners[i] = instance;
+                editorState.ShadowSourceTextures[i] = texture;
+                editorState.ShadowSourceMaterials[i] = material;
+                editorState.ShadowSourceStates[i] = state;
+            }
+            return changed;
+        }
+#endif
+
         // Rebuilds the runtime cookie texture array and assigns stable shader-side IDs to all point light instances
         public void ReinitializeCustomTextures() {
+#if UNITY_EDITOR && !COMPILER_UDONSHARP
+            if (!Application.isPlaying) CaptureEditorCustomSourceState();
+#endif
             BuildCustomTextureSourceCache();
             if (_customTextureArrayDepth <= 0) {
                 if (CustomTextures != null) {
@@ -1336,6 +1731,9 @@ namespace VRCLightVolumes {
 
         // Rebuilds the runtime shadow texture array and assigns stable shader-side IDs to all shadowed point light instances
         public void ReinitializeShadowTextures() {
+#if UNITY_EDITOR && !COMPILER_UDONSHARP
+            if (!Application.isPlaying) CaptureEditorShadowSourceState();
+#endif
             BuildShadowTextureSourceCache();
             if (_shadowTextureArrayDepth <= 0) { // No shadow sources are active, so release the stale runtime texture array
                 if (ShadowTextures != null) {
@@ -1809,7 +2207,571 @@ namespace VRCLightVolumes {
             CubemapFaceMaterial = null;
         }
 
+        // Destroys the editor/standalone clustering material created outside the build preprocessor.
+        private void DestroyClusteringMaterial() {
+#if !COMPILER_UDONSHARP
+            if (_generatedClusteringMaterial != null) {
+                if (Application.isPlaying) Destroy(_generatedClusteringMaterial);
+                else DestroyImmediate(_generatedClusteringMaterial);
+                _generatedClusteringMaterial = null;
+            }
 #endif
+            if (ClusteringMaterial != null && ClusteringMaterial.hideFlags == HideFlags.HideAndDontSave) {
+                if (Application.isPlaying) Destroy(ClusteringMaterial);
+                else DestroyImmediate(ClusteringMaterial);
+                ClusteringMaterial = null;
+            }
+        }
+
+#endif
+
+#endregion
+
+#region Froxel Clustering
+
+        // Updates screen-camera froxel clustering in VRChat and safely disables it when camera data is unavailable.
+        private void UpdateClustering() {
+            if (!Clustering) {
+                if (_clusteringActive) DisableClustering();
+                return;
+            }
+            TryInitialize();
+            int minLightCount = Mathf.Clamp(ClusteringMinLights, 1, MaxPointLightCount);
+            if (_clusterGeometryUploadPending || _pointLightCount < minLightCount || _clusteringUnsupported) {
+                DisableClustering();
+                return;
+            }
+
+#if COMPILER_UDONSHARP
+            VRCCameraSettings camera = VRCCameraSettings.ScreenCamera;
+            if (camera == null || !camera.Active) {
+                DisableClustering();
+                return;
+            }
+
+            Vector3 position = camera.Position;
+            Vector3 stereoLeftPosition = position;
+            Vector3 stereoRightPosition = position;
+            bool stereoEnabled = camera.StereoEnabled;
+            if (stereoEnabled) {
+                stereoLeftPosition = VRCCameraSettings.GetEyePosition(Camera.StereoscopicEye.Left);
+                stereoRightPosition = VRCCameraSettings.GetEyePosition(Camera.StereoscopicEye.Right);
+                position = (stereoLeftPosition + stereoRightPosition) * 0.5f;
+            }
+
+            float cameraFov = camera.FieldOfView;
+            float cameraAspect = camera.Aspect;
+            int pixelHeight = camera.PixelHeight;
+            float verticalFov = cameraFov > 0.001f ? cameraFov : DefaultFroxelFov;
+            float aspect = cameraAspect > 0.001f ? cameraAspect : (pixelHeight > 0 ? Mathf.Max((float)camera.PixelWidth / pixelHeight, 0.001f) : DefaultFroxelAspect);
+            float rawFarClip = Mathf.Max(camera.FarClipPlane, 0.01f);
+
+            Quaternion rotation = camera.Rotation;
+            Vector3 right = rotation * Vector3.right;
+            Vector3 up = rotation * Vector3.up;
+            Vector3 forward = rotation * Vector3.forward;
+            float horizontalPadding = 0f;
+            float verticalPadding = 0f;
+            float depthPadding = 0f;
+
+            if (stereoEnabled) {
+                Vector3 leftEyeOffset = stereoLeftPosition - position;
+                Vector3 rightEyeOffset = stereoRightPosition - position;
+                horizontalPadding = Mathf.Max(Mathf.Abs(Vector3.Dot(leftEyeOffset, right)), Mathf.Abs(Vector3.Dot(rightEyeOffset, right)));
+                verticalPadding = Mathf.Max(Mathf.Abs(Vector3.Dot(leftEyeOffset, up)), Mathf.Abs(Vector3.Dot(rightEyeOffset, up)));
+                depthPadding = Mathf.Max(Mathf.Abs(Vector3.Dot(leftEyeOffset, forward)), Mathf.Abs(Vector3.Dot(rightEyeOffset, forward)));
+            }
+
+            float nearClip = Mathf.Max(camera.NearClipPlane - depthPadding, 0.001f);
+            float farClip = Mathf.Max(rawFarClip + depthPadding, nearClip + 0.001f);
+            BuildClustering(position, right, up, forward, verticalFov, aspect, nearClip, farClip, horizontalPadding, verticalPadding, null);
+#else
+            Camera camera = Camera.main;
+            if (camera == null) camera = Camera.current;
+            UpdateClusteringFromCamera(camera);
+#endif
+        }
+
+#if !COMPILER_UDONSHARP
+        // Updates froxel clustering from an explicit Unity camera for standalone play mode and Scene View preview.
+        public void UpdateClusteringFromCamera(Camera camera) {
+            if (!Clustering) {
+                if (_clusteringActive) DisableClustering();
+                return;
+            }
+            TryInitialize();
+            int minLightCount = Mathf.Clamp(ClusteringMinLights, 1, MaxPointLightCount);
+            if (_clusterGeometryUploadPending || _pointLightCount < minLightCount || camera == null || camera.orthographic || !ClusteringSupported()) {
+                DisableClustering();
+                return;
+            }
+
+            Transform cameraTransform = camera.transform;
+            Vector3 position = cameraTransform.position;
+            Vector3 stereoLeftPosition = position;
+            Vector3 stereoRightPosition = position;
+            bool stereoEnabled = camera.stereoEnabled;
+            if (stereoEnabled) {
+                Matrix4x4 leftEyeMatrix = camera.GetStereoViewMatrix(Camera.StereoscopicEye.Left).inverse;
+                Matrix4x4 rightEyeMatrix = camera.GetStereoViewMatrix(Camera.StereoscopicEye.Right).inverse;
+                Vector4 leftEyeColumn = leftEyeMatrix.GetColumn(3);
+                Vector4 rightEyeColumn = rightEyeMatrix.GetColumn(3);
+                stereoLeftPosition = new Vector3(leftEyeColumn.x, leftEyeColumn.y, leftEyeColumn.z);
+                stereoRightPosition = new Vector3(rightEyeColumn.x, rightEyeColumn.y, rightEyeColumn.z);
+                position = (stereoLeftPosition + stereoRightPosition) * 0.5f;
+            }
+
+            float verticalFov = camera.fieldOfView > 0.001f ? camera.fieldOfView : DefaultFroxelFov;
+            float aspect = camera.aspect > 0.001f ? camera.aspect : DefaultFroxelAspect;
+            float rawFarClip = Mathf.Max(camera.farClipPlane, 0.01f);
+
+            Quaternion rotation = cameraTransform.rotation;
+            Vector3 right = rotation * Vector3.right;
+            Vector3 up = rotation * Vector3.up;
+            Vector3 forward = rotation * Vector3.forward;
+            float horizontalPadding = 0f;
+            float verticalPadding = 0f;
+            float depthPadding = 0f;
+
+            if (stereoEnabled) {
+                Vector3 leftEyeOffset = stereoLeftPosition - position;
+                Vector3 rightEyeOffset = stereoRightPosition - position;
+                horizontalPadding = Mathf.Max(Mathf.Abs(Vector3.Dot(leftEyeOffset, right)), Mathf.Abs(Vector3.Dot(rightEyeOffset, right)));
+                verticalPadding = Mathf.Max(Mathf.Abs(Vector3.Dot(leftEyeOffset, up)), Mathf.Abs(Vector3.Dot(rightEyeOffset, up)));
+                depthPadding = Mathf.Max(Mathf.Abs(Vector3.Dot(leftEyeOffset, forward)), Mathf.Abs(Vector3.Dot(rightEyeOffset, forward)));
+            }
+
+            float nearClip = Mathf.Max(camera.nearClipPlane - depthPadding, 0.001f);
+            float farClip = Mathf.Max(rawFarClip + depthPadding, nearClip + 0.001f);
+            BuildClustering(position, right, up, forward, verticalFov, aspect, nearClip, farClip, horizontalPadding, verticalPadding, camera);
+        }
+
+        // Releases editor preview textures while leaving the shared material available for play-mode preparation.
+        public void ReleaseClusteringPreview() {
+            TryInitialize();
+            DisableClustering();
+#if UNITY_EDITOR
+            // Shader globals outlive managed proxy state across play-mode transitions. Reset them
+            // even when the restored edit-mode manager reports a stale _clusteringActive == false.
+            VRCShader.SetGlobalFloat(_clusteringEnabledID, 0f);
+            VRCShader.SetGlobalTexture(_clusterMaskID, null);
+            VRCShader.SetGlobalTexture(_coarseClusterMaskID, null);
+#endif
+            _clusteringUnsupported = false;
+            _clusteringAllocationFailed = false;
+            _froxelLayoutValid = false;
+            _froxelDepthValid = false;
+            _froxelProjectionValid = false;
+            _clusterMaskDirty = true;
+            _clusterMaskValid = false;
+            if (_clusterMask != null) {
+                ReleaseRuntimeRenderTexture(_clusterMask);
+                _clusterMask = null;
+            }
+            if (_coarseClusterMask != null) {
+                ReleaseRuntimeRenderTexture(_coarseClusterMask);
+                _coarseClusterMask = null;
+            }
+            if (_clusteringSource != null) {
+                ReleaseRuntimeRenderTexture(_clusteringSource);
+                _clusteringSource = null;
+            }
+        }
+
+#if UNITY_EDITOR
+        // Rebuilds all derived edit-mode data after script reloads and late UdonSharp asset imports.
+        // Runtime flags can be restored independently from managed resources, so no cached gate is trusted.
+        public void RebuildClusteringPreviewState() {
+            if (Application.isPlaying) return;
+            _isUpdatingVolumes = false;
+            _volumeDataUpdateRequested = false;
+#if UDONSHARP
+            _isUpdateProcessRunning = false;
+#endif
+            _isInitialized = false;
+            _isRangeDirty = true;
+            _clusteringLightsDirty = true;
+            _clusterGeometryUploadPending = false;
+            ReleaseClusteringPreview();
+            UpdateVolumes();
+        }
+
+        // Prevents the generated HideAndDontSave material from becoming unreachable with the
+        // editor-state table during an assembly reload.
+        public void ReleaseClusteringPreviewForAssemblyReload() {
+            ReleaseClusteringPreview();
+            DestroyClusteringMaterial();
+        }
+#endif
+#endif
+
+#if !COMPILER_UDONSHARP
+        // Returns whether the active renderer can build and sample the packed integer mask atlas.
+        private bool ClusteringSupported() {
+            if (_clusteringUnsupported) return false;
+            return SystemInfo.graphicsShaderLevel >= 35 && SystemInfo.SupportsRenderTextureFormat(ClusterMaskFormat);
+        }
+#endif
+
+        // Resolves the camera grid, publishes its world-space transform, and builds both clustering masks.
+        private void BuildClustering(Vector3 position, Vector3 right, Vector3 up, Vector3 forward, float verticalFov, float aspect, float nearClip, float farClip, float horizontalPadding, float verticalPadding, Camera renderCamera) {
+            verticalFov = Mathf.Clamp(verticalFov, 1f, 179f);
+            if (aspect < 0.001f) aspect = DefaultFroxelAspect;
+            if (nearClip < 0.001f) nearClip = 0.001f;
+            if (farClip < nearClip + 0.001f) farClip = nearClip + 0.001f;
+
+            float density = Mathf.Clamp(FroxelDensity, 0.05f, 3f);
+            int depthSlices = Mathf.Clamp(FroxelSlices, 1, MaxFroxelSize);
+            int requestedCoarse = FroxelCoarse;
+            int coarseFactor = requestedCoarse <= 2 ? 2 : (requestedCoarse <= 5 ? 4 : 8);
+
+            bool layoutChanged = true;
+            if (_froxelLayoutValid && _froxelLayoutFov == verticalFov && _froxelLayoutAspect == aspect && _froxelLayoutDensity == density
+                && _froxelLayoutSlices == depthSlices && _froxelLayoutCoarse == coarseFactor) layoutChanged = false;
+            if (layoutChanged) {
+                _froxelLayoutValid = true;
+                _froxelLayoutFov = verticalFov;
+                _froxelLayoutAspect = aspect;
+                _froxelLayoutDensity = density;
+                _froxelLayoutSlices = depthSlices;
+                _froxelLayoutCoarse = coarseFactor;
+                _clusteringAllocationFailed = false;
+
+                float halfVerticalRadians = verticalFov * (0.5f * Mathf.Deg2Rad);
+                _froxelTanHalfVertical = Mathf.Tan(halfVerticalRadians);
+                _froxelTanHalfHorizontal = _froxelTanHalfVertical * aspect;
+                float horizontalFov = Mathf.Atan(_froxelTanHalfHorizontal) * (2f * Mathf.Rad2Deg);
+                int columns = Mathf.Clamp(Mathf.CeilToInt(horizontalFov * density), 1, MaxFroxelSize);
+                int rows = Mathf.Clamp(Mathf.CeilToInt(verticalFov * density), 1, MaxFroxelSize);
+
+                // Tile rows only enough to fit the portable 4096 texture limit. Depth changes
+                // storage packing, but never the camera's logical angular grid.
+                int atlasTileShift = 0;
+                int atlasTileColumns = 1;
+                int atlasTileRows = rows;
+                while (depthSlices * atlasTileRows > MaxFroxelAtlasSize && atlasTileShift < MaxFroxelTileShift) {
+                    atlasTileShift++;
+                    atlasTileColumns <<= 1;
+                    atlasTileRows = (rows + atlasTileColumns - 1) >> atlasTileShift;
+                }
+                _fineAtlasWidth = columns * atlasTileColumns;
+                _fineAtlasHeight = depthSlices * atlasTileRows;
+
+                int coarseShift = coarseFactor == 2 ? 1 : (coarseFactor == 4 ? 2 : 3);
+                int coarseColumns = (columns + coarseFactor - 1) >> coarseShift;
+                int coarseRows = (rows + coarseFactor - 1) >> coarseShift;
+                int coarseDepthSlices = (depthSlices + coarseFactor - 1) >> coarseShift;
+                int coarseAtlasTileShift = 0;
+                int coarseAtlasTileColumns = 1;
+                int coarseAtlasTileRows = coarseRows;
+                while (coarseDepthSlices * coarseAtlasTileRows > MaxFroxelAtlasSize && coarseAtlasTileShift < MaxFroxelTileShift) {
+                    coarseAtlasTileShift++;
+                    coarseAtlasTileColumns <<= 1;
+                    coarseAtlasTileRows = (coarseRows + coarseAtlasTileColumns - 1) >> coarseAtlasTileShift;
+                }
+                _coarseAtlasWidth = coarseColumns * coarseAtlasTileColumns;
+                _coarseAtlasHeight = coarseDepthSlices * coarseAtlasTileRows;
+
+                _fineGridParams = new Vector4(columns, depthSlices, rows, atlasTileShift);
+                _coarseGridParams = new Vector4(coarseColumns, coarseDepthSlices, coarseRows, coarseAtlasTileShift);
+                _coarseReductionParams = new Vector4(coarseFactor, coarseShift, 1f / columns, 1f / rows);
+                _froxelDepthValid = false;
+                _froxelProjectionValid = false;
+                _clusterMaskDirty = true;
+                _clusterMaskValid = false;
+            }
+
+            if (_clusteringAllocationFailed) {
+                DisableClustering();
+                return;
+            }
+
+            Material clusteringMaterial = GetClusteringMaterial();
+            bool materialMissing = clusteringMaterial == null;
+            bool resourcesMissing = materialMissing || _clusterMask == null || _coarseClusterMask == null || _clusteringSource == null;
+#if !COMPILER_UDONSHARP
+            resourcesMissing |= (_clusterMask != null && !_clusterMask.IsCreated()) || (_coarseClusterMask != null && !_coarseClusterMask.IsCreated()) || (_clusteringSource != null && !_clusteringSource.IsCreated());
+#endif
+            if (layoutChanged || resourcesMissing) {
+                if (!EnsureClusteringResources(_fineAtlasWidth, _fineAtlasHeight, _coarseAtlasWidth, _coarseAtlasHeight)) {
+                    DisableClustering();
+                    return;
+                }
+                clusteringMaterial = GetClusteringMaterial();
+
+                VRCShader.SetGlobalVector(_froxelGridID, _fineGridParams);
+                VRCShader.SetGlobalTexture(_clusterMaskID, _clusterMask);
+                VRCShader.SetGlobalTexture(_coarseClusterMaskID, _coarseClusterMask);
+                VRCShader.SetGlobalVector(_froxelCoarseGridID, _coarseGridParams);
+                VRCShader.SetGlobalVector(_froxelCoarseID, _coarseReductionParams);
+                clusteringMaterial.SetVector(_froxelFineGridID, _fineGridParams);
+                clusteringMaterial.SetVector(_froxelCoarseGridID, _coarseGridParams);
+                clusteringMaterial.SetVector(_froxelCoarseID, _coarseReductionParams);
+                clusteringMaterial.SetTexture(_coarseClusterMaskID, _coarseClusterMask);
+                if (materialMissing) _froxelDepthValid = false;
+                _clusterMaskDirty = true;
+            }
+
+            bool depthChanged = true;
+            if (_froxelDepthValid && _froxelNearClip == nearClip && _froxelFarClip == farClip) depthChanged = false;
+            if (depthChanged) {
+                _froxelDepthValid = true;
+                _froxelNearClip = nearClip;
+                _froxelFarClip = farClip;
+                float logDepthRange = Mathf.Log(farClip / nearClip) * 1.4426950409f;
+                if (logDepthRange < 0.000001f) logDepthRange = 0.000001f;
+                float logDepthStep = logDepthRange / depthSlices;
+#if !COMPILER_UDONSHARP
+                _editorFroxelDepthParams = new Vector4(nearClip, farClip, 1f / nearClip, depthSlices / logDepthRange);
+                VRCShader.SetGlobalVector(_froxelDepthID, _editorFroxelDepthParams);
+#else
+                VRCShader.SetGlobalVector(_froxelDepthID, new Vector4(nearClip, farClip, 1f / nearClip, depthSlices / logDepthRange));
+#endif
+                float fineDepthRatio = Mathf.Pow(2f, logDepthStep);
+                float coarseDepthRatio = Mathf.Pow(2f, logDepthStep * coarseFactor);
+                clusteringMaterial.SetVector(_froxelDepthStepID, new Vector4(logDepthStep, fineDepthRatio, coarseDepthRatio, 0f));
+                _clusterMaskDirty = true;
+            }
+
+            bool projectionChanged = true;
+            if (_froxelProjectionValid && _froxelHorizontalPadding == horizontalPadding && _froxelVerticalPadding == verticalPadding) projectionChanged = false;
+            if (projectionChanged) {
+                _froxelProjectionValid = true;
+                _froxelHorizontalPadding = horizontalPadding;
+                _froxelVerticalPadding = verticalPadding;
+                VRCShader.SetGlobalVector(_froxelProjectionID, new Vector4(_froxelTanHalfHorizontal, _froxelTanHalfVertical, horizontalPadding, verticalPadding));
+                _clusterMaskDirty = true;
+            }
+
+            bool cameraChanged = true;
+            if (_clusterMaskValid && _froxelCameraPosition.Equals(position) && _froxelCameraRight.Equals(right) && _froxelCameraUp.Equals(up) && _froxelCameraForward.Equals(forward)) cameraChanged = false;
+            if (cameraChanged) {
+                _froxelCameraPosition = position;
+                _froxelCameraRight = right;
+                _froxelCameraUp = up;
+                _froxelCameraForward = forward;
+                VRCShader.SetGlobalVector(_froxelRightID, new Vector4(right.x, right.y, right.z, position.x));
+                VRCShader.SetGlobalVector(_froxelUpID, new Vector4(up.x, up.y, up.z, position.y));
+                VRCShader.SetGlobalVector(_froxelForwardID, new Vector4(forward.x, forward.y, forward.z, position.z));
+            }
+
+#if !COMPILER_UDONSHARP
+            bool publishForEditorCamera = !Application.isPlaying;
+            if (publishForEditorCamera) {
+                // Shader globals are process-wide and may be reset or overwritten without invalidating this manager's caches.
+                VRCShader.SetGlobalVector(_froxelGridID, _fineGridParams);
+                VRCShader.SetGlobalVector(_froxelDepthID, _editorFroxelDepthParams);
+                VRCShader.SetGlobalVector(_froxelCoarseGridID, _coarseGridParams);
+                VRCShader.SetGlobalVector(_froxelCoarseID, _coarseReductionParams);
+                VRCShader.SetGlobalVector(_froxelProjectionID, new Vector4(_froxelTanHalfHorizontal, _froxelTanHalfVertical, horizontalPadding, verticalPadding));
+                VRCShader.SetGlobalVector(_froxelRightID, new Vector4(right.x, right.y, right.z, position.x));
+                VRCShader.SetGlobalVector(_froxelUpID, new Vector4(up.x, up.y, up.z, position.y));
+                VRCShader.SetGlobalVector(_froxelForwardID, new Vector4(forward.x, forward.y, forward.z, position.z));
+                VRCShader.SetGlobalTexture(_clusterMaskID, _clusterMask);
+                VRCShader.SetGlobalTexture(_coarseClusterMaskID, _coarseClusterMask);
+                VRCShader.SetGlobalVectorArray(_clusteringLightsID, _clusteringLights);
+            }
+#endif
+
+            bool maskNeedsBuild = _clusterMaskDirty || cameraChanged;
+            if (_clusteringLightsDirty) {
+                VRCShader.SetGlobalVectorArray(_clusteringLightsID, _clusteringLights);
+                _clusteringLightsDirty = false;
+                maskNeedsBuild = true;
+            }
+            if (maskNeedsBuild) {
+                BuildClusterMasks(renderCamera, _fineGridParams, _coarseGridParams);
+                _clusterMaskDirty = false;
+                _clusterMaskValid = true;
+            }
+
+#if COMPILER_UDONSHARP
+            bool publishForEditorCamera = false;
+#endif
+            if (!_clusteringActive || publishForEditorCamera) VRCShader.SetGlobalFloat(_clusteringEnabledID, 1f);
+            _clusteringActive = true;
+        }
+
+        // Ensures the hidden build material, both packed integer targets and one-pixel blit source all exist.
+        private bool EnsureClusteringResources(int atlasWidth, int atlasHeight, int coarseAtlasWidth, int coarseAtlasHeight) {
+            if (_clusteringUnsupported) return false;
+            bool ready = EnsureClusteringMaterial() && EnsureClusterMask(atlasWidth, atlasHeight) && EnsureCoarseClusterMask(coarseAtlasWidth, coarseAtlasHeight) && EnsureClusteringSource();
+            if (ready) return true;
+
+            // Do not retain the largest allocation after a later resource failed under memory pressure.
+            ReleaseClusteringTextures();
+            return false;
+        }
+
+        private void ReleaseClusteringTextures() {
+            if (_clusterMask != null) ReleaseRuntimeRenderTexture(_clusterMask);
+            if (_coarseClusterMask != null) ReleaseRuntimeRenderTexture(_coarseClusterMask);
+            if (_clusteringSource != null) ReleaseRuntimeRenderTexture(_clusteringSource);
+            _clusterMask = null;
+            _coarseClusterMask = null;
+            _clusteringSource = null;
+            _clusterMaskDirty = true;
+            _clusterMaskValid = false;
+        }
+
+        // Creates the build material outside Udon; runtime Udon receives the same dependency from the build preprocessor.
+        private bool EnsureClusteringMaterial() {
+            if (ClusteringMaterial != null) return true;
+#if COMPILER_UDONSHARP
+            _clusteringUnsupported = true;
+            return false;
+#else
+            if (_generatedClusteringMaterial != null) return true;
+            Shader shader = Shader.Find(ClusteringShaderName);
+            if (shader == null || !shader.isSupported) {
+                _clusteringUnsupported = true;
+                return false;
+            }
+            _generatedClusteringMaterial = new Material(shader);
+            _generatedClusteringMaterial.name = gameObject.name + "_ClusteringRuntime";
+            _generatedClusteringMaterial.hideFlags = HideFlags.HideAndDontSave;
+            return true;
+#endif
+        }
+
+        // Runtime Udon receives a serialized build dependency; editor preview owns an unsaved material instead.
+        private Material GetClusteringMaterial() {
+#if COMPILER_UDONSHARP
+            return ClusteringMaterial;
+#else
+            return ClusteringMaterial != null ? ClusteringMaterial : _generatedClusteringMaterial;
+#endif
+        }
+
+        // Creates or recreates the point-filtered RGBA32I Texture2D atlas used as the 128-bit light mask.
+        private bool EnsureClusterMask(int atlasWidth, int atlasHeight) {
+            bool matches = _clusterMask != null && _clusterMask.width == atlasWidth && _clusterMask.height == atlasHeight && _clusterMask.dimension == TextureDimension.Tex2D && _clusterMask.format == ClusterMaskFormat && _clusterMask.filterMode == FilterMode.Point && !_clusterMask.useMipMap;
+#if !COMPILER_UDONSHARP
+            if (matches) matches = _clusterMask.IsCreated();
+#endif
+            if (matches) return true;
+
+            ReleaseRuntimeRenderTexture(_clusterMask);
+            _clusterMask = new RenderTexture(atlasWidth, atlasHeight, 0, ClusterMaskFormat, RenderTextureReadWrite.Linear);
+            _clusterMask.dimension = TextureDimension.Tex2D;
+            _clusterMask.useMipMap = false;
+            _clusterMask.autoGenerateMips = false;
+            _clusterMask.enableRandomWrite = false;
+            _clusterMask.wrapMode = TextureWrapMode.Clamp;
+            _clusterMask.filterMode = FilterMode.Point;
+            _clusterMask.anisoLevel = 0;
+#if !COMPILER_UDONSHARP
+            _clusterMask.name = "Fine Froxel Cluster Mask";
+            _clusterMask.hideFlags = HideFlags.HideAndDontSave;
+#endif
+            bool created = _clusterMask.Create();
+            if (created) return true;
+            ReleaseRuntimeRenderTexture(_clusterMask);
+            _clusterMask = null;
+            _clusteringAllocationFailed = true;
+            _clusterMaskValid = false;
+            return false;
+        }
+
+        // Creates or recreates the point-filtered Coarse RGBA32I atlas used only by the Fine builder.
+        private bool EnsureCoarseClusterMask(int atlasWidth, int atlasHeight) {
+            bool matches = _coarseClusterMask != null && _coarseClusterMask.width == atlasWidth && _coarseClusterMask.height == atlasHeight && _coarseClusterMask.dimension == TextureDimension.Tex2D
+                && _coarseClusterMask.format == ClusterMaskFormat && _coarseClusterMask.filterMode == FilterMode.Point && !_coarseClusterMask.useMipMap;
+#if !COMPILER_UDONSHARP
+            if (matches) matches = _coarseClusterMask.IsCreated();
+#endif
+            if (matches) return true;
+
+            ReleaseRuntimeRenderTexture(_coarseClusterMask);
+            _coarseClusterMask = new RenderTexture(atlasWidth, atlasHeight, 0, ClusterMaskFormat, RenderTextureReadWrite.Linear);
+            _coarseClusterMask.dimension = TextureDimension.Tex2D;
+            _coarseClusterMask.useMipMap = false;
+            _coarseClusterMask.autoGenerateMips = false;
+            _coarseClusterMask.enableRandomWrite = false;
+            _coarseClusterMask.wrapMode = TextureWrapMode.Clamp;
+            _coarseClusterMask.filterMode = FilterMode.Point;
+            _coarseClusterMask.anisoLevel = 0;
+#if !COMPILER_UDONSHARP
+            _coarseClusterMask.name = "Coarse Froxel Cluster Mask";
+            _coarseClusterMask.hideFlags = HideFlags.HideAndDontSave;
+#endif
+            bool created = _coarseClusterMask.Create();
+            if (created) return true;
+            ReleaseRuntimeRenderTexture(_coarseClusterMask);
+            _coarseClusterMask = null;
+            _clusteringAllocationFailed = true;
+            _clusterMaskValid = false;
+            return false;
+        }
+
+        // Creates the one-pixel Texture2D source required by Graphics/VRCGraphics.Blit.
+        private bool EnsureClusteringSource() {
+            bool matches = _clusteringSource != null && _clusteringSource.dimension == TextureDimension.Tex2D;
+#if !COMPILER_UDONSHARP
+            if (matches) matches = _clusteringSource.IsCreated();
+#endif
+            if (matches) return true;
+
+            ReleaseRuntimeRenderTexture(_clusteringSource);
+            _clusteringSource = new RenderTexture(1, 1, 0, RenderTextureFormat.ARGB32, RenderTextureReadWrite.Linear);
+            _clusteringSource.dimension = TextureDimension.Tex2D;
+            _clusteringSource.useMipMap = false;
+            _clusteringSource.autoGenerateMips = false;
+            _clusteringSource.wrapMode = TextureWrapMode.Clamp;
+            _clusteringSource.filterMode = FilterMode.Point;
+#if !COMPILER_UDONSHARP
+            _clusteringSource.name = "Froxel Clustering Source";
+            _clusteringSource.hideFlags = HideFlags.HideAndDontSave;
+#endif
+            bool created = _clusteringSource.Create();
+            if (created) return true;
+            ReleaseRuntimeRenderTexture(_clusteringSource);
+            _clusteringSource = null;
+            _clusteringAllocationFailed = true;
+            _clusterMaskValid = false;
+            return false;
+        }
+
+        // Builds Coarse first, then filters it into Fine. Both draws are immediate and complete in the current frame.
+        private void BuildClusterMasks(Camera renderCamera, Vector4 fineGridParams, Vector4 coarseGridParams) {
+            Material clusteringMaterial = GetClusteringMaterial();
+#if !COMPILER_UDONSHARP
+            Camera previousCamera = Camera.current;
+            RenderTexture previousRenderTexture = RenderTexture.active;
+            if (renderCamera != null) Camera.SetupCurrent(renderCamera);
+#endif
+            // Never bind the Coarse destination as its own sampler: read/write feedback is undefined on GLES3.
+            clusteringMaterial.SetTexture(_coarseClusterMaskID, _clusterMask);
+#if COMPILER_UDONSHARP
+            clusteringMaterial.SetFloat(_froxelPassID, 0f);
+            clusteringMaterial.SetVector(_froxelGridID, coarseGridParams);
+            VRCGraphics.Blit(_clusteringSource, _coarseClusterMask, clusteringMaterial);
+            clusteringMaterial.SetTexture(_coarseClusterMaskID, _coarseClusterMask);
+            clusteringMaterial.SetFloat(_froxelPassID, 1f);
+            clusteringMaterial.SetVector(_froxelGridID, fineGridParams);
+            VRCGraphics.Blit(_clusteringSource, _clusterMask, clusteringMaterial);
+#else
+            clusteringMaterial.SetFloat(_froxelPassID, 0f);
+            clusteringMaterial.SetVector(_froxelGridID, coarseGridParams);
+            Graphics.Blit(_clusteringSource, _coarseClusterMask, clusteringMaterial);
+            clusteringMaterial.SetTexture(_coarseClusterMaskID, _coarseClusterMask);
+            clusteringMaterial.SetFloat(_froxelPassID, 1f);
+            clusteringMaterial.SetVector(_froxelGridID, fineGridParams);
+            Graphics.Blit(_clusteringSource, _clusterMask, clusteringMaterial);
+#endif
+#if !COMPILER_UDONSHARP
+            RenderTexture.active = previousRenderTexture;
+            Camera.SetupCurrent(previousCamera);
+#endif
+        }
+
+        // Publishes only the availability flag; all Point Light Volume globals remain untouched.
+        private void DisableClustering() {
+            if (_clusteringActive) {
+                VRCShader.SetGlobalFloat(_clusteringEnabledID, 0f);
+            }
+            _clusteringActive = false;
+        }
 
 #endregion
 
@@ -1819,6 +2781,11 @@ namespace VRCLightVolumes {
         public void RequestUpdateVolumes() {
 #if !COMPILER_UDONSHARP && UDONSHARP && UNITY_EDITOR
             if (ShouldSkipEditorProxyRuntimeUpdate()) return;
+            // Udon delayed events are not dispatched for the edit-mode C# proxy.
+            if (!Application.isPlaying) {
+                UpdateVolumes();
+                return;
+            }
 #endif
             if (_isUpdatingVolumes) return;
             _volumeDataUpdateRequested = true;
@@ -1829,6 +2796,10 @@ namespace VRCLightVolumes {
         private void ScheduleUpdateProcess() {
 #if !COMPILER_UDONSHARP && UDONSHARP && UNITY_EDITOR
             if (ShouldSkipEditorProxyRuntimeUpdate()) return;
+            if (!Application.isPlaying) {
+                UpdateVolumes();
+                return;
+            }
 #endif
 #if UDONSHARP
             if (_isUpdateProcessRunning) return;
@@ -1879,10 +2850,32 @@ namespace VRCLightVolumes {
                 Matrix4x4 previousMatrix = _dynamicPointLightVolumeMatrices[i];
                 if (localToWorldMatrix.Equals(previousMatrix)) continue;
 
-                UpdatePointLightTransformData(instance, localToWorldMatrix, false);
+                float packedShadowIdAbs = Mathf.Abs(_pointLightCustomId[shaderIndex].y);
+                bool hasActiveShadow = packedShadowIdAbs >= 1f && packedShadowIdAbs < DisabledShadingShadowId;
+                bool basisUnchanged = localToWorldMatrix.m00 == previousMatrix.m00 && localToWorldMatrix.m01 == previousMatrix.m01 && localToWorldMatrix.m02 == previousMatrix.m02
+                    && localToWorldMatrix.m10 == previousMatrix.m10 && localToWorldMatrix.m11 == previousMatrix.m11 && localToWorldMatrix.m12 == previousMatrix.m12
+                    && localToWorldMatrix.m20 == previousMatrix.m20 && localToWorldMatrix.m21 == previousMatrix.m21 && localToWorldMatrix.m22 == previousMatrix.m22;
+                if (basisUnchanged && !hasActiveShadow) {
+                    // Translation-only motion is the common case. Preserve all static light data and avoid
+                    // repeated cross-Udon reads; active shadows still need their reprojection metadata rebuilt.
+                    Vector3 position = localToWorldMatrix.GetPosition();
+                    instance.Position = position;
+                    Vector4 positionData = _pointLightPosition[shaderIndex];
+                    if (positionData.x != position.x || positionData.y != position.y || positionData.z != position.z) {
+                        positionData.x = position.x;
+                        positionData.y = position.y;
+                        positionData.z = position.z;
+                        _pointLightPosition[shaderIndex] = positionData;
+                        _clusterMaskDirty = true;
+                        _clusterGeometryUploadPending = true;
+                        _updatePointLightPositionBuffer = true;
+                    }
+                } else {
+                    UpdatePointLightTransformData(instance, localToWorldMatrix, false);
+                    WritePointLightShaderData(shaderIndex, _enabledPointIDs[shaderIndex], instance, false);
+                    _updatePointLightBuffers = true;
+                }
                 _dynamicPointLightVolumeMatrices[i] = localToWorldMatrix;
-                WritePointLightShaderData(shaderIndex, _enabledPointIDs[shaderIndex], instance, false);
-                _updatePointLightBuffers = true;
             }
         }
 
@@ -1893,19 +2886,26 @@ namespace VRCLightVolumes {
                 VRCShader.SetGlobalVectorArray(_lightVolumeRotationID, _relativeRotation);
                 VRCShader.SetGlobalVectorArray(_lightVolumeColorID, _colors);
             }
-            if (_updatePointLightBuffers && _pointLightCount != 0) {
-                VRCShader.SetGlobalVectorArray(_pointLightColorID, _pointLightColor);
-                VRCShader.SetGlobalVectorArray(_pointLightExtraDataID, _pointLightExtraData);
-                VRCShader.SetGlobalVectorArray(_pointLightPositionID, _pointLightPosition);
-                VRCShader.SetGlobalVectorArray(_pointLightDirectionID, _pointLightDirection);
-                VRCShader.SetGlobalVectorArray(_pointLightCustomIdID, _pointLightCustomId);
-                if (_activeShadowCount > 0) {
-                    VRCShader.SetGlobalVectorArray(_pointLightShadowReprojectionDataID, _pointLightShadowReprojectionData);
-                    VRCShader.SetGlobalVectorArray(_pointLightShadowRotationDataID, _pointLightShadowRotationData);
+            if (_updatePointLightBuffers || _updatePointLightPositionBuffer) {
+                if (_pointLightCount != 0) {
+                    VRCShader.SetGlobalVectorArray(_pointLightPositionID, _pointLightPosition);
+                    if (_updatePointLightBuffers) {
+                        VRCShader.SetGlobalVectorArray(_pointLightColorID, _pointLightColor);
+                        VRCShader.SetGlobalVectorArray(_pointLightExtraDataID, _pointLightExtraData);
+                        VRCShader.SetGlobalVectorArray(_pointLightDirectionID, _pointLightDirection);
+                        VRCShader.SetGlobalVectorArray(_pointLightCustomIdID, _pointLightCustomId);
+                        if (_activeShadowCount > 0) {
+                            VRCShader.SetGlobalVectorArray(_pointLightShadowReprojectionDataID, _pointLightShadowReprojectionData);
+                            VRCShader.SetGlobalVectorArray(_pointLightShadowRotationDataID, _pointLightShadowRotationData);
+                        }
+                    }
                 }
+                if (_clusterGeometryUploadPending) _clusterMaskDirty = true;
+                _clusterGeometryUploadPending = false;
             }
             _updateLightVolumeBuffers = false;
             _updatePointLightBuffers = false;
+            _updatePointLightPositionBuffer = false;
         }
 
 #if UDONSHARP
@@ -1929,6 +2929,7 @@ namespace VRCLightVolumes {
             _volumeDataUpdateRequested = false;
             _updateLightVolumeBuffers = _lightVolumeArraysDirty;
             _updatePointLightBuffers = _pointLightArraysDirty;
+            _updatePointLightPositionBuffer = false;
             _updateNeedsVolumeRebuild = false;
             _lightVolumeArraysDirty = false;
             _pointLightArraysDirty = false;
@@ -1940,7 +2941,7 @@ namespace VRCLightVolumes {
 
             if (updateVolumes) {
                 UpdateVolumes();
-            } else if (_updateLightVolumeBuffers || _updatePointLightBuffers) {
+            } else if (_updateLightVolumeBuffers || _updatePointLightBuffers || _updatePointLightPositionBuffer) {
                 UploadAutoUpdatedVolumeChanges();
             }
 
@@ -2026,12 +3027,41 @@ namespace VRCLightVolumes {
             float squaredScale = instance.SquaredScale;
             float squaredRange = instance.SquaredRange;
             Vector4 pos = instance.Position;
-
             // Point light type
             bool isSpot = lightType == 1; // 1: spot light
             bool isArea = lightType == 2; // 2: area light
             bool isLut = projectionMode == 1; // 1: LUT projection
             bool isCustomCookie = projectionMode == 2; // 2: custom cookie or cubemap projection
+            float spotOuterTangent = 0f;
+            float clusterOuterTangent = 0f;
+            float spotOuterCosine = 1f;
+            float spotCookieAspect = 1f;
+            Vector3 clusterAxis = Vector3.forward;
+            Vector4 directionData = Vector4.zero;
+            if (isSpot) {
+                spotOuterTangent = instance.OuterAngleTan;
+                clusterOuterTangent = spotOuterTangent;
+                if (isCustomCookie) {
+                    spotCookieAspect = Mathf.Max(Mathf.Abs(instance.SpotCookieAspect), 0.001f);
+                    // The cookie is a rectangular pyramid. Cluster against its circumscribed cone to avoid false negatives.
+                    float inverseAspect = 1f / spotCookieAspect;
+                    clusterOuterTangent *= Mathf.Sqrt(1f + inverseAspect * inverseAspect);
+                    Quaternion rotation = instance.Rotation;
+                    directionData = new Vector4(rotation.x, rotation.y, rotation.z, rotation.w);
+                    clusterAxis = Quaternion.Inverse(rotation) * Vector3.forward;
+                } else {
+                    Vector3 direction = instance.Direction;
+                    spotOuterCosine = instance.OuterAngleCos;
+                    clusterAxis = direction;
+                    directionData = new Vector4(direction.x, direction.y, direction.z, instance.ConeFalloff);
+                }
+            } else if (isArea || isCustomCookie) {
+                Quaternion rotation = instance.Rotation;
+                directionData = new Vector4(rotation.x, rotation.y, rotation.z, rotation.w);
+                if (isArea) clusterAxis = rotation * Vector3.forward;
+            }
+            WriteClusteringLight(shaderIndex, squaredRange, lightType, clusterOuterTangent, clusterAxis);
+            _pointLightDirection[shaderIndex] = directionData;
             int resolvedCustomId = sourceIndex < _pointLightCustomIDs.Length ? _pointLightCustomIDs[sourceIndex] : -1;
             bool hasAreaCookie = isArea && isCustomCookie && resolvedCustomId >= 0;
 
@@ -2047,14 +3077,19 @@ namespace VRCLightVolumes {
                     float lightSourceSize = instance.LightSourceSize;
                     pos.w = typeSign * lightSourceSize * lightSourceSize * squaredScale;
                 }
-                if (isSpot && isCustomCookie) angleData = instance.OuterAngleTan;
-                else angleData = instance.OuterAngleCos;
+                if (isSpot && isCustomCookie) angleData = spotOuterTangent;
+                else angleData = isSpot ? spotOuterCosine : instance.OuterAngleCos;
+            }
+            Vector4 previousPosition = _pointLightPosition[shaderIndex];
+            if (previousPosition.x != pos.x || previousPosition.y != pos.y || previousPosition.z != pos.z) {
+                _clusterMaskDirty = true;
+                _clusterGeometryUploadPending = true;
             }
             _pointLightPosition[shaderIndex] = pos;
 
             Vector4 lightColor = instance.Color.linear * instance.Intensity;
             Vector4 extraData = lightColor;
-            if (isSpot && isCustomCookie) extraData.x = Mathf.Max(Mathf.Abs(instance.SpotCookieAspect), 0.001f);
+            if (isSpot && isCustomCookie) extraData.x = spotCookieAspect;
             extraData.w = 0f;
             Vector4 color = lightColor;
             int customSourceType = sourceIndex < _customSourceTypes.Length ? _customSourceTypes[sourceIndex] : 0;
@@ -2068,15 +3103,6 @@ namespace VRCLightVolumes {
             color.w = angleData;
             _pointLightColor[shaderIndex] = color;
 
-            if (isSpot && !isCustomCookie) {
-                Vector4 direction = instance.Direction;
-                direction.w = instance.ConeFalloff;
-                _pointLightDirection[shaderIndex] = direction;
-            } else {
-                Quaternion r = instance.Rotation;
-                _pointLightDirection[shaderIndex] = new Vector4(r.x, r.y, r.z, r.w);
-            }
-
             float shaderCustomId = 0;
             if (resolvedCustomId >= 0) {
                 // Match the v2 shader ABI: point LUT uses the positive ID directly, while spot LUT subtracts one in shader.
@@ -2088,8 +3114,9 @@ namespace VRCLightVolumes {
             bool hasShading = shadingStrength > 0f;
             bool hasShadow = hasShading && ShadowMapsCount > 0 && resolvedShadowId >= 0 && resolvedShadowId < ShadowMapsCount;
             if (countActiveShadow && hasShadow) _activeShadowCount++;
-            float shadowNearClip = 0;
-            float shadowInvDepthRange = 0;
+            float shadowNearClip = 0f;
+            float shadowInvDepthRange = 0f;
+            bool useLocalSpaceShadows = false;
             if (hasShadow) {
                 shadowNearClip = Mathf.Max(instance.NearClip, 0.0001f);
                 float requestedFarClip = instance.FarClip;
@@ -2097,51 +3124,114 @@ namespace VRCLightVolumes {
                 if (shadowNearClip >= resolvedFarClip) resolvedFarClip = shadowNearClip + 0.0001f;
                 // Far is needed by the bake/encoder, but the receiver only needs its precomputed reciprocal range.
                 shadowInvDepthRange = 1f / Mathf.Max(resolvedFarClip - shadowNearClip, 0.0001f);
+                useLocalSpaceShadows = !instance.WorldSpaceShadows;
             }
             extraData.w = shadowNearClip;
-            bool useLocalSpaceShadows = hasShadow && !instance.WorldSpaceShadows;
             float shadowMapID = DisabledShadingShadowId;
             if (hasShading) {
                 shadowMapID = hasShadow ? (useLocalSpaceShadows ? -resolvedShadowId - 1f : resolvedShadowId + 1f) : 0f;
                 float shadingFade = 1f - shadingStrength;
                 if (shadingFade > 0f) shadowMapID += shadowMapID < 0f ? -shadingFade : shadingFade;
             }
-            bool usesCubemapShadow = hasShadow && resolvedShadowId < ShadowCubemapsCount;
-            Vector3 shadowBakePosition = instance.ShadowBakePosition;
-            // A negative reciprocal range is a v3-only fast-path marker: the baked world-space
-            // shadow origin exactly matches the current Point/Spot origin, so the receiver can
-            // reuse its raw light vector and distance. Compare components directly; Unity's
-            // Vector3 == is approximate and could incorrectly select this exact path.
-            bool reuseWorldShadowOrigin = hasShadow && !isArea && !useLocalSpaceShadows && shadowInvDepthRange > 0f
-                && shadowBakePosition.x == pos.x
-                && shadowBakePosition.y == pos.y
-                && shadowBakePosition.z == pos.z;
-            // V2 declares CustomID as float3 and ignores W. Keep the full reciprocal range for
-            // every v3 Point/Spot shadow; abs(W) is the value and sign(W) is the fast-path marker.
-            float customDataW = hasShadow && !isArea
-                ? (reuseWorldShadowOrigin ? -shadowInvDepthRange : shadowInvDepthRange)
-                : 0f;
-            if (isArea) customDataW = hasAreaCookie
-                ? (Mathf.Abs(instance.AreaCookieMirror) >= 0.5f ? instance.AreaCookieMirror : 1f)
-                : 0f;
+
+            float customDataW = 0f;
+            if (hasAreaCookie) {
+                float areaCookieMirror = instance.AreaCookieMirror;
+                customDataW = Mathf.Abs(areaCookieMirror) >= 0.5f ? areaCookieMirror : 1f;
+            }
+            if (hasShadow) {
+                bool usesCubemapShadow = resolvedShadowId < ShadowCubemapsCount;
+                Vector3 shadowBakePosition = instance.ShadowBakePosition;
+                // A negative reciprocal range is a v3-only fast-path marker: the baked world-space
+                // shadow origin exactly matches the current Point/Spot origin, so the receiver can
+                // reuse its raw light vector and distance. Compare components directly; Unity's
+                // Vector3 == is approximate and could incorrectly select this exact path.
+                bool reuseWorldShadowOrigin = !isArea && !useLocalSpaceShadows && shadowInvDepthRange > 0f && shadowBakePosition.x == pos.x && shadowBakePosition.y == pos.y && shadowBakePosition.z == pos.z;
+                // V2 declares CustomID as float3 and ignores W. Keep the full reciprocal range for
+                // every v3 Point/Spot shadow; abs(W) is the value and sign(W) is the fast-path marker.
+                if (!isArea) customDataW = reuseWorldShadowOrigin ? -shadowInvDepthRange : shadowInvDepthRange;
+
+                float shadowTanAngle = spotOuterTangent;
+                // Local single-slice Spot receivers fetch the tangent from otherwise unused ExtraData.Y.
+                if (isSpot && !usesCubemapShadow) extraData.y = shadowTanAngle;
+                float shadowReprojectionW = usesCubemapShadow ? -shadowInvDepthRange : shadowTanAngle;
+                _pointLightShadowReprojectionData[shaderIndex] = new Vector4(shadowBakePosition.x, shadowBakePosition.y, shadowBakePosition.z, shadowReprojectionW);
+
+                Quaternion shadowRotation = useLocalSpaceShadows ? Quaternion.Inverse(instance.transform.rotation) : Quaternion.Inverse(instance.ShadowBakeRotation);
+                _pointLightShadowRotationData[shaderIndex] = new Vector4(shadowRotation.x, shadowRotation.y, shadowRotation.z, shadowRotation.w);
+            }
             _pointLightCustomId[shaderIndex] = new Vector4(shaderCustomId, shadowMapID, squaredRange, customDataW);
-
-            float shadowTanAngle = isSpot ? instance.OuterAngleTan : 0f;
-            if (isSpot && shadowTanAngle <= 0f) shadowTanAngle = Mathf.Tan(instance.Angle);
-            // V3 local single-slice Spot receivers already fetch ExtraData for NearClip in W.
-            // Duplicate the projection tangent in the otherwise unused Spot Y component so
-            // they can skip fetching ShadowReprojectionData. Keep reprojection W unchanged
-            // for v2 shader + v3 manager compatibility and for world-space shadows.
-            if (hasShadow && isSpot && !usesCubemapShadow) extraData.y = shadowTanAngle;
             _pointLightExtraData[shaderIndex] = extraData;
-            float shadowReprojectionW = shadowTanAngle;
-            if (usesCubemapShadow) shadowReprojectionW = -shadowInvDepthRange;
-            _pointLightShadowReprojectionData[shaderIndex] = new Vector4(shadowBakePosition.x, shadowBakePosition.y, shadowBakePosition.z, shadowReprojectionW);
-
-            Quaternion shadowRotation = useLocalSpaceShadows ? Quaternion.Inverse(instance.transform.rotation) : Quaternion.Inverse(instance.ShadowBakeRotation);
-            _pointLightShadowRotationData[shaderIndex] = new Vector4(shadowRotation.x, shadowRotation.y, shadowRotation.z, shadowRotation.w);
 
         }
+
+#if UNITY_EDITOR && !COMPILER_UDONSHARP
+        // Exposes the exact runtime-packed light data to the editor probe baker without compiling
+        // a second copy of the Point/Spot/Area packing math into Udon or the player build.
+        public int GetEditorProbeBakePointLightData(Vector4[] positions, Vector4[] colors, Vector4[] extraData, Vector4[] directions, Vector4[] customIds, out int missingProjectionCount, out int overflowCount) {
+            missingProjectionCount = 0;
+            overflowCount = 0;
+            if (Application.isPlaying || !enabled || !gameObject.activeInHierarchy || PointLightVolumeInstances == null || positions == null || colors == null || extraData == null
+                || directions == null || customIds == null) return 0;
+
+            int capacity = Mathf.Min(
+                positions.Length,
+                Mathf.Min(colors.Length, Mathf.Min(extraData.Length, Mathf.Min(directions.Length, customIds.Length))));
+
+            UpdateVolumes();
+            int count = 0;
+            for (int shaderIndex = 0; shaderIndex < _pointLightCount; shaderIndex++) {
+                int sourceIndex = _enabledPointIDs[shaderIndex];
+                if (sourceIndex < 0 || sourceIndex >= PointLightVolumeInstances.Length) continue;
+                PointLightVolumeInstance instance = PointLightVolumeInstances[sourceIndex];
+                if (!IsEditorProbeBakePointLight(instance)) continue;
+
+                int resolvedCustomId = sourceIndex < _pointLightCustomIDs.Length ? _pointLightCustomIDs[sourceIndex] : -1;
+                if (instance.ProjectionMode != 0 && resolvedCustomId < 0) {
+                    missingProjectionCount++;
+                    continue;
+                }
+                if (count >= capacity) {
+                    overflowCount++;
+                    continue;
+                }
+
+                positions[count] = _pointLightPosition[shaderIndex];
+                colors[count] = _pointLightColor[shaderIndex];
+                Vector4 packedExtraData = _pointLightExtraData[shaderIndex];
+                packedExtraData.w = 0f;
+                extraData[count] = packedExtraData;
+                directions[count] = _pointLightDirection[shaderIndex];
+                Vector4 packedCustomId = _pointLightCustomId[shaderIndex];
+                packedCustomId.y = DisabledShadingShadowId;
+                if (instance.LightType != 2 || instance.ProjectionMode != 2) packedCustomId.w = 0f;
+                customIds[count] = packedCustomId;
+                count++;
+            }
+
+            // UpdateVolumes caps the compact shader list. Count otherwise eligible registry entries
+            // past that limit so the bake reports the same global 128-light constraint explicitly.
+            if (_pointLightCount >= MaxPointLightCount) {
+                for (int i = 0; i < PointLightVolumeInstances.Length; i++) {
+                    PointLightVolumeInstance instance = PointLightVolumeInstances[i];
+                    if (!IsEditorProbeBakePointLight(instance)) continue;
+                    bool packed = false;
+                    for (int j = 0; j < _pointLightCount; j++) {
+                        if (_enabledPointIDs[j] != i) continue;
+                        packed = true;
+                        break;
+                    }
+                    if (!packed) overflowCount++;
+                }
+            }
+            return count;
+        }
+
+        private bool IsEditorProbeBakePointLight(PointLightVolumeInstance instance) {
+            return instance != null && instance.LightVolumeManager == this && instance.BakeIntoProbes && instance.isActiveAndEnabled && !instance.CompareTag("EditorOnly")
+                && instance.Intensity != 0f && instance.Color != Color.black;
+        }
+#endif
 
         // Recalculates all volume data immediately. Automatic runtime paths should call RequestUpdateVolumes instead
         public void UpdateVolumes() {
@@ -2160,6 +3250,7 @@ namespace VRCLightVolumes {
                 SetDisabledShaderState();
                 _updateLightVolumeBuffers = false;
                 _updatePointLightBuffers = false;
+                _updatePointLightPositionBuffer = false;
                 _updateNeedsVolumeRebuild = false;
                 _isUpdatingVolumes = false;
                 return;
@@ -2167,25 +3258,23 @@ namespace VRCLightVolumes {
 
             bool isAtlas = LightVolumeAtlas != null;
 
-#if !COMPILER_UDONSHARP
+#if UNITY_EDITOR && !COMPILER_UDONSHARP
             // Editor tests and inspector edits can change fields directly without going through instance notify methods.
             if (!Application.isPlaying) {
                 int editorLightVolumeCount = LightVolumeInstances.Length;
                 for (int i = 0; i < editorLightVolumeCount; i++) {
                     LightVolumeInstance instance = LightVolumeInstances[i];
                     if (instance == null) continue;
-                    instance.IsActive = instance.gameObject.activeInHierarchy && instance.Intensity != 0 && instance.Color != Color.black;
+                    instance.IsActive = instance.isActiveAndEnabled && instance.Intensity != 0 && instance.Color != Color.black;
                 }
                 int editorPointLightCount = PointLightVolumeInstances.Length;
                 for (int i = 0; i < editorPointLightCount; i++) {
                     PointLightVolumeInstance instance = PointLightVolumeInstances[i];
                     if (instance == null) continue;
-                    bool wasActive = instance.IsActive;
-                    instance.IsActive = instance.gameObject.activeInHierarchy && instance.Intensity != 0 && instance.Color != Color.black;
-                    if (wasActive == instance.IsActive) continue;
-                    if (instance.CustomTexture != null || instance.CustomTextureMaterial != null) _customTexturesInitialized = false;
-                    if (instance.ShadowMapID >= 0) _shadowTexturesInitialized = false;
+                    instance.IsActive = instance.isActiveAndEnabled && instance.Intensity != 0 && instance.Color != Color.black;
                 }
+                if (CaptureEditorCustomSourceState()) _customTexturesInitialized = false;
+                if (CaptureEditorShadowSourceState()) _shadowTexturesInitialized = false;
             }
 #endif
 
@@ -2245,6 +3334,7 @@ namespace VRCLightVolumes {
                 _prevLightsBrightnessCutoff = LightsBrightnessCutoff;
                 _isRangeDirty = true;
             }
+            int previousPointLightCount = _pointLightCount;
             _pointLightCount = 0;
             _activeShadowCount = 0;
             _dynamicPointLightVolumeCount = 0;
@@ -2274,6 +3364,7 @@ namespace VRCLightVolumes {
                 WritePointLightShaderData(_pointLightCount, registryIndex, instance, true);
                 _pointLightCount++;
             }
+            if (previousPointLightCount != _pointLightCount) _clusterMaskDirty = true;
             _pointLightArraysDirty = false;
             _isRangeDirty = false;
 
@@ -2335,7 +3426,9 @@ namespace VRCLightVolumes {
             // Finish volume update state
             _updateLightVolumeBuffers = false;
             _updatePointLightBuffers = false;
+            _updatePointLightPositionBuffer = false;
             _updateNeedsVolumeRebuild = false;
+            _clusterGeometryUploadPending = false;
             _isUpdatingVolumes = false;
 #if !COMPILER_UDONSHARP
             } finally {

@@ -10,8 +10,10 @@ namespace VRCLightVolumes {
     [CustomEditor(typeof(LightVolumeManager))]
     public sealed class LightVolumeManagerEditor : Editor {
         private const string DebugFoldoutSessionKey = "VRCLightVolumes.LightVolumeManagerEditor.DebugFoldout";
+        private const string SortLightVolumesMenu = "CONTEXT/LightVolumeManager/Sort Light Volumes";
         private const int VisibleRegistryRows = 12;
         private const float RegistryHeaderHeight = 20f;
+        private const float RegistryWeightWidth = 48f;
         private const float RegistryScrollPadding = 2f;
         private const float RegistryScrollSmoothTime = 0.08f;
         private const float RegistryWheelStep = 18f;
@@ -58,6 +60,19 @@ namespace VRCLightVolumes {
         private bool _debugExpanded;
         private double _nextRuntimeDebugRefresh;
         private readonly HashSet<Texture> _countedShadowTextures = new HashSet<Texture>();
+
+        [MenuItem(SortLightVolumesMenu)]
+        private static void SortLightVolumes(MenuCommand command) {
+            if (command.context is LightVolumeManager manager)
+                LightVolumeManagerTools.SortLightVolumesByVoxelsPerUnit(manager);
+        }
+
+        [MenuItem(SortLightVolumesMenu, true)]
+        private static bool CanSortLightVolumes(MenuCommand command) {
+            if (EditorApplication.isPlayingOrWillChangePlaymode || !(command.context is LightVolumeManager manager))
+                return false;
+            return manager.LightVolumeInstances != null && manager.LightVolumeInstances.Length > 1;
+        }
 
         private void OnEnable() {
             _manager = (LightVolumeManager)target;
@@ -168,7 +183,6 @@ namespace VRCLightVolumes {
             };
             list.drawElementCallback = (rect, index, active, focused) => DrawRegistryElement(rect, source, index, pointLights);
             list.onReorderCallbackWithDetails = (reorderable, oldIndex, newIndex) => {
-                if (!pointLights) PreserveLightVolumePriorities(source, oldIndex, newIndex);
                 _registryChanged = true;
                 if (pointLights) _pointRegistryChanged = true;
             };
@@ -181,48 +195,25 @@ namespace VRCLightVolumes {
             return list;
         }
 
-        // Light volumes are canonically sorted by descending RegistryWeight. Reordering the
-        // serialized array alone would therefore be undone by ApplySettings immediately.
-        // Rotate the existing priority values with the dragged range so its new visual order
-        // remains canonical without inventing new weights or disturbing priorities outside it.
-        private static void PreserveLightVolumePriorities(SerializedProperty source, int oldIndex, int newIndex) {
-            if (oldIndex == newIndex || oldIndex < 0 || newIndex < 0 || oldIndex >= source.arraySize || newIndex >= source.arraySize) return;
-
-            int first = Mathf.Min(oldIndex, newIndex);
-            int last = Mathf.Max(oldIndex, newIndex);
-            int count = last - first + 1;
-            LightVolumeInstance[] volumes = new LightVolumeInstance[count];
-            float[] weights = new float[count];
-            for (int i = 0; i < count; i++) {
-                volumes[i] = source.GetArrayElementAtIndex(first + i).objectReferenceValue as LightVolumeInstance;
-                if (volumes[i] == null) return;
-                weights[i] = volumes[i].RegistryWeight;
-            }
-
-            if (oldIndex < newIndex) {
-                float movedWeight = weights[count - 1];
-                for (int i = count - 1; i > 0; i--) weights[i] = weights[i - 1];
-                weights[0] = movedWeight;
-            } else {
-                float movedWeight = weights[0];
-                for (int i = 0; i < count - 1; i++) weights[i] = weights[i + 1];
-                weights[count - 1] = movedWeight;
-            }
-
-            Undo.RecordObjects(volumes, "Reorder Light Volumes");
-            for (int i = 0; i < count; i++) {
-                LightVolumeInstance volume = volumes[i];
-                if (volume.RegistryWeight == weights[i]) continue;
-                volume.RegistryWeight = weights[i];
-                LVUtils.MarkDirty(volume);
-                LightVolumeManagerTools.CopyProxyToUdon(volume);
-            }
-        }
-
-        private void DrawRegistryHeader(Rect rect, SerializedProperty source, bool pointLights) {
+        private void DrawRegistryHeader(Rect rect, SerializedProperty source, bool pointLights, float rightInset) {
             string label = pointLights ? "Point Light Volumes" : "Light Volumes";
             GUIContent title = new GUIContent($"{label} ({source.arraySize})", pointLights ? "At most 128 active lights are rendered." : "At most 32 active volumes are rendered.");
-            EditorGUI.LabelField(new Rect(rect.x + 15f, rect.y, rect.width - 15f, rect.height), title);
+            Rect weightRect = default;
+            float titleX = rect.x + 15f;
+            float titleRight = rect.xMax;
+            if (!pointLights) {
+                weightRect = new Rect(
+                    rect.xMax - rightInset - RegistryWeightWidth + 3f,
+                    rect.y,
+                    RegistryWeightWidth - 3f,
+                    rect.height);
+                titleRight = weightRect.x;
+            }
+            EditorGUI.LabelField(new Rect(titleX, rect.y, Mathf.Max(0f, titleRight - titleX), rect.height), title);
+            if (!pointLights)
+                EditorGUI.LabelField(
+                    weightRect,
+                    new GUIContent("Weight", "Higher weights have higher render priority."));
 
             Event current = Event.current;
             if (current.type != EventType.DragUpdated && current.type != EventType.DragPerform || !rect.Contains(current.mousePosition)) return;
@@ -260,7 +251,7 @@ namespace VRCLightVolumes {
             if (sourceIndex < 0 || sourceIndex >= source.arraySize) return;
             UnityEngine.Object value = source.GetArrayElementAtIndex(sourceIndex).objectReferenceValue;
             rect.y += 2f;
-            float weightWidth = pointLights ? 0f : 48f;
+            float weightWidth = pointLights ? 0f : RegistryWeightWidth;
             Rect iconRect = new Rect(rect.x, rect.y, 20f, EditorGUIUtility.singleLineHeight);
             Rect nameRect = new Rect(rect.x + 24f, rect.y, rect.width - 24f - weightWidth, EditorGUIUtility.singleLineHeight);
             EditorGUI.LabelField(iconRect, GetRegistryIcon(value, pointLights));
@@ -486,19 +477,21 @@ namespace VRCLightVolumes {
             Rect headerRect = new Rect(area.x, area.y, area.width, RegistryHeaderHeight);
             Rect bodyRect = new Rect(area.x, headerRect.yMax - 1f, area.width, area.yMax - headerRect.yMax + 1f);
             Rect viewportRect = new Rect(area.x + 1f, headerRect.yMax, area.width - 2f, viewportHeight);
+            float maxScrollY = Mathf.Max(0f, contentHeight - viewportHeight);
+            bool showScrollbar = maxScrollY > 0.5f;
+            float scrollbarWidth = showScrollbar ? Mathf.Max(16f, GUI.skin.verticalScrollbar.fixedWidth) : 0f;
+            float headerRightInset = 1f + ReorderableList.Defaults.padding
+                + (showScrollbar ? RegistryScrollbarRightInset + scrollbarWidth : 0f);
 
             if (Event.current.type == EventType.Repaint) {
                 ReorderableList.defaultBehaviours.boxBackground.Draw(bodyRect, false, false, false, false);
                 ReorderableList.defaultBehaviours.headerBackground.Draw(headerRect, false, false, false, false);
             }
-            DrawRegistryHeader(headerRect, source, pointLights);
+            DrawRegistryHeader(headerRect, source, pointLights, headerRightInset);
 
-            float maxScrollY = Mathf.Max(0f, contentHeight - viewportHeight);
             HandleSmoothRegistryScroll(viewportRect, list, scroll, maxScrollY);
 
-            bool showScrollbar = maxScrollY > 0.5f;
             if (showScrollbar) viewportRect.width = Mathf.Max(1f, viewportRect.width - RegistryScrollbarRightInset);
-            float scrollbarWidth = showScrollbar ? Mathf.Max(16f, GUI.skin.verticalScrollbar.fixedWidth) : 0f;
             Rect contentRect = new Rect(0f, 0f, Mathf.Max(1f, viewportRect.width - scrollbarWidth), contentHeight);
             Vector2 previousPosition = scroll.Position;
             scroll.Position = GUI.BeginScrollView(viewportRect, scroll.Position, contentRect, false, showScrollbar);

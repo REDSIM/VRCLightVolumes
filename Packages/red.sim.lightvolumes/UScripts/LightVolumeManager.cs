@@ -648,6 +648,35 @@ namespace VRCLightVolumes {
             return -1;
         }
 
+        // Selects the highest-priority active volumes without changing their authoring registry.
+        private int SelectLightVolumesByWeight() {
+            int selectedCount = 0;
+            int registryCount = LightVolumeInstances.Length;
+            for (int registryIndex = 0; registryIndex < registryCount; registryIndex++) {
+                LightVolumeInstance candidate = LightVolumeInstances[registryIndex];
+                if (candidate == null || !candidate.IsActive) continue;
+
+                int insertIndex = selectedCount;
+                for (int selectedIndex = 0; selectedIndex < selectedCount; selectedIndex++) {
+                    LightVolumeInstance selected = LightVolumeInstances[_selectedLightVolumeIDs[selectedIndex]];
+                    bool higherWeight = candidate.RegistryWeight > selected.RegistryWeight;
+                    bool earlierEqualWeight = candidate.RegistryWeight == selected.RegistryWeight &&
+                                              candidate.RegistryOrder < selected.RegistryOrder;
+                    if (!higherWeight && !earlierEqualWeight) continue;
+                    insertIndex = selectedIndex;
+                    break;
+                }
+                if (insertIndex >= MaxLightVolumeCount) continue;
+
+                int shiftStart = selectedCount < MaxLightVolumeCount ? selectedCount : MaxLightVolumeCount - 1;
+                for (int selectedIndex = shiftStart; selectedIndex > insertIndex; selectedIndex--)
+                    _selectedLightVolumeIDs[selectedIndex] = _selectedLightVolumeIDs[selectedIndex - 1];
+                _selectedLightVolumeIDs[insertIndex] = registryIndex;
+                if (selectedCount < MaxLightVolumeCount) selectedCount++;
+            }
+            return selectedCount;
+        }
+
         // Finds the current compact shader slot for one registered point light
         private int FindPointLightFinalIndex(int registryIndex) {
             if (registryIndex < 0) return -1;
@@ -1019,7 +1048,7 @@ namespace VRCLightVolumes {
             return changed;
         }
 
-        // Uses the stable authoring order as an O(1) hint and falls back after runtime reordering.
+        // Uses the stable authoring order as an O(1) hint and falls back after runtime compaction.
         private int FindLightVolumeRegistryIndex(LightVolumeInstance lightVolume) {
             if (lightVolume == null || LightVolumeInstances == null) return -1;
             int count = LightVolumeInstances.Length;
@@ -1065,8 +1094,7 @@ namespace VRCLightVolumes {
                 RequestUpdateVolumes();
                 return;
             }
-            // Insert by weight first and stable registry order second so enable/disable history does not change shader priority
-            float targetWeight = lightVolume.RegistryWeight;
+            // Keep the runtime registry in stable authoring order; shader priority is resolved separately.
             int targetOrder = lightVolume.RegistryOrder;
             int firstEmptyIndex = -1;
             int lastFilledIndex = -1;
@@ -1078,7 +1106,7 @@ namespace VRCLightVolumes {
                     continue;
                 }
                 lastFilledIndex = i;
-                if (insertIndex == count && (existingLightVolume.RegistryWeight < targetWeight || existingLightVolume.RegistryWeight == targetWeight && existingLightVolume.RegistryOrder > targetOrder)) insertIndex = i;
+                if (insertIndex == count && existingLightVolume.RegistryOrder > targetOrder) insertIndex = i;
             }
             if (firstEmptyIndex >= 0) {
                 if (insertIndex == count) {
@@ -1099,7 +1127,7 @@ namespace VRCLightVolumes {
                 RequestUpdateVolumes();
                 return;
             }
-            // No empty slot exists, so grow the registry array and insert by weight and stable order
+            // No empty slot exists, so grow the registry array and insert by stable authoring order.
             LightVolumeInstance[] targetArray = new LightVolumeInstance[count + 1];
             for (int i = 0; i < insertIndex; i++) targetArray[i] = LightVolumeInstances[i];
             targetArray[insertIndex] = lightVolume;
@@ -1122,7 +1150,7 @@ namespace VRCLightVolumes {
             if (enabled && gameObject.activeInHierarchy) RequestUpdateVolumes();
         }
 
-        // Repositions a registered Light Volume after its runtime sort weight changes
+        // Refreshes shader selection after a runtime weight change without reordering the registry.
         public void ReorderLightVolume(LightVolumeInstance lightVolume) {
             if (lightVolume == null) return;
             int index = FindLightVolumeRegistryIndex(lightVolume);
@@ -1130,8 +1158,7 @@ namespace VRCLightVolumes {
                 if (lightVolume.IsActive) InitializeLightVolume(lightVolume);
                 return;
             }
-            LightVolumeInstances[index] = null;
-            InitializeLightVolume(lightVolume);
+            RequestUpdateVolumes();
         }
 
         // Initializes a Point Light Volume by adding it to the point light volume registry
@@ -3370,15 +3397,7 @@ namespace VRCLightVolumes {
             _additiveCount = 0;
             _dynamicLightVolumeCount = 0;
             if (isAtlas) {
-                int lightVolumeRegistryCount = LightVolumeInstances.Length;
-                int selectedLightVolumeCount = 0;
-                for (int i = 0; i < lightVolumeRegistryCount && selectedLightVolumeCount < MaxLightVolumeCount; i++) {
-                    LightVolumeInstance instance = LightVolumeInstances[i];
-                    if (instance == null) continue;
-                    if (!instance.IsActive) continue;
-                    _selectedLightVolumeIDs[selectedLightVolumeCount] = i;
-                    selectedLightVolumeCount++;
-                }
+                int selectedLightVolumeCount = SelectLightVolumesByWeight();
                 for (int additivePass = 0; additivePass < 2 && _enabledCount < selectedLightVolumeCount; additivePass++) {
                     bool isAdditivePass = additivePass == 0;
                     for (int i = 0; i < selectedLightVolumeCount; i++) {

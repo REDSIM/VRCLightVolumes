@@ -72,28 +72,12 @@ namespace VRCLightVolumes {
 #endif
         }
 
-        // Canonicalizes registry priority and synchronizes only metadata that actually changed.
+        // Synchronizes registry ownership and stable authoring order without rearranging the list.
         public static void SynchronizeRegistryMetadata(LightVolumeManager manager) {
             if (manager == null) return;
 
             LightVolumeInstance[] volumes = manager.LightVolumeInstances;
-            SortLightVolumeRegistry(volumes);
-            for (int i = 0; i < volumes.Length; i++) {
-                LightVolumeInstance volume = volumes[i];
-                if (volume == null) continue;
-                bool changed = false;
-                if (volume.LightVolumeManager != manager) {
-                    volume.LightVolumeManager = manager;
-                    changed = true;
-                }
-                if (volume.RegistryOrder != i) {
-                    volume.RegistryOrder = i;
-                    changed = true;
-                }
-                if (!changed) continue;
-                LVUtils.MarkDirty(volume);
-                CopyProxyToUdon(volume);
-            }
+            SynchronizeLightVolumeMetadata(manager, volumes);
 
             PointLightVolumeInstance[] pointLights = manager.PointLightVolumeInstances;
             for (int i = 0; i < pointLights.Length; i++) {
@@ -114,23 +98,70 @@ namespace VRCLightVolumes {
             }
         }
 
-        // Stable insertion sort keeps equal-weight authoring order and moves empty slots to the tail.
-        private static void SortLightVolumeRegistry(LightVolumeInstance[] volumes) {
-            for (int i = 1; i < volumes.Length; i++) {
+        private static void SynchronizeLightVolumeMetadata(LightVolumeManager manager, LightVolumeInstance[] volumes) {
+            for (int i = 0; i < volumes.Length; i++) {
                 LightVolumeInstance volume = volumes[i];
-                int insertIndex = i;
-                while (insertIndex > 0 && ComesBefore(volume, volumes[insertIndex - 1])) {
-                    volumes[insertIndex] = volumes[insertIndex - 1];
-                    insertIndex--;
+                if (volume == null) continue;
+                bool changed = false;
+                if (volume.LightVolumeManager != manager) {
+                    volume.LightVolumeManager = manager;
+                    changed = true;
                 }
-                if (insertIndex != i) volumes[insertIndex] = volume;
+                if (volume.RegistryOrder != i) {
+                    volume.RegistryOrder = i;
+                    changed = true;
+                }
+                if (!changed) continue;
+                LVUtils.MarkDirty(volume);
+                CopyProxyToUdon(volume);
             }
         }
 
-        private static bool ComesBefore(LightVolumeInstance volume, LightVolumeInstance previous) {
+        // Explicit menu sorting is stable; automatic metadata sync never changes authoring order.
+        private static bool SortLightVolumeRegistryByWeightAndResolution(LightVolumeInstance[] volumes) {
+            bool changed = false;
+            for (int i = 1; i < volumes.Length; i++) {
+                LightVolumeInstance volume = volumes[i];
+                int insertIndex = i;
+                while (insertIndex > 0 && ComesBeforeByWeightAndResolution(volume, volumes[insertIndex - 1])) {
+                    volumes[insertIndex] = volumes[insertIndex - 1];
+                    insertIndex--;
+                }
+                if (insertIndex == i) continue;
+                volumes[insertIndex] = volume;
+                changed = true;
+            }
+            return changed;
+        }
+
+        private static bool ComesBeforeByWeightAndResolution(LightVolumeInstance volume, LightVolumeInstance previous) {
             if (volume == null) return false;
             if (previous == null) return true;
-            return volume.RegistryWeight > previous.RegistryWeight;
+            if (volume.RegistryWeight != previous.RegistryWeight)
+                return volume.RegistryWeight > previous.RegistryWeight;
+            if (volume.AdaptiveResolution != previous.AdaptiveResolution)
+                return !volume.AdaptiveResolution;
+            return volume.AdaptiveResolution && volume.VoxelsPerUnit > previous.VoxelsPerUnit;
+        }
+
+        // Keeps authoring weights authoritative and only resolves equal-weight groups by resolution settings.
+        public static void SortLightVolumesByVoxelsPerUnit(LightVolumeManager manager) {
+            if (manager == null) return;
+
+            const string undoName = "Sort Light Volumes by Voxels Per Unit";
+            Undo.RecordObject(manager, undoName);
+            bool managerChanged = manager.SanitizeRegistries();
+
+            LightVolumeInstance[] volumes = manager.LightVolumeInstances;
+            if (volumes.Length > 0) Undo.RecordObjects(volumes, undoName);
+            if (volumes.Length > 1)
+                managerChanged |= SortLightVolumeRegistryByWeightAndResolution(volumes);
+            SynchronizeLightVolumeMetadata(manager, volumes);
+
+            if (!managerChanged) return;
+            LVUtils.MarkDirty(manager);
+            CopyProxyToUdon(manager);
+            manager.UpdateVolumes();
         }
 
         public static void ReinitializeCustomTextures(LightVolumeManager manager) {

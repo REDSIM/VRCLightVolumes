@@ -206,7 +206,7 @@ namespace VRCLightVolumes {
             NotifyManager(false);
         }
 
-        // Sets runtime registry weight and reorders this volume in the manager registry
+        // Sets runtime render priority without changing the manager's authoring order
         public void SetWeight(float weight) {
             if (RegistryWeight == weight) return;
             RegistryWeight = weight;

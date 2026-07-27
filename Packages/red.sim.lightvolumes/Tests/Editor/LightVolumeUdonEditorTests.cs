@@ -978,10 +978,10 @@ namespace VRCLightVolumes.Tests {
             AssertVectorClose(ExpectedLightVolumeColor(regulars[0]), colors[31]);
         }
 
-        // Authoring keeps the capped registry globally weight-sorted; additive compaction happens after selection.
+        // Authoring metadata synchronization never changes the Manager list when weights differ.
         [Test]
-        public void ManagerAuthoringCanonicalizesLightVolumeRegistryByWeightStably() {
-            LightVolumeManager manager = CreateManager("Canonical Authoring Registry Manager", true);
+        public void ManagerAuthoringPreservesLightVolumeRegistryOrderAcrossWeights() {
+            LightVolumeManager manager = CreateManager("Stable Authoring Registry Manager", true);
             LightVolumeInstance equalFirst = CreateUnregisteredLightVolume(manager, "Equal Weight First");
             LightVolumeInstance additiveHighest = CreateUnregisteredLightVolume(manager, "Highest Additive");
             LightVolumeInstance equalSecond = CreateUnregisteredLightVolume(manager, "Equal Weight Second");
@@ -993,23 +993,83 @@ namespace VRCLightVolumes.Tests {
             lowest.RegistryWeight = -1f;
             manager.LightVolumeInstances = new[] {
                 equalFirst,
-                null,
+                lowest,
                 additiveHighest,
-                equalSecond,
-                lowest
+                equalSecond
             };
 
             LightVolumeManagerTools.SynchronizeRegistryMetadata(manager);
 
-            Assert.That(manager.LightVolumeInstances[0], Is.SameAs(additiveHighest));
-            Assert.That(manager.LightVolumeInstances[1], Is.SameAs(equalFirst));
-            Assert.That(manager.LightVolumeInstances[2], Is.SameAs(equalSecond));
-            Assert.That(manager.LightVolumeInstances[3], Is.SameAs(lowest));
-            Assert.That(manager.LightVolumeInstances[4], Is.Null);
+            Assert.That(manager.LightVolumeInstances, Is.EqualTo(new[] {
+                equalFirst,
+                lowest,
+                additiveHighest,
+                equalSecond
+            }));
             for (int i = 0; i < 4; i++) {
                 Assert.That(manager.LightVolumeInstances[i].RegistryOrder, Is.EqualTo(i));
                 Assert.That(manager.LightVolumeInstances[i].LightVolumeManager, Is.SameAs(manager));
             }
+        }
+
+        // The Manager menu sort keeps weights authoritative and only applies resolution ordering
+        // within equal-weight groups, preserving equal density authoring order.
+        [Test]
+        public void ManagerAuthoringSortsLightVolumesByVoxelsPerUnit() {
+            LightVolumeManager manager = CreateManager("Voxel Density Sort Manager", true);
+            LightVolumeInstance adaptiveLow = CreateUnregisteredLightVolume(manager, "Adaptive Low");
+            LightVolumeInstance manualFirst = CreateUnregisteredLightVolume(manager, "Manual First");
+            LightVolumeInstance adaptiveHighFirst = CreateUnregisteredLightVolume(manager, "Adaptive High First");
+            LightVolumeInstance manualSecond = CreateUnregisteredLightVolume(manager, "Manual Second");
+            LightVolumeInstance adaptiveHighSecond = CreateUnregisteredLightVolume(manager, "Adaptive High Second");
+            LightVolumeInstance adaptiveMiddle = CreateUnregisteredLightVolume(manager, "Adaptive Middle");
+
+            adaptiveLow.VoxelsPerUnit = 1f;
+            manualFirst.AdaptiveResolution = false;
+            adaptiveHighFirst.VoxelsPerUnit = 8f;
+            manualSecond.AdaptiveResolution = false;
+            adaptiveHighSecond.VoxelsPerUnit = 8f;
+            adaptiveMiddle.VoxelsPerUnit = 4f;
+
+            adaptiveLow.RegistryWeight = 30f;
+            manualFirst.RegistryWeight = 10f;
+            adaptiveHighFirst.RegistryWeight = 10f;
+            manualSecond.RegistryWeight = 10f;
+            adaptiveHighSecond.RegistryWeight = 10f;
+            adaptiveMiddle.RegistryWeight = 10f;
+            manager.LightVolumeInstances = new[] {
+                adaptiveLow,
+                manualFirst,
+                adaptiveHighFirst,
+                manualSecond,
+                adaptiveHighSecond,
+                adaptiveMiddle
+            };
+
+            LightVolumeManagerTools.SortLightVolumesByVoxelsPerUnit(manager);
+
+            LightVolumeInstance[] expected = {
+                adaptiveLow,
+                manualFirst,
+                manualSecond,
+                adaptiveHighFirst,
+                adaptiveHighSecond,
+                adaptiveMiddle
+            };
+            Assert.That(manager.LightVolumeInstances, Is.EqualTo(expected));
+            Assert.That(manager.LightVolumeInstances[0].RegistryWeight, Is.EqualTo(30f).Within(Epsilon));
+            Assert.That(manager.LightVolumeInstances[1].RegistryWeight, Is.EqualTo(10f).Within(Epsilon));
+            Assert.That(manager.LightVolumeInstances[2].RegistryWeight, Is.EqualTo(10f).Within(Epsilon));
+            Assert.That(manager.LightVolumeInstances[3].RegistryWeight, Is.EqualTo(10f).Within(Epsilon));
+            Assert.That(manager.LightVolumeInstances[4].RegistryWeight, Is.EqualTo(10f).Within(Epsilon));
+            Assert.That(manager.LightVolumeInstances[5].RegistryWeight, Is.EqualTo(10f).Within(Epsilon));
+            for (int i = 0; i < expected.Length; i++) {
+                Assert.That(expected[i].RegistryOrder, Is.EqualTo(i));
+                Assert.That(expected[i].LightVolumeManager, Is.SameAs(manager));
+            }
+
+            LightVolumeManagerTools.SynchronizeRegistryMetadata(manager);
+            Assert.That(manager.LightVolumeInstances, Is.EqualTo(expected));
         }
 
         // Verifies only the highest-weight active Point Light Volumes are uploaded when the registry exceeds shader capacity.
@@ -1050,9 +1110,9 @@ namespace VRCLightVolumes.Tests {
             AssertVectorClose(ExpectedPointLightColor(points[2]), colors[127]);
         }
 
-        // Verifies SetWeight reorders registered Light Volumes and affects the next shader upload.
+        // Verifies SetWeight changes shader priority without moving the Manager's authoring registry.
         [Test]
-        public void SetWeightReordersRegisteredLightVolumesAndShaderUpload() {
+        public void SetWeightPreservesRegistryOrderAndReordersShaderUpload() {
             LightVolumeManager manager = CreateManager("Set Weight Light Volume Manager", true);
             LightVolumeInstance first = CreateLightVolume(manager, "Set Weight First Volume", true);
             LightVolumeInstance second = CreateLightVolume(manager, "Set Weight Second Volume", true);
@@ -1062,8 +1122,13 @@ namespace VRCLightVolumes.Tests {
             second.SetWeight(10f);
 
             Assert.That(second.RegistryWeight, Is.EqualTo(10f).Within(Epsilon));
-            Assert.That(manager.LightVolumeInstances[0], Is.SameAs(second));
-            Assert.That(manager.LightVolumeInstances[1], Is.SameAs(first));
+            Assert.That(manager.LightVolumeInstances[0], Is.SameAs(first));
+            Assert.That(manager.LightVolumeInstances[1], Is.SameAs(second));
+            manager.UpdateVolumes();
+
+            Vector4[] colors = Shader.GetGlobalVectorArray(_lightVolumeColorID);
+            AssertVectorClose(ExpectedLightVolumeColor(second), colors[0]);
+            AssertVectorClose(ExpectedLightVolumeColor(first), colors[1]);
 
             first.SetWeight(20f);
             manager.UpdateVolumes();
@@ -1071,7 +1136,7 @@ namespace VRCLightVolumes.Tests {
             Assert.That(first.RegistryWeight, Is.EqualTo(20f).Within(Epsilon));
             Assert.That(manager.LightVolumeInstances[0], Is.SameAs(first));
             Assert.That(manager.LightVolumeInstances[1], Is.SameAs(second));
-            Vector4[] colors = Shader.GetGlobalVectorArray(_lightVolumeColorID);
+            colors = Shader.GetGlobalVectorArray(_lightVolumeColorID);
             AssertVectorClose(ExpectedLightVolumeColor(first), colors[0]);
             AssertVectorClose(ExpectedLightVolumeColor(second), colors[1]);
         }

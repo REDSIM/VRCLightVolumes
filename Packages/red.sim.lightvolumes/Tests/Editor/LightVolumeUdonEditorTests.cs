@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
 using NUnit.Framework;
+using UdonSharpEditor;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.Rendering;
@@ -296,7 +297,9 @@ namespace VRCLightVolumes.Tests {
             Assert.That(manager.ClusteringMaterial, Is.Null, "Scene View preview must not serialize its generated material on the manager");
             PropertyInfo generatedMaterialProperty = typeof(LightVolumeManager).GetProperty("_generatedClusteringMaterial", _lifecycleMethodFlags);
             Assert.That(generatedMaterialProperty, Is.Not.Null);
-            Assert.That(generatedMaterialProperty.GetValue(manager), Is.Not.Null);
+            object generatedMaterial = generatedMaterialProperty.GetValue(manager);
+            Assert.That(generatedMaterial, Is.Not.Null);
+            Assert.That(manager.ClusteringMaterialPreview, Is.SameAs(generatedMaterial), "The editor Debug view must expose the generated preview material");
 
             clusterMask.Release();
             Assert.That(clusterMask.IsCreated(), Is.False);
@@ -550,11 +553,15 @@ namespace VRCLightVolumes.Tests {
         public void RuntimeShadowDependenciesWriteManagerBackingToUdonHeap() {
             GameObject managerObject = CreateGameObject("Runtime Heap Manager", true);
             GameObject pointObject = CreateGameObject("Runtime Heap Point", true);
-            LightVolumeManager manager = UdonSharpEditor.UdonSharpUndo.AddComponent<LightVolumeManager>(managerObject);
-            PointLightVolumeInstance point = UdonSharpEditor.UdonSharpUndo.AddComponent<PointLightVolumeInstance>(pointObject);
+            // Tests run in the user's active scene. Avoid Undo-backed setup because a later Undo
+            // replay can resurrect the containers after TearDown has destroyed them.
+            LightVolumeManager manager = managerObject.AddUdonSharpComponent<LightVolumeManager>();
+            PointLightVolumeInstance point = pointObject.AddUdonSharpComponent<PointLightVolumeInstance>();
+            GameObject excludedObject = CreateGameObject("Runtime Heap Shadow Exclusion", true);
             point.LightVolumeManager = manager;
             point.Shadows = true;
             point.BakeInGame = true;
+            point.ExclusionMask = new[] { excludedObject };
             UdonSharpEditor.UdonSharpEditorUtility.CopyProxyToUdon(manager);
             UdonSharpEditor.UdonSharpEditorUtility.CopyProxyToUdon(point);
 
@@ -571,6 +578,8 @@ namespace VRCLightVolumes.Tests {
             Assert.That(pointBacking.publicVariables.TryGetVariableValue("LightVolumeManager", out object serializedManager), Is.True);
             Assert.That(serializedManager, Is.SameAs(managerBacking));
             Assert.That(serializedManager, Is.Not.SameAs(manager));
+            Assert.That(pointBacking.publicVariables.TryGetVariableValue("ExclusionMask", out object serializedExclusionMask), Is.True);
+            Assert.That(serializedExclusionMask, Is.EqualTo(new[] { excludedObject }));
 
             GameObject cameraObject = CreateGameObject("Runtime Heap Camera", true);
             Camera runtimeCamera = cameraObject.AddComponent<Camera>();
@@ -690,14 +699,29 @@ namespace VRCLightVolumes.Tests {
         [Test]
         public void UpdateVolumesClearsEditorGuardAfterException() {
             LightVolumeManager manager = CreateManager("Update Guard Manager", true);
-            manager.LightVolumeInstances = null;
+            PointLightVolumeInstance point = CreatePointLight(manager, "Update Guard Point", true);
+            manager.PointLightVolumeInstances = new[] { point };
+            int[] enabledPointIDs = GetManagerField<int[]>(manager, _enabledPointIDsField);
+            SetManagerField<int[]>(manager, _enabledPointIDsField, null);
 
             Assert.Catch<System.Exception>(() => manager.UpdateVolumes());
             Assert.That(GetManagerField<bool>(manager, _isUpdatingVolumesField), Is.False);
 
-            manager.LightVolumeInstances = new LightVolumeInstance[0];
-            manager.PointLightVolumeInstances = new PointLightVolumeInstance[0];
+            SetManagerField(manager, _enabledPointIDsField, enabledPointIDs);
             Assert.DoesNotThrow(() => manager.UpdateVolumes());
+        }
+
+        // Verifies null public registries are treated as empty legacy data instead of an update failure.
+        [Test]
+        public void UpdateVolumesSanitizesNullRegistries() {
+            LightVolumeManager manager = CreateManager("Null Registry Manager", true);
+            manager.LightVolumeInstances = null;
+            manager.PointLightVolumeInstances = null;
+
+            Assert.DoesNotThrow(() => manager.UpdateVolumes());
+            Assert.That(manager.LightVolumeInstances, Is.Empty);
+            Assert.That(manager.PointLightVolumeInstances, Is.Empty);
+            Assert.That(GetManagerField<bool>(manager, _isUpdatingVolumesField), Is.False);
         }
 
         // Exercises real GameObject enable and disable callbacks for unregister and re-register behavior.
@@ -820,6 +844,10 @@ namespace VRCLightVolumes.Tests {
             late.RegistryOrder = 2;
 
             manager.DeinitializeLightVolume(first);
+
+            Assert.That(manager.LightVolumeInstances, Has.Length.EqualTo(1));
+            Assert.That(manager.LightVolumeInstances[0], Is.SameAs(second));
+
             manager.InitializeLightVolume(late);
 
             Assert.That(manager.LightVolumeInstances, Has.Length.EqualTo(2));
@@ -846,6 +874,10 @@ namespace VRCLightVolumes.Tests {
             late.RegistryOrder = 2;
 
             manager.DeinitializePointLightVolume(first, false, false);
+
+            Assert.That(manager.PointLightVolumeInstances, Has.Length.EqualTo(1));
+            Assert.That(manager.PointLightVolumeInstances[0], Is.SameAs(second));
+
             manager.InitializePointLightVolume(late);
 
             Assert.That(manager.PointLightVolumeInstances, Has.Length.EqualTo(2));
@@ -858,6 +890,25 @@ namespace VRCLightVolumes.Tests {
             Assert.That(manager.PointLightVolumeInstances[0], Is.SameAs(first));
             Assert.That(manager.PointLightVolumeInstances[1], Is.SameAs(second));
             Assert.That(manager.PointLightVolumeInstances[2], Is.SameAs(late));
+        }
+
+        // Verifies legacy serialized null slots are compacted without changing relative registry order.
+        [Test]
+        public void SanitizeRegistriesRemovesLegacyNullSlots() {
+            LightVolumeManager manager = CreateManager("Registry Sanitation Manager", false);
+            LightVolumeInstance firstVolume = CreateLightVolume(manager, "First Sanitation Volume", false);
+            LightVolumeInstance secondVolume = CreateLightVolume(manager, "Second Sanitation Volume", false);
+            PointLightVolumeInstance firstPoint = CreatePointLight(manager, "First Sanitation Point", false);
+            PointLightVolumeInstance secondPoint = CreatePointLight(manager, "Second Sanitation Point", false);
+            manager.LightVolumeInstances = new[] { firstVolume, null, secondVolume, null };
+            manager.PointLightVolumeInstances = new[] { null, firstPoint, null, secondPoint };
+
+            bool changed = manager.SanitizeRegistries();
+
+            Assert.That(changed, Is.True);
+            Assert.That(manager.LightVolumeInstances, Is.EqualTo(new[] { firstVolume, secondVolume }));
+            Assert.That(manager.PointLightVolumeInstances, Is.EqualTo(new[] { firstPoint, secondPoint }));
+            Assert.That(manager.SanitizeRegistries(), Is.False);
         }
 
         // Verifies only the highest-weight active Light Volumes are uploaded when the registry exceeds shader capacity.
@@ -1105,38 +1156,6 @@ namespace VRCLightVolumes.Tests {
 
             Assert.That(CountPointLightVolumeReferences(manager.PointLightVolumeInstances, point), Is.EqualTo(1));
             AssertGlobalFloat(_pointLightCountID, 1);
-        }
-
-        // Changing the public manager reference moves both instance types without leaving stale slots.
-        [Test]
-        public void ManagerReassignmentMovesActiveVolumesBetweenRegistries() {
-            LightVolumeManager firstManager = CreateManager("First Reassignment Manager", true);
-            LightVolumeManager secondManager = CreateManager("Second Reassignment Manager", true);
-            LightVolumeInstance volume = CreateManagerlessLightVolume("Reassigned Runtime Volume");
-            PointLightVolumeInstance point = CreateManagerlessPointLight("Reassigned Runtime Point");
-
-            volume.LightVolumeManager = firstManager;
-            volume._onVarChange_LightVolumeManager();
-            point.LightVolumeManager = firstManager;
-            point._onVarChange_LightVolumeManager();
-            Assert.That(CountLightVolumeReferences(firstManager.LightVolumeInstances, volume), Is.EqualTo(1));
-            Assert.That(CountPointLightVolumeReferences(firstManager.PointLightVolumeInstances, point), Is.EqualTo(1));
-
-            volume.LightVolumeManager = secondManager;
-            volume._onVarChange_LightVolumeManager();
-            point.LightVolumeManager = secondManager;
-            point._onVarChange_LightVolumeManager();
-            Assert.That(ContainsLightVolume(firstManager.LightVolumeInstances, volume), Is.False);
-            Assert.That(ContainsPointLightVolume(firstManager.PointLightVolumeInstances, point), Is.False);
-            Assert.That(CountLightVolumeReferences(secondManager.LightVolumeInstances, volume), Is.EqualTo(1));
-            Assert.That(CountPointLightVolumeReferences(secondManager.PointLightVolumeInstances, point), Is.EqualTo(1));
-
-            volume.LightVolumeManager = null;
-            volume._onVarChange_LightVolumeManager();
-            point.LightVolumeManager = null;
-            point._onVarChange_LightVolumeManager();
-            Assert.That(ContainsLightVolume(secondManager.LightVolumeInstances, volume), Is.False);
-            Assert.That(ContainsPointLightVolume(secondManager.PointLightVolumeInstances, point), Is.False);
         }
 
         // Verifies inactive, black, and zero-intensity entries are removed from the final shader-visible arrays.
@@ -1640,7 +1659,7 @@ namespace VRCLightVolumes.Tests {
         // Verifies area cookie fallback averages cache before shader buffers exist, patch live buffers, and keep the cached color until replacement readback.
         [Test]
         public void AreaCookieFallbackAveragePreservesCachedColorUntilReplacementReadback() {
-            LightVolumeManager manager = CreateManager("Area Cookie Fallback Average Manager", false);
+            LightVolumeManager manager = CreateManager("Area Cookie Fallback Average Manager", false, false);
             Texture2D source = CreateTexture2D("Area Average Cookie Source");
             Texture2D replacementSource = CreateTexture2D("Area Average Cookie Replacement Source");
             Color averageColor = new Color(0.25f, 0.5f, 0.75f, 1f);
@@ -1679,9 +1698,8 @@ namespace VRCLightVolumes.Tests {
             point.AreaCookieAverageReadbackPending = false;
             point.AreaCookieAverageCustomId = -1;
 
-            manager.PointLightVolumeInstances = new PointLightVolumeInstance[0];
             UploadAreaCookieAverageColor(manager, 0, averageColor);
-            manager.PointLightVolumeInstances = new[] { point };
+            manager.gameObject.SetActive(true);
             manager.UpdateVolumes();
 
             AssertVectorClose(ExpectedAreaCookieFallbackColor(point, averageColor), Shader.GetGlobalVectorArray(_pointLightColorID)[0]);
@@ -2946,6 +2964,60 @@ namespace VRCLightVolumes.Tests {
             string planarRuntimeBlurSource = shaderSource.Substring(radiusMethodStart, stepMethodEnd - radiusMethodStart);
             Assert.That(planarRuntimeBlurSource, Does.Contain("rcp(max(_ShadowTanHalfFov"));
             Assert.That(planarRuntimeBlurSource, Does.Contain("spotScale"));
+        }
+
+        // Editor and runtime shadow baking share one exclusion implementation that touches only listed hierarchies.
+        [Test]
+        public void ExclusionMaskDisablesListedRenderersAndRestoresExactState() {
+            PointLightVolumeInstance point = CreateManagerlessPointLight("Shadow Exclusion Light");
+            GameObject excludedRoot = CreateGameObject("Shadow Exclusion Root", true);
+            MeshRenderer excludedRootRenderer = excludedRoot.AddComponent<MeshRenderer>();
+            GameObject excludedChild = CreateGameObject("Shadow Exclusion Child", true);
+            excludedChild.transform.SetParent(excludedRoot.transform, false);
+            MeshRenderer excludedChildRenderer = excludedChild.AddComponent<MeshRenderer>();
+            GameObject includedObject = CreateGameObject("Shadow Included Object", true);
+            MeshRenderer includedRenderer = includedObject.AddComponent<MeshRenderer>();
+
+            excludedRootRenderer.forceRenderingOff = true;
+            excludedChildRenderer.forceRenderingOff = false;
+            includedRenderer.forceRenderingOff = false;
+            point.ExclusionMask = new[] { excludedRoot, excludedChild };
+
+            MethodInfo applyMask = typeof(PointLightVolumeInstance).GetMethod("ApplyExclusionMask", _lifecycleMethodFlags);
+            MethodInfo restoreMask = typeof(PointLightVolumeInstance).GetMethod("RestoreExclusionMask", _lifecycleMethodFlags);
+            Assert.That(applyMask, Is.Not.Null);
+            Assert.That(restoreMask, Is.Not.Null);
+
+            try {
+                applyMask.Invoke(point, null);
+                Assert.That(excludedRootRenderer.forceRenderingOff, Is.True);
+                Assert.That(excludedChildRenderer.forceRenderingOff, Is.True);
+                Assert.That(includedRenderer.forceRenderingOff, Is.False);
+            } finally {
+                restoreMask.Invoke(point, null);
+            }
+
+            Assert.That(excludedRootRenderer.forceRenderingOff, Is.True);
+            Assert.That(excludedChildRenderer.forceRenderingOff, Is.False);
+            Assert.That(includedRenderer.forceRenderingOff, Is.False);
+
+            // Hierarchy changes under the same root are picked up by the next bake.
+            GameObject addedChild = CreateGameObject("Added Shadow Exclusion Child", true);
+            addedChild.transform.SetParent(excludedRoot.transform, false);
+            MeshRenderer addedRenderer = addedChild.AddComponent<MeshRenderer>();
+            try {
+                applyMask.Invoke(point, null);
+                Assert.That(excludedRootRenderer.forceRenderingOff, Is.True);
+                Assert.That(excludedChildRenderer.forceRenderingOff, Is.True);
+                Assert.That(addedRenderer.forceRenderingOff, Is.True);
+                Assert.That(includedRenderer.forceRenderingOff, Is.False);
+            } finally {
+                restoreMask.Invoke(point, null);
+            }
+
+            Assert.That(excludedRootRenderer.forceRenderingOff, Is.True);
+            Assert.That(excludedChildRenderer.forceRenderingOff, Is.False);
+            Assert.That(addedRenderer.forceRenderingOff, Is.False);
         }
 
         // Verifies runtime shadow baking reports metadata changes so manager globals can refresh after the first bake.

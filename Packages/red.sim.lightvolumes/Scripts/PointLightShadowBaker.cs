@@ -6,11 +6,6 @@ using UnityEngine.Rendering;
 namespace VRCLightVolumes {
 
     public static class PointLightShadowBaker {
-        private struct RendererState {
-            public Renderer Renderer;
-            public bool PreviousForceRenderingOff;
-        }
-
         private const string ShadowDepthEncodeShaderName = "Hidden/VRCLV/PointLightShadowDepthEncode";
         private const string ShadowBlurShaderName = "Hidden/VRCLV/PointLightShadowRuntimeBlur";
         private const string EditorShadowBlurQualityKeyword = "VRCLV_EDITOR_SHADOW_BLUR_QUALITY";
@@ -47,13 +42,10 @@ namespace VRCLightVolumes {
             int oldShadowTextureFormat = manager.ShadowTextureFormat;
             bool oldPointLightInstanceEnabled = pointLightInstance.enabled;
             RenderTexture oldActive = RenderTexture.active;
-            RendererState[] objectMaskRendererStates = null;
             RenderTexture runtimeShadowTexture = null;
             bool baked = false;
 
             try {
-                objectMaskRendererStates = ApplyObjectMaskFilter(pointLightVolume);
-
                 manager.ShadowTextureFormat = GetShadowTextureFormatValue(textureFormat);
                 ResetManagerRuntimeShadowBlurState(manager);
 
@@ -100,7 +92,7 @@ namespace VRCLightVolumes {
                 baked = true;
                 return true;
             } finally {
-                RestoreObjectMaskFilter(objectMaskRendererStates);
+                pointLightVolume.EditorRestoreExclusionMask();
                 manager.ShadowTextureFormat = oldShadowTextureFormat;
                 ResetManagerRuntimeShadowBlurState(manager);
                 pointLightVolume.EditorApplyAuthoringData(false, true);
@@ -178,52 +170,6 @@ namespace VRCLightVolumes {
             string path = $"{System.IO.Path.GetDirectoryName(scenePath)}/{scene.name}/VRCLightVolumes/Temp/{escapedName}_shadows.asset";
             if (AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(path) != null) AssetDatabase.DeleteAsset(path);
             LVUtils.SaveAsAsset(shadowAsset, path);
-        }
-
-        // Temporarily hides renderers outside the point light's object mask for this editor bake.
-        private static RendererState[] ApplyObjectMaskFilter(PointLightVolumeInstance pointLightVolume) {
-            if (!HasObjectMask(pointLightVolume)) return null;
-
-            Renderer[] renderers = UnityEngine.Object.FindObjectsByType<Renderer>(FindObjectsInactive.Exclude, FindObjectsSortMode.None);
-            RendererState[] rendererStates = new RendererState[renderers.Length];
-            for (int i = 0; i < renderers.Length; i++) {
-                Renderer renderer = renderers[i];
-                rendererStates[i].Renderer = renderer;
-                rendererStates[i].PreviousForceRenderingOff = renderer.forceRenderingOff;
-                if (!IsRendererInsideObjectMask(renderer, pointLightVolume.ObjectMask)) renderer.forceRenderingOff = true;
-            }
-            return rendererStates;
-        }
-
-        // Restores renderer visibility changed by ApplyObjectMaskFilter().
-        private static void RestoreObjectMaskFilter(RendererState[] rendererStates) {
-            if (rendererStates == null) return;
-            for (int i = 0; i < rendererStates.Length; i++) {
-                Renderer renderer = rendererStates[i].Renderer;
-                if (renderer != null) renderer.forceRenderingOff = rendererStates[i].PreviousForceRenderingOff;
-            }
-        }
-
-        // Checks whether this point light has at least one valid object-mask root.
-        private static bool HasObjectMask(PointLightVolumeInstance pointLightVolume) {
-            if (pointLightVolume.ObjectMask == null) return false;
-            for (int i = 0; i < pointLightVolume.ObjectMask.Length; i++) {
-                if (pointLightVolume.ObjectMask[i] != null) return true;
-            }
-            return false;
-        }
-
-        // Checks whether a renderer belongs to one of the object-mask roots.
-        private static bool IsRendererInsideObjectMask(Renderer renderer, GameObject[] objectMask) {
-            if (renderer == null || objectMask == null) return false;
-            Transform rendererTransform = renderer.transform;
-            for (int i = 0; i < objectMask.Length; i++) {
-                GameObject root = objectMask[i];
-                if (root == null) continue;
-                Transform rootTransform = root.transform;
-                if (rendererTransform == rootTransform || rendererTransform.IsChildOf(rootTransform)) return true;
-            }
-            return false;
         }
 
         // Copies the runtime texture-array shadow output into a serializable cubemap asset.

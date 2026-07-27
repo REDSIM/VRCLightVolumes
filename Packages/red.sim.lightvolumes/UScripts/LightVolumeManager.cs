@@ -83,19 +83,17 @@ namespace VRCLightVolumes {
         [Tooltip("EVSM variance bias used by the shadow receiver shader. Authoring setup stores this as a 0..1 logarithmic slider.")]
         public float ShadowMinVariance = 1.0f;
 
-        [Header("Froxel Clustering")]
         [Tooltip("Builds camera-relative Coarse-to-Fine froxel clusters so shaders only evaluate Point Light Volumes that can affect the current pixel.")]
-        public bool Clustering = false;
+        public bool Clustering = true;
         [Tooltip("Fine froxels per camera degree on each screen axis. 1.0 = one froxel per degree; total count is multiplied by Slices Count.")]
-        [Range(0.05f, 3f)] public float FroxelDensity = 0.25f;
+        [Range(0.05f, 3f)] public float FroxelDensity = 1f;
         [Tooltip("Count of exponentially distributed depth slices between the main camera near and far clip planes. This does not change the angular resolution; memory and build cost scale with the slice count.")]
-        [Range(8, MaxFroxelSize)] public int FroxelSlices = 32;
+        [Range(8, MaxFroxelSize)] public int FroxelSlices = 100;
         [Tooltip("Power-of-two reduction of the intermediate Coarse grid relative to the Fine grid on every axis. Values are resolved to 2, 4 or 8 so every Fine froxel has one exact parent and the shader can use bit shifts instead of integer division.")]
         [Range(MinFroxelCoarse, MaxFroxelCoarse)] public int FroxelCoarse = 4;
         [Tooltip("Uses the non-clustered loop below this active Point Light Volume count because building and sampling the cluster mask is unlikely to amortize.")]
-        [Range(1, MaxPointLightCount)] public int ClusteringMinLights = 16;
+        [Range(1, MaxPointLightCount)] public int ClusteringMinLights = 8;
 
-        [Header("Visuals")]
         [Tooltip("When enabled, areas outside Light Volumes fall back to light probes. Otherwise, the Light Volume with the smallest weight is used as fallback. It also improves performance.")]
         public bool LightProbesBlending = true;
         [Tooltip("Disables smooth blending with areas outside Light Volumes. Use it if your entire scene's play area is covered by Light Volumes. It also improves performance.")]
@@ -149,7 +147,6 @@ namespace VRCLightVolumes {
         public bool IsBakeryMode => BakingMode == 1;
 #endif
 
-        [Header("Runtime Textures")]
         [Tooltip("Runtime texture array used for point light cubemaps, LUTs and cookies.")]
         public RenderTexture CustomTextures;
         [Tooltip("Cubemap count stored in CustomTextures. Cubemap array elements start from the beginning, 6 elements each.")]
@@ -386,10 +383,19 @@ namespace VRCLightVolumes {
         private Vector3 _froxelCameraUp;
         private Vector3 _froxelCameraForward;
 
-#if !COMPILER_UDONSHARP
-        // Exposes generated cluster masks to the custom Udon component inspector without serializing them into the world.
+#if UNITY_EDITOR && !COMPILER_UDONSHARP
+        // Editor-only getters for the custom inspector. They add no serialized fields,
+        // asset references, or variables to either the Udon program or a player build.
         public RenderTexture FineClusterMaskPreview => _clusterMask;
         public RenderTexture CoarseClusterMaskPreview => _coarseClusterMask;
+        public Material ClusteringMaterialPreview => GetClusteringMaterial();
+        public bool RuntimeInitializedPreview => _isInitialized;
+        public int ActivePointLightCountPreview => _pointLightCount;
+        public int ActiveShadowCountPreview => _activeShadowCount;
+        public bool ClusteringActivePreview => _clusteringActive;
+        public bool ClusteringUnsupportedPreview => _clusteringUnsupported;
+        public bool ClusteringAllocationFailedPreview => _clusteringAllocationFailed;
+        public bool ClusterMaskValidPreview => _clusterMaskValid;
 #endif
 
 #endregion
@@ -955,6 +961,64 @@ namespace VRCLightVolumes {
 
 #region Runtime Registries
 
+        // Removes stale serialized registry slots left by older manager versions. New runtime
+        // deinitialization keeps both registries dense, so this normally exits without allocating.
+        public bool SanitizeRegistries() {
+            bool changed = false;
+
+            if (LightVolumeInstances == null) {
+                LightVolumeInstances = new LightVolumeInstance[0];
+                changed = true;
+            } else {
+                int count = LightVolumeInstances.Length;
+                int validCount = 0;
+                for (int i = 0; i < count; i++) {
+                    if (LightVolumeInstances[i] != null) validCount++;
+                }
+                if (validCount != count) {
+                    LightVolumeInstance[] targetArray = new LightVolumeInstance[validCount];
+                    int targetIndex = 0;
+                    for (int i = 0; i < count; i++) {
+                        LightVolumeInstance instance = LightVolumeInstances[i];
+                        if (instance == null) continue;
+                        targetArray[targetIndex++] = instance;
+                    }
+                    LightVolumeInstances = targetArray;
+                    changed = true;
+                }
+            }
+
+            bool pointLightRegistryChanged = false;
+            if (PointLightVolumeInstances == null) {
+                PointLightVolumeInstances = new PointLightVolumeInstance[0];
+                pointLightRegistryChanged = true;
+            } else {
+                int count = PointLightVolumeInstances.Length;
+                int validCount = 0;
+                for (int i = 0; i < count; i++) {
+                    if (PointLightVolumeInstances[i] != null) validCount++;
+                }
+                if (validCount != count) {
+                    PointLightVolumeInstance[] targetArray = new PointLightVolumeInstance[validCount];
+                    int targetIndex = 0;
+                    for (int i = 0; i < count; i++) {
+                        PointLightVolumeInstance instance = PointLightVolumeInstances[i];
+                        if (instance == null) continue;
+                        targetArray[targetIndex++] = instance;
+                    }
+                    PointLightVolumeInstances = targetArray;
+                    pointLightRegistryChanged = true;
+                }
+            }
+
+            if (pointLightRegistryChanged) {
+                changed = true;
+                if (_customTextureArrayDepth > 0) _customTexturesInitialized = false;
+                if (_shadowTextureArrayDepth > 0) _shadowTexturesInitialized = false;
+            }
+            return changed;
+        }
+
         // Uses the stable authoring order as an O(1) hint and falls back after runtime reordering.
         private int FindLightVolumeRegistryIndex(LightVolumeInstance lightVolume) {
             if (lightVolume == null || LightVolumeInstances == null) return -1;
@@ -1045,12 +1109,16 @@ namespace VRCLightVolumes {
             RequestUpdateVolumes();
         }
 
-        // Deinitializes a Light Volume by removing its registry reference without resizing the array
+        // Deinitializes a Light Volume and keeps the serialized registry dense.
         public void DeinitializeLightVolume(LightVolumeInstance lightVolume) {
             if (lightVolume == null || LightVolumeInstances == null) return;
             int index = FindLightVolumeRegistryIndex(lightVolume);
             if (index < 0) return;
-            LightVolumeInstances[index] = null;
+            int count = LightVolumeInstances.Length;
+            LightVolumeInstance[] targetArray = new LightVolumeInstance[count - 1];
+            for (int i = 0; i < index; i++) targetArray[i] = LightVolumeInstances[i];
+            for (int i = index + 1; i < count; i++) targetArray[i - 1] = LightVolumeInstances[i];
+            LightVolumeInstances = targetArray;
             if (enabled && gameObject.activeInHierarchy) RequestUpdateVolumes();
         }
 
@@ -1166,7 +1234,7 @@ namespace VRCLightVolumes {
             RequestUpdateVolumes();
         }
 
-        // Deinitializes a Point Light Volume by removing its registry reference without resizing the array
+        // Deinitializes a Point Light Volume and keeps the serialized registry dense.
         public void DeinitializePointLightVolume(PointLightVolumeInstance pointLightVolume, bool customTexturesChanged, bool shadowTexturesChanged) {
             if (pointLightVolume == null || PointLightVolumeInstances == null) return;
             int index = FindPointLightRegistryIndex(pointLightVolume);
@@ -1174,7 +1242,15 @@ namespace VRCLightVolumes {
             if (pointLightVolume.LightType == 2 && pointLightVolume.ProjectionMode == 2 && (pointLightVolume.CustomTexture != null || pointLightVolume.CustomTextureMaterial != null)) {
                 pointLightVolume.AreaLightFallbackColor = index < _pointLightAreaCookieAverageColors.Length ? _pointLightAreaCookieAverageColors[index] : Color.clear;
             }
-            PointLightVolumeInstances[index] = null;
+            int count = PointLightVolumeInstances.Length;
+            PointLightVolumeInstance[] targetArray = new PointLightVolumeInstance[count - 1];
+            for (int i = 0; i < index; i++) targetArray[i] = PointLightVolumeInstances[i];
+            for (int i = index + 1; i < count; i++) targetArray[i - 1] = PointLightVolumeInstances[i];
+            PointLightVolumeInstances = targetArray;
+            if (index < count - 1) {
+                if (_customTextureArrayDepth > 0) customTexturesChanged = true;
+                if (_shadowTextureArrayDepth > 0) shadowTexturesChanged = true;
+            }
             if (customTexturesChanged) _customTexturesInitialized = false;
             if (shadowTexturesChanged) _shadowTexturesInitialized = false;
             if (enabled && gameObject.activeInHierarchy) RequestUpdateVolumes();
@@ -1339,16 +1415,17 @@ namespace VRCLightVolumes {
                 _customSingleAreaCookieReceiverIndices = new int[count];
                 _pointLightCustomIDs = new int[count];
                 _customSourceTypes = new int[count];
-                Color[] oldAreaCookieAverageColors = _pointLightAreaCookieAverageColors;
                 _pointLightAreaCookieAverageColors = new Color[count];
-                int averageCopyCount = Mathf.Min(oldAreaCookieAverageColors.Length, count);
-                for (int i = 0; i < averageCopyCount; i++) _pointLightAreaCookieAverageColors[i] = oldAreaCookieAverageColors[i];
             } else {
                 for (int i = 0; i < _customCubemapTextureCount; i++) _customCubemapTextures[i] = null;
                 for (int i = 0; i < _customCubemapMaterialCount; i++) _customCubemapMaterials[i] = null;
                 for (int i = 0; i < _customSingleTextureCount; i++) _customSingleTextures[i] = null;
                 for (int i = 0; i < _customSingleMaterialCount; i++) _customSingleMaterials[i] = null;
             }
+            // The registry can be compacted or reordered independently of this reusable array.
+            // Rebuild its index view from the per-instance cache below so a removed light's
+            // fallback color can never leak into the light that takes over its old index.
+            for (int i = 0; i < _pointLightAreaCookieAverageColors.Length; i++) _pointLightAreaCookieAverageColors[i] = Color.clear;
             int previousSingleSourceCount = _customSingleTextureCount + _customSingleMaterialCount;
             for (int i = 0; i < previousSingleSourceCount; i++) {
                 _customSingleAreaCookieReceivers[i] = null;
@@ -1533,7 +1610,7 @@ namespace VRCLightVolumes {
                     _customSingleAreaCookieReceiverIndices[singleSourceIndex] = i;
                 }
 
-                if (i < _pointLightAreaCookieAverageColors.Length && _pointLightAreaCookieAverageColors[i].a <= 0f) _pointLightAreaCookieAverageColors[i] = instance.AreaLightFallbackColor;
+                if (i < _pointLightAreaCookieAverageColors.Length) _pointLightAreaCookieAverageColors[i] = instance.AreaLightFallbackColor;
                 instance.AreaCookieAverageReadbackDirty = true;
             }
 
@@ -1692,16 +1769,21 @@ namespace VRCLightVolumes {
             color.b *= alpha;
             color.a = 1f;
 
+            PointLightVolumeInstance[] pointInstances = PointLightVolumeInstances;
+            if (pointInstances == null) return false;
             int sourceCount = _pointLightCustomIDs.Length;
             if (_customSourceTypes.Length < sourceCount) sourceCount = _customSourceTypes.Length;
             if (_pointLightAreaCookieAverageColors.Length < sourceCount) sourceCount = _pointLightAreaCookieAverageColors.Length;
+            if (pointInstances.Length < sourceCount) sourceCount = pointInstances.Length;
             for (int i = 0; i < sourceCount; i++) {
                 if (_pointLightCustomIDs[i] != customId || _customSourceTypes[i] < 3) continue;
+                PointLightVolumeInstance instance = pointInstances[i];
+                if (instance == null || instance.LightType != 2 || instance.ProjectionMode != 2) continue;
                 _pointLightAreaCookieAverageColors[i] = color;
+                instance.AreaLightFallbackColor = color;
             }
 
             int pointLightCount = _pointLightCount;
-            PointLightVolumeInstance[] pointInstances = PointLightVolumeInstances;
             int pointInstanceCount = pointInstances.Length;
             bool foundLiveTarget = false;
             bool updatedColor = false;
@@ -3244,6 +3326,7 @@ namespace VRCLightVolumes {
 #if !COMPILER_UDONSHARP
             try {
 #endif
+            SanitizeRegistries();
             TryInitialize();
 
             if (!enabled || !gameObject.activeInHierarchy) {
@@ -3292,7 +3375,6 @@ namespace VRCLightVolumes {
                 for (int i = 0; i < lightVolumeRegistryCount && selectedLightVolumeCount < MaxLightVolumeCount; i++) {
                     LightVolumeInstance instance = LightVolumeInstances[i];
                     if (instance == null) continue;
-                    instance.LightVolumeManager = this;
                     if (!instance.IsActive) continue;
                     _selectedLightVolumeIDs[selectedLightVolumeCount] = i;
                     selectedLightVolumeCount++;
@@ -3303,7 +3385,6 @@ namespace VRCLightVolumes {
                         int registryIndex = _selectedLightVolumeIDs[i];
                         LightVolumeInstance instance = LightVolumeInstances[registryIndex];
                         if (instance == null) continue;
-                        instance.LightVolumeManager = this;
                         if (!instance.IsActive || instance.IsAdditive != isAdditivePass) continue;
                         if (instance.IsDynamic) {
                             Transform instanceTransform = instance.transform;
@@ -3342,7 +3423,6 @@ namespace VRCLightVolumes {
             for (int registryIndex = 0; registryIndex < pointLightRegistryCount && _pointLightCount < MaxPointLightCount; registryIndex++) {
                 PointLightVolumeInstance instance = PointLightVolumeInstances[registryIndex];
                 if (instance == null) continue;
-                instance.LightVolumeManager = this;
                 if (!instance.IsActive) continue;
                 if (instance.IsDynamic) {
                     Transform instanceTransform = instance.transform;

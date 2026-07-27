@@ -181,7 +181,8 @@ namespace VRCLightVolumes.Tests {
             bool valid = LightVolumeMigration.ValidateLoadedSceneUdonPairs(out int issueCount, out string issueSummary);
 
             Assert.That(valid, Is.False);
-            Assert.That(issueCount, Is.EqualTo(2));
+            Assert.That(issueCount, Is.EqualTo(3));
+            Assert.That(issueSummary, Does.Contain("contains 2 Light Volume Managers"));
             Assert.That(issueSummary, Does.Contain("references manager 'Registry Manager A'"));
             Assert.That(issueSummary, Does.Contain("is registered by both"));
             Assert.That(issueSummary, Does.Contain(volumeObject.name));

@@ -23,7 +23,6 @@ namespace VRCLightVolumes {
     public class PointLightVolumeInstance : MonoBehaviour
 #endif
     {
-        [Header("Light Setup")]
         [Tooltip("Defines whether this point light volume can be moved at runtime. Disabling this option slightly improves performance. Don't forget to enable \"Auto Update Volumes\" in your Light Volumes Setup to get these dynamic updates!")]
         public bool IsDynamic = false;
         [Tooltip("Point light volume shape. 0 = point, 1 = spot, 2 = area.")]
@@ -70,7 +69,7 @@ namespace VRCLightVolumes {
         public float SquaredRange = 1f;
         [Tooltip("Average squared lossy scale of the light. Light Source Size uses this for range and size-aware specular calculations. Updates with UpdateTransform() method.")]
         public float SquaredScale = 1f;
-        [Tooltip("Reference to the Light Volume Manager. Needed for runtime initialization.")]
+        [Tooltip("Reference to the scene's single Light Volume Manager. Assign it before registration and do not change it afterwards.")]
         public LightVolumeManager LightVolumeManager;
         [Tooltip("Internal stable manager registry tie-breaker used when this point light volume is enabled at runtime. Use SetWeight(float weight) to change priority.")]
         [HideInInspector] public int RegistryOrder = 2147483647;
@@ -121,7 +120,6 @@ namespace VRCLightVolumes {
         [Tooltip("Hardens shadows near the contact areas. Can produce artefacts, so use with caution. Requires rebaking. More performant when set to 0 in realtime mode. Runtime baker Spherical Blur also applies to contact hardening samples.")]
         [Range(0, 1)] public float ContactHardening = 0f;
 
-        [Header("Runtime Shadow Bake")]
         [Tooltip("Bakes this light's shadow map once when the runtime instance starts. If enabled, the editor-baked shadow texture is used only in the editor and is not included in the build or asset bundle.")]
         public bool BakeInGame = false;
         [Tooltip("Resolution used by runtime shadow baking.")]
@@ -136,8 +134,9 @@ namespace VRCLightVolumes {
         [HideInInspector] public bool RuntimeShadowDirectOutput = false;
 
         // Persistent authoring state. These fields deliberately remain part of the Udon program so the
-        // UdonSharp proxy and backing behaviour always share one serializable schema. Heavy references are
-        // cleared from the temporary build scene by the Light Volumes build preprocessor.
+        // UdonSharp proxy and backing behaviour always share one serializable schema. Duplicate texture
+        // references are cleared from the temporary build scene, while runtime authoring references such as
+        // the shadow exclusion roots remain available to Udon.
         [HideInInspector] public int Projection = 0; // 0: parametric, 1: LUT, 2: custom cookie or cubemap
         [HideInInspector] public float Range = 10f;
         [HideInInspector] public float Falloff = 1f;
@@ -148,7 +147,8 @@ namespace VRCLightVolumes {
         [HideInInspector] public bool DebugRange = false;
         [HideInInspector] public bool Shadows = false;
         [HideInInspector] public bool RebakeShadows = false;
-        [HideInInspector] public GameObject[] ObjectMask = new GameObject[0];
+        [Tooltip("Objects that must not cast shadows for this light. Every Renderer under a listed root is temporarily excluded from both editor and runtime shadow baking.")]
+        [HideInInspector] public GameObject[] ExclusionMask = new GameObject[0];
         [HideInInspector] public bool DebugClipPlanes = false;
         [HideInInspector] public bool ForceCubemapShadows = false;
         [HideInInspector] public UnityEngine.Object ShadowMap;
@@ -159,6 +159,10 @@ namespace VRCLightVolumes {
         [NonSerialized] public Material RuntimeShadowDepthEncodeMaterial;
         // Cached shared runtime shadow blur material assigned by the Light Volume Manager.
         [NonSerialized] public Material RuntimeShadowBlurMaterial;
+
+        // Temporary exclusion state kept only while the shadow camera renders.
+        private Renderer[] _shadowExclusionRenderers = new Renderer[0];
+        private bool[] _shadowExclusionRendererStates = new bool[0];
 
         // Internal projection source metadata resolved by the editor authoring layer
         [HideInInspector] public bool CustomTextureIsCubemap = false;
@@ -180,7 +184,6 @@ namespace VRCLightVolumes {
         private float _old_Intensity = 100f;
         private float _old_ShadingStrength = 1;
         private bool _isRegisteredWithManager = false;
-        private LightVolumeManager _registeredManager;
         [NonSerialized] public Color AreaLightFallbackColor = Color.clear;
         [HideInInspector] public float AreaCookieMirror = 1f;
         [NonSerialized] public int AreaCookieAverageCustomId = -1;
@@ -217,6 +220,19 @@ namespace VRCLightVolumes {
         private RenderTexture _runtimeShadowRegistrationTexture;
         private RenderTexture _runtimeShadowBlurTempTexture;
         private RenderTexture _runtimeShadowMaterialBlitInputTexture;
+
+#if UNITY_EDITOR && !COMPILER_UDONSHARP
+        // Editor-only views of existing runtime state; no backing fields are added.
+        public bool RegisteredWithManagerPreview => _isRegisteredWithManager;
+        public bool RuntimeShadowBakeStartedPreview => _inGameBakeStarted;
+        public bool RuntimeShadowSourceInitializedPreview => _runtimeShadowSourceInitialized;
+        public int RuntimeShadowFaceIndexPreview => _runtimeShadowFaceIndex;
+        public float RuntimeShadowReceiverNearClipPreview => _runtimeShadowReceiverNearClip;
+        public float RuntimeShadowReceiverFarClipPreview => _runtimeShadowReceiverFarClip;
+        public RenderTexture RuntimeShadowDepthTexturePreview => _runtimeShadowDepthTexture;
+        public RenderTexture RuntimeShadowTexturePreview => _runtimeShadowTexture;
+        public RenderTexture RuntimeShadowRegistrationTexturePreview => _runtimeShadowRegistrationTexture;
+#endif
 
         // Local cubemap face rotations used by point-light runtime shadow rendering.
         private Quaternion _runtimeShadowFaceRotation0 = new Quaternion(0f, -0.70710678f, 0f, 0.70710678f);
@@ -268,7 +284,7 @@ namespace VRCLightVolumes {
 #endif
 
 #if UDONSHARP || UNITY_EDITOR
-        // Registers this instance after the manager reference is assigned at runtime.
+        // Registers a newly spawned instance after its initially empty manager reference is assigned.
         public void _onVarChange_LightVolumeManager() {
             RegisterWithManager();
         }
@@ -289,37 +305,29 @@ namespace VRCLightVolumes {
             IsActive = gameObject.activeInHierarchy && Intensity != 0 && Color != Color.black;
             if (!gameObject.activeInHierarchy) return;
             RegisterWithManager();
-            if (_registeredManager == null) return;
+            if (LightVolumeManager == null) return;
             if (wasActive != IsActive) {
                 if (CustomTexture != null || CustomTextureMaterial != null) customTexturesChanged = true;
                 if (ShadowMapID >= 0) shadowTexturesChanged = true;
             }
-            _registeredManager.NotifyPointLightVolumeChanged(this, rebuildFinalData, customTexturesChanged, shadowTexturesChanged);
+            LightVolumeManager.NotifyPointLightVolumeChanged(this, rebuildFinalData, customTexturesChanged, shadowTexturesChanged);
         }
 
-        // Keeps the actual registry owner in sync when the public manager reference changes.
+        // Registers once with the scene's single manager.
         private void RegisterWithManager() {
             IsActive = gameObject.activeInHierarchy && Intensity != 0 && Color != Color.black;
-            LightVolumeManager targetManager = LightVolumeManager;
-            if (_isRegisteredWithManager && _registeredManager != targetManager) UnregisterFromManager();
-            if (targetManager == null || !gameObject.activeInHierarchy || !enabled) return;
-            if (_isRegisteredWithManager && _registeredManager == targetManager) return;
-            _registeredManager = targetManager;
+            if (LightVolumeManager == null || !gameObject.activeInHierarchy || !enabled || _isRegisteredWithManager) return;
             _isRegisteredWithManager = true;
-            targetManager.InitializePointLightVolume(this);
+            LightVolumeManager.InitializePointLightVolume(this);
         }
 
-        // Removes this instance from the manager that actually owns its registry slot.
+        // Removes this instance from the scene's manager.
         private void UnregisterFromManager() {
-            // The private owner is runtime-only and can be empty after deserialization or when
-            // an editor/runtime integration registered this volume through the manager API.
-            LightVolumeManager registeredManager = _registeredManager != null ? _registeredManager : LightVolumeManager;
-            _registeredManager = null;
             _isRegisteredWithManager = false;
-            if (registeredManager == null) return;
+            if (LightVolumeManager == null) return;
             bool customTexturesChanged = IsActive && (CustomTexture != null || CustomTextureMaterial != null);
             bool shadowTexturesChanged = IsActive && ShadowMapID >= 0;
-            registeredManager.DeinitializePointLightVolume(this, customTexturesChanged, shadowTexturesChanged);
+            LightVolumeManager.DeinitializePointLightVolume(this, customTexturesChanged, shadowTexturesChanged);
         }
 
         private void Start() {
@@ -413,7 +421,7 @@ namespace VRCLightVolumes {
             if (RegistryWeight == weight) return;
             RegistryWeight = weight;
             RegisterWithManager();
-            if (_registeredManager != null) _registeredManager.ReorderPointLightVolume(this);
+            if (LightVolumeManager != null) LightVolumeManager.ReorderPointLightVolume(this);
         }
 
         // Sets light source size or range data for LUT mode
@@ -593,6 +601,57 @@ namespace VRCLightVolumes {
             NotifyManager(false, false, false);
         }
 
+        // Hides every renderer below the exclusion roots, including inactive objects.
+        private void ApplyExclusionMask() {
+            RestoreExclusionMask();
+            int rootCount = ExclusionMask != null ? ExclusionMask.Length : 0;
+            if (rootCount == 0) return;
+
+            Renderer[][] rendererGroups = new Renderer[rootCount][];
+            int rendererCount = 0;
+            for (int i = 0; i < rootCount; i++) {
+                GameObject root = ExclusionMask[i];
+                if (root == null) continue;
+                Renderer[] rootRenderers = root.GetComponentsInChildren<Renderer>(true);
+                rendererGroups[i] = rootRenderers;
+                rendererCount += rootRenderers.Length;
+            }
+
+            _shadowExclusionRenderers = new Renderer[rendererCount];
+            _shadowExclusionRendererStates = new bool[rendererCount];
+            int rendererIndex = 0;
+            for (int i = 0; i < rootCount; i++) {
+                Renderer[] rootRenderers = rendererGroups[i];
+                if (rootRenderers == null) continue;
+                for (int j = 0; j < rootRenderers.Length; j++) {
+                    Renderer renderer = rootRenderers[j];
+                    if (renderer == null) continue;
+                    _shadowExclusionRenderers[rendererIndex] = renderer;
+                    _shadowExclusionRendererStates[rendererIndex] = renderer.forceRenderingOff;
+                    renderer.forceRenderingOff = true;
+                    rendererIndex++;
+                }
+            }
+        }
+
+        // Restores the exact renderer states captured by ApplyExclusionMask.
+        private void RestoreExclusionMask() {
+            int rendererCount = _shadowExclusionRenderers != null ? _shadowExclusionRenderers.Length : 0;
+            for (int i = rendererCount - 1; i >= 0; i--) {
+                Renderer renderer = _shadowExclusionRenderers[i];
+                if (renderer != null) renderer.forceRenderingOff = _shadowExclusionRendererStates[i];
+            }
+            _shadowExclusionRenderers = new Renderer[0];
+            _shadowExclusionRendererStates = new bool[0];
+        }
+
+#if UNITY_EDITOR && !COMPILER_UDONSHARP
+        // Editor safety net used by the asset baker's finally block if rendering throws unexpectedly.
+        public void EditorRestoreExclusionMask() {
+            RestoreExclusionMask();
+        }
+#endif
+
         // Runs one runtime shadow bake trigger using the current runtime bake options.
         public void BakeShadows() {
             bool rangeChanged = IsRangeDirty;
@@ -736,11 +795,13 @@ namespace VRCLightVolumes {
             depthEncodeMaterial.SetTexture(_runtimeShadowDepthTextureID, _runtimeShadowDepthTexture, RenderTextureSubElement.Depth);
             if (useBlur) useBlur = PrepareRuntimeShadowBlurMaterial(blurUsesUniformRadius, bakeTanHalfFov, bakeResolution, useCubemapShadow, useSphericalBlur);
 
-            // Render selected faces into the output array using the shared camera.
+            // Render selected faces into the output array using the shared camera. There are deliberately no
+            // early returns between Apply and Restore because Udon does not support try/finally.
             Quaternion previousCameraRotation = runtimeShadowCameraTransform.rotation;
             runtimeShadowCameraTransform.position = bakePosition;
             RenderTexture previousTargetTexture = runtimeShadowCamera.targetTexture;
             runtimeShadowCamera.targetTexture = _runtimeShadowDepthTexture;
+            ApplyExclusionMask();
 
             int face = firstFace;
             if (useCubemapShadow) {
@@ -764,6 +825,7 @@ namespace VRCLightVolumes {
                 BlitRuntimeShadowMaterialToSlice(_runtimeShadowDepthTexture, depthEncodeMaterial, 0, outputTexture, outputBaseSlice);
             }
 
+            RestoreExclusionMask();
             runtimeShadowCamera.targetTexture = previousTargetTexture;
             runtimeShadowCameraTransform.rotation = previousCameraRotation;
 

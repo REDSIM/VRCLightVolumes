@@ -43,6 +43,7 @@ namespace VRCLightVolumes {
         private static bool _bakeryBitmaskPending;
         private static bool _bakeryProbePostProcessAttempted;
         private static bool _bakeryCompletionHandled;
+        private static bool _bakeryCompletionQueued;
         private static bool _bakeryBitmaskConflictWarned;
         private static bool _bakeryWatcherRefreshQueued;
         private static bool _bakeryWatcherSubscribed;
@@ -93,8 +94,10 @@ namespace VRCLightVolumes {
             EditorApplication.hierarchyChanged -= QueueBakeryWatcherRefresh;
             EditorSceneManager.sceneOpened -= OnSceneOpened;
             EditorSceneManager.sceneClosed -= OnSceneClosed;
+            EditorApplication.delayCall -= CompleteBakeryBake;
             EditorApplication.delayCall -= RefreshBakeryWatcher;
             EditorApplication.update -= WatchBakeryBake;
+            _bakeryCompletionQueued = false;
             _bakeryWatcherSubscribed = false;
             _bakeryManagers = Array.Empty<LightVolumeManager>();
 #endif
@@ -240,7 +243,7 @@ namespace VRCLightVolumes {
                 LightVolumeManager manager = managers[i];
                 if (manager == null) continue;
                 LightVolumeManagerTools.BakeShadowMaps(manager);
-                LightVolumeManagerTools.GenerateAtlas(manager);
+                LightVolumeManagerTools.QueueAtlasGeneration(manager);
             }
         }
 
@@ -372,12 +375,21 @@ namespace VRCLightVolumes {
         // scene components only on the transition into a bake.
         private static void WatchBakeryBake() {
             bool baking = ftRenderLightmap.bakeInProgress;
-            if (baking && !_bakeryWasBaking) BeginBakeryBake();
+            bool wasBaking = _bakeryWasBaking;
+            if (baking && !wasBaking) BeginBakeryBake();
             if (baking && _bakeryBitmaskPending) TryApplyBakeryRuntimeBitmasks();
             _bakeryWasBaking = baking;
+            if (baking || !wasBaking || _bakeryCompletionHandled) return;
+            if (ftRenderLightmap.userCanceled) {
+                CancelBakeryCompletion();
+                return;
+            }
+            QueueBakeryCompletion();
         }
 
         private static void BeginBakeryBake() {
+            EditorApplication.delayCall -= CompleteBakeryBake;
+            _bakeryCompletionQueued = false;
             _bakeryManagers = GetActiveManagers(1);
             _bakeryProbePostProcessAttempted = false;
             _bakeryCompletionHandled = false;
@@ -393,6 +405,29 @@ namespace VRCLightVolumes {
 
         private static void OnBakeryFinished(object sender, EventArgs args) {
             if (Application.isPlaying || _bakeryCompletionHandled) return;
+            QueueBakeryCompletion();
+        }
+
+        private static void QueueBakeryCompletion() {
+            if (_bakeryCompletionQueued || _bakeryCompletionHandled) return;
+            _bakeryCompletionQueued = true;
+            EditorApplication.delayCall -= CompleteBakeryBake;
+            EditorApplication.delayCall += CompleteBakeryBake;
+        }
+
+        private static void CompleteBakeryBake() {
+            EditorApplication.delayCall -= CompleteBakeryBake;
+            _bakeryCompletionQueued = false;
+            if (Application.isPlaying || _bakeryCompletionHandled) return;
+            // Bakery fires OnFinishedFullRender before its outer update clears bakeInProgress.
+            if (ftRenderLightmap.bakeInProgress) {
+                QueueBakeryCompletion();
+                return;
+            }
+            if (ftRenderLightmap.userCanceled) {
+                CancelBakeryCompletion();
+                return;
+            }
             _bakeryCompletionHandled = true;
             LightVolumeManager[] managers = _bakeryManagers.Length > 0 ? _bakeryManagers : GetActiveManagers(1);
             _bakeryBitmaskPending = false;
@@ -427,6 +462,16 @@ namespace VRCLightVolumes {
             }
             FinalizeManagers(managers);
             Debug.Log("[LightVolume] Bakery Light Volume atlas generation queued.");
+            _bakeryManagers = Array.Empty<LightVolumeManager>();
+            QueueBakeryWatcherRefresh();
+        }
+
+        private static void CancelBakeryCompletion() {
+            EditorApplication.delayCall -= CompleteBakeryBake;
+            _bakeryCompletionQueued = false;
+            _bakeryCompletionHandled = true;
+            _bakeryBitmaskPending = false;
+            _bakeryWasBaking = false;
             _bakeryManagers = Array.Empty<LightVolumeManager>();
             QueueBakeryWatcherRefresh();
         }

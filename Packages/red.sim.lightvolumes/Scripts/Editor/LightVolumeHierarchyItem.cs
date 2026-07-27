@@ -2,17 +2,10 @@ using System;
 using UdonSharpEditor;
 using UnityEditor;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 
 namespace VRCLightVolumes {
     public static class HierarchyMenu {
-
-        [MenuItem("GameObject/Light Volume Manager", false, 9998)]
-        private static void CreateLightVolumeManager(MenuCommand command) {
-            GameObject gameObject = CreateGameObject("Light Volume Manager", command);
-            LightVolumeManager manager = gameObject.AddUdonSharpComponent<LightVolumeManager>();
-            UdonSharpEditorUtility.CopyProxyToUdon(manager);
-            Selection.activeGameObject = gameObject;
-        }
 
         [MenuItem("GameObject/Light Volume", false, 9999)]
         private static void CreateLightVolume(MenuCommand command) {
@@ -86,20 +79,31 @@ namespace VRCLightVolumes {
         }
 
         private static LightVolumeManager FindSingleManager(UnityEngine.Object context) {
+            Component component = context as Component;
+            Scene targetScene = component != null ? component.gameObject.scene : SceneManager.GetActiveScene();
             LightVolumeManager[] managers = UnityEngine.Object.FindObjectsByType<LightVolumeManager>(FindObjectsInactive.Include, FindObjectsSortMode.None);
             LightVolumeManager result = null;
             for (int i = 0; i < managers.Length; i++) {
                 LightVolumeManager manager = managers[i];
-                if (manager == null || EditorUtility.IsPersistent(manager) || !manager.gameObject.scene.IsValid() || !manager.gameObject.scene.isLoaded) continue;
+                if (manager == null || EditorUtility.IsPersistent(manager) || manager.gameObject.scene != targetScene) continue;
                 if (result == null) {
                     result = manager;
                     continue;
                 }
 
-                Debug.LogWarning("[VRC Light Volumes] The new component was not assigned because multiple Light Volume Managers are loaded.", context);
+                Debug.LogError("[VRC Light Volumes] The new component was not assigned because its scene contains multiple Light Volume Managers.", context);
                 return null;
             }
-            return result;
+
+            if (result != null) return result;
+
+            GameObject managerObject = new GameObject("Light Volume Manager");
+            Undo.RegisterCreatedObjectUndo(managerObject, "Create Light Volume Manager");
+            if (targetScene.IsValid() && managerObject.scene != targetScene)
+                SceneManager.MoveGameObjectToScene(managerObject, targetScene);
+            LightVolumeManager createdManager = managerObject.AddUdonSharpComponent<LightVolumeManager>();
+            UdonSharpEditorUtility.CopyProxyToUdon(createdManager);
+            return createdManager;
         }
     }
 }

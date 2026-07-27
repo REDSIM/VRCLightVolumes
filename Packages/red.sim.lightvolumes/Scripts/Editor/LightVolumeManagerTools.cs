@@ -47,8 +47,7 @@ namespace VRCLightVolumes {
             manager.DilationIterations = Mathf.Clamp(manager.DilationIterations, 1, 8);
             manager.DilationBackfaceBias = Mathf.Clamp01(manager.DilationBackfaceBias);
             manager.AdditiveMaxOverdraw = Mathf.Max(manager.AdditiveMaxOverdraw, 1);
-            if (manager.LightVolumeInstances == null) manager.LightVolumeInstances = Array.Empty<LightVolumeInstance>();
-            if (manager.PointLightVolumeInstances == null) manager.PointLightVolumeInstances = Array.Empty<PointLightVolumeInstance>();
+            manager.SanitizeRegistries();
 
             SynchronizeRegistryMetadata(manager);
             if (reinitializeCustomTextures) manager.ReinitializeCustomTextures();

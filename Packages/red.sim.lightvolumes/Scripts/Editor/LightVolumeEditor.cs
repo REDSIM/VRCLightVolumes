@@ -6,10 +6,15 @@ namespace VRCLightVolumes {
     [CanEditMultipleObjects]
     [CustomEditor(typeof(LightVolumeInstance))]
     public class LightVolumeEditor : Editor {
+        private const string DebugFoldoutSessionKey = "VRCLightVolumes.LightVolumeEditor.DebugFoldout";
         private const float ToolbarButtonWidth = 150f;
         private const float ActionButtonWidth = 170f;
+        private const float InspectorSectionSpacing = 10f;
+        private const double RuntimeDebugRefreshInterval = 0.2d;
 
         private bool _isEditMode;
+        private bool _debugExpanded;
+        private double _nextRuntimeDebugRefresh;
         private Tool _savedTool;
         private Tool _previousTool;
         private LightProbePlacerWindow _probePlacerWindow;
@@ -36,6 +41,7 @@ namespace VRCLightVolumes {
 
         private void OnEnable() {
             _volume = target as LightVolumeInstance;
+            _debugExpanded = SessionState.GetBool(DebugFoldoutSessionKey, false);
             _previousTool = Tools.current;
             CacheProperties();
             CacheAtlasStates();
@@ -46,6 +52,7 @@ namespace VRCLightVolumes {
         public override void OnInspectorGUI() {
             if (_volume == null) return;
 
+            RefreshRuntimeDebugProxy();
             serializedObject.UpdateIfRequiredOrScript();
             int undoGroup = Undo.GetCurrentGroup();
 #if BAKERY_INCLUDED
@@ -58,6 +65,7 @@ namespace VRCLightVolumes {
             HandleEditModeState();
             DrawAuthoringProperties();
             DrawProbeButton();
+            DrawDebugSection();
 
             if (!serializedObject.ApplyModifiedProperties()) return;
 
@@ -208,6 +216,66 @@ namespace VRCLightVolumes {
                 }
                 GUILayout.FlexibleSpace();
             }
+        }
+
+        private void DrawDebugSection() {
+            GUILayout.Space(InspectorSectionSpacing);
+            EditorGUI.BeginChangeCheck();
+            _debugExpanded = EditorGUILayout.BeginFoldoutHeaderGroup(
+                _debugExpanded,
+                new GUIContent("Debug", "Shows read-only live Light Volume data for troubleshooting."));
+            if (EditorGUI.EndChangeCheck()) {
+                SessionState.SetBool(DebugFoldoutSessionKey, _debugExpanded);
+                _nextRuntimeDebugRefresh = 0d;
+            }
+
+            if (_debugExpanded) {
+                if (!EditorApplication.isPlaying)
+                    EditorGUILayout.HelpBox("Live values are populated in Play Mode. Derived atlas and transform values show the current editor state.", MessageType.Info);
+                if (targets.Length > 1)
+                    EditorGUILayout.HelpBox("Debug values are shown for the first selected Light Volume.", MessageType.Info);
+
+                LightVolumeDebugGUI.DrawGroupHeader(
+                    "Registration",
+                    false,
+                    "Shows which Manager owns this volume and its registry priority.");
+                LightVolumeDebugGUI.DrawObject("Manager", _volume.LightVolumeManager, typeof(LightVolumeManager), "The scene Manager used by this volume.");
+                LightVolumeDebugGUI.DrawBool("Registered", _volume.RegisteredWithManagerPreview, "Whether this volume is currently in a Manager registry.");
+                LightVolumeDebugGUI.DrawBool("Active", _volume.IsActive, "Whether this volume is currently eligible for rendering.");
+                LightVolumeDebugGUI.DrawInt("Registry Order", _volume.RegistryOrder, "Stable tie-breaker used when registry weights are equal.");
+                LightVolumeDebugGUI.DrawFloat("Registry Weight", _volume.RegistryWeight, "Higher weights are uploaded to shaders first.");
+
+                LightVolumeDebugGUI.DrawGroupHeader(
+                    "Atlas Placement",
+                    true,
+                    "Shows this volume's resolution and packed location in the shared 3D atlas.");
+                LightVolumeDebugGUI.DrawVector3Int("Resolution", _volume.Resolution, "Voxel resolution used for this volume.");
+                LightVolumeDebugGUI.DrawVector4("Texture 0 UVW", _volume.BoundsUvwMin0, "Packed atlas position for texture 0; W stores its X scale.");
+                LightVolumeDebugGUI.DrawVector4("Texture 1 UVW", _volume.BoundsUvwMin1, "Packed atlas position for texture 1; W stores its Y scale.");
+                LightVolumeDebugGUI.DrawVector4("Texture 2 UVW", _volume.BoundsUvwMin2, "Packed atlas position for texture 2; W stores its Z scale.");
+
+                LightVolumeDebugGUI.DrawGroupHeader(
+                    "Derived Transform",
+                    true,
+                    "Values calculated from the volume bounds and rotation for shaders.");
+                LightVolumeDebugGUI.DrawVector4("Edge Smoothing", _volume.InvLocalEdgeSmoothing, "Inverse edge-blending distances used by shaders.");
+                LightVolumeDebugGUI.DrawBool("Rotated", _volume.IsRotated, "Whether the volume is rotated relative to its baked pose.");
+                LightVolumeDebugGUI.DrawQuaternion("Inverse Baked Rotation", _volume.InvBakedRotation, "Inverse rotation of the pose used when this volume was baked.");
+                LightVolumeDebugGUI.DrawVector3("Relative Rotation Row 0", _volume.RelativeRotationRow0, "First row of the relative rotation used for directional lighting.");
+                LightVolumeDebugGUI.DrawVector3("Relative Rotation Row 1", _volume.RelativeRotationRow1, "Second row of the relative rotation used for directional lighting.");
+            }
+            EditorGUILayout.EndFoldoutHeaderGroup();
+        }
+
+        private void RefreshRuntimeDebugProxy() {
+#if UDONSHARP
+            if (!_debugExpanded || !EditorApplication.isPlaying || _volume == null) return;
+            double now = EditorApplication.timeSinceStartup;
+            if (now < _nextRuntimeDebugRefresh) return;
+            _nextRuntimeDebugRefresh = now + RuntimeDebugRefreshInterval;
+            if (UdonSharpEditorUtility.GetBackingUdonBehaviour(_volume) != null)
+                UdonSharpEditorUtility.CopyUdonToProxy(_volume);
+#endif
         }
 
         private void HandleEditModeState() {
@@ -435,6 +503,10 @@ namespace VRCLightVolumes {
             SceneView.RepaintAll();
             EditorApplication.QueuePlayerLoopUpdate();
             EditorApplication.update -= ForceRepaintNextFrame;
+        }
+
+        public override bool RequiresConstantRepaint() {
+            return _debugExpanded && EditorApplication.isPlaying;
         }
     }
 }

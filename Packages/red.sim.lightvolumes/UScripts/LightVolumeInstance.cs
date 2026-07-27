@@ -81,7 +81,7 @@ namespace VRCLightVolumes {
         public bool IsRotated = false;
 
         [Header("Runtime State")]
-        [Tooltip("Reference to the Light Volume Manager. Needed for runtime initialization.")]
+        [Tooltip("Reference to the scene's single Light Volume Manager. Assign it before registration and do not change it afterwards.")]
         public LightVolumeManager LightVolumeManager;
         [Tooltip("Internal stable manager registry tie-breaker used when this volume is enabled at runtime. Use SetWeight(float weight) to change priority.")]
         [HideInInspector] public int RegistryOrder = 2147483647;
@@ -92,7 +92,11 @@ namespace VRCLightVolumes {
         private Color _old_Color = Color.white;
         private float _old_Intensity = 1f;
         private bool _isRegisteredWithManager = false;
-        private LightVolumeManager _registeredManager;
+
+#if UNITY_EDITOR && !COMPILER_UDONSHARP
+        // Editor-only views of existing runtime state; no backing fields are added.
+        public bool RegisteredWithManagerPreview => _isRegisteredWithManager;
+#endif
 
 #if UDONSHARP
         // Low level Udon hacks:
@@ -114,7 +118,7 @@ namespace VRCLightVolumes {
 #endif
 
 #if UDONSHARP || UNITY_EDITOR
-        // Registers this instance after the manager reference is assigned at runtime.
+        // Registers a newly spawned instance after its initially empty manager reference is assigned.
         public void _onVarChange_LightVolumeManager() {
             RegisterWithManager();
         }
@@ -136,30 +140,22 @@ namespace VRCLightVolumes {
             IsActive = gameObject.activeInHierarchy && Intensity != 0 && Color != Color.black;
             if (!gameObject.activeInHierarchy) return;
             RegisterWithManager();
-            if (_registeredManager == null) return;
-            _registeredManager.NotifyLightVolumeChanged(this, rebuildFinalData);
+            if (LightVolumeManager == null) return;
+            LightVolumeManager.NotifyLightVolumeChanged(this, rebuildFinalData);
         }
 
-        // Keeps the actual registry owner in sync when the public manager reference changes.
+        // Registers once with the scene's single manager.
         private void RegisterWithManager() {
             IsActive = gameObject.activeInHierarchy && Intensity != 0 && Color != Color.black;
-            LightVolumeManager targetManager = LightVolumeManager;
-            if (_isRegisteredWithManager && _registeredManager != targetManager) UnregisterFromManager();
-            if (targetManager == null || !gameObject.activeInHierarchy || !enabled) return;
-            if (_isRegisteredWithManager && _registeredManager == targetManager) return;
-            _registeredManager = targetManager;
+            if (LightVolumeManager == null || !gameObject.activeInHierarchy || !enabled || _isRegisteredWithManager) return;
             _isRegisteredWithManager = true;
-            targetManager.InitializeLightVolume(this);
+            LightVolumeManager.InitializeLightVolume(this);
         }
 
-        // Removes this instance from the manager that actually owns its registry slot.
+        // Removes this instance from the scene's manager.
         private void UnregisterFromManager() {
-            // The private owner is runtime-only and can be empty after deserialization or when
-            // an editor/runtime integration registered this volume through the manager API.
-            LightVolumeManager registeredManager = _registeredManager != null ? _registeredManager : LightVolumeManager;
-            _registeredManager = null;
             _isRegisteredWithManager = false;
-            if (registeredManager != null) registeredManager.DeinitializeLightVolume(this);
+            if (LightVolumeManager != null) LightVolumeManager.DeinitializeLightVolume(this);
         }
 
         private void Start() {
@@ -215,7 +211,7 @@ namespace VRCLightVolumes {
             if (RegistryWeight == weight) return;
             RegistryWeight = weight;
             RegisterWithManager();
-            if (_registeredManager != null) _registeredManager.ReorderLightVolume(this);
+            if (LightVolumeManager != null) LightVolumeManager.ReorderLightVolume(this);
         }
 
         // Calculates and sets invLocalEdgeBlending

@@ -400,6 +400,7 @@ namespace VRCLightVolumes {
         private static void ApplyPointLightRuntimeShadowBakeSettings(PointLightVolumeInstance pointLight, UdonBehaviour udonBehaviour) {
             if (pointLight == null || udonBehaviour == null) return;
             SetUdonProgramVariable(udonBehaviour, "BakeInGame", pointLight.BakeInGame);
+            SetUdonProgramVariable(udonBehaviour, "ExclusionMask", pointLight.ExclusionMask ?? Array.Empty<GameObject>());
             SetUdonProgramVariable(udonBehaviour, "RuntimeShadowResolution", pointLight.RuntimeShadowResolution);
             SetUdonProgramVariable(udonBehaviour, "RuntimeShadowBlurSamplePreset", pointLight.RuntimeShadowBlurSamplePreset);
             SetUdonProgramVariable(udonBehaviour, "RuntimeShadowSphericalBlur", pointLight.RuntimeShadowSphericalBlur);
@@ -492,7 +493,6 @@ namespace VRCLightVolumes {
             pointLight.Cookie = null;
             pointLight.Cubemap = null;
             pointLight.ShadowMap = null;
-            pointLight.ObjectMask = Array.Empty<GameObject>();
 
             UdonBehaviour udonBehaviour = GetBackingUdonBehaviour(pointLight);
             if (udonBehaviour == null) return;
@@ -500,7 +500,6 @@ namespace VRCLightVolumes {
             SetUdonProgramVariable(udonBehaviour, "Cookie", null);
             SetUdonProgramVariable(udonBehaviour, "Cubemap", null);
             SetUdonProgramVariable(udonBehaviour, "ShadowMap", null);
-            SetUdonProgramVariable(udonBehaviour, "ObjectMask", Array.Empty<GameObject>());
         }
 
         private static Material CreateRuntimeMaterialInstance(Shader shader, Material existing, string name, bool editorTemporary) {
@@ -561,7 +560,7 @@ namespace VRCLightVolumes {
             string issueSummary;
             if (LightVolumeMigration.ValidateLoadedSceneUdonPairs(out issueCount, out issueSummary)) return true;
 
-            Debug.LogError("[LightVolume] Build blocked before UdonSharp upgrade: automatic migration could not resolve " + issueCount + " invalid proxy/backing relation(s). " + issueSummary + ". Restore a unique co-located Udon proxy/backing graph, then reopen the scene.");
+            Debug.LogError("[LightVolume] Build blocked before UdonSharp upgrade: " + issueCount + " Light Volume setup issue(s) were found. " + issueSummary + ". Fix the reported scene setup, then reopen the scene.");
             return false;
         }
     }

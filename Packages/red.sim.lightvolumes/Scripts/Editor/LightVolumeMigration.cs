@@ -816,35 +816,18 @@ namespace VRCLightVolumes {
             LightVolumeSetup.PostProcessor[] processors = source.AtlasPostProcessors;
             if (processors == null) return;
 
-            List<RenderTexture> targets = new List<RenderTexture>();
-            List<Material> materials = new List<Material>();
-            List<string> textureNames = new List<string>();
-            List<LightVolumeManager.PostProcessor> transientProcessors = new List<LightVolumeManager.PostProcessor>();
-            HashSet<RenderTexture> persistentTargets = new HashSet<RenderTexture>();
+            LightVolumeManager.PostProcessor[] migrated = new LightVolumeManager.PostProcessor[processors.Length];
             for (int i = 0; i < processors.Length; i++) {
                 LightVolumeSetup.PostProcessor processor = processors[i];
-                if (processor.RT == null) continue;
-                if (processor.Mat != null) {
-                    if (!persistentTargets.Add(processor.RT)) continue;
-                    targets.Add(processor.RT);
-                    materials.Add(processor.Mat);
-                    textureNames.Add(string.IsNullOrEmpty(processor.TextureName) ? "_MainTex" : processor.TextureName);
-                    continue;
-                }
-                if (processor.Update == null && processor.UpdateWithInput == null) continue;
-                transientProcessors.Add(new LightVolumeManager.PostProcessor {
+                migrated[i] = new LightVolumeManager.PostProcessor {
                     RT = processor.RT,
+                    Mat = processor.Mat,
                     TextureName = processor.TextureName,
                     Update = processor.Update,
                     UpdateWithInput = processor.UpdateWithInput
-                });
+                };
             }
-
-            destination.AtlasPostProcessorTargets = targets.ToArray();
-            destination.AtlasPostProcessorMaterials = materials.ToArray();
-            destination.AtlasPostProcessorTextureNames = textureNames.ToArray();
-            for (int i = 0; i < transientProcessors.Count; i++) LightVolumeManagerTools.RegisterPostProcessor(destination, transientProcessors[i]);
-
+            destination.AtlasPostProcessors = migrated;
         }
 
         private static bool IsReadyProxy(Component component) {

@@ -123,7 +123,7 @@ namespace VRCLightVolumes {
         [HideInInspector] public float ShadowMinVarianceDesktop = 0f;
         [HideInInspector] public float ShadowMinVarianceMobile = 1f;
         // Serializable RT/material/name projection for editor atlas processors.
-        // Delegate callbacks remain in the transient Editor registry and must re-register after reload.
+        // Delegate callbacks remain in transient editor state and must re-register after reload.
         [HideInInspector] public RenderTexture[] AtlasPostProcessorTargets = new RenderTexture[0];
         [HideInInspector] public Material[] AtlasPostProcessorMaterials = new Material[0];
         [HideInInspector] public string[] AtlasPostProcessorTextureNames = new string[0];
@@ -143,6 +143,15 @@ namespace VRCLightVolumes {
             public Action Update;
             public Action<Texture> UpdateWithInput;
         }
+
+        // Preserves the pre-migration integration surface without adding delegate fields to the Udon heap.
+        public PostProcessor[] AtlasPostProcessors {
+            get => GetAtlasPostProcessors();
+            set => SetAtlasPostProcessors(value);
+        }
+
+        // Lets the editor assembly persist proxy changes without making this Udon assembly depend on editor tools.
+        public static event Action<LightVolumeManager> AtlasPostProcessorsChanged;
 
         public bool IsBakeryMode => BakingMode == 1;
 #endif
@@ -253,6 +262,10 @@ namespace VRCLightVolumes {
             public int ShadowTextureFormat = -1;
             public Material GeneratedClusteringMaterial;
             public Vector4 FroxelDepthParams;
+            public PostProcessor[] AtlasPostProcessors;
+            public RenderTexture[] PostProcessorProjectionTargets;
+            public Material[] PostProcessorProjectionMaterials;
+            public string[] PostProcessorProjectionTextureNames;
 
             public EditorState() { }
         }
@@ -271,6 +284,207 @@ namespace VRCLightVolumes {
         private Vector4 _editorFroxelDepthParams {
             get => EditorData.FroxelDepthParams;
             set => EditorData.FroxelDepthParams = value;
+        }
+
+        // Registers a Custom Render Texture post processor for the Light Volume 3D atlas.
+        public void RegisterPostProcessorCRT(CustomRenderTexture texture) {
+            if (texture == null) return;
+            RegisterPostProcessor(new PostProcessor {
+                RT = texture,
+                Mat = texture.material,
+                TextureName = "_MainTex",
+                Update = texture.Update
+            });
+        }
+
+        // Backwards-compatible alias retained from LightVolumeSetup.
+        public void UnregisterPostProcessorCRT(CustomRenderTexture texture) {
+            UnregisterPostProcessor(texture);
+        }
+
+        public void UnregisterPostProcessor(RenderTexture texture) {
+            if (texture == null) return;
+            UnregisterPostProcessor(new PostProcessor { RT = texture });
+        }
+
+        public void UnregisterPostProcessor(PostProcessor processor) {
+            PostProcessor[] processors = GetAtlasPostProcessors();
+            int removeCount = 0;
+            RenderTexture removedTarget = processor.RT;
+            for (int i = 0; i < processors.Length; i++) {
+                if (!IsSamePostProcessor(processors[i], processor)) continue;
+                if (removedTarget == null) removedTarget = processors[i].RT;
+                removeCount++;
+            }
+            if (removeCount == 0) return;
+
+            PostProcessor[] remaining = new PostProcessor[processors.Length - removeCount];
+            for (int i = 0, write = 0; i < processors.Length; i++) {
+                if (IsSamePostProcessor(processors[i], processor)) continue;
+                remaining[write++] = processors[i];
+            }
+            SetAtlasPostProcessors(remaining);
+            Debug.Log($"[LightVolumeManager] Unregistered post processor: {(removedTarget != null ? removedTarget.name : "")}");
+            RefreshAtlasPostProcessors();
+        }
+
+        public void RegisterPostProcessor(PostProcessor processor) {
+            if (processor.RT == null || processor.Mat == null && processor.Update == null && processor.UpdateWithInput == null) return;
+            if (string.IsNullOrEmpty(processor.TextureName)) processor.TextureName = "_MainTex";
+
+            PostProcessor[] processors = GetAtlasPostProcessors();
+            int index = FindPostProcessor(processors, processor);
+            if (index < 0) {
+                Array.Resize(ref processors, processors.Length + 1);
+                processors[processors.Length - 1] = processor;
+                SetAtlasPostProcessors(processors);
+                Debug.Log($"[LightVolumeManager] Registered post processor: {processor.RT.name}");
+                RefreshAtlasPostProcessors();
+                return;
+            }
+
+            bool changed = !HasSamePostProcessorValues(processors[index], processor);
+            processors[index] = processor;
+            int duplicateCount = 0;
+            for (int i = 0; i < processors.Length; i++)
+                if (i != index && IsSamePostProcessor(processors[i], processor)) duplicateCount++;
+            if (!changed && duplicateCount == 0) return;
+
+            if (duplicateCount > 0) {
+                PostProcessor[] unique = new PostProcessor[processors.Length - duplicateCount];
+                for (int i = 0, write = 0; i < processors.Length; i++) {
+                    if (i != index && IsSamePostProcessor(processors[i], processor)) continue;
+                    unique[write++] = processors[i];
+                }
+                processors = unique;
+            }
+            SetAtlasPostProcessors(processors);
+            Debug.Log($"[LightVolumeManager] Updated post processor: {processor.RT.name}");
+            RefreshAtlasPostProcessors();
+        }
+
+        // Re-runs the chain after the base atlas is rebuilt.
+        public void RefreshAtlasPostProcessors() {
+            Texture output = UpdatePostProcessorChain(GetAtlasPostProcessors(), LightVolumeAtlasBase);
+            LightVolumeAtlas = output;
+            AtlasPostProcessorsChanged?.Invoke(this);
+            UpdateVolumes();
+        }
+
+        private PostProcessor[] GetAtlasPostProcessors() {
+            EditorState state = EditorData;
+            if (state.AtlasPostProcessors != null &&
+                state.PostProcessorProjectionTargets == AtlasPostProcessorTargets &&
+                state.PostProcessorProjectionMaterials == AtlasPostProcessorMaterials &&
+                state.PostProcessorProjectionTextureNames == AtlasPostProcessorTextureNames)
+                return state.AtlasPostProcessors;
+
+            RenderTexture[] targets = AtlasPostProcessorTargets ?? Array.Empty<RenderTexture>();
+            Material[] materials = AtlasPostProcessorMaterials;
+            string[] textureNames = AtlasPostProcessorTextureNames;
+            PostProcessor[] processors = new PostProcessor[targets.Length];
+            for (int i = 0; i < processors.Length; i++) {
+                RenderTexture target = targets[i];
+                processors[i] = new PostProcessor {
+                    RT = target,
+                    Mat = materials != null && i < materials.Length ? materials[i] : null,
+                    TextureName = textureNames != null && i < textureNames.Length && !string.IsNullOrEmpty(textureNames[i]) ? textureNames[i] : "_MainTex"
+                };
+            }
+            state.AtlasPostProcessors = processors;
+            CapturePostProcessorProjection(state);
+            return processors;
+        }
+
+        private void SetAtlasPostProcessors(PostProcessor[] processors) {
+            processors = processors ?? Array.Empty<PostProcessor>();
+            RenderTexture[] targets = new RenderTexture[processors.Length];
+            Material[] materials = new Material[processors.Length];
+            string[] textureNames = new string[processors.Length];
+            for (int i = 0; i < processors.Length; i++) {
+                targets[i] = processors[i].RT;
+                materials[i] = processors[i].Mat;
+                textureNames[i] = string.IsNullOrEmpty(processors[i].TextureName) ? "_MainTex" : processors[i].TextureName;
+            }
+
+            AtlasPostProcessorTargets = targets;
+            AtlasPostProcessorMaterials = materials;
+            AtlasPostProcessorTextureNames = textureNames;
+            EditorState state = EditorData;
+            state.AtlasPostProcessors = processors;
+            CapturePostProcessorProjection(state);
+        }
+
+        private void CapturePostProcessorProjection(EditorState state) {
+            state.PostProcessorProjectionTargets = AtlasPostProcessorTargets;
+            state.PostProcessorProjectionMaterials = AtlasPostProcessorMaterials;
+            state.PostProcessorProjectionTextureNames = AtlasPostProcessorTextureNames;
+        }
+
+        private static int FindPostProcessor(PostProcessor[] processors, PostProcessor requested) {
+            for (int i = 0; i < processors.Length; i++)
+                if (IsSamePostProcessor(processors[i], requested)) return i;
+            return -1;
+        }
+
+        private static bool IsSamePostProcessor(PostProcessor existing, PostProcessor requested) {
+            return requested.RT != null && existing.RT == requested.RT ||
+                   requested.Update != null && existing.Update == requested.Update ||
+                   requested.UpdateWithInput != null && existing.UpdateWithInput == requested.UpdateWithInput;
+        }
+
+        private static bool HasSamePostProcessorValues(PostProcessor first, PostProcessor second) {
+            return first.RT == second.RT &&
+                   first.Mat == second.Mat &&
+                   first.TextureName == second.TextureName &&
+                   first.Update == second.Update &&
+                   first.UpdateWithInput == second.UpdateWithInput;
+        }
+
+        private static Texture UpdatePostProcessorChain(PostProcessor[] processors, Texture baseTexture) {
+            if (baseTexture == null || processors == null || processors.Length == 0) return baseTexture;
+
+            Texture output = baseTexture;
+            bool hasValidProcessor = false;
+            for (int i = 0; i < processors.Length; i++) {
+                PostProcessor processor = processors[i];
+                if (processor.RT == null || processor.Mat == null && processor.Update == null && processor.UpdateWithInput == null) continue;
+
+                SetupPostProcessorTexture(processor.RT, baseTexture);
+                Texture input = output;
+                if (processor.Mat != null)
+                    processor.Mat.SetTexture(string.IsNullOrEmpty(processor.TextureName) ? "_MainTex" : processor.TextureName, input);
+                output = processor.RT;
+                hasValidProcessor = true;
+                if (processor.UpdateWithInput != null) processor.UpdateWithInput(input);
+                else processor.Update?.Invoke();
+            }
+            return hasValidProcessor ? output : baseTexture;
+        }
+
+        private static void SetupPostProcessorTexture(RenderTexture texture, Texture source) {
+            RenderTexture.active = null;
+            texture.Release();
+            texture.dimension = TextureDimension.Tex3D;
+            texture.graphicsFormat = UnityEngine.Experimental.Rendering.GraphicsFormat.R16G16B16A16_SFloat;
+            texture.enableRandomWrite = false;
+            texture.wrapMode = TextureWrapMode.Clamp;
+            texture.filterMode = FilterMode.Trilinear;
+            texture.anisoLevel = 0;
+            texture.width = Mathf.Max(source.width, 1);
+            texture.height = Mathf.Max(source.height, 1);
+            texture.volumeDepth = Mathf.Max(GetTextureDepth(source), 1);
+            if (texture is CustomRenderTexture customTexture)
+                customTexture.updateMode = CustomRenderTextureUpdateMode.Realtime;
+            texture.Create();
+        }
+
+        private static int GetTextureDepth(Texture texture) {
+            if (texture is Texture3D texture3D) return texture3D.depth;
+            if (texture is Texture2DArray textureArray) return textureArray.depth;
+            if (texture is RenderTexture renderTexture) return renderTexture.volumeDepth;
+            if (texture is Cubemap) return 6;
+            return 1;
         }
 
 #endif

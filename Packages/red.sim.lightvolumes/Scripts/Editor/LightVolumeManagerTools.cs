@@ -4,8 +4,6 @@ using System.IO;
 using Unity.EditorCoroutines.Editor;
 using UnityEditor;
 using UnityEngine;
-using UnityEngine.Experimental.Rendering;
-using UnityEngine.Rendering;
 using UnityEngine.SceneManagement;
 using PostProcessor = VRCLightVolumes.LightVolumeManager.PostProcessor;
 #if UDONSHARP
@@ -19,8 +17,6 @@ namespace VRCLightVolumes {
         private const float ShadowMinVarianceValueMin = 0.0001f;
         private const float ShadowMinVarianceValueMax = 1f;
 
-        private static readonly Dictionary<int, PostProcessor[]> _atlasPostProcessors = new Dictionary<int, PostProcessor[]>();
-        private static readonly Dictionary<int, LightVolumeManager> _atlasPostProcessorOwners = new Dictionary<int, LightVolumeManager>();
         private static readonly Dictionary<int, EditorCoroutine> _atlasCoroutines = new Dictionary<int, EditorCoroutine>();
         private static readonly HashSet<LightVolumeManager> _queuedCustomProbeManagers = new HashSet<LightVolumeManager>();
         private static bool _customProbeFinalizeQueued;
@@ -210,9 +206,18 @@ namespace VRCLightVolumes {
             if (_atlasCoroutines.TryGetValue(managerId, out EditorCoroutine running) && running != null)
                 EditorCoroutineUtility.StopCoroutine(running);
 
-            TexturePackingStrategy strategy = HasPostProcessors(manager) ? TexturePackingStrategy.MinimumDepth : TexturePackingStrategy.MinimumVRAM;
+            TexturePackingStrategy strategy = ResolveAtlasPackingStrategy(manager);
             EditorCoroutine coroutine = EditorCoroutineUtility.StartCoroutine(Texture3DAtlasGenerator.CreateAtlas(volumes, atlas => CompleteAtlas(manager, volumes, atlas), manager.DownscaleVolumes, strategy), manager);
             _atlasCoroutines[managerId] = coroutine;
+        }
+
+        private static TexturePackingStrategy ResolveAtlasPackingStrategy(LightVolumeManager manager) {
+            PostProcessor[] postProcessors = manager != null ? manager.AtlasPostProcessors : null;
+            // Post-processed 3D textures are commonly updated slice by slice, so minimizing atlas
+            // depth reduces per-frame draw calls even when that costs a little more VRAM.
+            return postProcessors != null && postProcessors.Length > 0
+                ? TexturePackingStrategy.MinimumDepth
+                : TexturePackingStrategy.MinimumVRAM;
         }
 
         private static LightVolumeInstance[] GetAtlasVolumes(LightVolumeManager manager) {
@@ -258,9 +263,6 @@ namespace VRCLightVolumes {
                 string directory = Path.GetDirectoryName(scenePath);
                 LVUtils.SaveAsAssetDelayed(atlas.Texture, $"{directory}/{scene.name}/VRCLightVolumes/LightVolumeAtlas.asset");
             }
-            LVUtils.MarkDirty(manager);
-            CopyProxyToUdon(manager);
-            manager.UpdateVolumes();
         }
 
         public static int GetCustomProbesCount(this LightVolumeManager manager) {
@@ -368,303 +370,27 @@ namespace VRCLightVolumes {
         }
 
         public static void RegisterPostProcessorCRT(this LightVolumeManager manager, CustomRenderTexture texture) {
-            if (texture == null) return;
-            RegisterPostProcessor(manager, new PostProcessor {
-                RT = texture,
-                Mat = texture.material,
-                TextureName = "_MainTex",
-                Update = texture.Update
-            });
+            if (manager != null) manager.RegisterPostProcessorCRT(texture);
         }
 
         public static void RegisterPostProcessor(this LightVolumeManager manager, PostProcessor processor) {
-            if (manager == null || processor.RT == null || processor.Mat == null && processor.Update == null && processor.UpdateWithInput == null) return;
-            if (string.IsNullOrEmpty(processor.TextureName)) processor.TextureName = "_MainTex";
-            if (!TryGetAtlasPostProcessors(manager, out PostProcessor[] processors)) processors = Array.Empty<PostProcessor>();
-
-            bool persistentChanged = UpsertPersistentPostProcessor(manager, processor, processors);
-            bool transientChanged = UpsertTransientPostProcessor(ref processors, processor);
-            if (transientChanged) SetAtlasPostProcessors(manager, processors);
-            if (persistentChanged || transientChanged) RefreshAtlasOutput(manager, persistentChanged);
-        }
-
-        private static bool UpsertPersistentPostProcessor(LightVolumeManager manager, PostProcessor requested, PostProcessor[] transientProcessors) {
-            RenderTexture[] targets = manager.AtlasPostProcessorTargets ?? Array.Empty<RenderTexture>();
-            Material[] materials = manager.AtlasPostProcessorMaterials;
-            string[] textureNames = manager.AtlasPostProcessorTextureNames;
-            int matchCount = 0;
-            int firstMatch = -1;
-            for (int i = 0; i < targets.Length; i++) {
-                if (!IsPersistentPostProcessorMatch(targets[i], requested, transientProcessors)) continue;
-                if (firstMatch < 0) firstMatch = i;
-                matchCount++;
-            }
-
-            bool arraysAligned = materials != null && materials.Length == targets.Length && textureNames != null && textureNames.Length == targets.Length;
-            bool changed = matchCount != 1 || !arraysAligned;
-            if (!changed) {
-                changed = targets[firstMatch] != requested.RT || materials[firstMatch] != requested.Mat || textureNames[firstMatch] != requested.TextureName;
-            }
-            if (!changed) return false;
-
-            int resultCount = targets.Length - matchCount + 1;
-            RenderTexture[] resultTargets = new RenderTexture[resultCount];
-            Material[] resultMaterials = new Material[resultCount];
-            string[] resultNames = new string[resultCount];
-            bool inserted = false;
-            int write = 0;
-            for (int i = 0; i < targets.Length; i++) {
-                if (IsPersistentPostProcessorMatch(targets[i], requested, transientProcessors)) {
-                    if (!inserted) {
-                        resultTargets[write] = requested.RT;
-                        resultMaterials[write] = requested.Mat;
-                        resultNames[write] = requested.TextureName;
-                        write++;
-                        inserted = true;
-                    }
-                    continue;
-                }
-                resultTargets[write] = targets[i];
-                if (materials != null && i < materials.Length) resultMaterials[write] = materials[i];
-                resultNames[write] = textureNames != null && i < textureNames.Length && !string.IsNullOrEmpty(textureNames[i]) ? textureNames[i] : "_MainTex";
-                write++;
-            }
-            if (!inserted) {
-                resultTargets[write] = requested.RT;
-                resultMaterials[write] = requested.Mat;
-                resultNames[write] = requested.TextureName;
-            }
-            manager.AtlasPostProcessorTargets = resultTargets;
-            manager.AtlasPostProcessorMaterials = resultMaterials;
-            manager.AtlasPostProcessorTextureNames = resultNames;
-            return true;
-        }
-
-        private static bool IsPersistentPostProcessorMatch(RenderTexture target, PostProcessor requested, PostProcessor[] transientProcessors) {
-            if (target == requested.RT) return true;
-            for (int i = 0; i < transientProcessors.Length; i++) {
-                PostProcessor existing = transientProcessors[i];
-                if (existing.RT == target && IsSamePostProcessor(existing, requested)) return true;
-            }
-            return false;
-        }
-
-        private static bool UpsertTransientPostProcessor(ref PostProcessor[] processors, PostProcessor requested) {
-            int index = FindPostProcessor(processors, requested);
-            if (index < 0) {
-                Array.Resize(ref processors, processors.Length + 1);
-                processors[processors.Length - 1] = requested;
-                return true;
-            }
-
-            int duplicateCount = 0;
-            for (int i = 0; i < processors.Length; i++)
-                if (i != index && IsSamePostProcessor(processors[i], requested)) duplicateCount++;
-            if (duplicateCount == 0 && HasSamePostProcessorValues(processors[index], requested)) return false;
-
-            PostProcessor[] result = new PostProcessor[processors.Length - duplicateCount];
-            for (int i = 0, write = 0; i < processors.Length; i++) {
-                if (i == index) result[write++] = requested;
-                else if (!IsSamePostProcessor(processors[i], requested)) result[write++] = processors[i];
-            }
-            processors = result;
-            return true;
-        }
-
-        private static bool HasSamePostProcessorValues(PostProcessor first, PostProcessor second) {
-            return first.RT == second.RT && first.Mat == second.Mat && first.TextureName == second.TextureName && first.Update == second.Update && first.UpdateWithInput == second.UpdateWithInput;
+            if (manager != null) manager.RegisterPostProcessor(processor);
         }
 
         public static void UnregisterPostProcessorCRT(this LightVolumeManager manager, CustomRenderTexture texture) {
-            UnregisterPostProcessor(manager, texture);
+            if (manager != null) manager.UnregisterPostProcessorCRT(texture);
         }
 
         public static void UnregisterPostProcessor(this LightVolumeManager manager, RenderTexture texture) {
-            if (manager == null || texture == null) return;
-            UnregisterPostProcessor(manager, new PostProcessor { RT = texture });
+            if (manager != null) manager.UnregisterPostProcessor(texture);
         }
 
         public static void UnregisterPostProcessor(this LightVolumeManager manager, PostProcessor processor) {
-            if (manager == null || processor.RT == null && processor.Update == null && processor.UpdateWithInput == null) return;
-            int id = manager.GetInstanceID();
-            TryGetAtlasPostProcessors(manager, out PostProcessor[] processors);
-            int targetCapacity = (processors != null ? processors.Length : 0) + 1;
-            RenderTexture[] removalTargets = new RenderTexture[targetCapacity];
-            int removalTargetCount = 0;
-            AddUniqueRenderTarget(removalTargets, ref removalTargetCount, processor.RT);
-            if (processors != null) {
-                for (int i = 0; i < processors.Length; i++) {
-                    if (IsSamePostProcessor(processors[i], processor))
-                        AddUniqueRenderTarget(removalTargets, ref removalTargetCount, processors[i].RT);
-                }
-            }
-            bool persistentChanged = RemovePersistentPostProcessors(manager, removalTargets, removalTargetCount);
-            bool transientChanged = false;
-            if (processors != null) {
-                int removeCount = 0;
-                for (int i = 0; i < processors.Length; i++) if (IsSamePostProcessor(processors[i], processor)) removeCount++;
-                if (removeCount > 0) {
-                    PostProcessor[] remaining = new PostProcessor[processors.Length - removeCount];
-                    for (int i = 0, write = 0; i < processors.Length; i++) {
-                        if (IsSamePostProcessor(processors[i], processor)) continue;
-                        remaining[write++] = processors[i];
-                    }
-                    if (remaining.Length == 0) RemoveAtlasPostProcessors(id);
-                    else SetAtlasPostProcessors(manager, remaining);
-                    transientChanged = true;
-                }
-            }
-            if (persistentChanged || transientChanged) RefreshAtlasOutput(manager, persistentChanged);
+            if (manager != null) manager.UnregisterPostProcessor(processor);
         }
 
-        private static void AddUniqueRenderTarget(RenderTexture[] targets, ref int count, RenderTexture target) {
-            if (target == null) return;
-            for (int i = 0; i < count; i++) if (targets[i] == target) return;
-            targets[count++] = target;
-        }
-
-        private static bool RemovePersistentPostProcessors(LightVolumeManager manager, RenderTexture[] removalTargets, int removalTargetCount) {
-            if (removalTargetCount == 0) return false;
-            RenderTexture[] targets = manager.AtlasPostProcessorTargets;
-            if (targets == null || targets.Length == 0) return false;
-            int removeCount = 0;
-            for (int i = 0; i < targets.Length; i++)
-                if (ContainsRenderTarget(removalTargets, removalTargetCount, targets[i])) removeCount++;
-            if (removeCount == 0) return false;
-
-            Material[] materials = manager.AtlasPostProcessorMaterials;
-            string[] textureNames = manager.AtlasPostProcessorTextureNames;
-            int remainingCount = targets.Length - removeCount;
-            RenderTexture[] remainingTargets = new RenderTexture[remainingCount];
-            Material[] remainingMaterials = new Material[remainingCount];
-            string[] remainingNames = new string[remainingCount];
-            for (int i = 0, write = 0; i < targets.Length; i++) {
-                if (ContainsRenderTarget(removalTargets, removalTargetCount, targets[i])) continue;
-                remainingTargets[write] = targets[i];
-                if (materials != null && i < materials.Length) remainingMaterials[write] = materials[i];
-                remainingNames[write] = textureNames != null && i < textureNames.Length && !string.IsNullOrEmpty(textureNames[i]) ? textureNames[i] : "_MainTex";
-                write++;
-            }
-            manager.AtlasPostProcessorTargets = remainingTargets;
-            manager.AtlasPostProcessorMaterials = remainingMaterials;
-            manager.AtlasPostProcessorTextureNames = remainingNames;
-            return true;
-        }
-
-        private static bool ContainsRenderTarget(RenderTexture[] targets, int count, RenderTexture target) {
-            for (int i = 0; i < count; i++) if (targets[i] == target) return true;
-            return false;
-        }
-
-        private static int FindPostProcessor(PostProcessor[] processors, PostProcessor requested) {
-            for (int i = 0; i < processors.Length; i++) {
-                if (IsSamePostProcessor(processors[i], requested)) return i;
-            }
-            return -1;
-        }
-
-        private static bool IsSamePostProcessor(PostProcessor existing, PostProcessor requested) {
-            return requested.RT != null && existing.RT == requested.RT || requested.Update != null && existing.Update == requested.Update || requested.UpdateWithInput != null && existing.UpdateWithInput == requested.UpdateWithInput;
-        }
-
-        private static bool TryGetAtlasPostProcessors(LightVolumeManager manager, out PostProcessor[] processors) {
-            processors = null;
-            if (manager == null) return false;
-            int id = manager.GetInstanceID();
-            if (!_atlasPostProcessorOwners.TryGetValue(id, out LightVolumeManager owner) || owner != manager) {
-                RemoveAtlasPostProcessors(id);
-                return false;
-            }
-            if (_atlasPostProcessors.TryGetValue(id, out processors)) return true;
-            _atlasPostProcessorOwners.Remove(id);
-            return false;
-        }
-
-        private static void SetAtlasPostProcessors(LightVolumeManager manager, PostProcessor[] processors) {
-            int id = manager.GetInstanceID();
-            _atlasPostProcessorOwners[id] = manager;
-            _atlasPostProcessors[id] = processors;
-        }
-
-        private static void RemoveAtlasPostProcessors(int id) {
-            _atlasPostProcessors.Remove(id);
-            _atlasPostProcessorOwners.Remove(id);
-        }
-
-        private static bool HasPostProcessors(LightVolumeManager manager) {
-            if (manager == null) return false;
-            if (manager.AtlasPostProcessorTargets != null && manager.AtlasPostProcessorTargets.Length > 0) return true;
-            return TryGetAtlasPostProcessors(manager, out PostProcessor[] processors) && processors.Length > 0;
-        }
-
-        private static void RefreshAtlasOutput(LightVolumeManager manager, bool serializedStateChanged = false) {
-            if (manager == null) return;
-            Texture output = manager.LightVolumeAtlasBase;
-            TryGetAtlasPostProcessors(manager, out PostProcessor[] processors);
-            bool[] transientProcessorUsed = processors != null ? new bool[processors.Length] : null;
-            RenderTexture[] persistentTargets = manager.AtlasPostProcessorTargets;
-            Material[] persistentMaterials = manager.AtlasPostProcessorMaterials;
-            string[] persistentNames = manager.AtlasPostProcessorTextureNames;
-            int persistentCount = persistentTargets != null && persistentMaterials != null ? Mathf.Min(persistentTargets.Length, persistentMaterials.Length) : 0;
-            for (int i = 0; output != null && i < persistentCount; i++) {
-                RenderTexture target = persistentTargets[i];
-                Material material = persistentMaterials[i];
-                if (target == null) continue;
-                int transientIndex = processors != null ? FindPostProcessor(processors, new PostProcessor { RT = target }) : -1;
-                if (transientIndex >= 0) {
-                    transientProcessorUsed[transientIndex] = ApplyPostProcessor(ref output, processors[transientIndex]);
-                    continue;
-                }
-                if (material == null) continue;
-                string textureName = persistentNames != null && i < persistentNames.Length && !string.IsNullOrEmpty(persistentNames[i]) ? persistentNames[i] : "_MainTex";
-                ApplyPostProcessor(ref output, new PostProcessor {
-                    RT = target,
-                    Mat = material,
-                    TextureName = textureName,
-                    Update = target is CustomRenderTexture customTarget ? (Action)customTarget.Update : null
-                });
-            }
-
-            if (processors != null) {
-                for (int i = 0; i < processors.Length; i++) {
-                    if (transientProcessorUsed[i]) continue;
-                    ApplyPostProcessor(ref output, processors[i]);
-                }
-            }
-            bool atlasChanged = manager.LightVolumeAtlas != output;
-            if (!atlasChanged && !serializedStateChanged) return;
-            if (atlasChanged) manager.LightVolumeAtlas = output;
-            LVUtils.MarkDirty(manager);
-            CopyProxyToUdon(manager);
-            if (atlasChanged) manager.UpdateVolumes();
-        }
-
-        private static bool ApplyPostProcessor(ref Texture output, PostProcessor processor) {
-            if (output == null || processor.RT == null || processor.Mat == null && processor.Update == null && processor.UpdateWithInput == null) return false;
-            SetupPostProcessorTexture(processor.RT, output);
-            string textureName = string.IsNullOrEmpty(processor.TextureName) ? "_MainTex" : processor.TextureName;
-            if (processor.Mat != null) processor.Mat.SetTexture(textureName, output);
-            Texture input = output;
-            output = processor.RT;
-            if (processor.UpdateWithInput != null) processor.UpdateWithInput(input);
-            else processor.Update?.Invoke();
-            return true;
-        }
-
-        private static void SetupPostProcessorTexture(RenderTexture texture, Texture source) {
-            RenderTexture.active = null;
-            texture.Release();
-            texture.dimension = TextureDimension.Tex3D;
-            texture.graphicsFormat = GraphicsFormat.R16G16B16A16_SFloat;
-            texture.enableRandomWrite = false;
-            texture.wrapMode = TextureWrapMode.Clamp;
-            texture.filterMode = FilterMode.Trilinear;
-            texture.anisoLevel = 0;
-            texture.width = Mathf.Max(source.width, 1);
-            texture.height = Mathf.Max(source.height, 1);
-            texture.volumeDepth = source is Texture3D texture3D ? Mathf.Max(texture3D.depth, 1) : source is RenderTexture renderTexture ? Mathf.Max(renderTexture.volumeDepth, 1) : 1;
-            if (texture is CustomRenderTexture customTexture) customTexture.updateMode = CustomRenderTextureUpdateMode.Realtime;
-            texture.Create();
+        private static void RefreshAtlasOutput(LightVolumeManager manager) {
+            if (manager != null) manager.RefreshAtlasPostProcessors();
         }
 
         public static float GetShadowMinVarianceValue(float slider) {
@@ -707,6 +433,21 @@ namespace VRCLightVolumes {
         static LightVolumeEditorUpdater() {
             ObjectChangeEvents.changesPublished -= OnChangesPublished;
             ObjectChangeEvents.changesPublished += OnChangesPublished;
+            LightVolumeManager.AtlasPostProcessorsChanged -= OnAtlasPostProcessorsChanged;
+            LightVolumeManager.AtlasPostProcessorsChanged += OnAtlasPostProcessorsChanged;
+        }
+
+        private static void OnAtlasPostProcessorsChanged(LightVolumeManager manager) {
+            if (manager == null) return;
+            LVUtils.MarkDirty(manager);
+            LightVolumeManagerTools.CopyProxyToUdon(manager);
+#if UDONSHARP
+            if (Application.isPlaying) {
+                var backingBehaviour = UdonSharpEditorUtility.GetBackingUdonBehaviour(manager);
+                if (backingBehaviour != null)
+                    backingBehaviour.SendCustomEvent(nameof(LightVolumeManager.RequestUpdateVolumes));
+            }
+#endif
         }
 
         private static void OnChangesPublished(ref ObjectChangeEventStream stream) {

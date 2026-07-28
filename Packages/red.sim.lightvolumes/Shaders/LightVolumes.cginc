@@ -366,7 +366,7 @@ inline float LV_ShadowEVSMInvRange(float4 moments, float distanceToShadowCenter,
 }
 
 // Samples the shared Spot/Area shadow layout. Area retains its legacy reprojection payload.
-inline float LV_PointLightShadow(uint id, float3 worldPos, float3 lightVector, float sqDistanceToLight, float invDistanceToLight, float shadowNearClip, float localSingleShadowTanAngle, float signedShadowInvDepthRange, float shadowIdData, uint shadowId, const bool forceCubemapShadow) {
+inline float LV_PointLightShadow(uint id, float3 worldPos, float3 lightVector, float sqDistanceToLight, float invDistanceToLight, float shadowNearClip, float localSingleShadowTanAngle, float signedShadowInvDepthRange, float shadowIdData, uint shadowId, bool forceCubemapShadow) {
     uint shadowCubeCount = (uint)_UdonPointLightVolumeShadowCubeCount;
     float4 shadowRotationData = _UdonPointLightVolumeShadowRotationData[id];
     bool isSingleShadow = !forceCubemapShadow && shadowId >= shadowCubeCount;
@@ -556,7 +556,7 @@ inline float4 LV_AreaLightCookie(float3 localPos, float2 size, uint textureId) {
 // Resolves point-light normal shading and baked shadows. lightVector samples shadows, normalMaskLightDir attenuates by surface normal.
 // Returns false only for a cheap normal-mask rejection performed before baked-shadow sampling.
 // Once shadow work starts, an exact-zero result still consumes the caller's performance budget.
-inline bool LV_PointLightVolumeShadowMask(uint id, float shadowIdData, float shadowInvDepthRange, float3 worldPos, float3 lightVector, float3 normalMaskLightDir, float distSq, float invDist, float3 pointLightShadingNormal, float pointLightShadingBias, const bool forceCubemapShadow, const bool packedPointCube, out float shadow) {
+inline bool LV_PointLightVolumeShadowMask(uint id, float shadowIdData, float shadowInvDepthRange, float3 worldPos, float3 lightVector, float3 normalMaskLightDir, float distSq, float invDist, float3 pointLightShadingNormal, float pointLightShadingBias, bool forceCubemapShadow, bool packedPointCube, out float shadow) {
     shadow = 1;
     bool shadowVisible = true;
     [branch] if (shadowIdData != 0) { // Optional normal shading strength and optional baked shadow map

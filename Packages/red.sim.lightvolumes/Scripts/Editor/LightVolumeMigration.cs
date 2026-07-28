@@ -644,20 +644,34 @@ namespace VRCLightVolumes {
         }
 
         private static void CopyLegacyPointLight(PointLightVolume source, PointLightVolumeInstance destination) {
+            int lightType = (int)source.Type;
+            int projection = (int)source.Projection;
+            UnityEngine.Object falloffLut = source.FalloffLUT;
+            UnityEngine.Object cookie = source.Cookie;
+            UnityEngine.Object cubemap = source.Cubemap;
+            // Authoring data stays authoritative. Recover only a missing active source when the old
+            // runtime cache agrees on the same light type, non-parametric mode and source kind.
+            if (GetLegacyProjectionSource(lightType, projection, falloffLut, cookie, cubemap) == null
+                && TryGetMatchingLegacyRuntimeProjectionSource(lightType, projection, destination, out UnityEngine.Object runtimeProjectionSource)) {
+                if (lightType == 2 || (lightType == 1 && projection == 2)) cookie = runtimeProjectionSource;
+                else if (projection == 1) falloffLut = runtimeProjectionSource;
+                else if (lightType == 0 && projection == 2) cubemap = runtimeProjectionSource;
+            }
+
             destination.IsDynamic = source.Dynamic;
-            destination.LightType = (int)source.Type;
+            destination.LightType = lightType;
             destination.LightSourceSize = source.LightSourceSize;
             destination.Range = source.Range;
             destination.Color = source.Color;
             destination.Intensity = source.Intensity;
             destination.ShadingStrength = source.ShadingStrength;
-            destination.Projection = (int)source.Projection;
+            destination.Projection = projection;
             destination.Angle = source.Angle * Mathf.Deg2Rad * 0.5f;
             destination.Falloff = source.Falloff;
-            destination.FalloffLUT = source.FalloffLUT;
-            destination.Cookie = source.Cookie;
+            destination.FalloffLUT = falloffLut;
+            destination.Cookie = cookie;
             destination.SpotCookieAspect = source.SpotCookieAspect;
-            destination.Cubemap = source.Cubemap;
+            destination.Cubemap = cubemap;
             destination.BakeIntoProbes = source.BakeIntoProbes;
             destination.DebugRange = source.DebugRange;
             destination.Shadows = source.Shadows;
@@ -674,6 +688,24 @@ namespace VRCLightVolumes {
             destination.WorldSpaceShadows = source.UseWorldSpace;
             destination.ForceCubemapShadows = source.ForceCubemapShadows;
             destination.ShadowMap = source.ShadowMap;
+        }
+
+        private static UnityEngine.Object GetLegacyProjectionSource(int lightType, int projection, UnityEngine.Object falloffLut, UnityEngine.Object cookie, UnityEngine.Object cubemap) {
+            if (lightType == 2) return cookie;
+            if (projection == 1) return falloffLut;
+            if (projection != 2) return null;
+            return lightType == 0 ? cubemap : lightType == 1 ? cookie : null;
+        }
+
+        private static bool TryGetMatchingLegacyRuntimeProjectionSource(int lightType, int projection, PointLightVolumeInstance destination, out UnityEngine.Object source) {
+            source = destination.CustomTexture != null
+                ? (UnityEngine.Object)destination.CustomTexture
+                : destination.CustomTextureMaterial;
+            int expectedProjectionMode = lightType == 2 ? 2 : projection;
+            if (expectedProjectionMode == 0 || destination.LightType != lightType || destination.ProjectionMode != expectedProjectionMode) return false;
+            if (source is Texture) return destination.ProjectionType == 1;
+            if (source is Material) return destination.ProjectionType == 2;
+            return false;
         }
 
         private static void CopyLegacySetup(LightVolumeSetup source, LightVolumeManager destination) {

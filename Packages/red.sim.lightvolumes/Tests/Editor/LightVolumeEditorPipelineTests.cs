@@ -124,9 +124,11 @@ namespace VRCLightVolumes.Tests {
             _unifiedObject = new GameObject("Point Light Migration Destination");
             PointLightVolume source = _legacyObject.AddComponent<PointLightVolume>();
             PointLightVolumeInstance destination = _unifiedObject.AddComponent<PointLightVolumeInstance>();
+            Texture2D cookie = new Texture2D(2, 2, TextureFormat.RGBA32, false);
             source.Dynamic = true;
             source.Type = PointLightVolume.LightType.SpotLight;
             source.Projection = PointLightVolume.LightProjection.Custom;
+            source.Cookie = cookie;
             source.Range = 17f;
             source.Intensity = 3.5f;
             source.Angle = 42f;
@@ -139,12 +141,134 @@ namespace VRCLightVolumes.Tests {
 
             Assert.That(copy, Is.Not.Null);
             copy.Invoke(null, new object[] { source, destination });
+            destination.EditorApplyAuthoringData(true, true, false);
             string firstState = JsonUtility.ToJson(destination);
             copy.Invoke(null, new object[] { source, destination });
+            destination.EditorApplyAuthoringData(true, true, false);
 
             Assert.That(JsonUtility.ToJson(destination), Is.EqualTo(firstState));
             Assert.That(destination.LightType, Is.EqualTo(1));
+            Assert.That(destination.Projection, Is.EqualTo(2));
+            Assert.That(destination.ProjectionMode, Is.EqualTo(2));
+            Assert.That(destination.Cookie, Is.SameAs(cookie));
+            Assert.That(destination.CustomTexture, Is.SameAs(cookie));
             Assert.That(destination.Intensity, Is.EqualTo(3.5f).Within(Epsilon));
+            UnityEngine.Object.DestroyImmediate(cookie);
+        }
+
+        // The affected upgrade retained a matching effective runtime source while losing the duplicate cookie field.
+        [Test]
+        public void MigrationRecoversMissingSpotCookieFromMatchingLegacyRuntimeState() {
+            _legacyObject = new GameObject("Partially Deserialized Point Light Source");
+            _unifiedObject = new GameObject("Working Legacy Runtime Destination");
+            PointLightVolume source = _legacyObject.AddComponent<PointLightVolume>();
+            PointLightVolumeInstance destination = _unifiedObject.AddComponent<PointLightVolumeInstance>();
+            Texture2D cookie = new Texture2D(2, 2, TextureFormat.RGBA32, false);
+            source.Type = PointLightVolume.LightType.SpotLight;
+            source.Projection = PointLightVolume.LightProjection.Custom;
+            destination.LightType = 1;
+            destination.ProjectionMode = 2;
+            destination.ProjectionType = 1;
+            destination.CustomTexture = cookie;
+            MethodInfo copy = typeof(LightVolumeMigration).GetMethod(
+                "CopyLegacyPointLight",
+                BindingFlags.Static | BindingFlags.NonPublic);
+
+            Assert.That(copy, Is.Not.Null);
+            copy.Invoke(null, new object[] { source, destination });
+            destination.EditorApplyAuthoringData(true, true, false);
+
+            Assert.That(destination.LightType, Is.EqualTo(1));
+            Assert.That(destination.Projection, Is.EqualTo(2));
+            Assert.That(destination.ProjectionMode, Is.EqualTo(2));
+            Assert.That(destination.Cookie, Is.SameAs(cookie));
+            Assert.That(destination.CustomTexture, Is.SameAs(cookie));
+            UnityEngine.Object.DestroyImmediate(cookie);
+        }
+
+        // Runtime fields are derived cache and must not override a different legacy authoring type or mode.
+        [Test]
+        public void MigrationDoesNotImportMismatchedLegacyRuntimeProjectionState() {
+            _legacyObject = new GameObject("Authoritative Parametric Point Source");
+            _unifiedObject = new GameObject("Stale Spot Cookie Runtime Destination");
+            PointLightVolume source = _legacyObject.AddComponent<PointLightVolume>();
+            PointLightVolumeInstance destination = _unifiedObject.AddComponent<PointLightVolumeInstance>();
+            Texture2D staleCookie = new Texture2D(2, 2, TextureFormat.RGBA32, false);
+            destination.LightType = 1;
+            destination.ProjectionMode = 2;
+            destination.ProjectionType = 1;
+            destination.CustomTexture = staleCookie;
+            MethodInfo copy = typeof(LightVolumeMigration).GetMethod(
+                "CopyLegacyPointLight",
+                BindingFlags.Static | BindingFlags.NonPublic);
+
+            Assert.That(copy, Is.Not.Null);
+            copy.Invoke(null, new object[] { source, destination });
+            destination.EditorApplyAuthoringData(true, true, false);
+
+            Assert.That(destination.LightType, Is.Zero);
+            Assert.That(destination.Projection, Is.Zero);
+            Assert.That(destination.ProjectionMode, Is.Zero);
+            Assert.That(destination.GetProjectionSource(), Is.Null);
+            Assert.That(destination.CustomTexture, Is.Null);
+            UnityEngine.Object.DestroyImmediate(staleCookie);
+        }
+
+        [Test]
+        public void LegacyObjectMaskIsNotAliasedToExclusionMask() {
+            FieldInfo field = typeof(PointLightVolume).GetField(nameof(PointLightVolume.ExclusionMask));
+            object[] aliases = field?.GetCustomAttributes(typeof(UnityEngine.Serialization.FormerlySerializedAsAttribute), false);
+            bool aliasesObjectMask = false;
+            if (aliases != null) {
+                for (int i = 0; i < aliases.Length; i++) {
+                    UnityEngine.Serialization.FormerlySerializedAsAttribute alias =
+                        (UnityEngine.Serialization.FormerlySerializedAsAttribute)aliases[i];
+                    if (alias.oldName == "ObjectMask") aliasesObjectMask = true;
+                }
+            }
+
+            Assert.That(field, Is.Not.Null);
+            Assert.That(aliasesObjectMask, Is.False);
+        }
+
+        [Test]
+        public void MigrationPreservesProjectionSourcesForEveryLightTypeAndMode() {
+            MethodInfo copy = typeof(LightVolumeMigration).GetMethod(
+                "CopyLegacyPointLight",
+                BindingFlags.Static | BindingFlags.NonPublic);
+            Texture2D lut = new Texture2D(2, 2, TextureFormat.RGBA32, false);
+            Texture2D cookie = new Texture2D(2, 2, TextureFormat.RGBA32, false);
+            Cubemap cubemap = new Cubemap(2, TextureFormat.RGBA32, false);
+            Assert.That(copy, Is.Not.Null);
+
+            AssertProjectionCopy(copy, PointLightVolume.LightType.PointLight, PointLightVolume.LightProjection.Parametric, null, 0);
+            AssertProjectionCopy(copy, PointLightVolume.LightType.PointLight, PointLightVolume.LightProjection.LUT, lut, 1);
+            AssertProjectionCopy(copy, PointLightVolume.LightType.PointLight, PointLightVolume.LightProjection.Custom, cubemap, 2);
+            AssertProjectionCopy(copy, PointLightVolume.LightType.SpotLight, PointLightVolume.LightProjection.Parametric, null, 0);
+            AssertProjectionCopy(copy, PointLightVolume.LightType.SpotLight, PointLightVolume.LightProjection.LUT, lut, 1);
+            AssertProjectionCopy(copy, PointLightVolume.LightType.SpotLight, PointLightVolume.LightProjection.Custom, cookie, 2);
+            AssertProjectionCopy(copy, PointLightVolume.LightType.AreaLight, PointLightVolume.LightProjection.Parametric, null, 0);
+            AssertProjectionCopy(copy, PointLightVolume.LightType.AreaLight, PointLightVolume.LightProjection.Parametric, cookie, 2);
+
+            UnityEngine.Object.DestroyImmediate(lut);
+            UnityEngine.Object.DestroyImmediate(cookie);
+            UnityEngine.Object.DestroyImmediate(cubemap);
+        }
+
+        [Test]
+        public void MigrationPreservesShadowMapForEveryLightTypeAndWhenShadowsAreDisabled() {
+            MethodInfo copy = typeof(LightVolumeMigration).GetMethod(
+                "CopyLegacyPointLight",
+                BindingFlags.Static | BindingFlags.NonPublic);
+            Texture2D shadowMap = new Texture2D(2, 2, TextureFormat.RGBA32, false);
+            Assert.That(copy, Is.Not.Null);
+
+            AssertShadowCopy(copy, PointLightVolume.LightType.PointLight, shadowMap, true, true);
+            AssertShadowCopy(copy, PointLightVolume.LightType.SpotLight, shadowMap, true, false);
+            AssertShadowCopy(copy, PointLightVolume.LightType.AreaLight, shadowMap, true, true);
+            AssertShadowCopy(copy, PointLightVolume.LightType.SpotLight, shadowMap, false, false);
+
+            UnityEngine.Object.DestroyImmediate(shadowMap);
         }
 
         // Resolution validation belongs to unified authoring and rejects invalid or overflowing grids.
@@ -153,6 +277,57 @@ namespace VRCLightVolumes.Tests {
             Assert.That(LightVolumeTools.GetVoxelCount(new Vector3Int(2, 3, 4)), Is.EqualTo(24));
             Assert.That(LightVolumeTools.GetVoxelCount(new Vector3Int(0, 3, 4)), Is.EqualTo(-1));
             Assert.That(LightVolumeTools.GetVoxelCount(new Vector3Int(int.MaxValue, 2, 2)), Is.EqualTo(-1));
+        }
+
+        private static void AssertProjectionCopy(MethodInfo copy, PointLightVolume.LightType lightType, PointLightVolume.LightProjection projection, UnityEngine.Object sourceObject, int expectedMode) {
+            GameObject legacyObject = new GameObject($"Legacy {lightType} {projection}");
+            GameObject unifiedObject = new GameObject($"Unified {lightType} {projection}");
+            try {
+                PointLightVolume source = legacyObject.AddComponent<PointLightVolume>();
+                PointLightVolumeInstance destination = unifiedObject.AddComponent<PointLightVolumeInstance>();
+                source.Type = lightType;
+                source.Projection = projection;
+                if (lightType == PointLightVolume.LightType.AreaLight) source.Cookie = sourceObject;
+                else if (projection == PointLightVolume.LightProjection.LUT) source.FalloffLUT = sourceObject;
+                else if (lightType == PointLightVolume.LightType.PointLight) source.Cubemap = sourceObject;
+                else source.Cookie = sourceObject;
+
+                copy.Invoke(null, new object[] { source, destination });
+                destination.EditorApplyAuthoringData(true, true, false);
+
+                Assert.That(destination.LightType, Is.EqualTo((int)lightType), $"{lightType} {projection} type");
+                Assert.That(destination.ProjectionMode, Is.EqualTo(expectedMode), $"{lightType} {projection} mode");
+                Assert.That(destination.GetProjectionSource(), Is.SameAs(sourceObject), $"{lightType} {projection} source");
+                Assert.That(destination.CustomTexture, Is.SameAs(sourceObject as Texture), $"{lightType} {projection} runtime texture");
+            } finally {
+                UnityEngine.Object.DestroyImmediate(legacyObject);
+                UnityEngine.Object.DestroyImmediate(unifiedObject);
+            }
+        }
+
+        private static void AssertShadowCopy(MethodInfo copy, PointLightVolume.LightType lightType, UnityEngine.Object shadowMap, bool shadows, bool expectedCubemap) {
+            GameObject legacyObject = new GameObject($"Legacy {lightType} Shadows {shadows}");
+            GameObject unifiedObject = new GameObject($"Unified {lightType} Shadows {shadows}");
+            try {
+                PointLightVolume source = legacyObject.AddComponent<PointLightVolume>();
+                PointLightVolumeInstance destination = unifiedObject.AddComponent<PointLightVolumeInstance>();
+                source.Type = lightType;
+                source.Shadows = shadows;
+                source.ShadowMap = shadowMap;
+
+                copy.Invoke(null, new object[] { source, destination });
+                destination.EditorApplyAuthoringData(true, true, false);
+
+                Assert.That(destination.LightType, Is.EqualTo((int)lightType));
+                Assert.That(destination.Shadows, Is.EqualTo(shadows));
+                Assert.That(destination.ShadowMap, Is.SameAs(shadowMap), $"{lightType} authoring shadow source");
+                Assert.That(destination.ShadowMapTexture, shadows ? Is.SameAs(shadowMap) : Is.Null, $"{lightType} runtime shadow source");
+                Assert.That(destination.ShadowMapID, shadows ? Is.Zero : Is.EqualTo(-1f));
+                Assert.That(destination.ShadowMapUsesCubemap, Is.EqualTo(shadows && expectedCubemap));
+            } finally {
+                UnityEngine.Object.DestroyImmediate(legacyObject);
+                UnityEngine.Object.DestroyImmediate(unifiedObject);
+            }
         }
     }
 }

@@ -17,12 +17,14 @@ namespace VRCLightVolumes.Tests {
         private Scene _scene;
         private string _prefabAssetPath;
         private string _sceneAssetPath;
+        private UnityEngine.Object _temporaryObject;
 
         [TearDown]
         public void TearDown() {
             if (_scene.IsValid() && _scene.isLoaded) EditorSceneManager.CloseScene(_scene, true);
             if (!string.IsNullOrEmpty(_sceneAssetPath)) AssetDatabase.DeleteAsset(_sceneAssetPath);
             if (!string.IsNullOrEmpty(_prefabAssetPath)) AssetDatabase.DeleteAsset(_prefabAssetPath);
+            if (_temporaryObject != null) UnityEngine.Object.DestroyImmediate(_temporaryObject);
         }
 
         // Removing an inherited legacy component must become an instance override, never a prefab edit.
@@ -284,6 +286,9 @@ namespace VRCLightVolumes.Tests {
             PointLightVolume legacyPoint = pointObject.AddComponent<PointLightVolume>();
             legacyPoint.LightVolumeSetup = setup;
             legacyPoint.Intensity = 654f;
+            legacyPoint.Type = PointLightVolume.LightType.SpotLight;
+            legacyPoint.Projection = PointLightVolume.LightProjection.Custom;
+            legacyPoint.Cookie = _temporaryObject = new Texture2D(2, 2, TextureFormat.RGBA32, false);
             setup.PointLightVolumes.Add(legacyPoint);
 
             int removed = MigrateScene(_scene, out int blocked);
@@ -301,6 +306,11 @@ namespace VRCLightVolumes.Tests {
             Assert.That(volume.Intensity, Is.EqualTo(2.5f));
             Assert.That(volume.RegistryWeight, Is.EqualTo(4f));
             Assert.That(point.Intensity, Is.EqualTo(654f));
+            Assert.That(point.LightType, Is.EqualTo(1));
+            Assert.That(point.Projection, Is.EqualTo(2));
+            Assert.That(point.ProjectionMode, Is.EqualTo(2));
+            Assert.That(point.Cookie, Is.SameAs(_temporaryObject));
+            Assert.That(point.CustomTexture, Is.SameAs(_temporaryObject));
             Assert.That(manager.LightVolumeInstances, Is.EqualTo(new[] { volume }));
             Assert.That(manager.PointLightVolumeInstances, Is.EqualTo(new[] { point }));
             Assert.That(UdonSharpEditorUtility.GetBackingUdonBehaviour(manager), Is.Not.Null);

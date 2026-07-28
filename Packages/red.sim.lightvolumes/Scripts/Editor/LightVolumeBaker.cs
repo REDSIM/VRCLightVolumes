@@ -429,7 +429,7 @@ namespace VRCLightVolumes {
                 return;
             }
             _bakeryCompletionHandled = true;
-            LightVolumeManager[] managers = _bakeryManagers.Length > 0 ? _bakeryManagers : GetActiveManagers(1);
+            LightVolumeManager[] managers = ResolveBakeryCompletionManagers();
             _bakeryBitmaskPending = false;
             _bakeryWasBaking = false;
             if (managers.Length == 0) {
@@ -464,6 +464,12 @@ namespace VRCLightVolumes {
             Debug.Log("[LightVolume] Bakery Light Volume atlas generation queued.");
             _bakeryManagers = Array.Empty<LightVolumeManager>();
             QueueBakeryWatcherRefresh();
+        }
+
+        // Bakery can unload and recreate every open scene in deferred mode. Always resolve the
+        // completion targets from the restored scenes instead of using the pre-bake object cache.
+        private static LightVolumeManager[] ResolveBakeryCompletionManagers() {
+            return GetActiveManagers(1);
         }
 
         private static void CancelBakeryCompletion() {

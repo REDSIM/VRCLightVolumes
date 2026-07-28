@@ -87,6 +87,38 @@ namespace VRCLightVolumes.Tests {
             Assert.That(EditorUtility.IsDirty(manager), Is.True);
         }
 
+#if BAKERY_INCLUDED
+        // Deferred Bakery bakes can destroy every pre-bake scene object before loading the scene again.
+        [Test]
+        public void BakeryCompletionResolvesManagersFromRestoredSceneInsteadOfDestroyedCache() {
+            LightVolumeManager restoredManager = CreateComponent<LightVolumeManager>("Restored Bakery Manager");
+            restoredManager.BakingMode = 1;
+
+            LightVolumeManager destroyedManager = CreateComponent<LightVolumeManager>("Destroyed Bakery Manager");
+            destroyedManager.BakingMode = 1;
+            Object.DestroyImmediate(destroyedManager.gameObject);
+
+            System.Type bakerType = typeof(LightVolumeManagerTools).Assembly.GetType("VRCLightVolumes.LightVolumeBaker");
+            FieldInfo cachedManagersField = bakerType?.GetField("_bakeryManagers", _nonPublicStaticFlags);
+            MethodInfo resolveManagers = bakerType?.GetMethod("ResolveBakeryCompletionManagers", _nonPublicStaticFlags);
+            Assert.That(bakerType, Is.Not.Null);
+            Assert.That(cachedManagersField, Is.Not.Null);
+            Assert.That(resolveManagers, Is.Not.Null);
+
+            object previousCache = cachedManagersField.GetValue(null);
+            try {
+                cachedManagersField.SetValue(null, new[] { destroyedManager });
+                LightVolumeManager[] result = (LightVolumeManager[])resolveManagers.Invoke(null, null);
+
+                Assert.That(result, Does.Contain(restoredManager));
+                for (int i = 0; i < result.Length; i++)
+                    Assert.That(ReferenceEquals(result[i], destroyedManager), Is.False);
+            } finally {
+                cachedManagersField.SetValue(null, previousCache);
+            }
+        }
+#endif
+
         // Unified authoring infers animation only when a projection source changes and detects cubemap RenderTextures.
         [Test]
         public void PointLightAuthoringResolvesProjectionSourcesWithoutOverwritingManualAutoUpdate() {

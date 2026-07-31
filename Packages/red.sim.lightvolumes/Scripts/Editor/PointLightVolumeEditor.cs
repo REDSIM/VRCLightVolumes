@@ -1,7 +1,9 @@
 using UnityEngine;
 using UnityEditor;
 using UnityEditorInternal;
+#if UDONSHARP
 using UdonSharpEditor;
+#endif
 using System.Collections.Generic;
 
 namespace VRCLightVolumes {
@@ -18,7 +20,7 @@ namespace VRCLightVolumes {
             if (recordUndo) Undo.RecordObject(pointLightVolume, "Sync Point Light Volume");
 
             pointLightVolume.EditorApplyAuthoringData(customTexturesChanged, shadowTexturesChanged);
-            UdonSharpEditorUtility.CopyProxyToUdon(pointLightVolume);
+            LightVolumeManagerTools.CopyProxyToUdon(pointLightVolume);
 
             int changes = (customTexturesChanged ? CustomTexturesChanged : 0)
                 | (shadowTexturesChanged ? ShadowTexturesChanged : 0);

@@ -29,7 +29,9 @@
         "VRCSDKBase.dll"
     ],
     "autoReferenced": false,
-    "defineConstraints": [],
+    "defineConstraints": [
+        "UDONSHARP"
+    ],
     "versionDefines": [],
     "noEngineReferences": false,
     "optionalUnityReferences": [

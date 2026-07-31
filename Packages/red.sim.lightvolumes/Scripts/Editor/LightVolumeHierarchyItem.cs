@@ -1,5 +1,7 @@
 using System;
+#if UDONSHARP
 using UdonSharpEditor;
+#endif
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.SceneManagement;
@@ -10,7 +12,11 @@ namespace VRCLightVolumes {
         [MenuItem("GameObject/Light Volume", false, 9999)]
         private static void CreateLightVolume(MenuCommand command) {
             GameObject gameObject = CreateGameObject("Light Volume", command);
+#if UDONSHARP
             LightVolumeInstance volume = gameObject.AddUdonSharpComponent<LightVolumeInstance>();
+#else
+            LightVolumeInstance volume = Undo.AddComponent<LightVolumeInstance>(gameObject);
+#endif
 
             LightVolumeTools.ResetFromParentReflectionProbe(volume);
             LightVolumeTools.ApplyRuntimeState(volume, false);
@@ -19,14 +25,18 @@ namespace VRCLightVolumes {
             if (volume.LightVolumeManager != null && volume.LightVolumeManager.IsBakeryMode)
                 LightVolumeTools.SetupBakeryDependencies(volume, true);
 #endif
-            UdonSharpEditorUtility.CopyProxyToUdon(volume);
+            LightVolumeManagerTools.CopyProxyToUdon(volume);
             Selection.activeGameObject = gameObject;
         }
 
         [MenuItem("GameObject/Point Light Volume", false, 9999)]
         private static void CreatePointLightVolume(MenuCommand command) {
             GameObject gameObject = CreateGameObject("Point Light Volume", command);
+#if UDONSHARP
             PointLightVolumeInstance volume = gameObject.AddUdonSharpComponent<PointLightVolumeInstance>();
+#else
+            PointLightVolumeInstance volume = Undo.AddComponent<PointLightVolumeInstance>(gameObject);
+#endif
 
             BindToSingleManager(volume);
             PointLightVolumeEditorUtility.Sync(volume, false, false);
@@ -58,7 +68,7 @@ namespace VRCLightVolumes {
             volume.RegistryOrder = index;
 
             EditorUtility.SetDirty(manager);
-            UdonSharpEditorUtility.CopyProxyToUdon(manager);
+            LightVolumeManagerTools.CopyProxyToUdon(manager);
         }
 
         private static void BindToSingleManager(PointLightVolumeInstance volume) {
@@ -75,7 +85,7 @@ namespace VRCLightVolumes {
             volume.RegistryOrder = index;
 
             EditorUtility.SetDirty(manager);
-            UdonSharpEditorUtility.CopyProxyToUdon(manager);
+            LightVolumeManagerTools.CopyProxyToUdon(manager);
         }
 
         private static LightVolumeManager FindSingleManager(UnityEngine.Object context) {
@@ -101,8 +111,12 @@ namespace VRCLightVolumes {
             Undo.RegisterCreatedObjectUndo(managerObject, "Create Light Volume Manager");
             if (targetScene.IsValid() && managerObject.scene != targetScene)
                 SceneManager.MoveGameObjectToScene(managerObject, targetScene);
+#if UDONSHARP
             LightVolumeManager createdManager = managerObject.AddUdonSharpComponent<LightVolumeManager>();
-            UdonSharpEditorUtility.CopyProxyToUdon(createdManager);
+#else
+            LightVolumeManager createdManager = Undo.AddComponent<LightVolumeManager>(managerObject);
+#endif
+            LightVolumeManagerTools.CopyProxyToUdon(createdManager);
             return createdManager;
         }
     }

@@ -1,4 +1,6 @@
+#if UDONSHARP
 using UdonSharpEditor;
+#endif
 using UnityEditor;
 using UnityEngine;
 
@@ -346,9 +348,7 @@ namespace VRCLightVolumes {
                 if (recordUndo) Undo.RecordObject(volume, "Update Light Volume");
                 LightVolumeTools.ApplyRuntimeState(volume, true);
 
-                if (UdonSharpEditorUtility.GetBackingUdonBehaviour(volume) != null) {
-                    UdonSharpEditorUtility.CopyProxyToUdon(volume);
-                }
+                LightVolumeManagerTools.CopyProxyToUdon(volume);
                 EditorUtility.SetDirty(volume);
 
                 if (previousAtlasState != GetAtlasStateHash(volume) && volume.LightVolumeManager != null) {
@@ -438,9 +438,7 @@ namespace VRCLightVolumes {
 
         private static void SyncSingleTarget(LightVolumeInstance volume) {
             LightVolumeTools.ApplyRuntimeState(volume, true);
-            if (UdonSharpEditorUtility.GetBackingUdonBehaviour(volume) != null) {
-                UdonSharpEditorUtility.CopyProxyToUdon(volume);
-            }
+            LightVolumeManagerTools.CopyProxyToUdon(volume);
             EditorUtility.SetDirty(volume);
             LightVolumePreviewSceneRenderer.RequestRefresh();
         }

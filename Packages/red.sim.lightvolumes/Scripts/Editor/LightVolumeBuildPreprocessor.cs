@@ -1,15 +1,19 @@
 using System;
 using System.Collections.Generic;
+#if UDONSHARP
 using UdonSharp;
 using UdonSharpEditor;
+#endif
 using UnityEditor;
 using UnityEditor.Build;
 using UnityEditor.Build.Reporting;
 using UnityEditor.Callbacks;
 using UnityEngine;
 using UnityEngine.SceneManagement;
+#if UDONSHARP
 using VRC.Udon;
 using VRC.SDKBase.Editor.BuildPipeline;
+#endif
 
 namespace VRCLightVolumes {
     [InitializeOnLoad]
@@ -258,11 +262,15 @@ namespace VRCLightVolumes {
                 pointLight.RuntimeShadowDirectOutput = false;
                 PreparePointLightRuntimeShadowDependencies(pointLight, depthEncodeShader, blurShader, editorTemporary);
             } else {
+#if UDONSHARP
                 ApplyPointLightRuntimeShadowBakeSettings(pointLight, GetBackingUdonBehaviour(pointLight));
+#endif
             }
 
             ApplyPointLightRuntimeCustomSource(pointLight);
+#if UDONSHARP
             ApplyPointLightRuntimeShadowSource(pointLight, GetBackingUdonBehaviour(pointLight));
+#endif
         }
 
         private static void PreparePointLightRuntimeShadowDependencies(PointLightVolumeInstance pointLight, Shader depthEncodeShader, Shader blurShader, bool editorTemporary) {
@@ -287,6 +295,7 @@ namespace VRCLightVolumes {
 
         private static void ApplyManagerRuntimeDependencies(LightVolumeManager manager) {
             if (manager == null) return;
+#if UDONSHARP
             UdonBehaviour udonBehaviour = GetBackingUdonBehaviour(manager);
             if (udonBehaviour == null) return;
             SetUdonProgramVariable(udonBehaviour, "CubemapFaceMaterial", manager.CubemapFaceMaterial);
@@ -303,10 +312,12 @@ namespace VRCLightVolumes {
             SetUdonProgramVariable(udonBehaviour, "FroxelCoarse", manager.FroxelCoarse);
             SetUdonProgramVariable(udonBehaviour, "ClusteringMinLights", manager.ClusteringMinLights);
             SetUdonProgramVariable(udonBehaviour, "ClusteringMaterial", manager.ClusteringMaterial);
+#endif
         }
 
         private static void ApplyPointLightRuntimeShadowDependencies(PointLightVolumeInstance pointLight) {
             if (pointLight == null) return;
+#if UDONSHARP
             UdonBehaviour udonBehaviour = GetBackingUdonBehaviour(pointLight);
             if (udonBehaviour == null) return;
             // Udon stores U# references as backing UdonBehaviours in both serialized data and the live heap.
@@ -316,6 +327,7 @@ namespace VRCLightVolumes {
             SetUdonProgramVariable(udonBehaviour, "RuntimeShadowBlurMaterial", pointLight.RuntimeShadowBlurMaterial);
             ApplyPointLightRuntimeShadowBakeSettings(pointLight, udonBehaviour);
             if (pointLight.Shadows && pointLight.BakeInGame) ApplyPointLightRuntimeShadowSource(pointLight, udonBehaviour);
+#endif
         }
 
         private static bool HasPointLightRuntimeShadowDependencies(PointLightVolumeInstance pointLight) {
@@ -334,6 +346,7 @@ namespace VRCLightVolumes {
             manager.ClusteringMaterial = null;
             ResetManagerRuntimeShadowBlurState(manager);
 
+#if UDONSHARP
             UdonBehaviour udonBehaviour = GetBackingUdonBehaviour(manager);
             if (udonBehaviour == null) return;
             SetUdonProgramVariable(udonBehaviour, "CubemapFaceMaterial", null);
@@ -344,6 +357,7 @@ namespace VRCLightVolumes {
             SetUdonProgramVariable(udonBehaviour, "RuntimeShadowBlurUniformKeyword", -1);
             SetUdonProgramVariable(udonBehaviour, "RuntimeShadowBlurDirectKeyword", -1);
             SetUdonProgramVariable(udonBehaviour, "RuntimeShadowBlurSphericalKeyword", -1);
+#endif
         }
 
         // Clears play-mode-only dependencies from both the proxy and its live Udon heap.
@@ -353,11 +367,13 @@ namespace VRCLightVolumes {
             pointLight.RuntimeShadowDepthEncodeMaterial = null;
             pointLight.RuntimeShadowBlurMaterial = null;
 
+#if UDONSHARP
             UdonBehaviour udonBehaviour = GetBackingUdonBehaviour(pointLight);
             if (udonBehaviour == null) return;
             SetUdonProgramVariable(udonBehaviour, "RuntimeShadowCamera", null);
             SetUdonProgramVariable(udonBehaviour, "RuntimeShadowDepthEncodeMaterial", null);
             SetUdonProgramVariable(udonBehaviour, "RuntimeShadowBlurMaterial", null);
+#endif
         }
 
         private static LightVolumeManager ResolvePointLightManager(PointLightVolumeInstance pointLight) {
@@ -386,6 +402,7 @@ namespace VRCLightVolumes {
             pointLight.ShadowMapTextureHasDepthSlices = false;
         }
 
+#if UDONSHARP
         private static void ApplyPointLightRuntimeShadowSource(PointLightVolumeInstance pointLight, UdonBehaviour udonBehaviour) {
             if (pointLight == null || udonBehaviour == null) return;
             SetUdonProgramVariable(udonBehaviour, "ShadowMapTexture", pointLight.ShadowMapTexture);
@@ -407,9 +424,11 @@ namespace VRCLightVolumes {
             SetUdonProgramVariable(udonBehaviour, "RuntimeShadowFacesPerFrame", pointLight.RuntimeShadowFacesPerFrame);
             SetUdonProgramVariable(udonBehaviour, "RuntimeShadowDirectOutput", pointLight.RuntimeShadowDirectOutput);
         }
+#endif
 
         private static void ApplyPointLightRuntimeCustomSource(PointLightVolumeInstance pointLight) {
             if (pointLight == null) return;
+#if UDONSHARP
             UdonBehaviour udonBehaviour = GetBackingUdonBehaviour(pointLight);
             if (udonBehaviour == null) return;
             SetUdonProgramVariable(udonBehaviour, "CustomTexture", pointLight.CustomTexture);
@@ -419,6 +438,7 @@ namespace VRCLightVolumes {
             SetUdonProgramVariable(udonBehaviour, "AutoUpdateCustomTexture", pointLight.AutoUpdateCustomTexture);
             SetUdonProgramVariable(udonBehaviour, "CustomTextureIsCubemap", pointLight.CustomTextureIsCubemap);
             SetUdonProgramVariable(udonBehaviour, "CustomTextureHasDepthSlices", pointLight.CustomTextureHasDepthSlices);
+#endif
         }
 
         // Runtime fields are published first; only duplicate authoring references are stripped afterwards.
@@ -452,6 +472,7 @@ namespace VRCLightVolumes {
             manager.AtlasPostProcessorMaterials = noPostProcessorMaterials;
             manager.AtlasPostProcessorTextureNames = noPostProcessorTextureNames;
 
+#if UDONSHARP
             UdonBehaviour udonBehaviour = GetBackingUdonBehaviour(manager);
             if (udonBehaviour == null) return;
             SetUdonProgramVariable(udonBehaviour, "LightVolumeAtlas", finalAtlas);
@@ -461,6 +482,7 @@ namespace VRCLightVolumes {
             SetUdonProgramVariable(udonBehaviour, "AtlasPostProcessorTargets", noPostProcessorTargets);
             SetUdonProgramVariable(udonBehaviour, "AtlasPostProcessorMaterials", noPostProcessorMaterials);
             SetUdonProgramVariable(udonBehaviour, "AtlasPostProcessorTextureNames", noPostProcessorTextureNames);
+#endif
         }
 
         private static void ClearLightVolumeBuildOnlySerializedReferences(LightVolumeInstance volume) {
@@ -472,6 +494,7 @@ namespace VRCLightVolumes {
             volume.BakeryVolume = null;
 #endif
 
+#if UDONSHARP
             UdonBehaviour udonBehaviour = GetBackingUdonBehaviour(volume);
             if (udonBehaviour == null) return;
             SetUdonProgramVariable(udonBehaviour, "Texture0", null);
@@ -480,6 +503,7 @@ namespace VRCLightVolumes {
 #if BAKERY_INCLUDED
             SetUdonProgramVariable(udonBehaviour, "BakeryVolume", null);
 #endif
+#endif
         }
 
         private static void ClearPointLightBuildOnlySerializedReferences(PointLightVolumeInstance pointLight) {
@@ -487,19 +511,23 @@ namespace VRCLightVolumes {
 
             // Active runtime sources already point at the selected authoring source.
             ApplyPointLightRuntimeCustomSource(pointLight);
+#if UDONSHARP
             ApplyPointLightRuntimeShadowSource(pointLight, GetBackingUdonBehaviour(pointLight));
+#endif
 
             pointLight.FalloffLUT = null;
             pointLight.Cookie = null;
             pointLight.Cubemap = null;
             pointLight.ShadowMap = null;
 
+#if UDONSHARP
             UdonBehaviour udonBehaviour = GetBackingUdonBehaviour(pointLight);
             if (udonBehaviour == null) return;
             SetUdonProgramVariable(udonBehaviour, "FalloffLUT", null);
             SetUdonProgramVariable(udonBehaviour, "Cookie", null);
             SetUdonProgramVariable(udonBehaviour, "Cubemap", null);
             SetUdonProgramVariable(udonBehaviour, "ShadowMap", null);
+#endif
         }
 
         private static Material CreateRuntimeMaterialInstance(Shader shader, Material existing, string name, bool editorTemporary) {
@@ -528,6 +556,7 @@ namespace VRCLightVolumes {
             _shadowBakerBuffer.Clear();
         }
 
+#if UDONSHARP
         private static UdonBehaviour GetBackingUdonBehaviour(Component proxy) {
             UdonSharpBehaviour behaviour = proxy as UdonSharpBehaviour;
             return behaviour != null ? UdonSharpEditorUtility.GetBackingUdonBehaviour(behaviour) : null;
@@ -539,6 +568,7 @@ namespace VRCLightVolumes {
             if (Application.isPlaying) udonBehaviour.SetProgramVariable(variableName, value);
             else udonBehaviour.publicVariables.TrySetVariableValue(variableName, value);
         }
+#endif
     }
 
     internal sealed class LightVolumeTextureImportBuildPreprocessor : IPreprocessBuildWithReport {
@@ -549,6 +579,7 @@ namespace VRCLightVolumes {
         }
     }
 
+#if UDONSHARP
     // Runs immediately before UdonSharp and performs a read-only proxy/backing integrity check.
     internal sealed class LightVolumeSdkBuildIntegrityPreflight : IVRCSDKBuildRequestedCallback {
         public int callbackOrder => 90;
@@ -564,4 +595,5 @@ namespace VRCLightVolumes {
             return false;
         }
     }
+#endif
 }

@@ -2912,7 +2912,8 @@ namespace VRCLightVolumes.Tests {
             Assert.That(shaderSource, Does.Contain("uniform Texture2D<int4> _UdonClusterMask;"));
             Assert.That(shaderSource, Does.Contain("inline void LV_LoadClusterMask"));
             Assert.That(shaderSource, Does.Contain("mask = asuint(_UdonClusterMask.Load"));
-            Assert.That(shaderSource, Does.Contain("[branch] if (useClustering)"));
+            Assert.That(shaderSource, Does.Contain("uint sequentialEnd = useClustering ? 0u : pointCount;"));
+            Assert.That(shaderSource, Does.Contain("[branch] if (traversalIndex < sequentialEnd)"));
             Assert.That(bitScanStart, Is.GreaterThanOrEqualTo(0));
             Assert.That(bitScanEnd, Is.GreaterThan(bitScanStart));
             string bitScanSource = shaderSource.Substring(bitScanStart, bitScanEnd - bitScanStart);

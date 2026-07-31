@@ -991,6 +991,26 @@ namespace VRCLightVolumes {
             VRCShader.SetGlobalInteger(_forceSceneLightingID, enabled ? 1 : 0);
         }
 
+#if UDONSHARP
+        // External runtime writes can enable texture auto-updates after the delayed process stopped.
+        public void _onVarChange_AutoUpdateTextures() {
+            if (AutoUpdateTextures) ScheduleUpdateProcess();
+        }
+#endif
+
+#if UDONSHARP || UNITY_EDITOR
+        // Applies Inspector-authored scalar settings without rebuilding volume registries or texture caches.
+        public void _ApplyEditorSettings() {
+            TryInitialize();
+            VRCShader.SetGlobalFloat(_lightVolumeProbesBlendID, LightProbesBlending ? 1f : 0f);
+            VRCShader.SetGlobalFloat(_lightVolumeSharpBoundsID, SharpBounds ? 1f : 0f);
+            VRCShader.SetGlobalFloat(_lightVolumeAdditiveMaxOverdrawID, AdditiveMaxOverdraw);
+            VRCShader.SetGlobalFloat(_lightBrightnessCutoffID, LightsBrightnessCutoff);
+            VRCShader.SetGlobalVector(_pointLightShadowReceiverParamsID, GetPointLightShadowReceiverParams());
+            if (AutoUpdateTextures) ScheduleUpdateProcess();
+        }
+#endif
+
         // Enables or disables camera-relative froxel clustering at runtime.
         public void SetClustering(bool enabled) {
 #if !COMPILER_UDONSHARP && UDONSHARP && UNITY_EDITOR
@@ -1152,14 +1172,16 @@ namespace VRCLightVolumes {
         }
 
 #if UDONSHARP
-        // Rebuilds main-camera froxel clustering after camera and tracked-head motion have settled for this frame.
+        // Updates cached dynamic transforms and camera-relative clustering after runtime motion has settled.
         public override void PostLateUpdate() {
+            UpdateDynamicVolumeTransforms();
             UpdateClustering();
         }
 #else
-        // Rebuilds main-camera froxel clustering after ordinary standalone camera motion has settled for this frame.
+        // Updates cached dynamic transforms and camera-relative clustering after standalone motion has settled.
         private void LateUpdate() {
             if (!Application.isPlaying) return;
+            UpdateDynamicVolumeTransforms();
             Camera camera = Camera.main;
             if (camera == null) camera = Camera.current;
             UpdateClusteringFromCamera(camera);
@@ -3134,6 +3156,27 @@ namespace VRCLightVolumes {
 #endif
         }
 
+        // Polls only cached Dynamic entries in the transform-safe frame phase shared with clustering.
+        private void UpdateDynamicVolumeTransforms() {
+            if (!AutoUpdateVolumes || _isUpdatingVolumes || _volumeDataUpdateRequested) return;
+            if (_dynamicLightVolumeCount == 0 && _dynamicPointLightVolumeCount == 0) return;
+
+            _updateLightVolumeBuffers = false;
+            _updatePointLightBuffers = false;
+            _updatePointLightPositionBuffer = false;
+            _updateNeedsVolumeRebuild = false;
+            UpdateAutoUpdatedVolumeChanges();
+            if (_updateNeedsVolumeRebuild) {
+                _updateLightVolumeBuffers = false;
+                _updatePointLightBuffers = false;
+                _updatePointLightPositionBuffer = false;
+                RequestUpdateVolumes();
+                return;
+            }
+            if (_updateLightVolumeBuffers || _updatePointLightBuffers || _updatePointLightPositionBuffer)
+                UploadAutoUpdatedVolumeChanges();
+        }
+
         // Updates moved dynamic volumes in-place and marks which shader buffer groups need uploading.
         private void UpdateAutoUpdatedVolumeChanges() {
             int enabledCount = _enabledCount;
@@ -3247,7 +3290,7 @@ namespace VRCLightVolumes {
                 yield return null;
 #endif
 
-            // Volume section: full rebuilds, direct dirty uploads and dynamic transform polling
+            // Volume section: full rebuilds and direct dirty uploads. Dynamic transforms run in PostLateUpdate.
             bool updateVolumes = _volumeDataUpdateRequested;
             _volumeDataUpdateRequested = false;
             _updateLightVolumeBuffers = _lightVolumeArraysDirty;
@@ -3256,11 +3299,6 @@ namespace VRCLightVolumes {
             _updateNeedsVolumeRebuild = false;
             _lightVolumeArraysDirty = false;
             _pointLightArraysDirty = false;
-
-            if (!updateVolumes && AutoUpdateVolumes && (_dynamicLightVolumeCount != 0 || _dynamicPointLightVolumeCount != 0)) {
-                UpdateAutoUpdatedVolumeChanges();
-                if (_updateNeedsVolumeRebuild) updateVolumes = true;
-            }
 
             if (updateVolumes) {
                 UpdateVolumes();
@@ -3276,7 +3314,7 @@ namespace VRCLightVolumes {
                 if (HasAutoShadowTextureUpdates) UpdateAutoShadowTextures();
             }
 
-            keepUpdating = AutoUpdateVolumes && (_dynamicLightVolumeCount != 0 || _dynamicPointLightVolumeCount != 0) || AutoUpdateTextures && (HasAutoCustomTextureUpdates || HasAutoShadowTextureUpdates);
+            keepUpdating = AutoUpdateTextures && (HasAutoCustomTextureUpdates || HasAutoShadowTextureUpdates);
 
             // Keep the delayed loop alive only for continuous monitoring; one-shot requests schedule their own tick.
 #if UDONSHARP
@@ -3563,6 +3601,7 @@ namespace VRCLightVolumes {
             if (ShouldSkipEditorProxyRuntimeUpdate()) return;
 #endif
             if (_isUpdatingVolumes) return;
+            _volumeDataUpdateRequested = false;
             _isUpdatingVolumes = true;
 #if !COMPILER_UDONSHARP
             try {
@@ -3742,6 +3781,7 @@ namespace VRCLightVolumes {
             _updatePointLightPositionBuffer = false;
             _updateNeedsVolumeRebuild = false;
             _clusterGeometryUploadPending = false;
+            if (AutoUpdateTextures && (HasAutoCustomTextureUpdates || HasAutoShadowTextureUpdates)) ScheduleUpdateProcess();
             _isUpdatingVolumes = false;
 #if !COMPILER_UDONSHARP
             } finally {

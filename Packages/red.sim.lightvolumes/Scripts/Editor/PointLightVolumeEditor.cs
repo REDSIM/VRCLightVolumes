@@ -1,9 +1,6 @@
 using UnityEngine;
 using UnityEditor;
 using UnityEditorInternal;
-#if UDONSHARP
-using UdonSharpEditor;
-#endif
 using System.Collections.Generic;
 
 namespace VRCLightVolumes {
@@ -11,8 +8,8 @@ namespace VRCLightVolumes {
         public const int CustomTexturesChanged = 1;
         public const int ShadowTexturesChanged = 2;
 
-        // Applies derived data once, copies the proxy once, and optionally rebuilds shared arrays once.
-        public static int Sync(PointLightVolumeInstance pointLightVolume, bool recordUndo = false, bool rebuildTextureArrays = true) {
+        // Applies derived data once, copies the proxy once, and optionally refreshes shared runtime data.
+        public static int Sync(PointLightVolumeInstance pointLightVolume, bool recordUndo = false, bool rebuildTextureArrays = true, bool refreshRuntime = true) {
             if (pointLightVolume == null) return 0;
 
             bool customTexturesChanged = pointLightVolume.HasEditorCustomTextureChanges();
@@ -25,10 +22,8 @@ namespace VRCLightVolumes {
             int changes = (customTexturesChanged ? CustomTexturesChanged : 0)
                 | (shadowTexturesChanged ? ShadowTexturesChanged : 0);
             LightVolumeManager manager = pointLightVolume.LightVolumeManager;
-            if (rebuildTextureArrays && manager != null) {
-                if (customTexturesChanged) manager.ReinitializeCustomTextures();
-                if (shadowTexturesChanged) manager.ReinitializeShadowTextures();
-            }
+            if (refreshRuntime) LightVolumeManagerTools.RefreshRuntimeManagerImmediately(manager);
+            if (rebuildTextureArrays) LightVolumeManagerTools.ReinitializeTextures(manager, customTexturesChanged, shadowTexturesChanged);
             return changes;
         }
     }
@@ -51,12 +46,10 @@ namespace VRCLightVolumes {
         private const float InspectorSectionSpacing = 10f;
         private const float ShadowGroupSpacing = 6f;
         private const float ShadowButtonSpacing = 6f;
-        private const double RuntimeDebugRefreshInterval = 0.2d;
         private static readonly Color _shadowClipVisibleColor = new Color(0.2f, 0.65f, 1f, 0.75f);
         private static readonly Color _shadowClipHiddenColor = new Color(0.2f, 0.65f, 1f, 0.18f);
         private static GUIStyle _projectionSourceHintStyle;
         private bool _debugExpanded;
-        private double _nextRuntimeDebugRefresh;
 
         private void OnEnable() {
             PointLightVolume = target as PointLightVolumeInstance;
@@ -69,14 +62,12 @@ namespace VRCLightVolumes {
         }
 
         public override void OnInspectorGUI() {
-            RefreshRuntimeDebugProxy();
             serializedObject.Update();
             int undoGroup = Undo.GetCurrentGroup();
             SerializedProperty lightTypeProperty = serializedObject.FindProperty("LightType");
             SerializedProperty projectionProperty = serializedObject.FindProperty("Projection");
             int lightType = Mathf.Clamp(lightTypeProperty.intValue, 0, 2);
             int projection = Mathf.Clamp(projectionProperty.intValue, 0, 2);
-
             DrawSectionHeader("Light", false);
             DrawPopup(lightTypeProperty, new GUIContent("Type", "Point Light is the most performant type. For static lighting, prefer baked additive Light Volumes."), _lightTypeNames);
             lightType = Mathf.Clamp(lightTypeProperty.intValue, 0, 2);
@@ -166,7 +157,6 @@ namespace VRCLightVolumes {
                 new GUIContent("Debug", "Shows read-only live Point Light Volume data for troubleshooting."));
             if (EditorGUI.EndChangeCheck()) {
                 SessionState.SetBool(DebugFoldoutSessionKey, _debugExpanded);
-                _nextRuntimeDebugRefresh = 0d;
             }
 
             if (_debugExpanded && PointLightVolume != null) {
@@ -257,17 +247,6 @@ namespace VRCLightVolumes {
             EditorGUILayout.EndFoldoutHeaderGroup();
         }
 
-        private void RefreshRuntimeDebugProxy() {
-#if UDONSHARP
-            if (!_debugExpanded || !EditorApplication.isPlaying || PointLightVolume == null) return;
-            double now = EditorApplication.timeSinceStartup;
-            if (now < _nextRuntimeDebugRefresh) return;
-            _nextRuntimeDebugRefresh = now + RuntimeDebugRefreshInterval;
-            if (UdonSharpEditorUtility.GetBackingUdonBehaviour(PointLightVolume) != null)
-                UdonSharpEditorUtility.CopyUdonToProxy(PointLightVolume);
-#endif
-        }
-
         private static string GetProjectionModeName(int value) {
             if (value == 1) return "LUT";
             if (value == 2) return "Custom";
@@ -332,26 +311,38 @@ namespace VRCLightVolumes {
             }
             if (managers != null) {
                 foreach (LightVolumeManager manager in managers) {
-                    if (manager != null) manager.ReinitializeShadowTextures();
+                    LightVolumeManagerTools.ReinitializeShadowTextures(manager);
                 }
             }
             return bakedAny;
         }
 
         // Applies all selected proxies first, then rebuilds each shared array at most once.
-        private void SyncTargets(bool recordUndo) {
+        private void SyncTargets(bool recordUndo, bool reinitializeTextures = false, bool refreshRuntimeImmediately = true) {
             Dictionary<LightVolumeManager, int> managerChanges = null;
+            HashSet<LightVolumeManager> runtimeManagers = null;
             for (int i = 0; i < targets.Length; i++) {
                 PointLightVolumeInstance pointLightVolume = targets[i] as PointLightVolumeInstance;
                 if (pointLightVolume == null) continue;
 
-                int changes = PointLightVolumeEditorUtility.Sync(pointLightVolume, recordUndo, false);
+                int changes = PointLightVolumeEditorUtility.Sync(pointLightVolume, recordUndo, false, false);
+                if (reinitializeTextures) changes |= PointLightVolumeEditorUtility.CustomTexturesChanged | PointLightVolumeEditorUtility.ShadowTexturesChanged;
                 LightVolumeManager manager = pointLightVolume.LightVolumeManager;
-                if (manager == null || changes == 0) continue;
+                if (manager == null) continue;
+                if (runtimeManagers == null) runtimeManagers = new HashSet<LightVolumeManager>();
+                runtimeManagers.Add(manager);
+                if (changes == 0) continue;
                 if (managerChanges == null) managerChanges = new Dictionary<LightVolumeManager, int>();
                 int previous;
                 managerChanges.TryGetValue(manager, out previous);
                 managerChanges[manager] = previous | changes;
+            }
+
+            if (runtimeManagers != null) {
+                foreach (LightVolumeManager manager in runtimeManagers) {
+                    if (refreshRuntimeImmediately) LightVolumeManagerTools.RefreshRuntimeManagerImmediately(manager);
+                    else LightVolumeManagerTools.QueueRuntimeManagerRefresh(manager);
+                }
             }
 
             if (managerChanges == null) return;
@@ -359,13 +350,17 @@ namespace VRCLightVolumes {
                 LightVolumeManager manager = entry.Key;
                 if (manager == null) continue;
                 if (recordUndo) Undo.RecordObject(manager, "Sync Point Light Volume Textures");
-                if ((entry.Value & PointLightVolumeEditorUtility.CustomTexturesChanged) != 0) manager.ReinitializeCustomTextures();
-                if ((entry.Value & PointLightVolumeEditorUtility.ShadowTexturesChanged) != 0) manager.ReinitializeShadowTextures();
+                LightVolumeManagerTools.ReinitializeTextures(
+                    manager,
+                    (entry.Value & PointLightVolumeEditorUtility.CustomTexturesChanged) != 0,
+                    (entry.Value & PointLightVolumeEditorUtility.ShadowTexturesChanged) != 0);
             }
         }
 
         private void OnUndoRedoPerformed() {
-            SyncTargets(false);
+            // Undo also restores hidden derived source fields, which makes ordinary source-change
+            // detection intentionally inconclusive. Rebuild both shared arrays once per manager.
+            SyncTargets(false, true, false);
             Repaint();
         }
 

@@ -105,7 +105,7 @@ namespace VRCLightVolumes {
                 changed = true;
             }
 
-            bool isActive = volume.gameObject.activeInHierarchy && volume.Intensity != 0f && volume.Color != Color.black;
+            bool isActive = volume.isActiveAndEnabled && volume.Intensity != 0f && volume.Color != Color.black;
             if (volume.IsActive != isActive) {
                 volume.IsActive = isActive;
                 changed = true;

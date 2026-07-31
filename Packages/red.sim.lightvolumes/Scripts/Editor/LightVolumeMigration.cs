@@ -1188,27 +1188,6 @@ namespace VRCLightVolumes {
             return false;
         }
 
-        private static bool TryExtractSceneObjectYamlBlock(string yaml, ulong objectId, out string block) {
-            block = null;
-            if (string.IsNullOrEmpty(yaml)) return false;
-            string marker = "--- !u!114 &" + objectId;
-            int start = 0;
-            while (true) {
-                start = yaml.IndexOf(marker, start, StringComparison.Ordinal);
-                if (start < 0) return false;
-                int end = start + marker.Length;
-                bool startsLine = start == 0 || yaml[start - 1] == '\n';
-                bool endsId = end == yaml.Length || yaml[end] == ' ' || yaml[end] == '\r' || yaml[end] == '\n';
-                if (startsLine && endsId) break;
-                start = end;
-            }
-            int lineEnd = yaml.IndexOf('\n', start);
-            if (lineEnd < 0) return false;
-            int next = yaml.IndexOf("\n--- !u!", lineEnd + 1, StringComparison.Ordinal);
-            block = next >= 0 ? yaml.Substring(lineEnd + 1, next - lineEnd - 1) : yaml.Substring(lineEnd + 1);
-            return true;
-        }
-
         private static bool TryReadVector4(string block, string name, string fallback, out Vector4 value) {
             if (TryReadVector4(block, name, out value)) return true;
             return TryReadVector4(block, fallback, out value);

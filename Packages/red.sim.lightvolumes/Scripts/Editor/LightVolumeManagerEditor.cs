@@ -2,9 +2,6 @@ using System.Collections.Generic;
 using UnityEditor;
 using UnityEditorInternal;
 using UnityEngine;
-#if UDONSHARP
-using UdonSharpEditor;
-#endif
 
 namespace VRCLightVolumes {
     [CustomEditor(typeof(LightVolumeManager))]
@@ -22,7 +19,6 @@ namespace VRCLightVolumes {
         private const float RegistryScrollbarRightInset = 2f;
         private const float InspectorSectionSpacing = 10f;
         private const double StatsRefreshInterval = 0.25d;
-        private const double RuntimeDebugRefreshInterval = 0.2d;
         private const double BundleCompressionEstimate = 0.315d;
         private static readonly int[] TextureResolutions = { 16, 32, 64, 128, 256, 512, 1024, 2048 };
         private static readonly string[] TextureResolutionLabels = { "16 x 16", "32 x 32", "64 x 64", "128 x 128", "256 x 256", "512 x 512", "1024 x 1024", "2048 x 2048" };
@@ -58,7 +54,6 @@ namespace VRCLightVolumes {
         private bool _canBatchBakeShadows;
         private bool _multipleManagers;
         private bool _debugExpanded;
-        private double _nextRuntimeDebugRefresh;
         private readonly HashSet<Texture> _countedShadowTextures = new HashSet<Texture>();
 
         [MenuItem(SortLightVolumesMenu)]
@@ -79,6 +74,7 @@ namespace VRCLightVolumes {
             _debugExpanded = SessionState.GetBool(DebugFoldoutSessionKey, false);
             if (_manager != null && _manager.SanitizeRegistries()) {
                 LightVolumeManagerTools.CopyProxyToUdon(_manager);
+                LightVolumeManagerTools.QueueRuntimeManagerRefresh(_manager);
                 LVUtils.MarkDirty(_manager);
             }
             serializedObject.Update();
@@ -101,7 +97,14 @@ namespace VRCLightVolumes {
         private void OnUndoRedoPerformed() {
             if (_manager == null) return;
             serializedObject.UpdateIfRequiredOrScript();
-            LightVolumeManagerTools.ApplySettings(_manager, false);
+            // Undo can restore source/layout fields together with their hidden derived values, so
+            // change detection alone cannot reliably invalidate either runtime texture cache.
+            LightVolumeManagerTools.ApplySettings(_manager, false, updateVolumes: false, copyProxyToUdon: false);
+            if (!LightVolumeManagerTools.RefreshRuntimeManagerFromProxyImmediately(
+                    _manager,
+                    reinitializeCustomTextures: true,
+                    reinitializeShadowTextures: true))
+                LightVolumeManagerTools.ReinitializeTextures(_manager, true, true);
 #if BAKERY_INCLUDED
             LightVolumeBaker.QueueBakeryWatcherRefresh();
 #endif
@@ -112,7 +115,6 @@ namespace VRCLightVolumes {
         }
 
         public override void OnInspectorGUI() {
-            RefreshRuntimeDebugProxy();
             serializedObject.Update();
             EditorGUILayout.Space(EditorGUIUtility.singleLineHeight * 0.5f);
 
@@ -134,6 +136,9 @@ namespace VRCLightVolumes {
             int previousCookieResolution = _manager.CustomTexturesWidth;
             int previousShadowResolution = _manager.ShadowTexturesWidth;
             int previousBakingMode = _manager.BakingMode;
+            bool previousAutoUpdateTextures = _manager.AutoUpdateTextures;
+            Texture previousAtlas = _manager.LightVolumeAtlas;
+            float previousBrightnessCutoff = _manager.LightsBrightnessCutoff;
             bool hasLightVolumes = HasRegistryEntries(_lightVolumes);
             bool hasPointLights = HasRegistryEntries(_pointLights);
             bool hasPreviousSection = false;
@@ -166,7 +171,17 @@ namespace VRCLightVolumes {
 
             bool cookieLayoutChanged = previousCookieResolution != _manager.CustomTexturesWidth || _pointRegistryChanged;
             bool shadowLayoutChanged = previousShadowResolution != _manager.ShadowTexturesWidth || _pointRegistryChanged;
-            LightVolumeManagerTools.ApplySettings(_manager, markDirty: false, reinitializeCustomTextures: cookieLayoutChanged, reinitializeShadowTextures: shadowLayoutChanged);
+            bool pointLightRangesChanged = previousBrightnessCutoff != _manager.LightsBrightnessCutoff;
+            bool rebuildRuntimeData = _registryChanged || _pointRegistryChanged || previousAutoUpdateTextures != _manager.AutoUpdateTextures || previousAtlas != _manager.LightVolumeAtlas;
+            bool fullRuntimeRefresh = rebuildRuntimeData || cookieLayoutChanged || shadowLayoutChanged;
+            LightVolumeManagerTools.ApplySettings( _manager, false, cookieLayoutChanged, shadowLayoutChanged, fullRuntimeRefresh, !EditorApplication.isPlaying);
+            if (!fullRuntimeRefresh) {
+                if (pointLightRangesChanged) {
+                    if (!LightVolumeManagerTools.RefreshRuntimeManagerFromProxyImmediately(_manager)) _manager.UpdateVolumes();
+                } else {
+                    LightVolumeManagerTools.ApplyRuntimeManagerSettings(_manager);
+                }
+            }
             LightVolumeManagerTools.HandleBakingModeChanged(_manager, previousBakingMode);
             _registryChanged = false;
             _pointRegistryChanged = false;
@@ -381,7 +396,6 @@ namespace VRCLightVolumes {
                 new GUIContent("Debug", "Shows read-only live Manager data for troubleshooting."));
             if (EditorGUI.EndChangeCheck()) {
                 SessionState.SetBool(DebugFoldoutSessionKey, _debugExpanded);
-                _nextRuntimeDebugRefresh = 0d;
             }
 
             if (_debugExpanded) {
@@ -439,17 +453,6 @@ namespace VRCLightVolumes {
                 LightVolumeDebugGUI.DrawObject("Clustering Material", _manager.ClusteringMaterialPreview, typeof(Material), "Builds the Fine and Coarse froxel masks.");
             }
             EditorGUILayout.EndFoldoutHeaderGroup();
-        }
-
-        private void RefreshRuntimeDebugProxy() {
-#if UDONSHARP
-            if (!_debugExpanded || !EditorApplication.isPlaying || _manager == null) return;
-            double now = EditorApplication.timeSinceStartup;
-            if (now < _nextRuntimeDebugRefresh) return;
-            _nextRuntimeDebugRefresh = now + RuntimeDebugRefreshInterval;
-            if (UdonSharpEditorUtility.GetBackingUdonBehaviour(_manager) != null)
-                UdonSharpEditorUtility.CopyUdonToProxy(_manager);
-#endif
         }
 
         private string GetClusteringStatus() {

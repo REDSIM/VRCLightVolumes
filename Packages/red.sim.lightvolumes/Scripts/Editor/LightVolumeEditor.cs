@@ -1,6 +1,4 @@
-#if UDONSHARP
-using UdonSharpEditor;
-#endif
+using System.Collections.Generic;
 using UnityEditor;
 using UnityEngine;
 
@@ -12,11 +10,9 @@ namespace VRCLightVolumes {
         private const float ToolbarButtonWidth = 150f;
         private const float ActionButtonWidth = 170f;
         private const float InspectorSectionSpacing = 10f;
-        private const double RuntimeDebugRefreshInterval = 0.2d;
 
         private bool _isEditMode;
         private bool _debugExpanded;
-        private double _nextRuntimeDebugRefresh;
         private Tool _savedTool;
         private Tool _previousTool;
         private LightProbePlacerWindow _probePlacerWindow;
@@ -54,7 +50,6 @@ namespace VRCLightVolumes {
         public override void OnInspectorGUI() {
             if (_volume == null) return;
 
-            RefreshRuntimeDebugProxy();
             serializedObject.UpdateIfRequiredOrScript();
             int undoGroup = Undo.GetCurrentGroup();
 #if BAKERY_INCLUDED
@@ -228,7 +223,6 @@ namespace VRCLightVolumes {
                 new GUIContent("Debug", "Shows read-only live Light Volume data for troubleshooting."));
             if (EditorGUI.EndChangeCheck()) {
                 SessionState.SetBool(DebugFoldoutSessionKey, _debugExpanded);
-                _nextRuntimeDebugRefresh = 0d;
             }
 
             if (_debugExpanded) {
@@ -267,17 +261,6 @@ namespace VRCLightVolumes {
                 LightVolumeDebugGUI.DrawVector3("Relative Rotation Row 1", _volume.RelativeRotationRow1, "Second row of the relative rotation used for directional lighting.");
             }
             EditorGUILayout.EndFoldoutHeaderGroup();
-        }
-
-        private void RefreshRuntimeDebugProxy() {
-#if UDONSHARP
-            if (!_debugExpanded || !EditorApplication.isPlaying || _volume == null) return;
-            double now = EditorApplication.timeSinceStartup;
-            if (now < _nextRuntimeDebugRefresh) return;
-            _nextRuntimeDebugRefresh = now + RuntimeDebugRefreshInterval;
-            if (UdonSharpEditorUtility.GetBackingUdonBehaviour(_volume) != null)
-                UdonSharpEditorUtility.CopyUdonToProxy(_volume);
-#endif
         }
 
         private void HandleEditModeState() {
@@ -334,12 +317,13 @@ namespace VRCLightVolumes {
 
         private void OnUndoRedoPerformed() {
             serializedObject.UpdateIfRequiredOrScript();
-            SyncTargets(false);
+            SyncTargets(false, false);
             Repaint();
         }
 
-        private void SyncTargets(bool recordUndo) {
+        private void SyncTargets(bool recordUndo, bool refreshRuntimeImmediately = true) {
             EnsureAtlasStateCache();
+            HashSet<LightVolumeManager> runtimeManagers = null;
             for (int i = 0; i < targets.Length; i++) {
                 LightVolumeInstance volume = targets[i] as LightVolumeInstance;
                 if (volume == null) continue;
@@ -349,10 +333,21 @@ namespace VRCLightVolumes {
                 LightVolumeTools.ApplyRuntimeState(volume, true);
 
                 LightVolumeManagerTools.CopyProxyToUdon(volume);
+                if (volume.LightVolumeManager != null) {
+                    if (runtimeManagers == null) runtimeManagers = new HashSet<LightVolumeManager>();
+                    runtimeManagers.Add(volume.LightVolumeManager);
+                }
                 EditorUtility.SetDirty(volume);
 
                 if (previousAtlasState != GetAtlasStateHash(volume) && volume.LightVolumeManager != null) {
                     LightVolumeManagerTools.QueueAtlasGeneration(volume.LightVolumeManager);
+                }
+            }
+
+            if (runtimeManagers != null) {
+                foreach (LightVolumeManager manager in runtimeManagers) {
+                    if (refreshRuntimeImmediately) LightVolumeManagerTools.RefreshRuntimeManagerImmediately(manager);
+                    else LightVolumeManagerTools.QueueRuntimeManagerRefresh(manager);
                 }
             }
 
@@ -439,6 +434,7 @@ namespace VRCLightVolumes {
         private static void SyncSingleTarget(LightVolumeInstance volume) {
             LightVolumeTools.ApplyRuntimeState(volume, true);
             LightVolumeManagerTools.CopyProxyToUdon(volume);
+            LightVolumeManagerTools.RefreshRuntimeManagerImmediately(volume.LightVolumeManager);
             EditorUtility.SetDirty(volume);
             LightVolumePreviewSceneRenderer.RequestRefresh();
         }

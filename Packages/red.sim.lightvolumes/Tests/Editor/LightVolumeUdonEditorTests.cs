@@ -78,22 +78,6 @@ namespace VRCLightVolumes.Tests {
             ResetShaderGlobals();
         }
 
-        // Scene YAML lookup must not confuse a file ID with a longer ID sharing the same prefix.
-        [Test]
-        public void SceneYamlBlockExtractionMatchesExactFileId() {
-            string sceneYaml =
-                "--- !u!114 &1234\n" +
-                "  PositionData: wrong\n" +
-                "--- !u!114 &123 stripped\n" +
-                "  PositionData: expected\n" +
-                "--- !u!1 &99\n";
-
-            string serializedBlock;
-            Assert.That(InvokeSceneYamlBlockExtraction(sceneYaml, 123, out serializedBlock), Is.True);
-            Assert.That(serializedBlock, Does.Contain("PositionData: expected"));
-            Assert.That(serializedBlock, Does.Not.Contain("PositionData: wrong"));
-        }
-
         // The migration cache keeps only exact legacy MonoBehaviour documents in one YAML pass.
         [Test]
         public void SceneYamlLegacyRuntimeBlockExtractionFiltersDocumentsAndIds() {
@@ -170,16 +154,6 @@ namespace VRCLightVolumes.Tests {
             Assert.That(registryIndex, Is.GreaterThanOrEqualTo(0));
             Assert.That(registryIndex, Is.LessThan(colors.Length));
             return colors[registryIndex];
-        }
-
-        // Extracts one serialized scene document through the migration's pure YAML lookup helper.
-        private static bool InvokeSceneYamlBlockExtraction(string sceneYaml, ulong targetObjectId, out string serializedBlock) {
-            MethodInfo method = typeof(LightVolumeMigration).GetMethod("TryExtractSceneObjectYamlBlock", _staticMigrationMethodFlags);
-            Assert.That(method, Is.Not.Null);
-            object[] arguments = { sceneYaml, targetObjectId, null };
-            bool result = (bool)method.Invoke(null, arguments);
-            serializedBlock = arguments[2] as string;
-            return result;
         }
 
         // Reads the runtime blur shader from either a Unity project root or this package directory.
@@ -349,37 +323,6 @@ namespace VRCLightVolumes.Tests {
                 "LightVolumeManager must not use per-object editor polling");
             Assert.That(typeof(PointLightVolumeInstance).GetMethod("Update", _lifecycleMethodFlags), Is.Null,
                 "PointLightVolumeInstance must not use per-object editor polling");
-        }
-
-        [Test]
-        public void EditorChangeCoordinatorOnlyRequestsFullRefreshForStructuralEvents() {
-            Type coordinatorType = typeof(LightVolumeManagerTools).Assembly.GetType(
-                "VRCLightVolumes.LightVolumeEditorUpdater");
-            Assert.That(coordinatorType, Is.Not.Null);
-            MethodInfo requiresFullRefresh = coordinatorType.GetMethod("RequiresFullManagerRefresh", _staticMigrationMethodFlags);
-            Assert.That(requiresFullRefresh, Is.Not.Null);
-
-            ObjectChangeKind[] fullRefreshKinds = {
-                ObjectChangeKind.ChangeScene,
-                ObjectChangeKind.ChangeGameObjectStructure,
-                ObjectChangeKind.ChangeGameObjectStructureHierarchy,
-                ObjectChangeKind.DestroyGameObjectHierarchy,
-                ObjectChangeKind.UpdatePrefabInstances
-            };
-            for (int i = 0; i < fullRefreshKinds.Length; i++) {
-                ObjectChangeKind kind = fullRefreshKinds[i];
-                Assert.That((bool)requiresFullRefresh.Invoke(null, new object[] { kind }), Is.True, kind.ToString());
-            }
-
-            ObjectChangeKind[] targetedKinds = {
-                ObjectChangeKind.ChangeGameObjectOrComponentProperties,
-                ObjectChangeKind.CreateGameObjectHierarchy,
-                ObjectChangeKind.ChangeGameObjectParent
-            };
-            for (int i = 0; i < targetedKinds.Length; i++) {
-                ObjectChangeKind kind = targetedKinds[i];
-                Assert.That((bool)requiresFullRefresh.Invoke(null, new object[] { kind }), Is.False, kind.ToString());
-            }
         }
 
         // Any AssetDatabase batch can restore serialized proxy state, including package metadata imports.
@@ -1221,6 +1164,30 @@ namespace VRCLightVolumes.Tests {
 
             Assert.That(CountPointLightVolumeReferences(manager.PointLightVolumeInstances, point), Is.EqualTo(1));
             AssertGlobalFloat(_pointLightCountID, 1);
+        }
+
+        // Editor synchronization and external program-variable callbacks must not reactivate a disabled component.
+        [Test]
+        public void DisabledComponentsRemainInactiveWhenRuntimeCallbacksRun() {
+            LightVolumeManager manager = CreateManager("Disabled Callback Manager", true);
+            LightVolumeInstance volume = CreateLightVolume(manager, "Disabled Callback Volume", true);
+            PointLightVolumeInstance point = CreatePointLight(manager, "Disabled Callback Point", true);
+
+            volume.enabled = false;
+            point.enabled = false;
+            volume.IsActive = true;
+            point.IsActive = true;
+
+            LightVolumeTools.ApplyRuntimeState(volume, false);
+            Assert.That(volume.IsActive, Is.False);
+            volume.IsActive = true;
+
+            volume._onVarChange_IsDynamic();
+            volume._onVarChange_IsAdditive();
+            point._onVarChange_IsDynamic();
+
+            Assert.That(volume.IsActive, Is.False);
+            Assert.That(point.IsActive, Is.False);
         }
 
         // Verifies inactive, black, and zero-intensity entries are removed from the final shader-visible arrays.

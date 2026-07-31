@@ -22,9 +22,15 @@ namespace VRCLightVolumes {
         private static bool _customProbeFinalizeQueued;
         private static readonly HashSet<LightVolumeManager> _queuedAtlasManagers = new HashSet<LightVolumeManager>();
         private static bool _atlasGenerationQueued;
+#if UDONSHARP
+        private static readonly HashSet<LightVolumeManager> _queuedRuntimeManagerRefreshes = new HashSet<LightVolumeManager>();
+        private static readonly HashSet<LightVolumeManager> _queuedRuntimeCustomTextureReinitializations = new HashSet<LightVolumeManager>();
+        private static readonly HashSet<LightVolumeManager> _queuedRuntimeShadowTextureReinitializations = new HashSet<LightVolumeManager>();
+#endif
 
-        // Applies target-dependent authoring values, optional texture-cache rebuilds and one final proxy/runtime sync.
-        public static void ApplySettings(LightVolumeManager manager, bool markDirty = true, bool reinitializeCustomTextures = false, bool reinitializeShadowTextures = false, bool updateVolumes = true) {
+        // Applies target-dependent authoring values and optional texture-cache rebuilds.
+        // Custom Inspectors can leave the final Play Mode proxy copy to UdonSharp's own wrapper.
+        public static void ApplySettings(LightVolumeManager manager, bool markDirty = true, bool reinitializeCustomTextures = false, bool reinitializeShadowTextures = false, bool updateVolumes = true, bool copyProxyToUdon = true) {
             if (manager == null) return;
 
             string previousState = markDirty ? LVUtils.GetSerializedState(manager) : null;
@@ -44,13 +50,15 @@ namespace VRCLightVolumes {
             manager.DilationBackfaceBias = Mathf.Clamp01(manager.DilationBackfaceBias);
             manager.AdditiveMaxOverdraw = Mathf.Max(manager.AdditiveMaxOverdraw, 1);
             manager.SanitizeRegistries();
-
             SynchronizeRegistryMetadata(manager);
-            if (reinitializeCustomTextures) manager.ReinitializeCustomTextures();
-            if (reinitializeShadowTextures) manager.ReinitializeShadowTextures();
-            CopyProxyToUdon(manager);
+            bool runtimeRefreshQueued = updateVolumes && QueueRuntimeManagerRefresh(manager, reinitializeCustomTextures, reinitializeShadowTextures);
+            if (!runtimeRefreshQueued) {
+                if (reinitializeCustomTextures) manager.ReinitializeCustomTextures();
+                if (reinitializeShadowTextures) manager.ReinitializeShadowTextures();
+            }
+            if (copyProxyToUdon) CopyProxyToUdon(manager);
             if (markDirty) LVUtils.MarkDirtyIfSerializedStateChanged(manager, previousState);
-            if (updateVolumes) manager.UpdateVolumes();
+            if (updateVolumes && !runtimeRefreshQueued) manager.UpdateVolumes();
         }
 
         // Bakery helpers are created or removed only as a direct result of an explicit mode edit.
@@ -161,15 +169,18 @@ namespace VRCLightVolumes {
         }
 
         public static void ReinitializeCustomTextures(LightVolumeManager manager) {
-            if (manager == null) return;
-            manager.ReinitializeCustomTextures();
-            CopyProxyToUdon(manager);
-            manager.UpdateVolumes();
+            ReinitializeTextures(manager, true, false);
         }
 
         public static void ReinitializeShadowTextures(LightVolumeManager manager) {
-            if (manager == null) return;
-            manager.ReinitializeShadowTextures();
+            ReinitializeTextures(manager, false, true);
+        }
+
+        internal static void ReinitializeTextures(LightVolumeManager manager, bool customTextures, bool shadowTextures) {
+            if (manager == null || !customTextures && !shadowTextures) return;
+            if (QueueRuntimeManagerRefresh(manager, customTextures, shadowTextures)) return;
+            if (customTextures) manager.ReinitializeCustomTextures();
+            if (shadowTextures) manager.ReinitializeShadowTextures();
             CopyProxyToUdon(manager);
             manager.UpdateVolumes();
         }
@@ -414,6 +425,96 @@ namespace VRCLightVolumes {
                 UdonSharpEditorUtility.CopyProxyToUdon(behaviour);
 #endif
         }
+
+        // The volume and manager are separate Udon behaviours, so UdonSharp's final volume proxy
+        // copy cannot overwrite this synchronous manager refresh.
+        public static bool RefreshRuntimeManagerImmediately(LightVolumeManager manager) {
+#if UDONSHARP
+            if (!Application.isPlaying || manager == null) return false;
+            var backingBehaviour = UdonSharpEditorUtility.GetBackingUdonBehaviour(manager);
+            if (backingBehaviour == null) return false;
+            backingBehaviour.SendCustomEvent(nameof(LightVolumeManager.UpdateVolumes));
+            return true;
+#else
+            return false;
+#endif
+        }
+
+        // Manager Inspector edits originate on the proxy. Mirror UdonSharp's custom-event round trip
+        // so the synchronous event result survives the Inspector wrapper's final proxy serialization.
+        public static bool RefreshRuntimeManagerFromProxyImmediately(
+            LightVolumeManager manager,
+            bool reinitializeCustomTextures = false,
+            bool reinitializeShadowTextures = false) {
+#if UDONSHARP
+            if (!Application.isPlaying || manager == null) return false;
+            var backingBehaviour = UdonSharpEditorUtility.GetBackingUdonBehaviour(manager);
+            if (backingBehaviour == null) return false;
+            UdonSharpEditorUtility.CopyProxyToUdon(manager, ProxySerializationPolicy.All);
+            if (reinitializeCustomTextures)
+                backingBehaviour.SendCustomEvent(nameof(LightVolumeManager.ReinitializeCustomTextures));
+            if (reinitializeShadowTextures)
+                backingBehaviour.SendCustomEvent(nameof(LightVolumeManager.ReinitializeShadowTextures));
+            backingBehaviour.SendCustomEvent(nameof(LightVolumeManager.UpdateVolumes));
+            UdonSharpEditorUtility.CopyUdonToProxy(manager, ProxySerializationPolicy.All);
+            return true;
+#else
+            return false;
+#endif
+        }
+
+        // UdonSharp performs its recursive Inspector serialization after the custom Inspector returns.
+        // Rebuild manager-owned caches once that final copy has completed.
+        public static bool QueueRuntimeManagerRefresh(
+            LightVolumeManager manager,
+            bool reinitializeCustomTextures = false,
+            bool reinitializeShadowTextures = false) {
+#if UDONSHARP
+            if (!Application.isPlaying || manager == null) return false;
+            var backingBehaviour = UdonSharpEditorUtility.GetBackingUdonBehaviour(manager);
+            if (backingBehaviour == null) return false;
+
+            _queuedRuntimeManagerRefreshes.Add(manager);
+            if (reinitializeCustomTextures) _queuedRuntimeCustomTextureReinitializations.Add(manager);
+            if (reinitializeShadowTextures) _queuedRuntimeShadowTextureReinitializations.Add(manager);
+            QueueRuntimeRefreshFlush();
+            return true;
+#else
+            return false;
+#endif
+        }
+
+        public static void ApplyRuntimeManagerSettings(LightVolumeManager manager) {
+            if (manager == null) return;
+            manager._ApplyEditorSettings();
+        }
+
+#if UDONSHARP
+        private static void QueueRuntimeRefreshFlush() {
+            EditorApplication.delayCall -= FlushRuntimeManagerRefreshes;
+            EditorApplication.delayCall += FlushRuntimeManagerRefreshes;
+            EditorApplication.QueuePlayerLoopUpdate();
+        }
+
+        private static void FlushRuntimeManagerRefreshes() {
+            EditorApplication.delayCall -= FlushRuntimeManagerRefreshes;
+            LightVolumeManager[] queued = new LightVolumeManager[_queuedRuntimeManagerRefreshes.Count];
+            _queuedRuntimeManagerRefreshes.CopyTo(queued);
+            _queuedRuntimeManagerRefreshes.Clear();
+
+            for (int i = 0; i < queued.Length; i++) {
+                LightVolumeManager manager = queued[i];
+                bool reinitializeCustomTextures = _queuedRuntimeCustomTextureReinitializations.Remove(manager);
+                bool reinitializeShadowTextures = _queuedRuntimeShadowTextureReinitializations.Remove(manager);
+                if (!Application.isPlaying || manager == null) continue;
+                var backingBehaviour = UdonSharpEditorUtility.GetBackingUdonBehaviour(manager);
+                if (backingBehaviour == null) continue;
+                if (reinitializeCustomTextures) backingBehaviour.SendCustomEvent(nameof(LightVolumeManager.ReinitializeCustomTextures));
+                if (reinitializeShadowTextures) backingBehaviour.SendCustomEvent(nameof(LightVolumeManager.ReinitializeShadowTextures));
+                backingBehaviour.SendCustomEvent(nameof(LightVolumeManager.UpdateVolumes));
+            }
+        }
+#endif
     }
 
     // Mirrors scene-object edits into unified Udon proxies without restoring per-object ExecuteAlways polling.
@@ -441,13 +542,7 @@ namespace VRCLightVolumes {
             if (manager == null) return;
             LVUtils.MarkDirty(manager);
             LightVolumeManagerTools.CopyProxyToUdon(manager);
-#if UDONSHARP
-            if (Application.isPlaying) {
-                var backingBehaviour = UdonSharpEditorUtility.GetBackingUdonBehaviour(manager);
-                if (backingBehaviour != null)
-                    backingBehaviour.SendCustomEvent(nameof(LightVolumeManager.RequestUpdateVolumes));
-            }
-#endif
+            LightVolumeManagerTools.QueueRuntimeManagerRefresh(manager);
         }
 
         private static void OnChangesPublished(ref ObjectChangeEventStream stream) {
@@ -494,19 +589,6 @@ namespace VRCLightVolumes {
                         QueueAllManagers();
                         break;
                 }
-            }
-        }
-
-        internal static bool RequiresFullManagerRefresh(ObjectChangeKind kind) {
-            switch (kind) {
-                case ObjectChangeKind.ChangeScene:
-                case ObjectChangeKind.ChangeGameObjectStructure:
-                case ObjectChangeKind.ChangeGameObjectStructureHierarchy:
-                case ObjectChangeKind.DestroyGameObjectHierarchy:
-                case ObjectChangeKind.UpdatePrefabInstances:
-                    return true;
-                default:
-                    return false;
             }
         }
 

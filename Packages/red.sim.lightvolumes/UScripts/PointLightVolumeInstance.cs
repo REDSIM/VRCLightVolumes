@@ -262,6 +262,9 @@ namespace VRCLightVolumes {
         // Low level Udon hacks:
         // _old_(Name) variables are the old values of the variables
         // _onVarChange_(Name) methods (events) are called when the variable changes
+        public void _onVarChange_IsDynamic() {
+            NotifyManager(true, false, false);
+        }
         public void _onVarChange_Color() {
             if (_old_Color != Color) {
                 _old_Color = Color;
@@ -302,8 +305,8 @@ namespace VRCLightVolumes {
         // Sends this instance change to the manager when it is active.
         private void NotifyManager(bool rebuildFinalData, bool customTexturesChanged, bool shadowTexturesChanged) {
             bool wasActive = IsActive;
-            IsActive = gameObject.activeInHierarchy && Intensity != 0 && Color != Color.black;
-            if (!gameObject.activeInHierarchy) return;
+            IsActive = enabled && gameObject.activeInHierarchy && Intensity != 0 && Color != Color.black;
+            if (!enabled || !gameObject.activeInHierarchy) return;
             RegisterWithManager();
             if (LightVolumeManager == null) return;
             if (wasActive != IsActive) {
@@ -315,7 +318,7 @@ namespace VRCLightVolumes {
 
         // Registers once with the scene's single manager.
         private void RegisterWithManager() {
-            IsActive = gameObject.activeInHierarchy && Intensity != 0 && Color != Color.black;
+            IsActive = enabled && gameObject.activeInHierarchy && Intensity != 0 && Color != Color.black;
             if (LightVolumeManager == null || !gameObject.activeInHierarchy || !enabled || _isRegisteredWithManager) return;
             _isRegisteredWithManager = true;
             LightVolumeManager.InitializePointLightVolume(this);

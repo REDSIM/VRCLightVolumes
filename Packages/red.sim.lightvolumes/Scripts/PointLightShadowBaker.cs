@@ -35,9 +35,6 @@ namespace VRCLightVolumes {
             int resolution = Mathf.Max(manager.ShadowTexturesWidth, 16);
             TextureFormat textureFormat = GetManagerShadowMapBakeFormat(manager);
             TextureFormat safeTextureFormat = GetSafeShadowMomentFormat(textureFormat);
-            float nearClip = pointLightVolume.GetShadowNearClip();
-            float farClip = pointLightVolume.GetShadowFarClip();
-            if (nearClip >= farClip) nearClip = farClip * 0.5f;
 
             int oldShadowTextureFormat = manager.ShadowTextureFormat;
             bool oldPointLightInstanceEnabled = pointLightInstance.enabled;
@@ -67,7 +64,6 @@ namespace VRCLightVolumes {
                 pointLightInstance.ShadowMapTextureHasDepthSlices = false;
                 pointLightInstance.ShadowMapUsesCubemap = cubemapShadows;
                 pointLightInstance.LayerMask = pointLightVolume.LayerMask;
-                pointLightInstance.NearClip = nearClip;
                 pointLightInstance.Bias = pointLightVolume.Bias;
                 pointLightInstance.Blur = pointLightVolume.Blur;
                 pointLightInstance.ContactHardening = pointLightVolume.ContactHardening;

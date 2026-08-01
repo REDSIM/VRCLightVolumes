@@ -169,8 +169,8 @@ namespace VRCLightVolumes {
 
             bakeryVolume.gameObject.name = $"Bakery Volume - {volume.gameObject.name}";
             bakeryVolume.gameObject.tag = "EditorOnly";
-            bakeryVolume.gameObject.hideFlags |= HideFlags.HideInHierarchy;
-            bakeryVolume.hideFlags |= HideFlags.HideInInspector;
+            if ((bakeryVolume.gameObject.hideFlags & HideFlags.HideInHierarchy) == 0) bakeryVolume.gameObject.hideFlags |= HideFlags.HideInHierarchy;
+            if ((bakeryVolume.hideFlags & HideFlags.HideInInspector) == 0) bakeryVolume.hideFlags |= HideFlags.HideInInspector;
             if (bakeryVolume.transform.parent != volume.transform) Undo.SetTransformParent(bakeryVolume.transform, volume.transform, "Parent Bakery Volume");
             bakeryVolume.transform.SetLocalPositionAndRotation(Vector3.zero, Quaternion.identity);
             bakeryVolume.transform.localScale = Vector3.one;

@@ -2511,7 +2511,7 @@ namespace VRCLightVolumes.Tests {
             point.RuntimeShadowResolution = 16;
             point.RuntimeShadowDepthEncodeMaterial = CreateMaterial("Hidden/VRCLV/PointLightShadowDepthEncode");
             Camera shadowCamera = AddRuntimeShadowCamera(point);
-            float expectedFarClip = point.GetShadowFarClip();
+            const float expectedFarClip = 8f;
 
             point.BakeShadows();
 

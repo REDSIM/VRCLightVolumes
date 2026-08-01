@@ -24,7 +24,7 @@ namespace VRCLightVolumes.Tests {
         [TearDown]
         public void TearDown() {
             LightVolumeEditorUpdater.FlushPendingSceneChanges();
-            if (_scene.IsValid() && _scene.isLoaded) EditorSceneManager.CloseScene(_scene, true);
+            if (_scene.IsValid() && _scene.isLoaded) EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
             if (!string.IsNullOrEmpty(_sceneAssetPath)) AssetDatabase.DeleteAsset(_sceneAssetPath);
             if (!string.IsNullOrEmpty(_prefabAssetPath)) AssetDatabase.DeleteAsset(_prefabAssetPath);
         }
@@ -269,7 +269,7 @@ namespace VRCLightVolumes.Tests {
             Assert.That(EditorSceneManager.SaveScene(_scene, _sceneAssetPath), Is.True);
             Assert.That(GetSceneComponents<LightVolumeManager>(), Is.Empty);
 
-            EditorSceneManager.CloseScene(_scene, true);
+            EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
             _scene = EditorSceneManager.OpenScene(_sceneAssetPath, OpenSceneMode.Single);
             for (int i = 0; i < 30 && GetSceneComponents<LightVolumeManager>().Count == 0; i++) yield return null;
 
@@ -301,8 +301,13 @@ namespace VRCLightVolumes.Tests {
             _sceneAssetPath = AssetDatabase.GenerateUniqueAssetPath("Assets/VRCLightVolumesSceneSetupCleanReopenTest.unity");
             Assert.That(EditorSceneManager.SaveScene(_scene, _sceneAssetPath), Is.True);
             Assert.That(_scene.isDirty, Is.False);
-            EditorSceneManager.CloseScene(_scene, true);
+            EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
             _scene = EditorSceneManager.OpenScene(_sceneAssetPath, OpenSceneMode.Single);
+
+            // Unity and UdonSharp may dirty a scene synchronously while reconstructing Udon proxies
+            // during OpenScene. Save the temporary test scene after those external callbacks so the
+            // assertion below measures only our queued migration and onboarding pipeline.
+            Assert.That(EditorSceneManager.SaveScene(_scene), Is.True);
             Assert.That(_scene.isDirty, Is.False);
 
             // sceneOpened queues migration, onboarding, and any resulting object-change batch on
@@ -664,7 +669,7 @@ namespace VRCLightVolumes.Tests {
         private void SaveAndReopenScene() {
             _sceneAssetPath = AssetDatabase.GenerateUniqueAssetPath("Assets/VRCLightVolumesSceneSetupTest.unity");
             Assert.That(EditorSceneManager.SaveScene(_scene, _sceneAssetPath), Is.True);
-            EditorSceneManager.CloseScene(_scene, true);
+            EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
             _scene = EditorSceneManager.OpenScene(_sceneAssetPath, OpenSceneMode.Single);
         }
 

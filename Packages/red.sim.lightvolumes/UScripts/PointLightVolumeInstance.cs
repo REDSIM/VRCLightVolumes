@@ -723,9 +723,10 @@ namespace VRCLightVolumes {
             // Read current light transform and safe bake parameters.
             Vector3 bakePosition = transform.position;
             Quaternion bakeRotation = transform.rotation;
-            float bakeNearClip = GetShadowNearClip();
-            BakedFarClip = GetShadowFarClip();
-            float bakeFarClip = BakedFarClip;
+            float bakeNearClip = Mathf.Max(NearClip, 0.0001f);
+            float bakeFarClip = FarClip > 0f ? FarClip : Mathf.Sqrt(Mathf.Max(SquaredRange, 0.000001f));
+            bakeFarClip = Mathf.Max(bakeFarClip, bakeNearClip + 0.0001f);
+            BakedFarClip = bakeFarClip;
             bool receiverClipChanged = _runtimeShadowReceiverNearClip != bakeNearClip || _runtimeShadowReceiverFarClip != bakeFarClip;
             _runtimeShadowReceiverNearClip = bakeNearClip;
             _runtimeShadowReceiverFarClip = bakeFarClip;

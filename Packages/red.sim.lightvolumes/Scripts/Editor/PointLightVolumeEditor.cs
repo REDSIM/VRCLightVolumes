@@ -199,6 +199,7 @@ namespace VRCLightVolumes {
                     LightVolumeDebugGUI.DrawBool("Cubemap Source", PointLightVolume.ShadowMapTextureIsCubemap, "Whether the assigned shadow texture is a cubemap.");
                     LightVolumeDebugGUI.DrawBool("Depth Slices", PointLightVolume.ShadowMapTextureHasDepthSlices, "Whether the assigned texture already contains array slices.");
                     LightVolumeDebugGUI.DrawBool("Dynamic Source", PointLightVolume.AutoUpdateShadowMap, "Whether the shadow source is copied again at runtime.");
+                    LightVolumeDebugGUI.DrawFloat("Baked Far Clip", PointLightVolume.BakedFarClip, "Far clipping plane used to encode the current shadow map.");
                     LightVolumeDebugGUI.DrawVector3("Bake Position", PointLightVolume.ShadowBakePosition, "World-space position used when the current shadow was baked.");
                     LightVolumeDebugGUI.DrawQuaternion("Bake Rotation", PointLightVolume.ShadowBakeRotation, "World-space rotation used when the current shadow was baked.");
                 }

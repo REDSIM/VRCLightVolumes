@@ -3483,7 +3483,7 @@ namespace VRCLightVolumes {
             bool useLocalSpaceShadows = false;
             if (hasShadow) {
                 shadowNearClip = Mathf.Max(instance.NearClip, 0.0001f);
-                float requestedFarClip = instance.FarClip;
+                float requestedFarClip = instance.BakedFarClip > 0f ? instance.BakedFarClip : instance.FarClip;
                 float resolvedFarClip = requestedFarClip > 0f ? Mathf.Max(requestedFarClip, shadowNearClip + 0.0001f) : Mathf.Sqrt(Mathf.Max(squaredRange, 0.000001f));
                 if (shadowNearClip >= resolvedFarClip) resolvedFarClip = shadowNearClip + 0.0001f;
                 // Far is needed by the bake/encoder, but the receiver only needs its precomputed reciprocal range.

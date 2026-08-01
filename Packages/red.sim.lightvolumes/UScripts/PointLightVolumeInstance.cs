@@ -112,6 +112,8 @@ namespace VRCLightVolumes {
         [Min(0.0001f)] public float NearClip = 0.01f;
         [Tooltip("Far clip distance used when the shadow map was baked. 0 falls back to this light's current culling range.")]
         [Min(0)] public float FarClip = 0f;
+        // Serialized source of truth for the far clip actually used by the latest shadow bake.
+        [HideInInspector] public float BakedFarClip = 0f;
         [Tooltip("World-space bias in meters applied while baking this light's shadow map. Larger values reduce self-shadow artifacts, but can detach contact edges. Requires rebaking.")]
         [Min(0)] public float Bias = 0.1f;
         [Tooltip("Shadow blur radius applied after baking, normalized to 128x128 shadow resolution. Editor baking uses spherical shadow-space blur to reduce visible cubemap and Spot Light projection seams. " +
@@ -721,9 +723,9 @@ namespace VRCLightVolumes {
             // Read current light transform and safe bake parameters.
             Vector3 bakePosition = transform.position;
             Quaternion bakeRotation = transform.rotation;
-            float bakeNearClip = Mathf.Max(NearClip, 0.0001f);
-            float bakeFarClip = FarClip > 0f ? Mathf.Max(FarClip, bakeNearClip + 0.0001f) : Mathf.Sqrt(Mathf.Max(SquaredRange, 0.000001f));
-            if (bakeNearClip >= bakeFarClip) bakeFarClip = bakeNearClip + 0.0001f;
+            float bakeNearClip = GetShadowNearClip();
+            BakedFarClip = GetShadowFarClip();
+            float bakeFarClip = BakedFarClip;
             bool receiverClipChanged = _runtimeShadowReceiverNearClip != bakeNearClip || _runtimeShadowReceiverFarClip != bakeFarClip;
             _runtimeShadowReceiverNearClip = bakeNearClip;
             _runtimeShadowReceiverFarClip = bakeFarClip;
@@ -1319,11 +1321,11 @@ namespace VRCLightVolumes {
 
         public float GetShadowFarClip() {
             float nearClip = GetShadowNearClip();
-            float farClip = FarClip > 0f ? FarClip : GetCalculatedEditorShadowFarClip();
+            float farClip = FarClip > 0f ? FarClip : GetCalculatedShadowFarClip();
             return Mathf.Max(farClip, nearClip + 0.0001f);
         }
 
-        private float GetCalculatedEditorShadowFarClip() {
+        private float GetCalculatedShadowFarClip() {
             Vector3 lossyScale = transform.lossyScale;
             float averageScale = (Mathf.Abs(lossyScale.x) + Mathf.Abs(lossyScale.y) + Mathf.Abs(lossyScale.z)) / 3f;
             float cutoff = LightVolumeManager != null ? LightVolumeManager.LightsBrightnessCutoff : 0.35f;

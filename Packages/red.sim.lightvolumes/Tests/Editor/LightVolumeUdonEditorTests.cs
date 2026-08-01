@@ -2466,28 +2466,33 @@ namespace VRCLightVolumes.Tests {
         public void RuntimeShadowBakerUsesTargetRangeForShadowFarClip() {
             LightVolumeManager manager = CreateManager("Runtime Shadow Far Clip Manager", false);
             PointLightVolumeInstance point = CreatePointLight(manager, "Runtime Shadow Far Clip Light", true);
-            point.SquaredRange = 64;
+            point.FarClip = 0f;
+            point.Intensity = 100f;
 
             PointLightVolumeInstance baker = point;
             baker.RuntimeShadowResolution = 16;
             baker.RuntimeShadowDepthEncodeMaterial = CreateMaterial("Hidden/VRCLV/PointLightShadowDepthEncode");
             Camera shadowCamera = AddRuntimeShadowCamera(baker);
 
-            point.SquaredRange = 64;
-            point.IsRangeDirty = false;
+            float firstAutomaticFarClip = point.GetShadowFarClip();
+            point.IsRangeDirty = true;
             baker.BakeShadows();
-            Assert.That(shadowCamera.farClipPlane, Is.EqualTo(8).Within(Epsilon));
+            Assert.That(shadowCamera.farClipPlane, Is.EqualTo(firstAutomaticFarClip).Within(Epsilon));
+            Assert.That(point.BakedFarClip, Is.EqualTo(firstAutomaticFarClip).Within(Epsilon));
 
-            point.SquaredRange = 4;
-            point.IsRangeDirty = false;
+            point.Intensity = 25f;
+            float secondAutomaticFarClip = point.GetShadowFarClip();
+            point.IsRangeDirty = true;
 
             baker.BakeShadows();
-            Assert.That(shadowCamera.farClipPlane, Is.EqualTo(2).Within(Epsilon));
+            Assert.That(shadowCamera.farClipPlane, Is.EqualTo(secondAutomaticFarClip).Within(Epsilon));
+            Assert.That(point.BakedFarClip, Is.EqualTo(secondAutomaticFarClip).Within(Epsilon));
 
             point.FarClip = 3;
 
             baker.BakeShadows();
             Assert.That(shadowCamera.farClipPlane, Is.EqualTo(3).Within(Epsilon));
+            Assert.That(point.BakedFarClip, Is.EqualTo(3).Within(Epsilon));
         }
 
         // Verifies a dirty automatic range is resolved before runtime shadow depth is encoded and uploaded.
@@ -2506,17 +2511,19 @@ namespace VRCLightVolumes.Tests {
             point.RuntimeShadowResolution = 16;
             point.RuntimeShadowDepthEncodeMaterial = CreateMaterial("Hidden/VRCLV/PointLightShadowDepthEncode");
             Camera shadowCamera = AddRuntimeShadowCamera(point);
+            float expectedFarClip = point.GetShadowFarClip();
 
             point.BakeShadows();
 
             Assert.That(point.IsRangeDirty, Is.False);
             Assert.That(point.SquaredRange, Is.EqualTo(64f).Within(Epsilon));
-            Assert.That(shadowCamera.farClipPlane, Is.EqualTo(8f).Within(Epsilon));
-            Assert.That(point.RuntimeShadowDepthEncodeMaterial.GetFloat("_ShadowFarClip"), Is.EqualTo(8f).Within(Epsilon));
+            Assert.That(shadowCamera.farClipPlane, Is.EqualTo(expectedFarClip).Within(Epsilon));
+            Assert.That(point.BakedFarClip, Is.EqualTo(expectedFarClip).Within(Epsilon));
+            Assert.That(point.RuntimeShadowDepthEncodeMaterial.GetFloat("_ShadowFarClip"), Is.EqualTo(expectedFarClip).Within(Epsilon));
 
             manager.UpdateVolumes();
             Assert.That(Shader.GetGlobalVectorArray(_pointLightShadowReprojectionDataID)[0].w,
-                Is.EqualTo(-1f / (8f - 0.25f)).Within(Epsilon));
+                Is.EqualTo(-1f / (expectedFarClip - 0.25f)).Within(Epsilon));
         }
 
         // Verifies runtime shadow baking treats FarClip as an input setting and does not publish calculated range back to the target.
@@ -2524,30 +2531,56 @@ namespace VRCLightVolumes.Tests {
         public void RuntimeShadowBakerDoesNotOverwriteTargetFarClip() {
             LightVolumeManager manager = CreateManager("Runtime Shadow Published Far Clip Manager", false);
             PointLightVolumeInstance point = CreatePointLight(manager, "Runtime Shadow Published Far Clip Light", true);
-            point.SquaredRange = 64;
             point.FarClip = 0;
+            point.Intensity = 100f;
 
             PointLightVolumeInstance baker = point;
             baker.RuntimeShadowResolution = 16;
             baker.RuntimeShadowDepthEncodeMaterial = CreateMaterial("Hidden/VRCLV/PointLightShadowDepthEncode");
             Camera shadowCamera = AddRuntimeShadowCamera(baker);
 
-            point.SquaredRange = 64;
-            point.IsRangeDirty = false;
+            float firstAutomaticFarClip = point.GetShadowFarClip();
+            point.IsRangeDirty = true;
             baker.BakeShadows();
-            Assert.That(shadowCamera.farClipPlane, Is.EqualTo(8).Within(Epsilon));
+            Assert.That(shadowCamera.farClipPlane, Is.EqualTo(firstAutomaticFarClip).Within(Epsilon));
             Assert.That(point.FarClip, Is.EqualTo(0).Within(Epsilon));
+            Assert.That(point.BakedFarClip, Is.EqualTo(firstAutomaticFarClip).Within(Epsilon));
 
-            point.SquaredRange = 4;
-            point.IsRangeDirty = false;
+            point.Intensity = 25f;
+            float secondAutomaticFarClip = point.GetShadowFarClip();
+            point.IsRangeDirty = true;
             baker.BakeShadows();
-            Assert.That(shadowCamera.farClipPlane, Is.EqualTo(2).Within(Epsilon));
+            Assert.That(shadowCamera.farClipPlane, Is.EqualTo(secondAutomaticFarClip).Within(Epsilon));
             Assert.That(point.FarClip, Is.EqualTo(0).Within(Epsilon));
+            Assert.That(point.BakedFarClip, Is.EqualTo(secondAutomaticFarClip).Within(Epsilon));
 
             point.FarClip = 5;
             baker.BakeShadows();
             Assert.That(shadowCamera.farClipPlane, Is.EqualTo(5).Within(Epsilon));
             Assert.That(point.FarClip, Is.EqualTo(5).Within(Epsilon));
+            Assert.That(point.BakedFarClip, Is.EqualTo(5).Within(Epsilon));
+        }
+
+        // Verifies automatic baking publishes its resolved far clip without replacing the 0 authoring mode.
+        [Test]
+        public void AutomaticShadowBakeKeepsFarClipSettingAtZero() {
+            LightVolumeManager manager = CreateManager("Editor Shadow Far Clip Manager", false);
+            PointLightVolumeInstance point = CreatePointLight(manager, "Editor Shadow Far Clip Light", true);
+            point.NearClip = 0.25f;
+            point.FarClip = 0f;
+            point.RuntimeShadowResolution = 16;
+            point.RuntimeShadowDepthEncodeMaterial = CreateMaterial("Hidden/VRCLV/PointLightShadowDepthEncode");
+            Camera shadowCamera = AddRuntimeShadowCamera(point);
+            float expectedFarClip = point.GetShadowFarClip();
+
+            point.BakeShadows();
+
+            Assert.That(shadowCamera.farClipPlane, Is.EqualTo(expectedFarClip).Within(Epsilon));
+            Assert.That(point.FarClip, Is.EqualTo(0f).Within(Epsilon));
+            Assert.That(point.BakedFarClip, Is.EqualTo(expectedFarClip).Within(Epsilon));
+            manager.UpdateVolumes();
+            Assert.That(Shader.GetGlobalVectorArray(_pointLightShadowReprojectionDataID)[0].w,
+                Is.EqualTo(-1f / (expectedFarClip - 0.25f)).Within(Epsilon));
         }
 
         // Verifies runtime shadow baking clamps unsafe bake inputs locally without normalizing public fields.
@@ -4345,7 +4378,8 @@ namespace VRCLightVolumes.Tests {
         // Computes the positive reciprocal shadow depth range precomputed by current managers.
         private static float ExpectedShadowInvDepthRange(PointLightVolumeInstance instance) {
             float nearClip = Mathf.Max(instance.NearClip, 0.0001f);
-            float farClip = instance.FarClip > 0f ? Mathf.Max(instance.FarClip, nearClip + 0.0001f) : Mathf.Sqrt(Mathf.Max(instance.SquaredRange, 0.000001f));
+            float requestedFarClip = instance.BakedFarClip > 0f ? instance.BakedFarClip : instance.FarClip;
+            float farClip = requestedFarClip > 0f ? Mathf.Max(requestedFarClip, nearClip + 0.0001f) : Mathf.Sqrt(Mathf.Max(instance.SquaredRange, 0.000001f));
             if (nearClip >= farClip) farClip = nearClip + 0.0001f;
             return 1f / Mathf.Max(farClip - nearClip, 0.0001f);
         }

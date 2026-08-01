@@ -68,7 +68,6 @@ namespace VRCLightVolumes {
                 pointLightInstance.ShadowMapUsesCubemap = cubemapShadows;
                 pointLightInstance.LayerMask = pointLightVolume.LayerMask;
                 pointLightInstance.NearClip = nearClip;
-                pointLightInstance.FarClip = farClip;
                 pointLightInstance.Bias = pointLightVolume.Bias;
                 pointLightInstance.Blur = pointLightVolume.Blur;
                 pointLightInstance.ContactHardening = pointLightVolume.ContactHardening;

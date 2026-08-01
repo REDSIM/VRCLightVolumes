@@ -73,6 +73,7 @@ namespace VRCLightVolumes {
             }
 
             MigrateLoadedScenes();
+            LightVolumeEditorUpdater.QueueLoadedSceneOnboarding();
         }
 
         // Migrates all loaded scenes. A clean unified scene is not dirtied.
@@ -84,14 +85,16 @@ namespace VRCLightVolumes {
             int blocked = 0;
             for (int i = 0; i < SceneManager.sceneCount; i++) {
                 Scene scene = SceneManager.GetSceneAt(i);
-                if (!scene.isLoaded) continue;
+                if (!LightVolumeSceneSetup.IsMainStageScene(scene)) continue;
                 migrated += MigrateScene(scene, ref blocked);
             }
             if (blocked > 0) Debug.LogWarning($"[LightVolume] Left {blocked} legacy component(s) unchanged because neither a coherent pure-v2 graph nor a complete existing unified Udon graph was available. Existing Udon components were not repaired or replaced.");
             return migrated;
         }
 
-        private static int MigrateScene(Scene scene, ref int blocked) {
+        internal static int MigrateScene(Scene scene, ref int blocked) {
+            if (!LightVolumeSceneSetup.IsMainStageScene(scene)) return 0;
+
             // Disk-only packed fields are authoritative only before anything has modified the loaded scene.
             // Never replay stale saved YAML over unsaved proxy edits after a domain reload.
             bool savedSceneYamlIsAuthoritative = !scene.isDirty;
@@ -257,6 +260,152 @@ namespace VRCLightVolumes {
                 EditorSceneManager.MarkSceneDirty(scene);
             }
             return removed;
+        }
+
+        // Migrates obsolete helper components only inside a hierarchy that has just entered a real
+        // scene. Existing unified prefab components are reused; UdonSharp cannot safely create a new
+        // backing behaviour as an added override on a prefab instance, so that case stays untouched.
+        internal static int MigrateHierarchy(GameObject root, LightVolumeManager manager, out int blocked) {
+            blocked = 0;
+            if (!LightVolumeSceneSetup.IsMainStageSceneObject(root)
+                || !IsExactReadyRuntimeComponent(manager)
+                || manager.gameObject.scene != root.scene) return 0;
+
+            int removed = 0;
+            List<LightVolume> volumes = new List<LightVolume>();
+            root.GetComponentsInChildren(true, volumes);
+            for (int i = 0; i < volumes.Count; i++) {
+                if (TryMigrateHierarchyVolume(volumes[i], manager)) removed++;
+                else blocked++;
+            }
+
+            List<PointLightVolume> pointLights = new List<PointLightVolume>();
+            root.GetComponentsInChildren(true, pointLights);
+            for (int i = 0; i < pointLights.Count; i++) {
+                if (TryMigrateHierarchyPointLight(pointLights[i], manager)) removed++;
+                else blocked++;
+            }
+            return removed;
+        }
+
+        internal static bool CanMigrateHierarchy(GameObject root) {
+            if (root == null) return false;
+            List<LightVolume> volumes = new List<LightVolume>();
+            root.GetComponentsInChildren(true, volumes);
+            for (int i = 0; i < volumes.Count; i++) {
+                if (CanMigrateHierarchyComponent<LightVolume, LightVolumeInstance>(volumes[i])) return true;
+            }
+
+            List<PointLightVolume> pointLights = new List<PointLightVolume>();
+            root.GetComponentsInChildren(true, pointLights);
+            for (int i = 0; i < pointLights.Count; i++) {
+                if (CanMigrateHierarchyComponent<PointLightVolume, PointLightVolumeInstance>(pointLights[i])) return true;
+            }
+            return false;
+        }
+
+        internal static bool IsReadyRuntimeComponent(Component component) {
+            if (component is LightVolumeManager manager) return IsExactReadyRuntimeComponent(manager);
+            if (component is LightVolumeInstance volume) return IsExactReadyRuntimeComponent(volume);
+            if (component is PointLightVolumeInstance pointLight) return IsExactReadyRuntimeComponent(pointLight);
+            return false;
+        }
+
+        private static bool CanMigrateHierarchyComponent<TLegacy, TUnified>(TLegacy source)
+            where TLegacy : Component where TUnified : Component {
+            if (source == null || source.GetComponents<TLegacy>().Length != 1) return false;
+            TUnified[] destinations = source.GetComponents<TUnified>();
+            if (destinations.Length == 1) return IsExactReadyRuntimeComponent(destinations[0]);
+            return destinations.Length == 0
+                && !PrefabUtility.IsPartOfPrefabInstance(source.gameObject)
+                && !HasUnmatchedUdonSharpBacking(source.gameObject);
+        }
+
+        private static bool TryMigrateHierarchyVolume(LightVolume source, LightVolumeManager manager) {
+            if (!TryResolveOrCreateHierarchyDestination(source, out LightVolumeInstance destination, out bool created)) return false;
+            try {
+                Undo.RecordObject(destination, UndoName);
+                CopyLegacyLightVolume(source, destination);
+                if (!LightVolumeManagerTools.EnsureRegistered(manager, destination, UndoName, out _)) throw new InvalidOperationException("Could not register LightVolumeInstance.");
+                MarkDirty(destination);
+                CopyProxyToUdon(destination);
+                if (!IsRegistered(manager.LightVolumeInstances, destination, manager)) throw new InvalidOperationException("LightVolumeInstance registration did not persist.");
+                RemoveLegacyComponent(source);
+                return true;
+            } catch (Exception exception) {
+                if (created) {
+                    Undo.RecordObject(manager, UndoName);
+                    manager.DeinitializeLightVolume(destination);
+                    MarkDirty(manager);
+                    CopyProxyToUdon(manager);
+                    RollbackCreatedProxies<LightVolumeInstance>(source.gameObject);
+                }
+                Debug.LogWarning($"[LightVolume] Could not migrate legacy LightVolume on '{source.gameObject.name}'. It was left unchanged. {exception.Message}", source);
+                return false;
+            }
+        }
+
+        private static bool TryMigrateHierarchyPointLight(PointLightVolume source, LightVolumeManager manager) {
+            if (!TryResolveOrCreateHierarchyDestination(source, out PointLightVolumeInstance destination, out bool created)) return false;
+            try {
+                Undo.RecordObject(destination, UndoName);
+                CopyLegacyPointLight(source, destination);
+                if (!LightVolumeManagerTools.EnsureRegistered(manager, destination, UndoName, out _)) throw new InvalidOperationException("Could not register PointLightVolumeInstance.");
+                destination.EditorApplyAuthoringData(true, true, false);
+                destination.CacheEditorObservedValues();
+                MarkDirty(destination);
+                CopyProxyToUdon(destination);
+                if (!IsRegistered(manager.PointLightVolumeInstances, destination, manager)) throw new InvalidOperationException("PointLightVolumeInstance registration did not persist.");
+                RemoveLegacyComponent(source);
+                return true;
+            } catch (Exception exception) {
+                if (created) {
+                    Undo.RecordObject(manager, UndoName);
+                    manager.DeinitializePointLightVolume(destination, true, true);
+                    MarkDirty(manager);
+                    CopyProxyToUdon(manager);
+                    RollbackCreatedProxies<PointLightVolumeInstance>(source.gameObject);
+                }
+                Debug.LogWarning($"[LightVolume] Could not migrate legacy PointLightVolume on '{source.gameObject.name}'. It was left unchanged. {exception.Message}", source);
+                return false;
+            }
+        }
+
+        private static bool TryResolveOrCreateHierarchyDestination<TLegacy, TUnified>(TLegacy source, out TUnified destination, out bool created)
+            where TLegacy : Component where TUnified : UdonSharpBehaviour {
+            destination = null;
+            created = false;
+            if (source == null || source.GetComponents<TLegacy>().Length != 1) return false;
+
+            TUnified[] destinations = source.GetComponents<TUnified>();
+            if (destinations.Length == 1) {
+                destination = destinations[0];
+                return IsExactReadyRuntimeComponent(destination);
+            }
+            if (destinations.Length != 0
+                || PrefabUtility.IsPartOfPrefabInstance(source.gameObject)
+                || HasUnmatchedUdonSharpBacking(source.gameObject)) return false;
+
+            try {
+                destination = UdonSharpUndo.AddComponent<TUnified>(source.gameObject);
+                created = true;
+            } catch (Exception) {
+                RollbackCreatedProxies<TUnified>(source.gameObject);
+                destination = null;
+                return false;
+            }
+            if (IsExactReadyRuntimeComponent(destination)) return true;
+            RollbackCreatedProxies<TUnified>(source.gameObject);
+            destination = null;
+            created = false;
+            return false;
+        }
+
+        private static bool IsRegistered<T>(T[] registry, T component, LightVolumeManager manager) where T : Component {
+            if (registry == null || Array.IndexOf(registry, component) < 0) return false;
+            if (component is LightVolumeInstance volume) return volume.LightVolumeManager == manager;
+            if (component is PointLightVolumeInstance pointLight) return pointLight.LightVolumeManager == manager;
+            return false;
         }
 
         // UdonSharp proxy lifecycle events do not run in Edit Mode. Refresh valid managers only
@@ -622,6 +771,7 @@ namespace VRCLightVolumes {
         }
 
         private static void CopyLegacyLightVolume(LightVolume source, LightVolumeInstance destination) {
+            destination.enabled = source.enabled;
             destination.IsDynamic = source.Dynamic;
             destination.IsAdditive = source.Additive;
             destination.Color = source.Color;
@@ -645,6 +795,7 @@ namespace VRCLightVolumes {
         }
 
         private static void CopyLegacyPointLight(PointLightVolume source, PointLightVolumeInstance destination) {
+            destination.enabled = source.enabled;
             int lightType = (int)source.Type;
             int projection = (int)source.Projection;
             UnityEngine.Object falloffLut = source.FalloffLUT;
@@ -710,6 +861,7 @@ namespace VRCLightVolumes {
         }
 
         private static void CopyLegacySetup(LightVolumeSetup source, LightVolumeManager destination) {
+            destination.enabled = source.enabled;
             destination.CustomTexturesWidth = (int)source.CookieResolution;
             destination.CustomTexturesHeight = destination.CustomTexturesWidth;
             destination.LightsBrightnessCutoff = source.BrightnessCutoff;

@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
 using UnityEditor;
+using UnityEditor.SceneManagement;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 
 namespace VRCLightVolumes {
     // Centralizes event-driven and continuous Edit Mode updates without per-object polling.
@@ -11,9 +13,11 @@ namespace VRCLightVolumes {
         private static readonly HashSet<LightVolumeInstance> _volumes = new HashSet<LightVolumeInstance>();
         private static readonly HashSet<PointLightVolumeInstance> _pointLights = new HashSet<PointLightVolumeInstance>();
         private static readonly HashSet<GameObject> _hierarchyRoots = new HashSet<GameObject>();
+        private static readonly HashSet<GameObject> _onboardingRoots = new HashSet<GameObject>();
         private static readonly List<LightVolumeManager> _managerBuffer = new List<LightVolumeManager>();
         private static readonly List<LightVolumeInstance> _volumeBuffer = new List<LightVolumeInstance>();
         private static readonly List<PointLightVolumeInstance> _pointLightBuffer = new List<PointLightVolumeInstance>();
+        private static readonly List<GameObject> _onboardingRootsInOrder = new List<GameObject>();
         private static LightVolumeManager[] _loadedManagers = Array.Empty<LightVolumeManager>();
         private static bool _refreshAllManagers;
         private static bool _flushQueued;
@@ -29,7 +33,18 @@ namespace VRCLightVolumes {
             EditorApplication.hierarchyChanged += RefreshLoadedManagers;
             EditorApplication.update -= UpdateAnimatedCookies;
             EditorApplication.update += UpdateAnimatedCookies;
+#if !UDONSHARP
+            EditorSceneManager.sceneOpened -= OnSceneOpened;
+            EditorSceneManager.sceneOpened += OnSceneOpened;
+            QueueLoadedSceneOnboarding();
+#endif
         }
+
+#if !UDONSHARP
+        private static void OnSceneOpened(Scene scene, OpenSceneMode mode) {
+            QueueSceneOnboarding(scene);
+        }
+#endif
 
         private static void RefreshLoadedManagers() {
             _loadedManagers = UnityEngine.Object.FindObjectsByType<LightVolumeManager>(FindObjectsInactive.Include, FindObjectsSortMode.None);
@@ -64,16 +79,19 @@ namespace VRCLightVolumes {
                         break;
                     case ObjectChangeKind.CreateGameObjectHierarchy:
                         stream.GetCreateGameObjectHierarchyEvent(i, out CreateGameObjectHierarchyEventArgs createData);
-                        QueueHierarchy(GetGameObject(createData.instanceId));
+                        GameObject createdObject = GetGameObject(createData.instanceId);
+                        QueueHierarchyForSetup(createdObject);
                         break;
                     case ObjectChangeKind.ChangeGameObjectStructure:
                         stream.GetChangeGameObjectStructureEvent(i, out ChangeGameObjectStructureEventArgs structureData);
-                        QueueHierarchy(GetGameObject(structureData.instanceId));
+                        GameObject structureObject = GetGameObject(structureData.instanceId);
+                        QueueHierarchyForSetup(structureObject);
                         QueueAllManagers();
                         break;
                     case ObjectChangeKind.ChangeGameObjectStructureHierarchy:
                         stream.GetChangeGameObjectStructureHierarchyEvent(i, out ChangeGameObjectStructureHierarchyEventArgs structureHierarchyData);
-                        QueueHierarchy(GetGameObject(structureHierarchyData.instanceId));
+                        GameObject structureHierarchyObject = GetGameObject(structureHierarchyData.instanceId);
+                        QueueHierarchyForSetup(structureHierarchyObject);
                         QueueAllManagers();
                         break;
                     case ObjectChangeKind.ChangeGameObjectOrComponentProperties:
@@ -101,8 +119,35 @@ namespace VRCLightVolumes {
             }
         }
 
+        private static void QueueHierarchyForSetup(GameObject root) {
+            QueueHierarchyOnboarding(root);
+            QueueHierarchy(root);
+        }
+
         private static GameObject GetGameObject(int instanceId) {
-            return EditorUtility.InstanceIDToObject(instanceId) as GameObject;
+            UnityEngine.Object changedObject = EditorUtility.InstanceIDToObject(instanceId);
+            if (changedObject is GameObject gameObject) return gameObject;
+            return changedObject is Component component ? component.gameObject : null;
+        }
+
+        internal static void QueueHierarchyOnboarding(GameObject root) {
+            if (!LightVolumeSceneSetup.IsMainStageSceneObject(root) || !LightVolumeSceneSetup.ContainsAuthoringComponents(root) || !_onboardingRoots.Add(root)) return;
+            _onboardingRootsInOrder.Add(root);
+            QueueFlush();
+        }
+
+        // UdonSharp calls this after its coherent legacy migration pass. Without UdonSharp there is
+        // no migration phase, so the updater queues each opened scene directly.
+        internal static void QueueLoadedSceneOnboarding() {
+            for (int sceneIndex = 0; sceneIndex < SceneManager.sceneCount; sceneIndex++) {
+                QueueSceneOnboarding(SceneManager.GetSceneAt(sceneIndex));
+            }
+        }
+
+        private static void QueueSceneOnboarding(Scene scene) {
+            if (!LightVolumeSceneSetup.IsMainStageScene(scene)) return;
+            GameObject[] roots = scene.GetRootGameObjects();
+            for (int rootIndex = 0; rootIndex < roots.Length; rootIndex++) QueueHierarchyOnboarding(roots[rootIndex]);
         }
 
         private static void QueueObject(UnityEngine.Object changedObject) {
@@ -146,7 +191,7 @@ namespace VRCLightVolumes {
 
         private static void QueueManager(LightVolumeManager manager) {
             if (IsEditableSceneObject(manager)) _managers.Add(manager);
-            QueueFlush();
+            if (!_isFlushing) QueueFlush();
         }
 
         private static void QueueAllManagers() {
@@ -180,6 +225,12 @@ namespace VRCLightVolumes {
 
             _isFlushing = true;
             try {
+                for (int i = 0; i < _onboardingRootsInOrder.Count; i++) {
+                    GameObject root = _onboardingRootsInOrder[i];
+                    if (!LightVolumeSceneSetup.OnboardHierarchy(root, out LightVolumeManager manager)) continue;
+                    QueueHierarchy(root);
+                    _managers.Add(manager);
+                }
                 foreach (LightVolumeInstance volume in _volumes) {
                     if (!IsEditableSceneObject(volume)) continue;
                     LightVolumeTools.ApplyRuntimeState(volume, false);
@@ -227,6 +278,8 @@ namespace VRCLightVolumes {
             _volumes.Clear();
             _pointLights.Clear();
             _hierarchyRoots.Clear();
+            _onboardingRoots.Clear();
+            _onboardingRootsInOrder.Clear();
             _managerBuffer.Clear();
             _volumeBuffer.Clear();
             _pointLightBuffer.Clear();

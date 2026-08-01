@@ -119,9 +119,9 @@ namespace VRCLightVolumes {
             EditorGUILayout.Space(EditorGUIUtility.singleLineHeight * 0.5f);
 
             if (LVUtils.IsInPrefabAsset(_manager))
-                EditorGUILayout.HelpBox("This component is part of a prefab asset. Edit the instance placed in a scene.", MessageType.Warning);
+                EditorGUILayout.HelpBox("This component is part of a prefab asset.\nEdit the instance placed in a scene.", MessageType.Warning);
             if (_multipleManagers)
-                EditorGUILayout.HelpBox("Multiple Light Volume Managers were found in this scene. Only one is supported; remove the extra Manager before building.", MessageType.Error);
+                EditorGUILayout.HelpBox("Multiple Light Volume Managers were found in this scene!\nRemove the extra Managers before building!", MessageType.Error);
 
             RefreshStats();
             GUILayout.Label($"Data size in VRAM: <b>{FormatMegabytes(_cachedVramBytes)} MB</b>", RichLabelStyle);
@@ -217,11 +217,7 @@ namespace VRCLightVolumes {
             float titleX = rect.x + 15f;
             float titleRight = rect.xMax;
             if (!pointLights) {
-                weightRect = new Rect(
-                    rect.xMax - rightInset - RegistryWeightWidth + 3f,
-                    rect.y,
-                    RegistryWeightWidth - 3f,
-                    rect.height);
+                weightRect = new Rect(rect.xMax - rightInset - RegistryWeightWidth + 3f, rect.y, RegistryWeightWidth - 3f, rect.height);
                 titleRight = weightRect.x;
             }
             EditorGUI.LabelField(new Rect(titleX, rect.y, Mathf.Max(0f, titleRight - titleX), rect.height), title);
@@ -391,9 +387,7 @@ namespace VRCLightVolumes {
         private void DrawDebugSection() {
             GUILayout.Space(InspectorSectionSpacing);
             EditorGUI.BeginChangeCheck();
-            _debugExpanded = EditorGUILayout.BeginFoldoutHeaderGroup(
-                _debugExpanded,
-                new GUIContent("Debug", "Shows read-only live Manager data for troubleshooting."));
+            _debugExpanded = EditorGUILayout.BeginFoldoutHeaderGroup(_debugExpanded, new GUIContent("Debug", "Shows read-only live Manager data for troubleshooting."));
             if (EditorGUI.EndChangeCheck()) {
                 SessionState.SetBool(DebugFoldoutSessionKey, _debugExpanded);
             }
@@ -402,51 +396,31 @@ namespace VRCLightVolumes {
                 if (!EditorApplication.isPlaying)
                     EditorGUILayout.HelpBox("Live values are populated in Play Mode. Runtime texture arrays are rebuilt on initialization and are not stored in the build.", MessageType.Info);
 
-                LightVolumeDebugGUI.DrawGroupHeader(
-                    "Runtime Texture Arrays",
-                    false,
-                    "Live texture arrays rebuilt by the Manager and sampled by shaders.");
-                LightVolumeDebugGUI.DrawObject(
-                    "Cookie Array",
-                    _manager.CustomTextures,
-                    typeof(RenderTexture),
-                    "The live cookie, LUT and cubemap array. Its serialized reference is cleared for builds and the Manager rebuilds it at runtime.");
+                LightVolumeDebugGUI.DrawGroupHeader("Runtime Texture Arrays", false, "Live texture arrays rebuilt by the Manager and sampled by shaders.");
+                LightVolumeDebugGUI.DrawObject("Cookie Array", _manager.CustomTextures, typeof(RenderTexture), "The live cookie, LUT and cubemap array. Its serialized reference is cleared for builds and the Manager rebuilds it at runtime.");
                 LightVolumeDebugGUI.DrawInt("Cookie Slices", GetTextureDepth(_manager.CustomTextures), "Number of allocated array slices. Each cubemap uses six slices.");
                 LightVolumeDebugGUI.DrawInt("Cookie Cubemaps", _manager.CubemapsCount, "Number of cubemap cookie sources packed into the live array.");
                 LightVolumeDebugGUI.DrawBool("Dynamic Cookie Sources", _manager.HasAutoCustomTextureUpdates, "Whether any cookie source must be copied again at runtime.");
 
                 GUILayout.Space(EditorGUIUtility.standardVerticalSpacing);
-                LightVolumeDebugGUI.DrawObject(
-                    "Shadow Array",
-                    _manager.ShadowTextures,
-                    typeof(RenderTexture),
-                    "The live shadow array. Its serialized reference is cleared for builds and the Manager rebuilds it at runtime.");
+                LightVolumeDebugGUI.DrawObject("Shadow Array", _manager.ShadowTextures, typeof(RenderTexture), "The live shadow array. Its serialized reference is cleared for builds and the Manager rebuilds it at runtime.");
                 LightVolumeDebugGUI.DrawInt("Shadow Slices", GetTextureDepth(_manager.ShadowTextures), "Number of allocated array slices. Each cubemap shadow uses six slices.");
                 LightVolumeDebugGUI.DrawInt("Shadow Maps", _manager.ShadowMapsCount, "Number of 2D shadow maps packed into the live array.");
                 LightVolumeDebugGUI.DrawInt("Shadow Cubemaps", _manager.ShadowCubemapsCount, "Number of cubemap shadow sources packed into the live array.");
                 LightVolumeDebugGUI.DrawBool("Dynamic Shadow Sources", _manager.HasAutoShadowTextureUpdates, "Whether any shadow source must be copied again at runtime.");
 
-                LightVolumeDebugGUI.DrawGroupHeader(
-                    "Froxel Clustering",
-                    true,
-                    "Live clustering textures and the current clustering state.");
+                LightVolumeDebugGUI.DrawGroupHeader("Froxel Clustering", true, "Live clustering textures and the current clustering state.");
                 LightVolumeDebugGUI.DrawObject("Fine Cluster Mask", _manager.FineClusterMaskPreview, typeof(RenderTexture), "The detailed clustered-light mask currently sampled by shaders.");
                 LightVolumeDebugGUI.DrawObject("Coarse Cluster Mask", _manager.CoarseClusterMaskPreview, typeof(RenderTexture), "The lower-resolution mask used to reject unrelated lights before building the Fine mask.");
                 LightVolumeDebugGUI.DrawText("Clustering Status", GetClusteringStatus(), "Current runtime state of froxel clustering.");
 
-                LightVolumeDebugGUI.DrawGroupHeader(
-                    "Runtime State",
-                    true,
-                    "Live initialization state and the counts currently uploaded by the Manager.");
+                LightVolumeDebugGUI.DrawGroupHeader("Runtime State", true, "Live initialization state and the counts currently uploaded by the Manager.");
                 LightVolumeDebugGUI.DrawBool("Runtime Initialized", _manager.RuntimeInitializedPreview, "Whether the Manager has completed runtime initialization.");
                 LightVolumeDebugGUI.DrawInt("Active Light Volumes", _manager.EnabledCount, "Light Volumes currently uploaded to shaders.");
                 LightVolumeDebugGUI.DrawInt("Active Point Lights", _manager.ActivePointLightCountPreview, "Point Light Volumes currently uploaded to shaders.");
                 LightVolumeDebugGUI.DrawInt("Active Shadows", _manager.ActiveShadowCountPreview, "Uploaded Point Light Volumes that currently use a valid shadow map.");
 
-                LightVolumeDebugGUI.DrawGroupHeader(
-                    "Runtime Materials",
-                    true,
-                    "Materials used internally by runtime texture and clustering passes.");
+                LightVolumeDebugGUI.DrawGroupHeader("Runtime Materials", true, "Materials used internally by runtime texture and clustering passes.");
                 LightVolumeDebugGUI.DrawObject("Cookie Copy Material", _manager.CubemapFaceMaterial, typeof(Material), "Copies cubemap faces into the runtime cookie array.");
                 LightVolumeDebugGUI.DrawObject("Shadow Depth Material", _manager.RuntimeShadowDepthEncodeMaterial, typeof(Material), "Encodes shadow-camera depth into runtime shadow textures.");
                 LightVolumeDebugGUI.DrawObject("Shadow Blur Material", _manager.RuntimeShadowBlurMaterial, typeof(Material), "Filters runtime shadow textures.");
@@ -483,8 +457,7 @@ namespace VRCLightVolumes {
             float maxScrollY = Mathf.Max(0f, contentHeight - viewportHeight);
             bool showScrollbar = maxScrollY > 0.5f;
             float scrollbarWidth = showScrollbar ? Mathf.Max(16f, GUI.skin.verticalScrollbar.fixedWidth) : 0f;
-            float headerRightInset = 1f + ReorderableList.Defaults.padding
-                + (showScrollbar ? RegistryScrollbarRightInset + scrollbarWidth : 0f);
+            float headerRightInset = 1f + ReorderableList.Defaults.padding + (showScrollbar ? RegistryScrollbarRightInset + scrollbarWidth : 0f);
 
             if (Event.current.type == EventType.Repaint) {
                 ReorderableList.defaultBehaviours.boxBackground.Draw(bodyRect, false, false, false, false);

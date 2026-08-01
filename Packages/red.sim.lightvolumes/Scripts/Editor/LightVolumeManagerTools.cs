@@ -102,6 +102,71 @@ namespace VRCLightVolumes {
             }
         }
 
+        // Registers an authoring component without invoking its runtime OnEnable path. This is used
+        // both by hierarchy creation and by scene-instance prefab onboarding. Success and mutation
+        // are separate so callers cannot mistake an already-correct registration for a new change.
+        internal static bool EnsureRegistered(LightVolumeManager manager, LightVolumeInstance volume, string undoName, out bool changed) {
+            changed = false;
+            if (manager == null || volume == null) return false;
+
+            LightVolumeInstance[] volumes = manager.LightVolumeInstances ?? Array.Empty<LightVolumeInstance>();
+            int index = Array.IndexOf(volumes, volume);
+            bool managerChanged = false;
+            if (index < 0) {
+                Undo.RecordObject(manager, undoName);
+                index = volumes.Length;
+                Array.Resize(ref volumes, index + 1);
+                volumes[index] = volume;
+                manager.LightVolumeInstances = volumes;
+                LVUtils.MarkDirty(manager);
+                changed = true;
+                managerChanged = true;
+            }
+
+            if (volume.LightVolumeManager != manager || volume.RegistryOrder != index) {
+                Undo.RecordObject(volume, undoName);
+                volume.LightVolumeManager = manager;
+                volume.RegistryOrder = index;
+                LVUtils.MarkDirty(volume);
+                CopyProxyToUdon(volume);
+                changed = true;
+            }
+
+            if (managerChanged) CopyProxyToUdon(manager);
+            return true;
+        }
+
+        internal static bool EnsureRegistered(LightVolumeManager manager, PointLightVolumeInstance pointLight, string undoName, out bool changed) {
+            changed = false;
+            if (manager == null || pointLight == null) return false;
+
+            PointLightVolumeInstance[] pointLights = manager.PointLightVolumeInstances ?? Array.Empty<PointLightVolumeInstance>();
+            int index = Array.IndexOf(pointLights, pointLight);
+            bool managerChanged = false;
+            if (index < 0) {
+                Undo.RecordObject(manager, undoName);
+                index = pointLights.Length;
+                Array.Resize(ref pointLights, index + 1);
+                pointLights[index] = pointLight;
+                manager.PointLightVolumeInstances = pointLights;
+                LVUtils.MarkDirty(manager);
+                changed = true;
+                managerChanged = true;
+            }
+
+            if (pointLight.LightVolumeManager != manager || pointLight.RegistryOrder != index) {
+                Undo.RecordObject(pointLight, undoName);
+                pointLight.LightVolumeManager = manager;
+                pointLight.RegistryOrder = index;
+                LVUtils.MarkDirty(pointLight);
+                CopyProxyToUdon(pointLight);
+                changed = true;
+            }
+
+            if (managerChanged) CopyProxyToUdon(manager);
+            return true;
+        }
+
         private static void SynchronizeLightVolumeMetadata(LightVolumeManager manager, LightVolumeInstance[] volumes) {
             for (int i = 0; i < volumes.Length; i++) {
                 LightVolumeInstance volume = volumes[i];

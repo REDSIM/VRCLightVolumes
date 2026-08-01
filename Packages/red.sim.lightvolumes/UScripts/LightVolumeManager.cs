@@ -110,7 +110,10 @@ namespace VRCLightVolumes {
         // Persistent authoring settings live on the Udon proxy as well. Keeping them here removes
         // the editor-only Setup component without adding runtime work; heavy asset references are
         // cleared from the temporary build scene by the build preprocessor.
-        [HideInInspector] public int BakingMode = 0; // 0 = Progressive, 1 = Bakery
+        private const int BakingModeProgressive = 0;
+        private const int BakingModeBakery = 1;
+        private const int BakingModeCustomLightmapper = 2;
+        [HideInInspector] public int BakingMode = BakingModeProgressive; // 0 = Progressive, 1 = Bakery, 2 = Custom Lightmapper
         [HideInInspector] public int VolumeBitmask = 1;
         [HideInInspector] public int ProbeBitmask = 1;
         [HideInInspector] public bool Denoise = true;
@@ -153,7 +156,7 @@ namespace VRCLightVolumes {
         // Lets the editor assembly persist proxy changes without making this Udon assembly depend on editor tools.
         public static event Action<LightVolumeManager> AtlasPostProcessorsChanged;
 
-        public bool IsBakeryMode => BakingMode == 1;
+        public bool IsBakeryMode => BakingMode == BakingModeBakery;
 #endif
 
         [Tooltip("Runtime texture array used for point light cubemaps, LUTs and cookies.")]

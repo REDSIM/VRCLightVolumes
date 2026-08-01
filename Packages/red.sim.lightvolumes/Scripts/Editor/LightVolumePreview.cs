@@ -22,10 +22,10 @@ namespace VRCLightVolumes {
         static readonly HashSet<SceneView> SetupViews = new HashSet<SceneView>();
 
         static SceneLightVolumeDebugModes() {
-            L1Mode = SceneView.AddCameraMode("VRC Light Volumes L1", Section);
-            L0Mode = SceneView.AddCameraMode("VRC Light Volumes L0", Section);
-            FineMode = SceneView.AddCameraMode("VRC Fine Froxel Clustering", Section);
-            CoarseMode = SceneView.AddCameraMode("VRC Coarse Froxel Clustering", Section);
+            L1Mode = SceneView.AddCameraMode("VRCLV SH L1", Section);
+            L0Mode = SceneView.AddCameraMode("VRCLV SH L0", Section);
+            FineMode = SceneView.AddCameraMode("VRCLV Fine Clustering", Section);
+            CoarseMode = SceneView.AddCameraMode("VRCLV Coarse Clustering", Section);
 
             SceneView.beforeSceneGui += SetupSceneView;
         }

@@ -24,8 +24,8 @@ namespace VRCLightVolumes {
         private static readonly string[] TextureResolutionLabels = { "16 x 16", "32 x 32", "64 x 64", "128 x 128", "256 x 256", "512 x 512", "1024 x 1024", "2048 x 2048" };
         private static readonly int[] CoarseValues = { 2, 4, 8 };
         private static readonly string[] CoarseLabels = { "2x", "4x", "8x" };
-        private static readonly int[] BakingValues = { 0, 1 };
-        private static readonly string[] BakingLabels = { "Progressive", "Bakery" };
+        private static readonly int[] BakingValues = { 0, 1, 2 };
+        private static readonly string[] BakingLabels = { "Progressive", "Bakery", "Custom Lightmapper" };
         private static readonly int[] DownscaleValues = { 0, 1, 2, 3 };
         private static readonly string[] DownscaleLabels = { "None", "2x", "4x", "8x" };
         private static readonly string[] BakeryMaskLabels = { "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "29", "30" };
@@ -337,15 +337,11 @@ namespace VRCLightVolumes {
         private void DrawBakingSettings() {
             DrawIntPopup("Baking Mode", "BakingMode", BakingLabels, BakingValues);
             int mode = serializedObject.FindProperty("BakingMode").intValue;
-#if BAKERY_INCLUDED
-            if (mode == 1) {
-                DrawMask("Volume Bitmask", "VolumeBitmask");
-                DrawMask("Probe Bitmask", "ProbeBitmask");
-                EditorGUILayout.PropertyField(serializedObject.FindProperty("FixLightProbesL1"));
-            }
-#endif
-            EditorGUILayout.PropertyField(serializedObject.FindProperty("Denoise"));
-            if (mode == 0) {
+            bool isProgressive = mode == 0;
+            bool isBakery = mode == 1;
+
+            if (isProgressive) {
+                EditorGUILayout.PropertyField(serializedObject.FindProperty("Denoise"));
                 SerializedProperty dilate = serializedObject.FindProperty("DilateInvalidProbes");
                 EditorGUILayout.PropertyField(dilate);
                 if (dilate.boolValue) {
@@ -353,6 +349,15 @@ namespace VRCLightVolumes {
                     EditorGUILayout.PropertyField(serializedObject.FindProperty("DilationBackfaceBias"));
                 }
             }
+
+#if BAKERY_INCLUDED
+            if (isBakery) {
+                DrawMask("Volume Bitmask", "VolumeBitmask");
+                DrawMask("Probe Bitmask", "ProbeBitmask");
+                EditorGUILayout.PropertyField(serializedObject.FindProperty("FixLightProbesL1"));
+                EditorGUILayout.PropertyField(serializedObject.FindProperty("Denoise"));
+            }
+#endif
             DrawIntPopup("Downscale Volumes", "DownscaleVolumes", DownscaleLabels, DownscaleValues);
             DrawProperty("LightVolumeAtlas", "Light Volume Atlas");
         }

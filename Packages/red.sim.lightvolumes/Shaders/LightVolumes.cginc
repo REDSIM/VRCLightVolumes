@@ -15,6 +15,14 @@
     #define VRCLV_CLUSTERING_SUPPORTED 0
 #endif
 
+// Unity's surface-shader analysis pass rejects fastopt. Generated runtime passes keep
+// the cheaper fastopt hint, while analysis gets the compatible explicit loop hint.
+#if defined(SHADER_TARGET_SURFACE_ANALYSIS)
+    #define VRCLV_DYNAMIC_LOOP [loop]
+#else
+    #define VRCLV_DYNAMIC_LOOP [fastopt]
+#endif
+
 #ifndef SHADER_TARGET_SURFACE_ANALYSIS
 cbuffer LightVolumeUniforms {
 #endif
@@ -211,7 +219,7 @@ inline uint LV_ClusterMaskWord(uint4 mask, uint word) {
 
 // Pops the next set bit in ascending compact light-ID order. Native firstbitlow is used where the shader target guarantees it.
 inline bool LV_NextClusteredLight(uint4 mask, inout uint maskWord, inout uint maskBits, out uint pointLightId) {
-    [fastopt] while (maskBits == 0u) {
+    VRCLV_DYNAMIC_LOOP while (maskBits == 0u) {
         maskWord++;
         if (maskWord >= 4u) {
             pointLightId = 0u;
@@ -937,7 +945,7 @@ void LV_PointLightVolumeSHSpecular(float3 worldPos, float3 worldNormal, float3 s
     uint sequentialEnd = useClustering ? 0u : pointCount;
 
     // Select IDs from the cluster mask or sequential range, then process them through one shared loop body.
-    [fastopt] while (pcount < maxOverdraw) {
+    VRCLV_DYNAMIC_LOOP while (pcount < maxOverdraw) {
         uint pid;
         [branch] if (traversalIndex < sequentialEnd) {
             pid = traversalIndex++;
@@ -948,7 +956,7 @@ void LV_PointLightVolumeSHSpecular(float3 worldPos, float3 worldNormal, float3 s
         if (LV_AccumulatePointLightVolumeSHSpecular(pid, worldPos, worldNormal, specularViewDir, f0, pointLightShadingNormal, pointLightShadingBias, specularRoughness, specularRoughnessSq, specularNoV, L0, L1r, L1g, L1b, specular)) pcount++;
     }
     #else
-    [fastopt] for (uint pid = 0u; pid < pointCount && pcount < maxOverdraw; pid++) {
+    VRCLV_DYNAMIC_LOOP for (uint pid = 0u; pid < pointCount && pcount < maxOverdraw; pid++) {
         if (LV_AccumulatePointLightVolumeSHSpecular(pid, worldPos, worldNormal, specularViewDir, f0, pointLightShadingNormal, pointLightShadingBias, specularRoughness, specularRoughnessSq, specularNoV, L0, L1r, L1g, L1b, specular)) pcount++;
     }
     #endif
@@ -978,7 +986,7 @@ void LV_PointLightVolumeSH(float3 worldPos, float3 worldNormal, float pointLight
     uint sequentialEnd = useClustering ? 0u : pointCount;
 
     // Select IDs from the cluster mask or sequential range, then process them through one shared loop body.
-    [fastopt] while (pcount < maxOverdraw) {
+    VRCLV_DYNAMIC_LOOP while (pcount < maxOverdraw) {
         uint pid;
         [branch] if (traversalIndex < sequentialEnd) {
             pid = traversalIndex++;
@@ -989,7 +997,7 @@ void LV_PointLightVolumeSH(float3 worldPos, float3 worldNormal, float pointLight
         if (LV_AccumulatePointLightVolumeSH(pid, worldPos, pointLightShadingNormal, pointLightShadingBias, L0, L1r, L1g, L1b)) pcount++;
     }
     #else
-    [fastopt] for (uint pid = 0u; pid < pointCount && pcount < maxOverdraw; pid++) {
+    VRCLV_DYNAMIC_LOOP for (uint pid = 0u; pid < pointCount && pcount < maxOverdraw; pid++) {
         if (LV_AccumulatePointLightVolumeSH(pid, worldPos, pointLightShadingNormal, pointLightShadingBias, L0, L1r, L1g, L1b)) pcount++;
     }
     #endif
@@ -1018,7 +1026,7 @@ void LV_LightVolumeRegularSH(float3 worldPos, inout float3 L0, inout float3 L1r,
     bool isNoA = true, isNoB = true;
 
     // Iterating through regular light volumes with simplified algorithm requiring Light Volumes to be sorted by weight in descending order
-    [fastopt] for (uint id = additiveCount; id < volumesCount; id++) {
+    VRCLV_DYNAMIC_LOOP for (uint id = additiveCount; id < volumesCount; id++) {
         localUVW = LV_LocalFromVolume(id, worldPos);
         [branch] if (LV_PointLocalAABB(localUVW)) { // Intersection test
             [branch] if (isNoA) { // First, searching for volume A
@@ -1095,7 +1103,7 @@ void LV_LightVolumeAdditiveSH(float3 worldPos, inout float3 L0, inout float3 L1r
     [branch] if (maxOverdraw == 0) return;
 
     uint addVolumesCount = 0;
-    [fastopt] for (uint id = 0; id < additiveCount && addVolumesCount < maxOverdraw; id++) {
+    VRCLV_DYNAMIC_LOOP for (uint id = 0; id < additiveCount && addVolumesCount < maxOverdraw; id++) {
         float3 localUVW = LV_LocalFromVolume(id, worldPos);
         [branch] if (LV_PointLocalAABB(localUVW)) {
             LV_SampleVolume(id, localUVW, L0, L1r, L1g, L1b);

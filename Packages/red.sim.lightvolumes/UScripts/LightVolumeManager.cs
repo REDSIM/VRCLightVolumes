@@ -66,13 +66,13 @@ namespace VRCLightVolumes {
         public Texture LightVolumeAtlas;
 
         [Header("Point Light Volumes")]
-        [Tooltip("Width of each runtime point light projection texture slice.")]
+        [Tooltip("Resolution used for Point Light cookie, LUT and cubemap projection textures.")]
         public int CustomTexturesWidth = 512;
         [Tooltip("Height of each runtime point light projection texture slice.")]
         public int CustomTexturesHeight = 512;
         [Tooltip("The minimum brightness at a point due to lighting from a Point Light Volume, before the light is culled. Larger values will result in better performance, but light attenuation will be less physically correct.")]
         public float LightsBrightnessCutoff = 0.35f;
-        [Tooltip("Width of each runtime shadow cubemap face.")]
+        [Tooltip("Resolution used for each shadow map face. A cubemap shadow uses six faces at this resolution.")]
         public int ShadowTexturesWidth = 256;
         [Tooltip("Height of each runtime shadow cubemap face.")]
         public int ShadowTexturesHeight = 256;
@@ -81,7 +81,7 @@ namespace VRCLightVolumes {
         [Tooltip("EVSM light bleed reduction applied by the shadow receiver shader. 0 disables reduction, 1 is strongest.")]
         public float ShadowBleedReduction = 0.2f;
         [Tooltip("EVSM variance bias used by the shadow receiver shader. Authoring setup stores this as a 0..1 logarithmic slider.")]
-        public float ShadowMinVariance = 1.0f;
+        public float ShadowMinVariance = 0.0001f;
 
         [Tooltip("Builds camera-relative Coarse-to-Fine froxel clusters so shaders only evaluate Point Light Volumes that can affect the current pixel.")]
         public bool Clustering = true;
@@ -113,17 +113,28 @@ namespace VRCLightVolumes {
         private const int BakingModeProgressive = 0;
         private const int BakingModeBakery = 1;
         private const int BakingModeCustomLightmapper = 2;
+        [Tooltip("Selects the lightmapper used to bake Light Volumes. Bakery usually gives better results and works faster.")]
         [HideInInspector] public int BakingMode = BakingModeProgressive; // 0 = Progressive, 1 = Bakery, 2 = Custom Lightmapper
+        [Tooltip("Light from Bakery light sources with this bitmask will affect Light Volumes.")]
         [HideInInspector] public int VolumeBitmask = 1;
+        [Tooltip("Light from Bakery light sources with this bitmask will affect light probes.")]
         [HideInInspector] public int ProbeBitmask = 1;
+        [Tooltip("Removes baked noise in Light Volumes, but may slightly reduce sharpness. Recommended to keep enabled.")]
         [HideInInspector] public bool Denoise = true;
+        [Tooltip("Dilates valid probe data into invalid probes, such as probes inside geometry, to reduce light leaking.")]
         [HideInInspector] public bool DilateInvalidProbes = true;
+        [Tooltip("Number of dilation passes. More passes can reduce leaking, but increase bake time.")]
         [HideInInspector] public int DilationIterations = 1;
+        [Tooltip("Fraction of backface hits required to mark a probe invalid for dilation. 0 marks every probe invalid; 1 keeps every probe valid.")]
         [HideInInspector] public float DilationBackfaceBias = 0.1f;
+        [Tooltip("Reduces ringing and burned-looking Bakery light probes, at the cost of slightly lower contrast.")]
         [HideInInspector] public bool FixLightProbesL1 = true;
+        [Tooltip("Downscales each Light Volume before atlas packing. Useful for lower-resolution mobile atlases or reducing aliasing.")]
         [HideInInspector] public int DownscaleVolumes = 0; // 0 = None, 1 = x2, 2 = x4, 3 = x8
         // The mobile slider is authoring-only. ShadowMinVariance remains the resolved raw runtime value.
+        [Tooltip("Logarithmic EVSM variance bias slider used for PC builds. The receiver shader scales this by warped depth, matching the EVSM derivative. Higher values reduce edge noise, but can detach contact shadows.")]
         [HideInInspector] public float ShadowMinVarianceDesktop = 0f;
+        [Tooltip("Logarithmic EVSM variance bias slider used for Android and iOS builds. Higher values reduce Half precision edge noise on Quest and Mobile, but can detach contact shadows.")]
         [HideInInspector] public float ShadowMinVarianceMobile = 1f;
         // Serializable RT/material/name projection for editor atlas processors.
         // Delegate callbacks remain in transient editor state and must re-register after reload.
@@ -226,6 +237,9 @@ namespace VRCLightVolumes {
         // SHADOW TEXTURES
         // Counts describe active prefixes, arrays stay reusable to avoid runtime allocations
         private bool _shadowTexturesInitialized = false;
+        // A failed atlas allocation must not be retried from the per-frame auto-update loop.
+        // Explicit source/configuration work calls ReinitializeShadowTextures and clears the latch.
+        private bool _shadowTextureAllocationFailed = false;
         private int _shadowTextureArrayDepth = 0;
         private int _shadowCubemapTextureCount = 0;
         private int _shadowCubemapMaterialCount = 0;
@@ -270,6 +284,7 @@ namespace VRCLightVolumes {
             public Material[] PostProcessorProjectionMaterials;
             public string[] PostProcessorProjectionTextureNames;
 
+            // Creates an empty editor cache for one Manager without affecting its Udon field layout.
             public EditorState() { }
         }
 
@@ -305,11 +320,13 @@ namespace VRCLightVolumes {
             UnregisterPostProcessor(texture);
         }
 
+        // Unregisters every atlas post processor that writes to the requested target texture.
         public void UnregisterPostProcessor(RenderTexture texture) {
             if (texture == null) return;
             UnregisterPostProcessor(new PostProcessor { RT = texture });
         }
 
+        // Removes a matching atlas post processor and refreshes the remaining chain.
         public void UnregisterPostProcessor(PostProcessor processor) {
             PostProcessor[] processors = GetAtlasPostProcessors();
             int removeCount = 0;
@@ -331,6 +348,7 @@ namespace VRCLightVolumes {
             RefreshAtlasPostProcessors();
         }
 
+        // Adds or updates an atlas post processor and removes duplicate registrations.
         public void RegisterPostProcessor(PostProcessor processor) {
             if (processor.RT == null || processor.Mat == null && processor.Update == null && processor.UpdateWithInput == null) return;
             if (string.IsNullOrEmpty(processor.TextureName)) processor.TextureName = "_MainTex";
@@ -374,6 +392,7 @@ namespace VRCLightVolumes {
             UpdateVolumes();
         }
 
+        // Rehydrates the transient post-processor chain from its serialized editor projection.
         private PostProcessor[] GetAtlasPostProcessors() {
             EditorState state = EditorData;
             if (state.AtlasPostProcessors != null &&
@@ -399,6 +418,7 @@ namespace VRCLightVolumes {
             return processors;
         }
 
+        // Stores the transient post-processor chain and its serializable texture/material projection.
         private void SetAtlasPostProcessors(PostProcessor[] processors) {
             processors = processors ?? Array.Empty<PostProcessor>();
             RenderTexture[] targets = new RenderTexture[processors.Length];
@@ -418,24 +438,28 @@ namespace VRCLightVolumes {
             CapturePostProcessorProjection(state);
         }
 
+        // Records which serialized arrays produced the cached post-processor chain.
         private void CapturePostProcessorProjection(EditorState state) {
             state.PostProcessorProjectionTargets = AtlasPostProcessorTargets;
             state.PostProcessorProjectionMaterials = AtlasPostProcessorMaterials;
             state.PostProcessorProjectionTextureNames = AtlasPostProcessorTextureNames;
         }
 
+        // Finds the first processor that shares the requested target or callback identity.
         private static int FindPostProcessor(PostProcessor[] processors, PostProcessor requested) {
             for (int i = 0; i < processors.Length; i++)
                 if (IsSamePostProcessor(processors[i], requested)) return i;
             return -1;
         }
 
+        // Compares post processors by their target texture or update delegate identity.
         private static bool IsSamePostProcessor(PostProcessor existing, PostProcessor requested) {
             return requested.RT != null && existing.RT == requested.RT ||
                    requested.Update != null && existing.Update == requested.Update ||
                    requested.UpdateWithInput != null && existing.UpdateWithInput == requested.UpdateWithInput;
         }
 
+        // Compares every configurable value of two post processors.
         private static bool HasSamePostProcessorValues(PostProcessor first, PostProcessor second) {
             return first.RT == second.RT &&
                    first.Mat == second.Mat &&
@@ -444,6 +468,7 @@ namespace VRCLightVolumes {
                    first.UpdateWithInput == second.UpdateWithInput;
         }
 
+        // Executes valid atlas post processors in order and returns the final output texture.
         private static Texture UpdatePostProcessorChain(PostProcessor[] processors, Texture baseTexture) {
             if (baseTexture == null || processors == null || processors.Length == 0) return baseTexture;
 
@@ -465,6 +490,7 @@ namespace VRCLightVolumes {
             return hasValidProcessor ? output : baseTexture;
         }
 
+        // Recreates a post-processor target as a half-float 3D texture matching its source.
         private static void SetupPostProcessorTexture(RenderTexture texture, Texture source) {
             RenderTexture.active = null;
             texture.Release();
@@ -482,6 +508,7 @@ namespace VRCLightVolumes {
             texture.Create();
         }
 
+        // Returns the depth or face count represented by a supported texture type.
         private static int GetTextureDepth(Texture texture) {
             if (texture is Texture3D texture3D) return texture3D.depth;
             if (texture is Texture2DArray textureArray) return textureArray.depth;
@@ -965,14 +992,20 @@ namespace VRCLightVolumes {
             bool isActive = pointLightVolume.IsActive;
             if (isActive != (shaderIndex >= 0) || rebuildFinalData) {
                 if (customTexturesChanged) _customTexturesInitialized = false;
-                if (shadowTexturesChanged) _shadowTexturesInitialized = false;
+                if (shadowTexturesChanged) {
+                    _shadowTexturesInitialized = false;
+                    _shadowTextureAllocationFailed = false;
+                }
                 RequestUpdateVolumes();
                 return;
             }
             if (!isActive) return;
             if (customTexturesChanged || shadowTexturesChanged) {
                 if (customTexturesChanged) _customTexturesInitialized = false;
-                if (shadowTexturesChanged) _shadowTexturesInitialized = false;
+                if (shadowTexturesChanged) {
+                    _shadowTexturesInitialized = false;
+                    _shadowTextureAllocationFailed = false;
+                }
                 RequestUpdateVolumes();
                 return;
             }
@@ -1151,6 +1184,7 @@ namespace VRCLightVolumes {
             _isInitialized = false;
             _clusteringUnsupported = false;
             _clusteringAllocationFailed = false;
+            _shadowTextureAllocationFailed = false;
             _froxelLayoutValid = false;
             _froxelDepthValid = false;
             _froxelProjectionValid = false;
@@ -1282,7 +1316,10 @@ namespace VRCLightVolumes {
             if (pointLightRegistryChanged) {
                 changed = true;
                 if (_customTextureArrayDepth > 0) _customTexturesInitialized = false;
-                if (_shadowTextureArrayDepth > 0) _shadowTexturesInitialized = false;
+                if (_shadowTextureArrayDepth > 0) {
+                    _shadowTexturesInitialized = false;
+                    _shadowTextureAllocationFailed = false;
+                }
             }
             return changed;
         }
@@ -1417,7 +1454,10 @@ namespace VRCLightVolumes {
             if (existingIndex >= 0 && pointLightVolume.RegistryOrder != DefaultRegistryOrder) {
                 pointLightVolume.LightVolumeManager = this;
                 if (invalidateCustomTextures) _customTexturesInitialized = false;
-                if (invalidateShadowTextures) _shadowTexturesInitialized = false;
+                if (invalidateShadowTextures) {
+                    _shadowTexturesInitialized = false;
+                    _shadowTextureAllocationFailed = false;
+                }
                 RequestUpdateVolumes();
                 return;
             }
@@ -1436,7 +1476,10 @@ namespace VRCLightVolumes {
             if (existingIndex >= 0) {
                 pointLightVolume.LightVolumeManager = this;
                 if (invalidateCustomTextures) _customTexturesInitialized = false;
-                if (invalidateShadowTextures) _shadowTexturesInitialized = false;
+                if (invalidateShadowTextures) {
+                    _shadowTexturesInitialized = false;
+                    _shadowTextureAllocationFailed = false;
+                }
                 RequestUpdateVolumes();
                 return;
             }
@@ -1480,7 +1523,10 @@ namespace VRCLightVolumes {
                     if (_shadowTextureArrayDepth > 0) invalidateShadowTextures = true;
                 }
                 if (invalidateCustomTextures) _customTexturesInitialized = false;
-                if (invalidateShadowTextures) _shadowTexturesInitialized = false;
+                if (invalidateShadowTextures) {
+                    _shadowTexturesInitialized = false;
+                    _shadowTextureAllocationFailed = false;
+                }
                 RequestUpdateVolumes();
                 return;
             }
@@ -1496,7 +1542,10 @@ namespace VRCLightVolumes {
                 if (_shadowTextureArrayDepth > 0) invalidateShadowTextures = true;
             }
             if (invalidateCustomTextures) _customTexturesInitialized = false;
-            if (invalidateShadowTextures) _shadowTexturesInitialized = false;
+            if (invalidateShadowTextures) {
+                _shadowTexturesInitialized = false;
+                _shadowTextureAllocationFailed = false;
+            }
             RequestUpdateVolumes();
         }
 
@@ -1518,7 +1567,10 @@ namespace VRCLightVolumes {
                 if (_shadowTextureArrayDepth > 0) shadowTexturesChanged = true;
             }
             if (customTexturesChanged) _customTexturesInitialized = false;
-            if (shadowTexturesChanged) _shadowTexturesInitialized = false;
+            if (shadowTexturesChanged) {
+                _shadowTexturesInitialized = false;
+                _shadowTextureAllocationFailed = false;
+            }
             if (enabled && gameObject.activeInHierarchy) RequestUpdateVolumes();
         }
 
@@ -1532,7 +1584,10 @@ namespace VRCLightVolumes {
             }
             PointLightVolumeInstances[index] = null;
             if (_customTextureArrayDepth > 0) _customTexturesInitialized = false;
-            if (_shadowTextureArrayDepth > 0) _shadowTexturesInitialized = false;
+            if (_shadowTextureArrayDepth > 0) {
+                _shadowTexturesInitialized = false;
+                _shadowTextureAllocationFailed = false;
+            }
             InitializePointLightVolume(pointLightVolume);
         }
 
@@ -2079,9 +2134,19 @@ namespace VRCLightVolumes {
 
         // Rebuilds the runtime shadow texture array and assigns stable shader-side IDs to all shadowed point light instances
         public void ReinitializeShadowTextures() {
+            // Calling this method is an explicit retry point. The automatic update loop skips it
+            // while the allocation-failure latch is set, so a failed Create cannot thrash every frame.
+            _shadowTextureAllocationFailed = false;
 #if UNITY_EDITOR && !COMPILER_UDONSHARP
             if (!Application.isPlaying) CaptureEditorShadowSourceState();
 #endif
+            // A full atlas copy replaces every direct baker's finished faces with its tiny
+            // registration texture, so those bakers must restart their face cycle.
+            int directOwnerCount = PointLightVolumeInstances.Length;
+            for (int i = 0; i < directOwnerCount; i++) {
+                PointLightVolumeInstance directOwner = PointLightVolumeInstances[i];
+                if (directOwner != null) directOwner.InvalidateRuntimeDirectShadowAtlas();
+            }
             BuildShadowTextureSourceCache();
             if (_shadowTextureArrayDepth <= 0) { // No shadow sources are active, so release the stale runtime texture array
                 if (ShadowTextures != null) {
@@ -2089,6 +2154,7 @@ namespace VRCLightVolumes {
                     ShadowTextures = null;
                 }
                 _shadowTexturesInitialized = true;
+                _shadowTextureAllocationFailed = false;
                 return;
             }
             if (!EnsureRuntimeShadowTextures(ShadowTexturesWidth, ShadowTexturesHeight, _shadowTextureArrayDepth)) return;
@@ -2109,9 +2175,14 @@ namespace VRCLightVolumes {
 
         // Updates one shadow texture-array slice for runtime bakers that already manage their own refresh loop
         public void UpdatePointLightShadowTextureSlice(PointLightVolumeInstance instance, int sourceSlice) {
+            UpdatePointLightShadowTextureRange(instance, sourceSlice, 1);
+        }
+
+        // Copies a contiguous runtime-baker face range with one cross-behaviour call.
+        public void UpdatePointLightShadowTextureRange(PointLightVolumeInstance instance, int firstSourceSlice, int sourceSliceCount) {
             if (instance == null) return;
             Texture sourceTexture = instance.ShadowMapTexture;
-            if (sourceTexture == null) return;
+            if (sourceTexture == null || sourceSliceCount <= 0) return;
 
             if (!_shadowTexturesInitialized || ShadowTextures == null || _shadowTextureArrayDepth <= 0) ReinitializeShadowTextures();
             if (ShadowTextures == null || _shadowTextureArrayDepth <= 0) return;
@@ -2120,14 +2191,19 @@ namespace VRCLightVolumes {
             if (shadowId < 0) return;
 
             bool isCubemapShadow = shadowId < ShadowCubemapsCount;
-            sourceSlice = isCubemapShadow ? Mathf.Clamp(sourceSlice, 0, 5) : 0;
-            int targetSlice = isCubemapShadow ? shadowId * 6 + sourceSlice : ShadowCubemapsCount * 6 + shadowId - ShadowCubemapsCount;
-            if (targetSlice >= _shadowTextureArrayDepth) return;
+            firstSourceSlice = isCubemapShadow ? Mathf.Clamp(firstSourceSlice, 0, 5) : 0;
+            sourceSliceCount = isCubemapShadow ? Mathf.Clamp(sourceSliceCount, 1, 6 - firstSourceSlice) : 1;
+            int firstTargetSlice = isCubemapShadow ? shadowId * 6 + firstSourceSlice : ShadowCubemapsCount * 6 + shadowId - ShadowCubemapsCount;
+            if (firstTargetSlice < 0 || firstTargetSlice + sourceSliceCount > _shadowTextureArrayDepth) return;
 
-            if (instance.ShadowMapTextureIsCubemap) {
-                BlitCubemapFace(sourceTexture, ShadowTextures, sourceSlice, targetSlice);
-            } else {
-                VRCGraphics.Blit(sourceTexture, ShadowTextures, instance.ShadowMapTextureHasDepthSlices ? sourceSlice : 0, targetSlice);
+            for (int i = 0; i < sourceSliceCount; i++) {
+                int sourceSlice = firstSourceSlice + i;
+                int targetSlice = firstTargetSlice + i;
+                if (instance.ShadowMapTextureIsCubemap) {
+                    BlitCubemapFace(sourceTexture, ShadowTextures, sourceSlice, targetSlice);
+                } else {
+                    VRCGraphics.Blit(sourceTexture, ShadowTextures, instance.ShadowMapTextureHasDepthSlices ? sourceSlice : 0, targetSlice);
+                }
             }
         }
 
@@ -2291,7 +2367,9 @@ namespace VRCLightVolumes {
             int cubemapMaterialCount = _shadowCubemapMaterialCount;
             for (int i = 0; i < cubemapMaterialCount; i++) {
                 if (autoUpdatePass && !_shadowCubemapMaterialAutoUpdates[i]) continue;
-                BlitCubemapMaterial(_shadowCubemapMaterials[i], (cubemapTextureCount + i) * 6, ShadowTextures);
+                int shadowId = cubemapTextureCount + i;
+                int firstSlice = shadowId * 6;
+                BlitCubemapMaterial(_shadowCubemapMaterials[i], firstSlice, ShadowTextures);
             }
             // Single shadow textures follow cubemap sources and occupy one array slice each
             int singleBaseSlice = ShadowCubemapsCount * 6;
@@ -2300,7 +2378,8 @@ namespace VRCLightVolumes {
                 if (autoUpdatePass && !_shadowSingleTextureAutoUpdates[i]) continue;
                 Texture sourceTexture = _shadowSingleTextures[i];
                 if (sourceTexture == null) continue;
-                VRCGraphics.Blit(sourceTexture, ShadowTextures, 0, singleBaseSlice + i);
+                int targetSlice = singleBaseSlice + i;
+                VRCGraphics.Blit(sourceTexture, ShadowTextures, 0, targetSlice);
             }
             // Single shadow materials follow single texture sources and occupy one array slice each
             int singleMaterialCount = _shadowSingleMaterialCount;
@@ -2308,7 +2387,8 @@ namespace VRCLightVolumes {
                 if (autoUpdatePass && !_shadowSingleMaterialAutoUpdates[i]) continue;
                 Material sourceMaterial = _shadowSingleMaterials[i];
                 if (sourceMaterial == null) continue;
-                BlitMaterialSlice(sourceMaterial, 0, singleBaseSlice + singleTextureCount + i, false, ShadowTextures);
+                int targetSlice = singleBaseSlice + singleTextureCount + i;
+                BlitMaterialSlice(sourceMaterial, 0, targetSlice, false, ShadowTextures);
             }
         }
 
@@ -2328,6 +2408,10 @@ namespace VRCLightVolumes {
             if (!recreate) return CustomTextures != null;
             ReleaseRuntimeRenderTexture(CustomTextures);
             CustomTextures = CreateRuntimeTextureArray(width, height, depth, FixedCustomTexturesFormat, FilterMode.Trilinear, useMipMap, autoGenerateMips);
+            if (CustomTextures == null) {
+                _customTexturesInitialized = false;
+                return false;
+            }
 #if !COMPILER_UDONSHARP
             CustomTextures.name = "CustomTextures";
 #endif
@@ -2337,16 +2421,28 @@ namespace VRCLightVolumes {
 
         // Creates or recreates the runtime shadow texture array so it matches an explicit texture layout
         private bool EnsureRuntimeShadowTextures(int width, int height, int depth) {
-            if (width <= 0 || height <= 0 || depth <= 0) return false;
+            if (width <= 0 || height <= 0 || depth <= 0) {
+                _shadowTextureAllocationFailed = true;
+                return false;
+            }
             RenderTextureFormat renderTextureFormat = ShadowTextureFormat == ShadowTextureFormatHalf ? RenderTextureFormat.ARGBHalf : RenderTextureFormat.ARGBFloat;
             bool recreate = ShouldRecreateRuntimeTextureArray(ShadowTextures, width, height, depth, renderTextureFormat, false, false, FilterMode.Bilinear);
-            if (!recreate) return ShadowTextures != null;
+            if (!recreate) {
+                _shadowTextureAllocationFailed = ShadowTextures == null;
+                return ShadowTextures != null;
+            }
             ReleaseRuntimeRenderTexture(ShadowTextures);
             ShadowTextures = CreateRuntimeTextureArray(width, height, depth, renderTextureFormat, FilterMode.Bilinear, false, false);
+            if (ShadowTextures == null) {
+                _shadowTexturesInitialized = false;
+                _shadowTextureAllocationFailed = true;
+                return false;
+            }
 #if !COMPILER_UDONSHARP
             ShadowTextures.name = "ShadowTextures";
 #endif
             _shadowTextureArrayDepth = depth;
+            _shadowTextureAllocationFailed = false;
             return true;
         }
 
@@ -2382,8 +2478,9 @@ namespace VRCLightVolumes {
 #if !COMPILER_UDONSHARP
             texture.hideFlags = HideFlags.HideAndDontSave;
 #endif
-            texture.Create();
-            return texture;
+            if (texture.Create()) return texture;
+            ReleaseRuntimeRenderTexture(texture);
+            return null;
         }
 
         // Copies one cubemap face into one texture array slice using the shared face unwrap shader
@@ -2748,6 +2845,8 @@ namespace VRCLightVolumes {
         // editor-state table during an assembly reload.
         public void ReleaseClusteringPreviewForAssemblyReload() {
             ReleaseClusteringPreview();
+            _shadowTexturesInitialized = false;
+            _shadowTextureAllocationFailed = false;
             DestroyClusteringMaterial();
         }
 #endif
@@ -2951,6 +3050,7 @@ namespace VRCLightVolumes {
             return false;
         }
 
+        // Releases all froxel clustering render textures and invalidates the current mask.
         private void ReleaseClusteringTextures() {
             if (_clusterMask != null) ReleaseRuntimeRenderTexture(_clusterMask);
             if (_coarseClusterMask != null) ReleaseRuntimeRenderTexture(_coarseClusterMask);
@@ -3311,13 +3411,17 @@ namespace VRCLightVolumes {
 
             // Texture section: auto-updates only cached texture sources, without touching point light components
             if (AutoUpdateTextures) {
-                if (!_customTexturesInitialized) ReinitializeCustomTextures();
-                if (!_shadowTexturesInitialized) ReinitializeShadowTextures();
-                if (HasAutoCustomTextureUpdates) UpdateAutoCustomTextures();
-                if (HasAutoShadowTextureUpdates) UpdateAutoShadowTextures();
+                bool rebuiltCustomTextures = !_customTexturesInitialized;
+                bool rebuiltShadowTextures = !_shadowTexturesInitialized && !_shadowTextureAllocationFailed;
+                if (rebuiltCustomTextures) ReinitializeCustomTextures();
+                if (rebuiltShadowTextures) ReinitializeShadowTextures();
+                // A full rebuild already copied every auto source in this tick.
+                if (!rebuiltCustomTextures && HasAutoCustomTextureUpdates) UpdateAutoCustomTextures();
+                if (!rebuiltShadowTextures && !_shadowTextureAllocationFailed && HasAutoShadowTextureUpdates) UpdateAutoShadowTextures();
             }
 
-            keepUpdating = AutoUpdateTextures && (HasAutoCustomTextureUpdates || HasAutoShadowTextureUpdates);
+            keepUpdating = AutoUpdateTextures && (HasAutoCustomTextureUpdates
+                || (HasAutoShadowTextureUpdates && !_shadowTextureAllocationFailed));
 
             // Keep the delayed loop alive only for continuous monitoring; one-shot requests schedule their own tick.
 #if UDONSHARP
@@ -3591,6 +3695,7 @@ namespace VRCLightVolumes {
             return count;
         }
 
+        // Checks whether a Point Light Volume is eligible for editor light-probe baking.
         private bool IsEditorProbeBakePointLight(PointLightVolumeInstance instance) {
             return instance != null && instance.LightVolumeManager == this && instance.BakeIntoProbes && instance.isActiveAndEnabled && !instance.CompareTag("EditorOnly")
                 && instance.Intensity != 0f && instance.Color != Color.black;
@@ -3640,13 +3745,16 @@ namespace VRCLightVolumes {
                     instance.IsActive = instance.isActiveAndEnabled && instance.Intensity != 0 && instance.Color != Color.black;
                 }
                 if (CaptureEditorCustomSourceState()) _customTexturesInitialized = false;
-                if (CaptureEditorShadowSourceState()) _shadowTexturesInitialized = false;
+                if (CaptureEditorShadowSourceState()) {
+                    _shadowTexturesInitialized = false;
+                    _shadowTextureAllocationFailed = false;
+                }
             }
 #endif
 
             // Rebuild runtime texture caches before point light shader IDs are written
             if (!_customTexturesInitialized) ReinitializeCustomTextures();
-            if (!_shadowTexturesInitialized) ReinitializeShadowTextures();
+            if (!_shadowTexturesInitialized && !_shadowTextureAllocationFailed) ReinitializeShadowTextures();
 
             // Rebuild regular Light Volume shader buffers and dynamic transform cache
             _enabledCount = 0;

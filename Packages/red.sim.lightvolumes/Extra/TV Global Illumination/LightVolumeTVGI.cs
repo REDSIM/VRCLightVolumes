@@ -33,6 +33,7 @@ namespace VRCLightVolumes {
         private float _timePrev;
         private RenderTexture _downsampledTex;
 
+        // Creates the mipmapped reduction texture used to estimate the video's average color.
         private void Start() {
             _timePrev = Time.time;
             _prevColor = Color.black;
@@ -46,11 +47,13 @@ namespace VRCLightVolumes {
         }
 
 #if UDONSHARP
+        // Blits the current video frame and requests its smallest mip through the VRChat readback API.
         void Update() {
             VRCGraphics.Blit(TargetRenderTexture, _downsampledTex);
             VRCAsyncGPUReadback.Request(_downsampledTex, _downsampledTex.mipmapCount - 1, (IUdonEventReceiver)this);
         }
 
+        // Receives the reduced video color from the VRChat GPU readback request.
         public override void OnAsyncGpuReadbackComplete(VRCAsyncGPUReadbackRequest request) {
             if (request.TryGetData(_pixels)) {
                 SetColor(_pixels[0]);
@@ -58,11 +61,13 @@ namespace VRCLightVolumes {
         }
 
 #else
+        // Blits the current video frame and requests its smallest mip through Unity's readback API.
         void Update() {
             Graphics.Blit(TargetRenderTexture, _downsampledTex);
             UnityEngine.Rendering.AsyncGPUReadback.Request(_downsampledTex, _downsampledTex.mipmapCount - 1, OnAsyncGpuReadbackComplete);
         }
 
+        // Receives the reduced video color from Unity's GPU readback request.
         public void OnAsyncGpuReadbackComplete(UnityEngine.Rendering.AsyncGPUReadbackRequest request) {
             if (request.hasError) return;
             Unity.Collections.NativeArray<Color32> pixels = request.GetData<Color32>();
@@ -70,6 +75,7 @@ namespace VRCLightVolumes {
         }
 #endif
 
+        // Smooths and applies the sampled video color to all configured light targets.
         private void SetColor(Color color) {
 
             // Custom delta time for the async stuff 
@@ -96,6 +102,7 @@ namespace VRCLightVolumes {
 
         }
 
+        // Calculates a perceptually weighted distance between two colors.
         private float ColorDifference(Color colorA, Color colorB) {
             float rmean = (colorA.r + colorB.r) * 0.5f;
             float r = colorA.r - colorB.r;

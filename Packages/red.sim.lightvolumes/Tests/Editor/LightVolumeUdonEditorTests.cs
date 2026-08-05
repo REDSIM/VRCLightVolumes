@@ -222,12 +222,16 @@ namespace VRCLightVolumes.Tests {
             Assert.That(deepGrid.y, Is.EqualTo(200));
         }
 
-        // Both Scene View clustering previews must resolve to supported shaders on the active editor graphics API.
+        // The builder and both Scene View clustering previews must compile on the active editor graphics API.
         [Test]
         public void FroxelPreviewShadersAreSupported() {
+            Shader builder = Shader.Find("Hidden/VRCLV/FroxelClusteringBuild");
             Shader fine = Shader.Find("Hidden/LV_DebugDisplayFineClustering");
             Shader coarse = Shader.Find("Hidden/LV_DebugDisplayCoarseClustering");
 
+            Assert.That(builder, Is.Not.Null);
+            Assert.That(builder.isSupported, Is.True);
+            Assert.That(builder.passCount, Is.EqualTo(1));
             Assert.That(fine, Is.Not.Null);
             Assert.That(fine.isSupported, Is.True);
             Assert.That(coarse, Is.Not.Null);
@@ -2920,6 +2924,17 @@ namespace VRCLightVolumes.Tests {
             Assert.That(bitScanSource, Does.Contain("#if SHADER_TARGET >= 45"));
             Assert.That(bitScanSource, Does.Not.Contain("SHADER_API_GLES3"));
             Assert.That(bitScanSource, Does.Not.Contain("#pragma multi_compile"));
+        }
+
+        // Surface-shader analysis cannot parse fastopt, while normal generated/runtime passes should retain it.
+        [Test]
+        public void SurfaceShaderAnalysisUsesLoopInsteadOfFastopt() {
+            string shaderSource = ReadLightVolumesIncludeSource().Replace("\r\n", "\n");
+
+            Assert.That(shaderSource, Does.Contain("#if defined(SHADER_TARGET_SURFACE_ANALYSIS)\n    #define VRCLV_DYNAMIC_LOOP [loop]\n#else\n    #define VRCLV_DYNAMIC_LOOP [fastopt]\n#endif"));
+            Assert.That(shaderSource, Does.Contain("VRCLV_DYNAMIC_LOOP while"));
+            Assert.That(shaderSource, Does.Contain("VRCLV_DYNAMIC_LOOP for"));
+            Assert.That(shaderSource.Split(new[] { "[fastopt]" }, StringSplitOptions.None).Length - 1, Is.EqualTo(1), "fastopt must only occur in the non-surface macro branch");
         }
 
         // Verifies material-source blits keep _MainTex as the generator source and use a dummy texture only for Udon destination binding.

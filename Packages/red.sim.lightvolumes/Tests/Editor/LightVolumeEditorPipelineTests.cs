@@ -279,6 +279,51 @@ namespace VRCLightVolumes.Tests {
             Assert.That(LightVolumeTools.GetVoxelCount(new Vector3Int(int.MaxValue, 2, 2)), Is.EqualTo(-1));
         }
 
+        // Destroyed Unity texture wrappers still satisfy C# type patterns and must be rejected with
+        // Unity's overloaded null comparison before their native properties are read.
+        [Test]
+        public void ManagerStatsIgnoreDestroyedShadowTextures() {
+            MethodInfo getTextureTexels = typeof(LightVolumeManagerEditor).GetMethod(
+                "GetTextureTexels",
+                BindingFlags.Static | BindingFlags.NonPublic);
+            Cubemap destroyedCubemap = new Cubemap(4, TextureFormat.RGBAHalf, false);
+            Assert.That(getTextureTexels, Is.Not.Null);
+            UnityEngine.Object.DestroyImmediate(destroyedCubemap);
+
+            Assert.That((ulong)getTextureTexels.Invoke(null, new object[] { destroyedCubemap }), Is.Zero);
+        }
+
+        // Two same-name lights receive separate shadow assets, while a rebake keeps the path already
+        // owned by that light.
+        [Test]
+        public void ShadowBakePathsDoNotCollideForSameNameLights() {
+            MethodInfo resolvePath = typeof(PointLightShadowBaker).GetMethod(
+                "ResolveShadowAssetPath",
+                BindingFlags.Static | BindingFlags.NonPublic);
+            string firstPath = AssetDatabase.GenerateUniqueAssetPath("Assets/VRCLightVolumesShadowPathTest.asset");
+            GameObject firstObject = new GameObject("Point Light");
+            GameObject secondObject = new GameObject("Point Light");
+            Texture2D firstShadow = new Texture2D(2, 2, TextureFormat.RGBAHalf, false);
+
+            try {
+                Assert.That(resolvePath, Is.Not.Null);
+                AssetDatabase.CreateAsset(firstShadow, firstPath);
+                PointLightVolumeInstance first = firstObject.AddComponent<PointLightVolumeInstance>();
+                PointLightVolumeInstance second = secondObject.AddComponent<PointLightVolumeInstance>();
+                first.ShadowMap = firstShadow;
+
+                string rebakePath = (string)resolvePath.Invoke(null, new object[] { first, firstPath });
+                string secondPath = (string)resolvePath.Invoke(null, new object[] { second, firstPath });
+
+                Assert.That(rebakePath, Is.EqualTo(firstPath));
+                Assert.That(secondPath, Is.Not.EqualTo(firstPath));
+            } finally {
+                UnityEngine.Object.DestroyImmediate(firstObject);
+                UnityEngine.Object.DestroyImmediate(secondObject);
+                AssetDatabase.DeleteAsset(firstPath);
+            }
+        }
+
         private static void AssertProjectionCopy(MethodInfo copy, PointLightVolume.LightType lightType, PointLightVolume.LightProjection projection, UnityEngine.Object sourceObject, int expectedMode) {
             GameObject legacyObject = new GameObject($"Legacy {lightType} {projection}");
             GameObject unifiedObject = new GameObject($"Unified {lightType} {projection}");

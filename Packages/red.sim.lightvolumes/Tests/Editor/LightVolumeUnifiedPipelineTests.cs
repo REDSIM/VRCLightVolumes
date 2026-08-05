@@ -36,6 +36,28 @@ namespace VRCLightVolumes.Tests {
                 Is.EqualTo("Assets/Valid Folder/Name%3ABad%3F.asset"));
         }
 
+        [Test]
+        public void ShadowDefaultsUseLowBiasAndPlatformSpecificVariance() {
+            PointLightVolumeInstance point = CreateComponent<PointLightVolumeInstance>("Default Shadow Point");
+            LightVolumeManager manager = CreateComponent<LightVolumeManager>("Default Shadow Manager");
+
+            Assert.That(point.Bias, Is.EqualTo(0.01f).Within(Epsilon));
+            Assert.That(manager.ShadowMinVarianceDesktop, Is.Zero);
+            Assert.That(manager.ShadowMinVarianceMobile, Is.EqualTo(1f));
+            Assert.That(manager.ShadowMinVariance, Is.EqualTo(0.0001f).Within(0.0000001f));
+            Assert.That(LightVolumeManagerTools.GetShadowMinVarianceValue(0f), Is.EqualTo(0.0001f).Within(0.0000001f));
+            Assert.That(LightVolumeManagerTools.GetShadowMinVarianceValue(1f), Is.EqualTo(1f).Within(Epsilon));
+
+#pragma warning disable CS0618
+            LightVolumeSetup legacySetup = CreateComponent<LightVolumeSetup>("Legacy Default Shadow Setup");
+#pragma warning restore CS0618
+            PointLightVolume legacyPoint = CreateComponent<PointLightVolume>("Legacy Default Shadow Point");
+
+            Assert.That(legacySetup.ShadowMinVariance, Is.Zero);
+            Assert.That(legacySetup.ShadowMinVarianceMobile, Is.EqualTo(1f));
+            Assert.That(legacyPoint.Bias, Is.EqualTo(0.01f).Within(Epsilon));
+        }
+
         // External lightmappers consume manager-scoped unified volumes and world-space voxel centers.
         [Test]
         public void ManagerCustomProbeApiUsesUnifiedRegistryAndWorldSpaceVoxelCenters() {

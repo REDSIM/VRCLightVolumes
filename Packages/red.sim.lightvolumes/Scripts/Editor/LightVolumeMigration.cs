@@ -47,11 +47,13 @@ namespace VRCLightVolumes {
         private static readonly List<string> IssueExamples = new List<string>(MaxIssueExamples);
         private static bool _migrationQueued;
 
+        // Installs scene-open migration hooks and schedules the initial loaded-scene pass.
         static LightVolumeMigration() {
             EditorSceneManager.sceneOpened += OnSceneOpened;
             QueueLoadedScenesMigration();
         }
 
+        // Queues a coalesced migration after Unity and UdonSharp finish opening a scene.
         private static void OnSceneOpened(Scene scene, OpenSceneMode mode) {
             QueueLoadedScenesMigration();
         }
@@ -63,6 +65,7 @@ namespace VRCLightVolumes {
             EditorApplication.delayCall += RunQueuedMigration;
         }
 
+        // Runs deferred migration when the editor is stable, then queues normal hierarchy onboarding.
         private static void RunQueuedMigration() {
             EditorApplication.delayCall -= RunQueuedMigration;
             _migrationQueued = false;
@@ -92,6 +95,7 @@ namespace VRCLightVolumes {
             return migrated;
         }
 
+        // Migrates coherent legacy graphs and packed runtime payloads in one loaded main-stage scene.
         internal static int MigrateScene(Scene scene, ref int blocked) {
             if (!LightVolumeSceneSetup.IsMainStageScene(scene)) return 0;
 
@@ -288,6 +292,7 @@ namespace VRCLightVolumes {
             return removed;
         }
 
+        // Checks whether a hierarchy contains at least one legacy helper with a safe unified destination.
         internal static bool CanMigrateHierarchy(GameObject root) {
             if (root == null) return false;
             List<LightVolume> volumes = new List<LightVolume>();
@@ -304,6 +309,7 @@ namespace VRCLightVolumes {
             return false;
         }
 
+        // Checks whether a known unified component has one exact ready backing Udon program.
         internal static bool IsReadyRuntimeComponent(Component component) {
             if (component is LightVolumeManager manager) return IsExactReadyRuntimeComponent(manager);
             if (component is LightVolumeInstance volume) return IsExactReadyRuntimeComponent(volume);
@@ -311,6 +317,7 @@ namespace VRCLightVolumes {
             return false;
         }
 
+        // Checks whether one legacy component can reuse a unique destination or safely create one.
         private static bool CanMigrateHierarchyComponent<TLegacy, TUnified>(TLegacy source)
             where TLegacy : Component where TUnified : Component {
             if (source == null || source.GetComponents<TLegacy>().Length != 1) return false;
@@ -321,6 +328,7 @@ namespace VRCLightVolumes {
                 && !HasUnmatchedUdonSharpBacking(source.gameObject);
         }
 
+        // Migrates and registers one hierarchy Light Volume with rollback on any incomplete mutation.
         private static bool TryMigrateHierarchyVolume(LightVolume source, LightVolumeManager manager) {
             if (!TryResolveOrCreateHierarchyDestination(source, out LightVolumeInstance destination, out bool created)) return false;
             try {
@@ -345,6 +353,7 @@ namespace VRCLightVolumes {
             }
         }
 
+        // Migrates and registers one hierarchy Point Light Volume with rollback on failure.
         private static bool TryMigrateHierarchyPointLight(PointLightVolume source, LightVolumeManager manager) {
             if (!TryResolveOrCreateHierarchyDestination(source, out PointLightVolumeInstance destination, out bool created)) return false;
             try {
@@ -371,6 +380,7 @@ namespace VRCLightVolumes {
             }
         }
 
+        // Resolves an exact attached unified component or creates one only on safe non-prefab objects.
         private static bool TryResolveOrCreateHierarchyDestination<TLegacy, TUnified>(TLegacy source, out TUnified destination, out bool created)
             where TLegacy : Component where TUnified : UdonSharpBehaviour {
             destination = null;
@@ -401,6 +411,7 @@ namespace VRCLightVolumes {
             return false;
         }
 
+        // Verifies that a component is present in a registry and points back to the same Manager.
         private static bool IsRegistered<T>(T[] registry, T component, LightVolumeManager manager) where T : Component {
             if (registry == null || Array.IndexOf(registry, component) < 0) return false;
             if (component is LightVolumeInstance volume) return volume.LightVolumeManager == manager;
@@ -418,6 +429,7 @@ namespace VRCLightVolumes {
             }
         }
 
+        // Collects components of one type below all supplied roots, including inactive objects.
         private static List<T> Collect<T>(GameObject[] roots) where T : Component {
             List<T> result = new List<T>();
             List<T> rootComponents = new List<T>();
@@ -431,6 +443,7 @@ namespace VRCLightVolumes {
             return result;
         }
 
+        // Collects backing UdonBehaviours already owned by UdonSharp proxies in a scene.
         private static HashSet<UdonBehaviour> CollectOwnedUdonBackings(GameObject[] roots) {
             List<UdonSharpBehaviour> proxies = Collect<UdonSharpBehaviour>(roots);
             HashSet<UdonBehaviour> ownedBackings = new HashSet<UdonBehaviour>();
@@ -467,6 +480,7 @@ namespace VRCLightVolumes {
             }
         }
 
+        // Validates and collects one complete v2 setup group without mutating any components.
         private static bool TryCollectPureLegacyGroup(LightVolumeSetup setup, List<LightVolume> sceneVolumes, List<PointLightVolume> scenePointLights,
             Dictionary<LightVolume, LightVolumeSetup> volumeOwners, Dictionary<PointLightVolume, LightVolumeSetup> pointOwners,
             HashSet<LightVolume> ambiguousVolumes, HashSet<PointLightVolume> ambiguousPointLights, out PureLegacyGroup group) {
@@ -537,10 +551,12 @@ namespace VRCLightVolumes {
             return true;
         }
 
+        // Checks whether a GameObject already contains any unified Light Volumes component.
         private static bool HasUnifiedLightVolumeComponent(GameObject gameObject) {
             return gameObject.GetComponents<LightVolumeManager>().Length != 0 || gameObject.GetComponents<LightVolumeInstance>().Length != 0 || gameObject.GetComponents<PointLightVolumeInstance>().Length != 0;
         }
 
+        // Detects backing UdonBehaviours that cannot be paired with a local UdonSharp proxy.
         private static bool HasUnmatchedUdonSharpBacking(GameObject gameObject) {
             UdonBehaviour[] backings = gameObject.GetComponents<UdonBehaviour>();
             if (backings.Length == 0) return false;
@@ -560,6 +576,7 @@ namespace VRCLightVolumes {
             return false;
         }
 
+        // Creates the complete unified Udon graph for one validated pure-v2 group atomically.
         private static bool TryCreatePureLegacyGroup(PureLegacyGroup group) {
             try {
                 LightVolumeManager manager = UdonSharpUndo.AddComponent<LightVolumeManager>(group.Setup.gameObject);
@@ -602,6 +619,7 @@ namespace VRCLightVolumes {
             RollbackCreatedProxies<LightVolumeManager>(group.Setup.gameObject);
         }
 
+        // Removes every newly created proxy of one type after a failed migration transaction.
         private static void RollbackCreatedProxies<T>(GameObject gameObject) where T : UdonSharpBehaviour {
             T[] proxies = gameObject.GetComponents<T>();
             for (int i = proxies.Length - 1; i >= 0; i--) {
@@ -613,18 +631,22 @@ namespace VRCLightVolumes {
             }
         }
 
+        // Throws when UdonSharp did not create a complete backing program for a new proxy.
         private static void RequireReadyCreatedProxy(UdonSharpBehaviour proxy) {
             if (!IsReadyProxy(proxy)) throw new InvalidOperationException($"{proxy.GetType().Name} was added without a complete Udon backing program.");
         }
 
+        // Resolves the unique unified Light Volume attached beside a legacy helper.
         private static LightVolumeInstance ResolveLightVolumeInstance(LightVolume source) {
             return ResolveExactAttached<LightVolumeInstance>(source);
         }
 
+        // Resolves the unique unified Point Light Volume attached beside a legacy helper.
         private static PointLightVolumeInstance ResolvePointLightVolumeInstance(PointLightVolume source) {
             return ResolveExactAttached<PointLightVolumeInstance>(source);
         }
 
+        // Resolves the unique unified Manager attached beside a legacy setup.
         private static LightVolumeManager ResolveManager(LightVolumeSetup setup) {
             return ResolveExactAttached<LightVolumeManager>(setup);
         }
@@ -637,6 +659,7 @@ namespace VRCLightVolumes {
             return attached.Length == 1 ? attached[0] : null;
         }
 
+        // Removes a migrated legacy helper through Undo, preserving prefab override semantics.
         private static void RemoveLegacyComponent(Component component) {
             if (component == null) return;
 
@@ -645,26 +668,31 @@ namespace VRCLightVolumes {
             Undo.DestroyObjectImmediate(component);
         }
 
+        // Counts how many legacy sources resolve to one prospective unified destination.
         private static void IncrementUseCount<T>(Dictionary<T, int> counts, T destination) where T : Component {
             if (destination == null) return;
             counts.TryGetValue(destination, out int count);
             counts[destination] = count + 1;
         }
 
+        // Checks that a destination is ready and referenced by exactly one legacy source.
         private static bool IsUniqueReadyDestination<T>(T destination, Dictionary<T, int> counts) where T : Component {
             return destination != null && counts.TryGetValue(destination, out int count) && count == 1 && IsExactReadyRuntimeComponent(destination);
         }
 
+        // Checks proxy/backing integrity and rejects duplicate components of the same runtime type.
         private static bool IsExactReadyRuntimeComponent<T>(T component) where T : Component {
             if (component == null || !IsReadyProxy(component)) return false;
             T[] attached = component.GetComponents<T>();
             return attached.Length == 1 && attached[0] == component;
         }
 
+        // Checks whether a component originates from a prefab rather than an added instance override.
         private static bool IsInheritedPrefabComponent(Component component) {
             return component != null && PrefabUtility.IsPartOfPrefabInstance(component) && PrefabUtility.GetCorrespondingObjectFromSource(component) != null;
         }
 
+        // Records legacy registry ownership and marks components referenced by multiple setups as ambiguous.
         private static void RegisterRegistryOwners(LightVolumeSetup setup, Dictionary<LightVolume, LightVolumeSetup> volumeOwners, HashSet<LightVolume> ambiguousVolumes,
             Dictionary<PointLightVolume, LightVolumeSetup> pointOwners, HashSet<PointLightVolume> ambiguousPointLights) {
             if (setup.LightVolumes != null) {
@@ -677,6 +705,7 @@ namespace VRCLightVolumes {
             }
         }
 
+        // Records one component owner or marks the component ambiguous when another owner already exists.
         private static void RegisterRegistryOwner<T>(T source, LightVolumeSetup setup, Dictionary<T, LightVolumeSetup> owners, HashSet<T> ambiguous) where T : Component {
             if (source == null) return;
             if (!owners.TryGetValue(source, out _)) {
@@ -686,6 +715,7 @@ namespace VRCLightVolumes {
             ambiguous.Add(source);
         }
 
+        // Resolves authoritative registry ownership, falling back to the helper's explicit setup link.
         private static bool TryResolveOwner<T>(LightVolumeSetup explicitOwner, T source, Dictionary<T, LightVolumeSetup> registryOwners, HashSet<T> ambiguous, out LightVolumeSetup owner) where T : Component {
             owner = null;
             if (ambiguous.Contains(source)) return false;
@@ -697,6 +727,7 @@ namespace VRCLightVolumes {
             return true;
         }
 
+        // Resolves the ready Manager owned by a validated setup without accepting conflicting fallback links.
         private static LightVolumeManager ResolveValidatedManager(LightVolumeSetup owner, LightVolumeManager fallback, Dictionary<LightVolumeSetup, bool> setupReady,
             Dictionary<LightVolumeSetup, LightVolumeManager> setupDestinations) {
             if (owner == null) return fallback;
@@ -705,6 +736,7 @@ namespace VRCLightVolumes {
             return fallback == null || fallback == manager ? manager : null;
         }
 
+        // Validates that complete legacy registries map one-to-one onto an existing unified Manager graph.
         private static bool CanMapRegistries(LightVolumeSetup setup, LightVolumeManager manager, List<LightVolume> volumes, List<PointLightVolume> pointLights,
             Dictionary<LightVolume, LightVolumeInstance> volumeDestinations, Dictionary<PointLightVolume, PointLightVolumeInstance> pointDestinations,
             Dictionary<LightVolumeInstance, int> volumeDestinationUse, Dictionary<PointLightVolumeInstance, int> pointDestinationUse,
@@ -748,10 +780,12 @@ namespace VRCLightVolumes {
             return true;
         }
 
+        // Checks registry ownership first and uses the explicit setup link only when unregistered.
         private static bool IsOwnedBySetup<T>(T source, LightVolumeSetup explicitOwner, LightVolumeSetup setup, Dictionary<T, LightVolumeSetup> registryOwners) where T : Component {
             return registryOwners.TryGetValue(source, out LightVolumeSetup registryOwner) ? registryOwner == setup : explicitOwner == setup;
         }
 
+        // Rejects duplicate, broken or cross-owned entries in an existing unified registry.
         private static bool ValidateExistingRegistry<T>(T[] registry, LightVolumeManager manager) where T : Component {
             if (registry == null) return true;
             HashSet<T> seen = new HashSet<T>();
@@ -764,12 +798,14 @@ namespace VRCLightVolumes {
             return true;
         }
 
+        // Returns the Manager referenced by either supported unified child component type.
         private static LightVolumeManager GetAssignedManager(Component component) {
             if (component is LightVolumeInstance volume) return volume.LightVolumeManager;
             if (component is PointLightVolumeInstance pointLight) return pointLight.LightVolumeManager;
             return null;
         }
 
+        // Copies v2 Light Volume authoring values and recalculates unified runtime state.
         private static void CopyLegacyLightVolume(LightVolume source, LightVolumeInstance destination) {
             destination.enabled = source.enabled;
             destination.IsDynamic = source.Dynamic;
@@ -794,6 +830,7 @@ namespace VRCLightVolumes {
             LightVolumeTools.ApplyRuntimeState(destination, false);
         }
 
+        // Copies v2 Point Light authoring, projection and shadow values into the unified component.
         private static void CopyLegacyPointLight(PointLightVolume source, PointLightVolumeInstance destination) {
             destination.enabled = source.enabled;
             int lightType = (int)source.Type;
@@ -842,6 +879,7 @@ namespace VRCLightVolumes {
             destination.ShadowMap = source.ShadowMap;
         }
 
+        // Resolves the active authoring source from legacy light type and projection fields.
         private static UnityEngine.Object GetLegacyProjectionSource(int lightType, int projection, UnityEngine.Object falloffLut, UnityEngine.Object cookie, UnityEngine.Object cubemap) {
             if (lightType == 2) return cookie;
             if (projection == 1) return falloffLut;
@@ -849,6 +887,7 @@ namespace VRCLightVolumes {
             return lightType == 0 ? cubemap : lightType == 1 ? cookie : null;
         }
 
+        // Recovers a missing legacy authoring source only when cached runtime metadata matches exactly.
         private static bool TryGetMatchingLegacyRuntimeProjectionSource(int lightType, int projection, PointLightVolumeInstance destination, out UnityEngine.Object source) {
             source = destination.CustomTexture != null
                 ? (UnityEngine.Object)destination.CustomTexture
@@ -860,6 +899,7 @@ namespace VRCLightVolumes {
             return false;
         }
 
+        // Copies v2 Manager settings, registries and atlas post processors into the unified Manager.
         private static void CopyLegacySetup(LightVolumeSetup source, LightVolumeManager destination) {
             destination.enabled = source.enabled;
             destination.CustomTexturesWidth = (int)source.CookieResolution;
@@ -901,12 +941,14 @@ namespace VRCLightVolumes {
             public LightVolumeInstance Instance;
             public float Weight;
 
+            // Stores one migrated volume together with its authoritative legacy weight.
             public LegacyLightVolumeEntry(LightVolumeInstance instance, float weight) {
                 Instance = instance;
                 Weight = weight;
             }
         }
 
+        // Merges legacy and existing Light Volume registries while preserving descending weights.
         private static LightVolumeInstance[] MapLightVolumes(LightVolumeSetup setup, LightVolumeManager destination) {
             List<LegacyLightVolumeEntry> entries = new List<LegacyLightVolumeEntry>();
             HashSet<LightVolumeInstance> seen = new HashSet<LightVolumeInstance>();
@@ -935,6 +977,7 @@ namespace VRCLightVolumes {
             return result;
         }
 
+        // Stably inserts a migrated Light Volume by descending registry weight.
         private static void InsertLightVolume(List<LegacyLightVolumeEntry> entries, LightVolumeInstance instance, float weight) {
             int insertIndex = entries.Count;
             while (insertIndex > 0) {
@@ -945,6 +988,7 @@ namespace VRCLightVolumes {
             entries.Insert(insertIndex, new LegacyLightVolumeEntry(instance, weight));
         }
 
+        // Writes migrated Manager ownership, order and weight to a regular Light Volume.
         private static void UpdateRegistryMetadata(LightVolumeInstance instance, LightVolumeManager manager, int order, float weight) {
             if (instance.LightVolumeManager == manager && instance.RegistryOrder == order && instance.RegistryWeight == weight) return;
             instance.LightVolumeManager = manager;
@@ -954,6 +998,7 @@ namespace VRCLightVolumes {
             CopyProxyToUdon(instance);
         }
 
+        // Resolves a Light Volume's weight from every supported legacy registry representation.
         private static float GetLegacyWeight(LightVolumeSetup setup, LightVolumeInstance instance, int index) {
             if (setup.LightVolumesWeights != null && index < setup.LightVolumesWeights.Count) return setup.LightVolumesWeights[index];
             if (setup.LightVolumeDataList != null) {
@@ -965,6 +1010,7 @@ namespace VRCLightVolumes {
             return instance.RegistryWeight;
         }
 
+        // Merges legacy and existing Point Light registries without duplicate instances.
         private static PointLightVolumeInstance[] MapPointLights(LightVolumeSetup setup, LightVolumeManager destination) {
             List<PointLightVolumeInstance> result = new List<PointLightVolumeInstance>();
             HashSet<PointLightVolumeInstance> seen = new HashSet<PointLightVolumeInstance>();
@@ -988,6 +1034,7 @@ namespace VRCLightVolumes {
             return result.ToArray();
         }
 
+        // Writes migrated Manager ownership and stable order to a Point Light Volume.
         private static void UpdateRegistryMetadata(PointLightVolumeInstance instance, LightVolumeManager manager, int order, float weight) {
             if (instance.LightVolumeManager == manager && instance.RegistryOrder == order && instance.RegistryWeight == weight) return;
             instance.LightVolumeManager = manager;
@@ -997,6 +1044,7 @@ namespace VRCLightVolumes {
             CopyProxyToUdon(instance);
         }
 
+        // Converts legacy atlas post processors to the unified Manager representation.
         private static void CopyLegacyAtlasPostProcessors(LightVolumeSetup source, LightVolumeManager destination) {
             LightVolumeSetup.PostProcessor[] processors = source.AtlasPostProcessors;
             if (processors == null) return;
@@ -1015,6 +1063,7 @@ namespace VRCLightVolumes {
             destination.AtlasPostProcessors = migrated;
         }
 
+        // Checks that a UdonSharp proxy has a co-located backing behaviour of the exact proxy type.
         private static bool IsReadyProxy(Component component) {
             UdonSharpBehaviour proxy = component as UdonSharpBehaviour;
             if (proxy == null) return false;
@@ -1022,6 +1071,7 @@ namespace VRCLightVolumes {
             return backing != null && backing.gameObject == proxy.gameObject && UdonSharpEditorUtility.GetUdonSharpBehaviourType(backing) == proxy.GetType();
         }
 
+        // Copies a migrated UdonSharp proxy into its backing UdonBehaviour.
         private static void CopyProxyToUdon(Component component) {
             UdonSharpBehaviour proxy = component as UdonSharpBehaviour;
             if (proxy != null) UdonSharpEditorUtility.CopyProxyToUdon(proxy);
@@ -1053,6 +1103,7 @@ namespace VRCLightVolumes {
             return issueCount == 0;
         }
 
+        // Reports duplicates, cross-ownership and mismatched back-references across Manager registries.
         private static void ValidateManagerRegistries(List<LightVolumeManager> managers, Dictionary<LightVolumeInstance, LightVolumeManager> volumeRegistryOwners,
             Dictionary<PointLightVolumeInstance, LightVolumeManager> pointRegistryOwners, ref int issueCount) {
             for (int managerIndex = 0; managerIndex < managers.Count; managerIndex++) {
@@ -1101,6 +1152,7 @@ namespace VRCLightVolumes {
             }
         }
 
+        // Reports Light Volumes backing UdonBehaviours that no UdonSharp proxy owns.
         private static void ValidateUnownedLightVolumeBackings(GameObject[] roots, ref int issueCount) {
             HashSet<UdonBehaviour> ownedBackings = CollectOwnedUdonBackings(roots);
             List<UdonBehaviour> backings = Collect<UdonBehaviour>(roots);
@@ -1113,10 +1165,12 @@ namespace VRCLightVolumes {
             }
         }
 
+        // Checks whether a UdonSharp proxy type belongs to the unified Light Volumes graph.
         private static bool IsKnownLightVolumeProxyType(Type proxyType) {
             return proxyType == typeof(LightVolumeManager) || proxyType == typeof(LightVolumeInstance) || proxyType == typeof(PointLightVolumeInstance);
         }
 
+        // Reports missing exact backing programs and duplicate unified components of one type.
         private static void ValidateComponents<T>(List<T> components, ref int issueCount) where T : Component {
             for (int i = 0; i < components.Count; i++) {
                 T component = components[i];
@@ -1127,6 +1181,7 @@ namespace VRCLightVolumes {
             }
         }
 
+        // Reports every obsolete helper component that remains in loaded scenes.
         private static void RegisterLegacyComponents<T>(List<T> components, ref int issueCount) where T : Component {
             for (int i = 0; i < components.Count; i++) {
                 T component = components[i];
@@ -1134,11 +1189,13 @@ namespace VRCLightVolumes {
             }
         }
 
+        // Increments the validation count and retains a bounded set of user-facing examples.
         private static void RegisterIssue(string issue, ref int issueCount) {
             issueCount++;
             if (IssueExamples.Count < MaxIssueExamples) IssueExamples.Add(issue);
         }
 
+        // Marks migrated data dirty and records inherited prefab instance modifications.
         private static void MarkDirty(UnityEngine.Object target) {
             if (target is Component component && IsInheritedPrefabComponent(component)) PrefabUtility.RecordPrefabInstancePropertyModifications(component);
             if (target != null) EditorUtility.SetDirty(target);
@@ -1154,6 +1211,7 @@ namespace VRCLightVolumes {
             return changed;
         }
 
+        // Recovers packed rotation and atlas bounds stored only in legacy scene YAML.
         private static bool MigrateLegacyLightVolumeData(LightVolumeInstance volume) {
             if (volume == null || IsInheritedPrefabComponent(volume) || !IsExactReadyRuntimeComponent(volume) || WasRuntimeComponentMigrated(volume)) return false;
             if (!TryGetSceneObjectYamlBlock(volume, out string serializedBlock)) return false;
@@ -1180,6 +1238,7 @@ namespace VRCLightVolumes {
             return true;
         }
 
+        // Converts one legacy min/max atlas axis to the unified min-plus-scale representation.
         private static bool MigrateLegacyBoundsScale(ref Vector4 uvwMin, Vector4 legacyMax, int axis, LightVolumeInstance volume, bool undoRecorded) {
             if (uvwMin.w != 0f || legacyMax == Vector4.zero) return false;
             if (!undoRecorded) Undo.RecordObject(volume, UndoName);
@@ -1189,6 +1248,7 @@ namespace VRCLightVolumes {
             return true;
         }
 
+        // Decodes packed v2 Point Light runtime vectors from authoritative saved scene YAML.
         private static bool MigrateLegacyPointLightData(PointLightVolumeInstance pointLight) {
             if (pointLight == null || IsInheritedPrefabComponent(pointLight) || !IsExactReadyRuntimeComponent(pointLight) || WasRuntimeComponentMigrated(pointLight)) return false;
             if (!TryGetSceneObjectYamlBlock(pointLight, out string block) || HasCurrentPointLightData(block)) return false;
@@ -1234,6 +1294,7 @@ namespace VRCLightVolumes {
             return true;
         }
 
+        // Checks whether this exact component instance already consumed its legacy YAML payload.
         private static bool WasRuntimeComponentMigrated(Component component) {
             int id = component.GetInstanceID();
             if (!MigratedRuntimeComponents.TryGetValue(id, out Component migrated)) return false;
@@ -1242,18 +1303,22 @@ namespace VRCLightVolumes {
             return false;
         }
 
+        // Records the exact component instance that consumed legacy runtime data.
         private static void RememberMigratedRuntimeComponent(Component component) {
             MigratedRuntimeComponents[component.GetInstanceID()] = component;
         }
 
+        // Detects unified Point Light fields that make replaying legacy packed data unsafe.
         private static bool HasCurrentPointLightData(string block) {
             return TryReadYamlLine(block, "LightType", out _) || TryReadYamlLine(block, "Position", out _) || TryReadYamlLine(block, "InverseSquaredRange", out _) || TryReadYamlLine(block, "ProjectionMode", out _);
         }
 
+        // Converts a packed legacy vector to a quaternion with an identity fallback.
         private static Quaternion LegacyVectorToQuaternion(Vector4 value) {
             return value == Vector4.zero ? Quaternion.identity : new Quaternion(value.x, value.y, value.z, value.w);
         }
 
+        // Clears obsolete or missing projection texture references that cannot be valid runtime arrays.
         private static bool MigrateLegacyManagerRuntimeTextures(LightVolumeManager manager) {
             if (manager == null || IsInheritedPrefabComponent(manager) || !IsExactReadyRuntimeComponent(manager)) return false;
             SerializedObject serializedManager = new SerializedObject(manager);
@@ -1275,6 +1340,7 @@ namespace VRCLightVolumes {
             return true;
         }
 
+        // Retrieves the cached legacy YAML document matching one scene component's global object ID.
         private static bool TryGetSceneObjectYamlBlock(Component component, out string block) {
             block = null;
             if (component == null) return false;
@@ -1324,6 +1390,7 @@ namespace VRCLightVolumes {
             return blocks;
         }
 
+        // Scans one YAML document for any known packed v2 runtime field prefix.
         private static bool ContainsLegacyRuntimeData(string yaml, int blockStart, int blockEnd) {
             int lineStart = blockStart;
             while (lineStart < blockEnd) {
@@ -1340,11 +1407,13 @@ namespace VRCLightVolumes {
             return false;
         }
 
+        // Reads a Vector4 by its current or fallback legacy field name.
         private static bool TryReadVector4(string block, string name, string fallback, out Vector4 value) {
             if (TryReadVector4(block, name, out value)) return true;
             return TryReadVector4(block, fallback, out value);
         }
 
+        // Parses a four-component vector from one YAML field line.
         private static bool TryReadVector4(string block, string name, out Vector4 value) {
             value = Vector4.zero;
             if (!TryReadYamlLine(block, name, out string line)) return false;
@@ -1354,11 +1423,13 @@ namespace VRCLightVolumes {
                 && TryReadYamlFloatComponent(line, "w:", out value.w);
         }
 
+        // Reads a floating-point value by its current or fallback legacy field name.
         private static bool TryReadFloat(string block, string name, string fallback, out float value) {
             if (TryReadFloat(block, name, out value)) return true;
             return TryReadFloat(block, fallback, out value);
         }
 
+        // Parses an invariant floating-point value from one YAML field line.
         private static bool TryReadFloat(string block, string name, out float value) {
             value = 0f;
             if (!TryReadYamlLine(block, name, out string line)) return false;
@@ -1366,11 +1437,13 @@ namespace VRCLightVolumes {
             return colon >= 0 && float.TryParse(line.Substring(colon + 1).Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out value);
         }
 
+        // Reads an integer by its current or fallback legacy field name.
         private static bool TryReadInt(string block, string name, string fallback, out int value) {
             if (TryReadInt(block, name, out value)) return true;
             return TryReadInt(block, fallback, out value);
         }
 
+        // Parses an invariant integer value from one YAML field line.
         private static bool TryReadInt(string block, string name, out int value) {
             value = -1;
             if (!TryReadYamlLine(block, name, out string line)) return false;
@@ -1378,6 +1451,7 @@ namespace VRCLightVolumes {
             return colon >= 0 && int.TryParse(line.Substring(colon + 1).Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out value);
         }
 
+        // Finds one top-level serialized field line inside a component YAML document.
         private static bool TryReadYamlLine(string block, string name, out string line) {
             line = null;
             string prefix = "  " + name + ":";
@@ -1389,6 +1463,7 @@ namespace VRCLightVolumes {
             return true;
         }
 
+        // Parses one named floating-point component from an inline YAML mapping.
         private static bool TryReadYamlFloatComponent(string line, string key, out float value) {
             value = 0f;
             int keyIndex = line.IndexOf(key, StringComparison.Ordinal);

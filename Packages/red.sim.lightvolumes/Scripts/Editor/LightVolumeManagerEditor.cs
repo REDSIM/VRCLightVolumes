@@ -11,6 +11,13 @@ namespace VRCLightVolumes {
         private const int VisibleRegistryRows = 12;
         private const float RegistryHeaderHeight = 20f;
         private const float RegistryWeightWidth = 48f;
+        private const float RegistryDynamicIndicatorSize = 20f;
+        private const float RegistryShadowIndicatorSize = 18f;
+        private const float RegistryColorIndicatorSize = 12f;
+        private const float RegistryIndicatorSpacing = 5f;
+        private const float RegistryIndicatorOuterSpacing = 3f;
+        private const float RegistryLightVolumeIndicatorsWidth = RegistryIndicatorOuterSpacing * 2f + RegistryDynamicIndicatorSize;
+        private const float PendingShadowIndicatorAlpha = 0.35f;
         private const float RegistryScrollPadding = 2f;
         private const float RegistryScrollSmoothTime = 0.08f;
         private const float RegistryWheelStep = 18f;
@@ -29,6 +36,16 @@ namespace VRCLightVolumes {
         private static readonly int[] DownscaleValues = { 0, 1, 2, 3 };
         private static readonly string[] DownscaleLabels = { "None", "2x", "4x", "8x" };
         private static readonly string[] BakeryMaskLabels = { "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "29", "30" };
+        private static GUIContent _bakedShadowIndicatorContent;
+        private static GUIContent _pendingShadowIndicatorContent;
+        private static GUIContent _runtimeShadowIndicatorContent;
+        private static GUIContent _dynamicIndicatorContent;
+        private static GUIContent _regularLightVolumeIconContent;
+        private static GUIContent _additiveLightVolumeIconContent;
+        private static GUIContent _pointLightIconContent;
+        private static GUIContent _spotLightIconContent;
+        private static GUIContent _areaLightIconContent;
+        private static readonly GUIContent _lightColorIndicatorContent = new GUIContent(string.Empty, "Light color");
 
         private sealed class RegistryScrollState {
             public Vector2 Position;
@@ -57,18 +74,21 @@ namespace VRCLightVolumes {
         private readonly HashSet<Texture> _countedShadowTextures = new HashSet<Texture>();
 
         [MenuItem(SortLightVolumesMenu)]
+        // Sorts the selected Manager's Light Volumes by effective voxel density.
         private static void SortLightVolumes(MenuCommand command) {
             if (command.context is LightVolumeManager manager)
                 LightVolumeManagerTools.SortLightVolumesByVoxelsPerUnit(manager);
         }
 
         [MenuItem(SortLightVolumesMenu, true)]
+        // Enables the sort command only for editable Managers with multiple volumes.
         private static bool CanSortLightVolumes(MenuCommand command) {
             if (EditorApplication.isPlayingOrWillChangePlaymode || !(command.context is LightVolumeManager manager))
                 return false;
             return manager.LightVolumeInstances != null && manager.LightVolumeInstances.Length > 1;
         }
 
+        // Caches registries, repairs stale entries and installs editor callbacks.
         private void OnEnable() {
             _manager = (LightVolumeManager)target;
             _debugExpanded = SessionState.GetBool(DebugFoldoutSessionKey, false);
@@ -86,14 +106,17 @@ namespace VRCLightVolumes {
             Undo.undoRedoPerformed += OnUndoRedoPerformed;
         }
 
+        // Removes the Undo callback owned by this inspector.
         private void OnDisable() {
             Undo.undoRedoPerformed -= OnUndoRedoPerformed;
         }
 
+        // Recounts scene Managers after hierarchy changes.
         private void OnHierarchyChange() {
             RefreshManagerCount();
         }
 
+        // Reapplies restored settings and fully refreshes runtime texture caches after Undo or Redo.
         private void OnUndoRedoPerformed() {
             if (_manager == null) return;
             serializedObject.UpdateIfRequiredOrScript();
@@ -114,6 +137,7 @@ namespace VRCLightVolumes {
             SceneView.RepaintAll();
         }
 
+        // Draws Manager registries and settings, then propagates explicit changes to runtime state.
         public override void OnInspectorGUI() {
             serializedObject.Update();
             EditorGUILayout.Space(EditorGUIUtility.singleLineHeight * 0.5f);
@@ -124,8 +148,16 @@ namespace VRCLightVolumes {
                 EditorGUILayout.HelpBox("Multiple Light Volume Managers were found in this scene!\nRemove the extra Managers before building!", MessageType.Error);
 
             RefreshStats();
-            GUILayout.Label($"Data size in VRAM: <b>{FormatMegabytes(_cachedVramBytes)} MB</b>", RichLabelStyle);
-            GUILayout.Label($"Data size in bundle: <b>{FormatMegabytes((ulong)(_cachedBundleBytes * BundleCompressionEstimate))} MB (Approximately)</b>", RichLabelStyle);
+            GUILayout.Label(
+                new GUIContent(
+                    $"Data size in VRAM: <b>{FormatMegabytes(_cachedVramBytes)} MB</b>",
+                    "Includes the Light Volume atlas, cookie texture arrays, baked shadow assets and runtime shadow arrays."),
+                RichLabelStyle);
+            GUILayout.Label(
+                new GUIContent(
+                    $"Data size in bundle: <b>{FormatMegabytes((ulong)(_cachedBundleBytes * BundleCompressionEstimate))} MB (Approximately)</b>",
+                    "Includes the Light Volume atlas and baked shadow assets included in the build. Bake In Game preview assets are excluded."),
+                RichLabelStyle);
             GUILayout.Space(8f);
 
             DrawScrollableList(_lightVolumeList, _lightVolumeScroll, _lightVolumes, false);
@@ -190,6 +222,7 @@ namespace VRCLightVolumes {
             SceneView.RepaintAll();
         }
 
+        // Creates a compact reorderable registry with selection and dirty-state callbacks.
         private ReorderableList CreateRegistryList(SerializedProperty source, bool pointLights) {
             ReorderableList list = new ReorderableList(serializedObject, source, true, false, false, false) {
                 headerHeight = 0f,
@@ -210,12 +243,13 @@ namespace VRCLightVolumes {
             return list;
         }
 
+        // Draws a registry header and accepts compatible components dropped onto it.
         private void DrawRegistryHeader(Rect rect, SerializedProperty source, bool pointLights, float rightInset) {
             string label = pointLights ? "Point Light Volumes" : "Light Volumes";
             GUIContent title = new GUIContent($"{label} ({source.arraySize})", pointLights ? "At most 128 active lights are rendered." : "At most 32 active volumes are rendered.");
             Rect weightRect = default;
             float titleX = rect.x + 15f;
-            float titleRight = rect.xMax;
+            float titleRight = rect.xMax - rightInset;
             if (!pointLights) {
                 weightRect = new Rect(rect.xMax - rightInset - RegistryWeightWidth + 3f, rect.y, RegistryWeightWidth - 3f, rect.height);
                 titleRight = weightRect.x;
@@ -246,30 +280,48 @@ namespace VRCLightVolumes {
             current.Use();
         }
 
+        // Checks whether a serialized registry already contains an object reference.
         private static bool ContainsReference(SerializedProperty source, UnityEngine.Object value) {
             for (int i = 0; i < source.arraySize; i++)
                 if (source.GetArrayElementAtIndex(i).objectReferenceValue == value) return true;
             return false;
         }
 
+        // Checks whether a serialized registry contains at least one live entry.
         private static bool HasRegistryEntries(SerializedProperty source) {
             for (int i = 0; i < source.arraySize; i++)
                 if (source.GetArrayElementAtIndex(i).objectReferenceValue != null) return true;
             return false;
         }
 
+        // Draws one registry row with its type, status indicators and optional volume weight.
         private void DrawRegistryElement(Rect rect, SerializedProperty source, int sourceIndex, bool pointLights) {
             if (sourceIndex < 0 || sourceIndex >= source.arraySize) return;
             UnityEngine.Object value = source.GetArrayElementAtIndex(sourceIndex).objectReferenceValue;
             rect.y += 2f;
-            float weightWidth = pointLights ? 0f : RegistryWeightWidth;
+            float indicatorWidth = GetRegistryIndicatorWidth(value, pointLights);
+            float trailingWidth = indicatorWidth + (pointLights ? 0f : RegistryWeightWidth);
             Rect iconRect = new Rect(rect.x, rect.y, 20f, EditorGUIUtility.singleLineHeight);
-            Rect nameRect = new Rect(rect.x + 24f, rect.y, rect.width - 24f - weightWidth, EditorGUIUtility.singleLineHeight);
+            Rect nameRect = new Rect(rect.x + 24f, rect.y, Mathf.Max(0f, rect.width - 24f - trailingWidth), EditorGUIUtility.singleLineHeight);
             EditorGUI.LabelField(iconRect, GetRegistryIcon(value, pointLights));
             EditorGUI.LabelField(nameRect, value != null ? value.name : "None");
-            if (pointLights || !(value is LightVolumeInstance volume)) return;
+            if (pointLights) {
+                if (value is PointLightVolumeInstance pointLight)
+                    DrawPointLightIndicators(new Rect(rect.xMax - indicatorWidth, rect.y, indicatorWidth, EditorGUIUtility.singleLineHeight), pointLight);
+                return;
+            }
+            if (!(value is LightVolumeInstance volume)) return;
 
-            Rect weightRect = new Rect(rect.xMax - weightWidth + 3f, rect.y, weightWidth - 3f, EditorGUIUtility.singleLineHeight);
+            if (volume.IsDynamic) {
+                Rect dynamicGroupRect = new Rect(rect.xMax - RegistryWeightWidth - indicatorWidth, rect.y, indicatorWidth, EditorGUIUtility.singleLineHeight);
+                Rect dynamicRect = new Rect(
+                    dynamicGroupRect.x + RegistryIndicatorOuterSpacing,
+                    dynamicGroupRect.y + (dynamicGroupRect.height - RegistryDynamicIndicatorSize) * 0.5f,
+                    RegistryDynamicIndicatorSize,
+                    RegistryDynamicIndicatorSize);
+                DrawDynamicIndicator(dynamicRect, true);
+            }
+            Rect weightRect = new Rect(rect.xMax - RegistryWeightWidth + 3f, rect.y, RegistryWeightWidth - 3f, EditorGUIUtility.singleLineHeight);
             EditorGUI.BeginChangeCheck();
             float weight = EditorGUI.FloatField(weightRect, volume.RegistryWeight);
             if (!EditorGUI.EndChangeCheck()) return;
@@ -280,16 +332,103 @@ namespace VRCLightVolumes {
             _registryChanged = true;
         }
 
+        // Calculates the trailing width required by the indicators present on one registry row.
+        private static float GetRegistryIndicatorWidth(UnityEngine.Object value, bool pointLights) {
+            if (!pointLights)
+                return value is LightVolumeInstance volume && volume.IsDynamic ? RegistryLightVolumeIndicatorsWidth : 0f;
+            if (!(value is PointLightVolumeInstance pointLight)) return 0f;
+
+            float width = RegistryIndicatorOuterSpacing * 2f + RegistryColorIndicatorSize;
+            if (pointLight.IsDynamic) width += RegistryIndicatorSpacing + RegistryDynamicIndicatorSize;
+            if (pointLight.Shadows) width += RegistryIndicatorSpacing + RegistryShadowIndicatorSize;
+            return width;
+        }
+
+        // Draws dynamic, shadow and color indicators for a Point Light Volume row.
+        private static void DrawPointLightIndicators(Rect rect, PointLightVolumeInstance pointLight) {
+            float dynamicY = rect.y + (rect.height - RegistryDynamicIndicatorSize) * 0.5f;
+            float shadowY = rect.y + (rect.height - RegistryShadowIndicatorSize) * 0.5f;
+            float colorY = rect.y + (rect.height - RegistryColorIndicatorSize) * 0.5f;
+            Rect colorRect = new Rect(rect.xMax - RegistryIndicatorOuterSpacing - RegistryColorIndicatorSize, colorY, RegistryColorIndicatorSize, RegistryColorIndicatorSize);
+            float nextIndicatorRight = colorRect.x - RegistryIndicatorSpacing;
+
+            if (pointLight.IsDynamic) {
+                Rect dynamicRect = new Rect(nextIndicatorRight - RegistryDynamicIndicatorSize, dynamicY, RegistryDynamicIndicatorSize, RegistryDynamicIndicatorSize);
+                DrawDynamicIndicator(dynamicRect, true);
+                nextIndicatorRight = dynamicRect.x - RegistryIndicatorSpacing;
+            }
+            if (pointLight.Shadows) {
+                Rect shadowRect = new Rect(nextIndicatorRight - RegistryShadowIndicatorSize, shadowY, RegistryShadowIndicatorSize, RegistryShadowIndicatorSize);
+                bool baked = pointLight.ShadowMap != null;
+                Color previousColor = GUI.color;
+                if (!baked) GUI.color = new Color(previousColor.r, previousColor.g, previousColor.b, previousColor.a * PendingShadowIndicatorAlpha);
+                GUI.Label(shadowRect, GetShadowIndicatorContent(baked, pointLight.BakeInGame));
+                GUI.color = previousColor;
+            }
+
+            Color lightColor = pointLight.Color;
+            lightColor.a = 1f;
+            DrawRoundedColor(colorRect, lightColor);
+            GUI.Label(colorRect, _lightColorIndicatorContent);
+        }
+
+        // Draws Unity's animation icon for dynamic lights and volumes.
+        private static void DrawDynamicIndicator(Rect rect, bool isDynamic) {
+            if (!isDynamic) return;
+            if (_dynamicIndicatorContent == null)
+                _dynamicIndicatorContent = new GUIContent(EditorGUIUtility.IconContent("d_AnimationClip On Icon").image, "Dynamic");
+            GUI.Label(rect, _dynamicIndicatorContent);
+        }
+
+        // Draws a borderless circular light-color swatch.
+        private static void DrawRoundedColor(Rect rect, Color color) {
+            GUI.DrawTexture(
+                rect,
+                Texture2D.whiteTexture,
+                ScaleMode.StretchToFill,
+                true,
+                0f,
+                color,
+                0f,
+                rect.width * 0.5f);
+        }
+
+        // Returns the Unity shadow icon and tooltip matching the light's bake state.
+        private static GUIContent GetShadowIndicatorContent(bool baked, bool bakeInGame) {
+            if (_bakedShadowIndicatorContent == null) {
+                Texture icon = EditorGUIUtility.IconContent(EditorGUIUtility.isProSkin ? "d_Shadow Icon" : "Shadow Icon").image;
+                _bakedShadowIndicatorContent = new GUIContent(icon, "Shadows are enabled and baked");
+                _pendingShadowIndicatorContent = new GUIContent(icon, "Shadows are enabled but not baked");
+                _runtimeShadowIndicatorContent = new GUIContent(icon, "Shadows are enabled and will be baked at runtime");
+            }
+            if (baked) return _bakedShadowIndicatorContent;
+            return bakeInGame ? _runtimeShadowIndicatorContent : _pendingShadowIndicatorContent;
+        }
+
+        // Returns the cached Unity icon for a registry entry's volume or light type.
         private static GUIContent GetRegistryIcon(UnityEngine.Object value, bool pointLights) {
-            if (!pointLights && value is LightVolumeInstance volume)
-                return EditorGUIUtility.IconContent(volume.IsAdditive ? "d_LightProbes Icon" : "d_PreMatLight1@2x");
+            if (!pointLights && value is LightVolumeInstance volume) {
+                if (volume.IsAdditive)
+                    return GetRegistryIconContent(ref _additiveLightVolumeIconContent, "d_LightProbes Icon", "Additive Light Volume");
+                return GetRegistryIconContent(ref _regularLightVolumeIconContent, "d_PreMatLight1@2x", "Regular Light Volume");
+            }
             if (value is PointLightVolumeInstance pointLight) {
-                if (pointLight.LightType == 1) return EditorGUIUtility.IconContent("d_Spotlight Icon");
-                if (pointLight.LightType == 2) return EditorGUIUtility.IconContent("d_AreaLight Icon");
+                if (pointLight.LightType == 1)
+                    return GetRegistryIconContent(ref _spotLightIconContent, "d_Spotlight Icon", "Spot Light");
+                if (pointLight.LightType == 2)
+                    return GetRegistryIconContent(ref _areaLightIconContent, "d_AreaLight Icon", "Area Light");
+                return GetRegistryIconContent(ref _pointLightIconContent, "d_Light Icon", "Point Light");
             }
             return EditorGUIUtility.IconContent("d_Light Icon");
         }
 
+        // Lazily creates reusable icon content with a descriptive tooltip.
+        private static GUIContent GetRegistryIconContent(ref GUIContent content, string iconName, string tooltip) {
+            if (content == null) content = new GUIContent(EditorGUIUtility.IconContent(iconName).image, tooltip);
+            return content;
+        }
+
+        // Draws shared projection, shadow and culling settings for Point Light Volumes.
         private void DrawPointLightSettings() {
             DrawIntPopup("Cookie Resolution", "CustomTexturesWidth", TextureResolutionLabels, TextureResolutions);
             DrawIntPopup("Shadow Resolution", "ShadowTexturesWidth", TextureResolutionLabels, TextureResolutions);
@@ -299,6 +438,7 @@ namespace VRCLightVolumes {
             DrawSlider("LightsBrightnessCutoff", "Brightness Cutoff", 0.05f, 1f);
         }
 
+        // Draws froxel clustering controls and live Scene View grid estimates.
         private void DrawClusteringSettings() {
             SerializedProperty clustering = serializedObject.FindProperty("Clustering");
             EditorGUILayout.PropertyField(clustering, new GUIContent("Clustering Enabled", clustering.tooltip));
@@ -334,6 +474,7 @@ namespace VRCLightVolumes {
                 RichLabelStyle);
         }
 
+        // Draws lightmapper-specific bake and atlas settings.
         private void DrawBakingSettings() {
             DrawIntPopup("Baking Mode", "BakingMode", BakingLabels, BakingValues);
             int mode = serializedObject.FindProperty("BakingMode").intValue;
@@ -362,6 +503,7 @@ namespace VRCLightVolumes {
             DrawProperty("LightVolumeAtlas", "Light Volume Atlas");
         }
 
+        // Draws runtime update, blending and overdraw settings relevant to current registries.
         private void DrawVisualSettings(bool hasLightVolumes, bool hasPointLights) {
             if (hasLightVolumes) {
                 EditorGUILayout.PropertyField(serializedObject.FindProperty("LightProbesBlending"));
@@ -373,6 +515,7 @@ namespace VRCLightVolumes {
             EditorGUILayout.PropertyField(serializedObject.FindProperty("ForceSceneLighting"));
         }
 
+        // Draws atlas packing and batch shadow baking actions when applicable.
         private void DrawActions(bool hasLightVolumes, bool hasPointLights) {
             GUILayout.Space(InspectorSectionSpacing);
             using (new EditorGUILayout.HorizontalScope()) {
@@ -389,6 +532,7 @@ namespace VRCLightVolumes {
             }
         }
 
+        // Draws read-only texture, clustering, count and runtime material diagnostics.
         private void DrawDebugSection() {
             GUILayout.Space(InspectorSectionSpacing);
             EditorGUI.BeginChangeCheck();
@@ -434,6 +578,7 @@ namespace VRCLightVolumes {
             EditorGUILayout.EndFoldoutHeaderGroup();
         }
 
+        // Converts the Manager's clustering flags into one inspector status label.
         private string GetClusteringStatus() {
             if (!_manager.Clustering) return "Disabled";
             if (_manager.ClusteringUnsupportedPreview) return "Unsupported";
@@ -442,15 +587,18 @@ namespace VRCLightVolumes {
             return _manager.ClusterMaskValidPreview ? "Active" : "Building";
         }
 
+        // Returns the allocated slice count of a runtime texture array.
         private static int GetTextureDepth(RenderTexture texture) {
             return texture != null ? Mathf.Max(texture.volumeDepth, 1) : 0;
         }
 
+        // Draws a bold inspector section title with optional leading spacing.
         private static void DrawSectionHeader(string title, bool addTopSpacing) {
             if (addTopSpacing) GUILayout.Space(InspectorSectionSpacing);
             EditorGUILayout.LabelField(title, EditorStyles.boldLabel);
         }
 
+        // Draws a registry in a bounded viewport with a custom header and smooth scrolling.
         private void DrawScrollableList(ReorderableList list, RegistryScrollState scroll, SerializedProperty source, bool pointLights) {
             float contentHeight = Mathf.Max(list.GetHeight(), list.elementHeight + RegistryScrollPadding * 2f);
             float maxViewportHeight = (list.elementHeight + 2f) * VisibleRegistryRows + RegistryScrollPadding * 2f;
@@ -487,6 +635,7 @@ namespace VRCLightVolumes {
             }
         }
 
+        // Updates wheel and drag-edge scrolling with clamped smooth motion.
         private void HandleSmoothRegistryScroll(Rect viewport, ReorderableList list, RegistryScrollState scroll, float maxScrollY) {
             scroll.TargetY = Mathf.Clamp(scroll.TargetY, 0f, maxScrollY);
             scroll.Position.y = Mathf.Clamp(scroll.Position.y, 0f, maxScrollY);
@@ -530,6 +679,7 @@ namespace VRCLightVolumes {
             Repaint();
         }
 
+        // Recalculates cached VRAM, bundle and shadow-bake statistics at a limited rate.
         private void RefreshStats() {
             double now = EditorApplication.timeSinceStartup;
             if (_cachedPointCount == _pointLights.arraySize && now < _nextStatsRefresh) return;
@@ -553,7 +703,7 @@ namespace VRCLightVolumes {
                 PointLightVolumeInstance light = lights[i];
                 if (light == null) continue;
                 if (light.Shadows && light.RebakeShadows) _canBatchBakeShadows = true;
-                if (!light.Shadows || light.BakeInGame || !(light.ShadowMap is Texture texture) || texture is RenderTexture || !_countedShadowTextures.Add(texture)) continue;
+                if (!light.Shadows || light.BakeInGame || !(light.ShadowMap is Texture texture) || texture == null || texture is RenderTexture || !_countedShadowTextures.Add(texture)) continue;
                 ulong bytes = GetTextureTexels(texture) * (_manager.ShadowTextureFormat == 0 ? 8UL : 16UL);
                 vram += bytes;
                 bundle += bytes;
@@ -562,32 +712,39 @@ namespace VRCLightVolumes {
             _cachedBundleBytes = bundle;
         }
 
+        // Estimates RenderTexture storage including its optional mip chain.
         private static ulong GetRenderTextureBytes(RenderTexture texture, ulong bytesPerPixel) {
             ulong bytes = (ulong)texture.width * (ulong)texture.height * (ulong)Mathf.Max(texture.volumeDepth, 1) * bytesPerPixel;
             return texture.useMipMap ? bytes * 4UL / 3UL : bytes;
         }
 
+        // Counts texels across supported 2D, array and cubemap shadow sources.
         private static ulong GetTextureTexels(Texture texture) {
+            if (texture == null) return 0;
             if (texture is Texture2DArray array) return (ulong)array.width * (ulong)array.height * (ulong)array.depth;
             if (texture is Cubemap cubemap) return (ulong)cubemap.width * (ulong)cubemap.height * 6UL;
             if (texture is Texture2D texture2D) return (ulong)texture2D.width * (ulong)texture2D.height;
             return 0;
         }
 
+        // Formats a byte count as megabytes with two decimal places.
         private static string FormatMegabytes(ulong bytes) {
             return (bytes / (double)(1024 * 1024)).ToString("0.00");
         }
 
+        // Draws a named serialized property with its field-level tooltip.
         private void DrawProperty(string propertyName, string label) {
             SerializedProperty property = serializedObject.FindProperty(propertyName);
             EditorGUILayout.PropertyField(property, new GUIContent(label, property.tooltip));
         }
 
+        // Draws a clamped serialized slider with its field-level tooltip.
         private void DrawSlider(string propertyName, string label, float min, float max) {
             SerializedProperty property = serializedObject.FindProperty(propertyName);
             EditorGUILayout.Slider(property, min, max, new GUIContent(label, property.tooltip));
         }
 
+        // Draws an integer-backed popup while preserving serialized property help.
         private void DrawIntPopup(string label, string propertyName, string[] labels, int[] values) {
             SerializedProperty property = serializedObject.FindProperty(propertyName);
             Rect rect = EditorGUILayout.GetControlRect();
@@ -595,11 +752,13 @@ namespace VRCLightVolumes {
             property.intValue = EditorGUI.IntPopup(popupRect, property.intValue, labels, values);
         }
 
+        // Draws a Bakery bitmask with named bit positions and field-level help.
         private void DrawMask(string label, string propertyName) {
             SerializedProperty property = serializedObject.FindProperty(propertyName);
             property.intValue = EditorGUILayout.MaskField(new GUIContent(label, property.tooltip), property.intValue, BakeryMaskLabels);
         }
 
+        // Detects whether the inspected scene contains more than one Manager.
         private void RefreshManagerCount() {
             _multipleManagers = false;
             if (_manager == null || !_manager.gameObject.scene.IsValid()) return;
@@ -617,6 +776,7 @@ namespace VRCLightVolumes {
 
         private GUIStyle RichLabelStyle => _richLabelStyle ?? (_richLabelStyle = new GUIStyle(EditorStyles.label) { richText = true });
 
+        // Keeps animated registries, statistics and live debug values visually current.
         public override bool RequiresConstantRepaint() {
             return _debugExpanded && EditorApplication.isPlaying;
         }

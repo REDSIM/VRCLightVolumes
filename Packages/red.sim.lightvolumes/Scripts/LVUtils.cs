@@ -53,6 +53,7 @@ namespace VRCLightVolumes {
 #endif
         }
 
+        // Marks an editor object and its prefab instance overrides dirty without affecting play mode.
         public static void MarkDirty(Object obj) {
 #if UNITY_EDITOR
             if (EditorApplication.isPlayingOrWillChangePlaymode) return;
@@ -102,6 +103,7 @@ namespace VRCLightVolumes {
             return (value - MinOld) / (MaxOld - MinOld);
         }
 
+        // Schedules asset creation for the next editor update and reports whether it succeeded.
         public static void SaveAsAssetDelayed(Object asset, string assetPath, System.Action<bool> callback = null) {
 #if UNITY_EDITOR
             if (asset == null || string.IsNullOrEmpty(assetPath)) {
@@ -109,6 +111,7 @@ namespace VRCLightVolumes {
                 callback?.Invoke(false);
                 return;
             }
+            // Creates the asset after the current editor callback has completed.
             void DelayedSave() {
                 EditorApplication.update -= DelayedSave;
                 try {
@@ -178,6 +181,7 @@ namespace VRCLightVolumes {
                 character == '*';
         }
 
+        // Saves an object as a Unity asset after sanitizing and creating its destination path.
         public static void SaveAsAsset(Object asset, string assetPath) {
 #if UNITY_EDITOR
             if (asset == null || string.IsNullOrEmpty(assetPath)) {
@@ -432,6 +436,7 @@ namespace VRCLightVolumes {
             return false;
         }
 
+        // Changes a texture asset's Read/Write import setting only when necessary.
         public static void TextureSetReadWrite(Texture texture, bool enabled) {
 #if UNITY_EDITOR
             if (texture == null) {
@@ -498,6 +503,7 @@ namespace VRCLightVolumes {
 #endif
         }
 
+        // Creates a half-resolution 3D texture by averaging each source voxel block.
         public static Texture3D DownscaleTexture3D(Texture3D source) {
 
             if (source == null) {

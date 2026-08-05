@@ -19,6 +19,7 @@ namespace VRCLightVolumes {
         private static LightVolumeManager[] _managers = Array.Empty<LightVolumeManager>();
         private static bool _refreshPending;
 
+        // Installs editor lifecycle hooks and initializes clustering preview globals after domain reload.
         static LightVolumeClusteringPreview() {
             Shader.SetGlobalFloat(ClusteringEnabledID, 0f);
             RefreshManagers();
@@ -43,24 +44,29 @@ namespace VRCLightVolumes {
             RequestPreviewRefresh();
         }
 
+        // Refreshes the cached set of Managers that can provide Scene View clustering data.
         private static void RefreshManagers() {
             _managers = UnityEngine.Object.FindObjectsByType<LightVolumeManager>(FindObjectsInactive.Include, FindObjectsSortMode.None);
         }
 
+        // Defers a clustering preview rebuild after a scene is opened.
         private static void OnSceneOpened(UnityEngine.SceneManagement.Scene scene, UnityEditor.SceneManagement.OpenSceneMode mode) {
             RequestPreviewRefresh();
         }
 
+        // Releases transient preview resources before Unity serializes a scene.
         private static void OnSceneSaving(UnityEngine.SceneManagement.Scene scene, string path) {
             _refreshPending = true;
             RefreshManagers();
             ReleasePreviewResources();
         }
 
+        // Requests fresh preview resources after scene serialization completes.
         private static void OnSceneSaved(UnityEngine.SceneManagement.Scene scene) {
             RequestPreviewRefresh();
         }
 
+        // Builds clustering for Scene View cameras and disables it for unrelated editor cameras.
         private static void OnCameraPreCull(Camera camera) {
             if (Application.isPlaying || camera == null) return;
             bool isSceneViewCamera = IsSceneViewCamera(camera);
@@ -87,11 +93,13 @@ namespace VRCLightVolumes {
             manager.UpdateClusteringFromCamera(camera);
         }
 
+        // Restores the clustering shader state captured before an editor camera rendered.
         private static void OnCameraPostRender(Camera camera) {
             if (Application.isPlaying || ClusteringEnabledStack.Count == 0) return;
             Shader.SetGlobalFloat(ClusteringEnabledID, ClusteringEnabledStack.Pop());
         }
 
+        // Checks both camera type and live Scene View instances for the requested camera.
         private static bool IsSceneViewCamera(Camera camera) {
             if (camera == null) return false;
             if (camera.cameraType == CameraType.SceneView) return true;
@@ -103,10 +111,12 @@ namespace VRCLightVolumes {
             return false;
         }
 
+        // Releases clustering preview textures while retaining reusable generated materials.
         private static void ReleasePreviewResources() {
             ReleasePreviewResources(false);
         }
 
+        // Releases transient clustering resources for every cached Manager.
         private static void ReleasePreviewResources(bool releaseGeneratedMaterials) {
             ClusteringEnabledStack.Clear();
             Shader.SetGlobalFloat(ClusteringEnabledID, 0f);
@@ -118,12 +128,14 @@ namespace VRCLightVolumes {
             }
         }
 
+        // Fully releases preview resources that cannot survive an assembly reload.
         private static void ReleasePreviewResourcesBeforeAssemblyReload() {
             _refreshPending = false;
             RefreshManagers();
             ReleasePreviewResources(true);
         }
 
+        // Tears down editor previews around play mode and rebuilds them on returning to edit mode.
         private static void OnPlayModeStateChanged(PlayModeStateChange state) {
             if (state == PlayModeStateChange.ExitingEditMode || state == PlayModeStateChange.ExitingPlayMode) {
                 _refreshPending = false;
@@ -142,6 +154,7 @@ namespace VRCLightVolumes {
             SceneView.RepaintAll();
         }
 
+        // Consumes one coalesced preview refresh immediately before Scene View rendering.
         private static void ApplyPendingPreviewRefresh() {
             if (!_refreshPending) return;
             _refreshPending = false;
@@ -168,6 +181,7 @@ namespace VRCLightVolumes {
             if (!hasActiveManager) SetDisabledShaderState();
         }
 
+        // Clears every Light Volumes shader count when no active Manager can populate preview data.
         private static void SetDisabledShaderState() {
             Shader.SetGlobalFloat(LightVolumeCountID, 0f);
             Shader.SetGlobalFloat(LightVolumeAdditiveCountID, 0f);
@@ -182,6 +196,7 @@ namespace VRCLightVolumes {
     // Any AssetDatabase refresh may restore serialized Udon proxy state. The actual rebuild is
     // deferred to the next Scene View render, so multiple imports collapse into one operation.
     internal sealed class LightVolumeClusteringImportPostprocessor : AssetPostprocessor {
+        // Requests a deferred preview rebuild after any AssetDatabase refresh.
         private static void OnPostprocessAllAssets(string[] importedAssets, string[] deletedAssets, string[] movedAssets, string[] movedFromAssetPaths, bool didDomainReload) {
             LightVolumeClusteringPreview.RequestPreviewRefresh();
         }

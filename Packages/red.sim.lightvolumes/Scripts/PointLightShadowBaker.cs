@@ -162,9 +162,25 @@ namespace VRCLightVolumes {
             UnityEngine.SceneManagement.Scene scene = pointLightVolume.gameObject.scene;
             string scenePath = scene.path;
             string escapedName = LVUtils.EscapeFileName(pointLightVolume.gameObject.name);
-            string path = $"{System.IO.Path.GetDirectoryName(scenePath)}/{scene.name}/VRCLightVolumes/Temp/{escapedName}_shadows.asset";
+            string defaultPath = $"{System.IO.Path.GetDirectoryName(scenePath)}/{scene.name}/VRCLightVolumes/Temp/{escapedName}_shadows.asset";
+            string path = ResolveShadowAssetPath(pointLightVolume, defaultPath);
             if (AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(path) != null) AssetDatabase.DeleteAsset(path);
             LVUtils.SaveAsAsset(shadowAsset, path);
+        }
+
+        // Keeps a light's existing bake path stable while preventing identically named lights from
+        // deleting each other's shadow assets.
+        private static string ResolveShadowAssetPath(PointLightVolumeInstance pointLightVolume, string defaultPath) {
+            UnityEngine.Object currentShadow = pointLightVolume.ShadowMap;
+            if (currentShadow != null) {
+                string currentPath = AssetDatabase.GetAssetPath(currentShadow);
+                string currentDirectory = System.IO.Path.GetDirectoryName(currentPath)?.Replace('\\', '/');
+                string targetDirectory = System.IO.Path.GetDirectoryName(defaultPath)?.Replace('\\', '/');
+                if (!string.IsNullOrEmpty(currentPath)
+                    && string.Equals(currentDirectory, targetDirectory, System.StringComparison.OrdinalIgnoreCase))
+                    return currentPath;
+            }
+            return AssetDatabase.GenerateUniqueAssetPath(defaultPath);
         }
 
         // Copies the runtime texture-array shadow output into a serializable cubemap asset.

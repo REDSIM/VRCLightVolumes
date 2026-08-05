@@ -27,16 +27,19 @@ namespace VRCLightVolumes {
         private static GUIStyle _projectionSourceHintStyle;
         private bool _debugExpanded;
 
+        // Caches the inspected light and restores its live debug foldout state.
         private void OnEnable() {
             PointLightVolume = target as PointLightVolumeInstance;
             _debugExpanded = SessionState.GetBool(DebugFoldoutSessionKey, false);
             Undo.undoRedoPerformed += OnUndoRedoPerformed;
         }
 
+        // Removes the Undo callback owned by this inspector.
         private void OnDisable() {
             Undo.undoRedoPerformed -= OnUndoRedoPerformed;
         }
 
+        // Draws type-specific authoring controls and synchronizes explicit changes.
         public override void OnInspectorGUI() {
             serializedObject.Update();
             int undoGroup = Undo.GetCurrentGroup();
@@ -45,7 +48,7 @@ namespace VRCLightVolumes {
             int lightType = Mathf.Clamp(lightTypeProperty.intValue, 0, 2);
             int projection = Mathf.Clamp(projectionProperty.intValue, 0, 2);
             DrawSectionHeader("Light", false);
-            DrawPopup(lightTypeProperty, new GUIContent("Type", "Point Light is the most performant type. For static lighting, prefer baked additive Light Volumes."), _lightTypeNames);
+            DrawPopup(lightTypeProperty, new GUIContent("Type", lightTypeProperty.tooltip), _lightTypeNames);
             lightType = Mathf.Clamp(lightTypeProperty.intValue, 0, 2);
             DrawProperty("IsDynamic", "Dynamic");
             DrawProperty("Color");
@@ -56,7 +59,7 @@ namespace VRCLightVolumes {
 
             DrawSectionHeader("Projection", true);
             if (lightType != 2) {
-                DrawPopup(projectionProperty, new GUIContent("Projection", "Parametric computes falloff; LUT, Cookie and Cubemap use a texture or material source."), _projectionNames);
+                DrawPopup(projectionProperty, new GUIContent("Projection", projectionProperty.tooltip), _projectionNames);
                 projection = Mathf.Clamp(projectionProperty.intValue, 0, 2);
                 if (projection == 1) DrawProperty("Range");
                 else DrawProperty("LightSourceSize", "Light Source Size");
@@ -120,11 +123,13 @@ namespace VRCLightVolumes {
             Undo.CollapseUndoOperations(undoGroup);
         }
 
+        // Draws a bold inspector section title with optional leading spacing.
         private static void DrawSectionHeader(string title, bool addTopSpacing) {
             if (addTopSpacing) GUILayout.Space(InspectorSectionSpacing);
             EditorGUILayout.LabelField(title, EditorStyles.boldLabel);
         }
 
+        // Draws resolved light, projection, shadow and runtime-bake diagnostics.
         private void DrawDebugSection() {
             GUILayout.Space(InspectorSectionSpacing);
             EditorGUI.BeginChangeCheck();
@@ -224,24 +229,28 @@ namespace VRCLightVolumes {
             EditorGUILayout.EndFoldoutHeaderGroup();
         }
 
+        // Converts a packed runtime projection mode to a readable inspector label.
         private static string GetProjectionModeName(int value) {
             if (value == 1) return "LUT";
             if (value == 2) return "Custom";
             return "Parametric";
         }
 
+        // Converts a packed projection source type to a readable inspector label.
         private static string GetSourceTypeName(int value) {
             if (value == 1) return "Texture";
             if (value == 2) return "Material";
             return "None";
         }
 
+        // Draws a serialized field while preserving its field-level tooltip.
         private void DrawProperty(string propertyName, string label = null) {
             SerializedProperty property = serializedObject.FindProperty(propertyName);
             GUIContent content = label == null ? EditorGUIUtility.TrTextContent(property.displayName, property.tooltip) : new GUIContent(label, property.tooltip);
             EditorGUILayout.PropertyField(property, content, true);
         }
 
+        // Draws an integer-backed popup with correct mixed-selection handling.
         private static void DrawPopup(SerializedProperty property, GUIContent label, string[] names) {
             EditorGUI.showMixedValue = property.hasMultipleDifferentValues;
             EditorGUI.BeginChangeCheck();
@@ -250,6 +259,7 @@ namespace VRCLightVolumes {
             EditorGUI.showMixedValue = false;
         }
 
+        // Presents the runtime half-angle radians field as a full cone angle in degrees.
         private void DrawAngleDegrees() {
             SerializedProperty angleProperty = serializedObject.FindProperty("Angle");
             float angleDegrees = angleProperty.floatValue * Mathf.Rad2Deg * 2f;
@@ -260,11 +270,12 @@ namespace VRCLightVolumes {
             EditorGUI.showMixedValue = false;
         }
 
+        // Draws the serialized shadow layer mask using Unity's named layers.
         private void DrawLayerMask() {
             SerializedProperty layerMaskProperty = serializedObject.FindProperty("LayerMask");
             EditorGUI.showMixedValue = layerMaskProperty.hasMultipleDifferentValues;
             EditorGUI.BeginChangeCheck();
-            int value = EditorGUILayout.MaskField(new GUIContent("Layer Mask", "Layers that can cast shadows."), layerMaskProperty.intValue, InternalEditorUtility.layers);
+            int value = EditorGUILayout.MaskField(new GUIContent("Layer Mask", layerMaskProperty.tooltip), layerMaskProperty.intValue, InternalEditorUtility.layers);
             if (EditorGUI.EndChangeCheck()) layerMaskProperty.intValue = value;
             EditorGUI.showMixedValue = false;
         }
@@ -334,6 +345,7 @@ namespace VRCLightVolumes {
             }
         }
 
+        // Rebuilds derived data and both texture arrays after an Undo or Redo operation.
         private void OnUndoRedoPerformed() {
             // Undo also restores hidden derived source fields, which makes ordinary source-change
             // detection intentionally inconclusive. Rebuild both shared arrays once per manager.
@@ -341,6 +353,7 @@ namespace VRCLightVolumes {
             Repaint();
         }
 
+        // Draws only the texture or material source relevant to the selected projection mode.
         private void DrawActiveProjectionSourceField(int lightType, int projection) {
             if (lightType == 2) {
                 DrawTextureMaterialField("Cookie", _textureMaterialHint, false);
@@ -352,11 +365,13 @@ namespace VRCLightVolumes {
             else if (lightType == 1) DrawTextureMaterialField("Cookie", _textureMaterialHint, false);
         }
 
+        // Resolves and draws a named texture-or-material serialized property.
         private void DrawTextureMaterialField(string propertyName, string acceptedTypesHint, bool isShadowSource) {
             SerializedProperty property = serializedObject.FindProperty(propertyName);
             DrawTextureMaterialField(property, EditorGUIUtility.TrTextContent(property.displayName, property.tooltip), acceptedTypesHint, isShadowSource);
         }
 
+        // Draws a filtered object field with mixed values, picker support and an empty-state hint.
         private void DrawTextureMaterialField(SerializedProperty property, GUIContent label, string acceptedTypesHint, bool isShadowSource) {
             Rect rect = EditorGUILayout.GetControlRect(true, EditorGUIUtility.singleLineHeight);
             EditorGUI.BeginProperty(rect, label, property);
@@ -379,6 +394,7 @@ namespace VRCLightVolumes {
             EditorGUI.EndProperty();
         }
 
+        // Opens a filtered Unity object picker when the field's selector button is clicked.
         private void ShowProjectionSourcePickerOnSelectorClick(SerializedProperty property, Rect fieldRect, int controlID) {
             Event currentEvent = Event.current;
             if (currentEvent.type != EventType.MouseDown || currentEvent.button != 0) return;
@@ -389,6 +405,7 @@ namespace VRCLightVolumes {
             currentEvent.Use();
         }
 
+        // Accepts supported picker selections and rejects incompatible projection sources.
         private void UpdateProjectionSourceFromPicker(SerializedProperty property, int controlID, bool isShadowSource) {
             Event currentEvent = Event.current;
             if (currentEvent.type != EventType.ExecuteCommand) return;
@@ -402,6 +419,7 @@ namespace VRCLightVolumes {
             currentEvent.Use();
         }
 
+        // Draws accepted source types inside an otherwise empty object field.
         private void DrawProjectionSourceHint(Rect fieldRect, string acceptedTypesHint) {
             if (Event.current.type != EventType.Repaint) return;
             if (_projectionSourceHintStyle == null) {
@@ -418,6 +436,7 @@ namespace VRCLightVolumes {
             GUI.Label(hintRect, acceptedTypesHint, _projectionSourceHintStyle);
         }
 
+        // Validates a texture or material against the current projection and shadow requirements.
         private bool IsSupportedTextureMaterialSource(UnityEngine.Object value, bool isShadowSource) {
             if (value == null) return true;
             if (isShadowSource) return value is Texture2DArray || value is Cubemap || value is RenderTexture || value is Material;
@@ -429,10 +448,12 @@ namespace VRCLightVolumes {
             return lightType == 2 || projection == 1 || projection == 2 && (lightType == 0 || lightType == 1);
         }
 
+        // Returns the owning Manager's culling cutoff or the package default.
         private static float GetBrightnessCutoff(PointLightVolumeInstance pointLightVolume) {
             return pointLightVolume.LightVolumeManager != null ? pointLightVolume.LightVolumeManager.LightsBrightnessCutoff : 0.35f;
         }
 
+        // Draws the Scene View shape, range and optional debug bounds for one light.
         private void DrawVolumeGUI(PointLightVolumeInstance pointLightVolume) {
 
             Transform t = pointLightVolume.transform;
@@ -535,6 +556,7 @@ namespace VRCLightVolumes {
 
         }
 
+        // Draws Scene View gizmos for every selected Point Light Volume.
         void OnSceneGUI() {
             foreach (var obj in Selection.gameObjects) {
                 var volume = obj.GetComponent<PointLightVolumeInstance>();
@@ -602,6 +624,7 @@ namespace VRCLightVolumes {
             Handles.DrawLine(nearCenter - up * nearRadius, farCenter - up * farRadius);
         }
 
+        // Draws an Area Light emitter rectangle and its forward direction.
         private void DrawAreaLight(Vector3 center, Quaternion rotation, float width, float height) {
             Vector3 right = rotation * Vector3.right * (width * 0.5f);
             Vector3 up = rotation * Vector3.up * (height * 0.5f);
@@ -622,6 +645,7 @@ namespace VRCLightVolumes {
             Handles.DrawLine(center, center + rotation * Vector3.forward * 0.5f);
         }
 
+        // Draws the estimated culling sphere of an Area Light.
         private void DrawAreaLightDebug(Vector3 center, Quaternion rotation, float width, float height, Color color, float intensity, float cutoff) {
 
             // Light normal
@@ -640,6 +664,7 @@ namespace VRCLightVolumes {
 
         }
 
+        // Calculates squared Area Light range from emitter dimensions and minimum solid angle.
         float ComputeAreaLightSquaredBoundingSphere(float width, float height, float minSolidAngle) {
             float A = width * height;
             float w2 = width * width;
@@ -653,11 +678,13 @@ namespace VRCLightVolumes {
             return d2;
         }
 
+        // Calculates squared Point Light range from brightness, source size and cutoff.
         float ComputePointLightSquaredBoundingSphere(Color color, float intensity, float size, float cutoff) {
             float L = Mathf.Max(color.r, Mathf.Max(color.g, color.b));
             return Mathf.Max(Mathf.PI * 2 * L * Mathf.Abs(intensity) / (cutoff * cutoff) - 1, 0) * size * size;
         }
 
+        // Keeps live debug values updating while their foldout is visible in play mode.
         public override bool RequiresConstantRepaint() {
             return _debugExpanded && EditorApplication.isPlaying;
         }

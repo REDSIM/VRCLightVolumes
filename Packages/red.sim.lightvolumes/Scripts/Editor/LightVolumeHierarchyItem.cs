@@ -8,6 +8,7 @@ namespace VRCLightVolumes {
     public static class HierarchyMenu {
 
         [MenuItem("GameObject/Light Volume", false, 9999)]
+        // Creates and initializes a unified Light Volume under the current hierarchy selection.
         private static void CreateLightVolume(MenuCommand command) {
             GameObject gameObject = CreateGameObject("Light Volume", command);
 #if UDONSHARP
@@ -24,6 +25,7 @@ namespace VRCLightVolumes {
         }
 
         [MenuItem("GameObject/Point Light Volume", false, 9999)]
+        // Creates and initializes a unified Point Light Volume under the current hierarchy selection.
         private static void CreatePointLightVolume(MenuCommand command) {
             GameObject gameObject = CreateGameObject("Point Light Volume", command);
 #if UDONSHARP
@@ -37,6 +39,7 @@ namespace VRCLightVolumes {
             Selection.activeGameObject = gameObject;
         }
 
+        // Creates an Undo-aware uniquely named GameObject aligned to the selected parent.
         private static GameObject CreateGameObject(string baseName, MenuCommand command) {
             GameObject parent = command.context as GameObject;
             Transform parentTransform = parent != null ? parent.transform : null;

@@ -21,7 +21,7 @@ namespace VRCLightVolumes {
         public TextureArrayResolution ShadowResolution = TextureArrayResolution._256x256;
         public ShadowTexturePrecision ShadowTextureFormat = ShadowTexturePrecision.Float;
         public float ShadowBleedReduction = 0.2f;
-        public float ShadowMinVariance;
+        public float ShadowMinVariance = 0f;
         public float ShadowMinVarianceMobile = 1f;
 
         public bool Clustering;

@@ -25,7 +25,7 @@ namespace VRCLightVolumes {
     {
         [Tooltip("Defines whether this point light volume can be moved at runtime. Disabling this option slightly improves performance. Don't forget to enable \"Auto Update Volumes\" in your Light Volumes Setup to get these dynamic updates!")]
         public bool IsDynamic = false;
-        [Tooltip("Point light volume shape. 0 = point, 1 = spot, 2 = area.")]
+        [Tooltip("Point Light is the most performant type. For static lighting, prefer baked additive Light Volumes.")]
         public int LightType = 0; // 0: point, 1: spot, 2: area
         [Tooltip("Multiplies the point light volume’s color by this value.")]
         [ColorUsage(showAlpha: false)] public Color Color = Color.white;
@@ -98,7 +98,7 @@ namespace VRCLightVolumes {
         public bool AutoUpdateShadowMap = false;
         [Tooltip("Index of the shadow map used by this light. -1 means no shadow.")]
         public float ShadowMapID = -1f;
-        [Tooltip("Use it if you don't want to move baked shadows together with their light. Attaches shadows to the world space basically. Less optimized when turned on.")]
+        [Tooltip("Keeps baked shadows fixed in world space instead of moving with the light. This costs slightly more at runtime.")]
         public bool WorldSpaceShadows = false;
         [Tooltip("World-space position where the shadow map was baked.")]
         public Vector3 ShadowBakePosition = Vector3.zero;
@@ -110,12 +110,12 @@ namespace VRCLightVolumes {
         public int LayerMask = 270849;
         [Tooltip("Near clip plane used by the shadow bake camera. Higher values can clip nearby occluders.")]
         [Min(0.0001f)] public float NearClip = 0.01f;
-        [Tooltip("Far clip distance used when the shadow map was baked. 0 falls back to this light's current culling range.")]
+        [Tooltip("Far clip plane used by the shadow bake camera. Shadow casters outside the near-far range are clipped. 0 uses this light's current culling range.")]
         [Min(0)] public float FarClip = 0f;
         // Serialized source of truth for the far clip actually used by the latest shadow bake.
         [HideInInspector] public float BakedFarClip = 0f;
         [Tooltip("World-space bias in meters applied while baking this light's shadow map. Larger values reduce self-shadow artifacts, but can detach contact edges. Requires rebaking.")]
-        [Min(0)] public float Bias = 0.1f;
+        [Min(0)] public float Bias = 0.01f;
         [Tooltip("Shadow blur radius applied after baking, normalized to 128x128 shadow resolution. Editor baking uses spherical shadow-space blur to reduce visible cubemap and Spot Light projection seams. " +
                  "Runtime baking uses Planar Blur unless Spherical Blur is enabled on the runtime baker. 0 keeps the baked shadow map unblurred. Requires rebaking.")]
         [Min(0)] public float Blur = 1f;
@@ -139,20 +139,33 @@ namespace VRCLightVolumes {
         // UdonSharp proxy and backing behaviour always share one serializable schema. Duplicate texture
         // references are cleared from the temporary build scene, while runtime authoring references such as
         // the shadow exclusion roots remain available to Udon.
+        [Tooltip("Parametric computes light falloff from settings. LUT uses X for cone falloff and Y for attenuation. Custom projects a cookie or cubemap.")]
         [HideInInspector] public int Projection = 0; // 0: parametric, 1: LUT, 2: custom cookie or cubemap
+        [Tooltip("Radius in meters beyond which the light is culled. Fewer overlapping lights improve performance.")]
         [HideInInspector] public float Range = 10f;
+        [Tooltip("Controls the Spot Light cone falloff.")]
         [HideInInspector] public float Falloff = 1f;
+        [Tooltip("LUT texture or material. X controls cone falloff and Y controls attenuation. Uncompressed RGBA Half or RGBA Float is recommended for textures.")]
         [HideInInspector] public UnityEngine.Object FalloffLUT;
+        [Tooltip("Texture or material projected by a Spot Light, or used as the textured emitter surface of an Area Light.")]
         [HideInInspector] public UnityEngine.Object Cookie;
+        [Tooltip("Cubemap texture or material projected by a Point Light.")]
         [HideInInspector] public UnityEngine.Object Cubemap;
+        [Tooltip("Bakes this light into light probes so it can affect objects without Light Volumes support. Intended for static lights.")]
         [HideInInspector] public bool BakeIntoProbes = false;
+        [Tooltip("Shows the light's culling range gizmo. Use it to reduce unnecessary overlap between Point Light Volumes.")]
         [HideInInspector] public bool DebugRange = false;
+        [Tooltip("Enables baked shadows for this light. Baked shadows can still affect dynamic objects such as avatars.")]
         [HideInInspector] public bool Shadows = false;
-        [HideInInspector] public bool RebakeShadows = false;
+        [Tooltip("Includes this light when Bake Shadows is clicked in the Light Volume Manager. Disable it to keep the current shadow map during batch bakes.")]
+        [HideInInspector] public bool RebakeShadows = true;
         [Tooltip("Objects that must not cast shadows for this light. Every Renderer under a listed root is temporarily excluded from both editor and runtime shadow baking.")]
         [HideInInspector] public GameObject[] ExclusionMask = new GameObject[0];
+        [Tooltip("Shows the shadow near and far clip plane gizmo.")]
         [HideInInspector] public bool DebugClipPlanes = false;
+        [Tooltip("Forces Spot Light shadows to bake and store as a cubemap even when the spot angle is below 180 degrees.")]
         [HideInInspector] public bool ForceCubemapShadows = false;
+        [Tooltip("Baked shadow map source for this light. Bake Shadows generates it automatically; compatible textures and materials can also be assigned manually.")]
         [HideInInspector] public UnityEngine.Object ShadowMap;
 
         // Shared disabled runtime shadow bake camera assigned by the Light Volume Manager.
@@ -267,18 +280,21 @@ namespace VRCLightVolumes {
         public void _onVarChange_IsDynamic() {
             NotifyManager(true, false, false);
         }
+        // Recalculates range and uploads data when Udon changes the light color.
         public void _onVarChange_Color() {
             if (_old_Color != Color) {
                 _old_Color = Color;
                 MarkRangeDirtyAndNotify(false, false, false);
             }
         }
+        // Recalculates range and uploads data when Udon changes light intensity.
         public void _onVarChange_Intensity() {
             if (_old_Intensity != Intensity) {
                 _old_Intensity = Intensity;
                 MarkRangeDirtyAndNotify(false, false, false);
             }
         }
+        // Rebuilds active-light data when Udon changes shading strength across zero.
         public void _onVarChange_ShadingStrength() {
             if (_old_ShadingStrength != ShadingStrength) {
                 float oldStrength = _old_ShadingStrength;
@@ -335,6 +351,7 @@ namespace VRCLightVolumes {
             LightVolumeManager.DeinitializePointLightVolume(this, customTexturesChanged, shadowTexturesChanged);
         }
 
+        // Registers the light and starts its optional one-shot runtime shadow bake.
         private void Start() {
 #if !UDONSHARP
             if (LightVolumeManager == null) {
@@ -352,10 +369,12 @@ namespace VRCLightVolumes {
             }
         }
 
+        // Registers the light when its component or GameObject becomes active.
         private void OnEnable() {
             RegisterWithManager();
         }
 
+        // Removes the light from the Manager registry and marks it inactive.
         private void OnDisable() {
             UnregisterFromManager();
             IsActive = false;
@@ -427,6 +446,15 @@ namespace VRCLightVolumes {
             RegistryWeight = weight;
             RegisterWithManager();
             if (LightVolumeManager != null) LightVolumeManager.ReorderPointLightVolume(this);
+        }
+
+        // Called before the manager replaces its complete atlas from registered source textures.
+        // A direct baker owns final pixels outside its 1x1 registration source, so it must restart.
+        public void InvalidateRuntimeDirectShadowAtlas() {
+            bool ownsDirectAtlas = RuntimeShadowDirectOutput && _runtimeShadowRegistrationTexture != null
+                && ShadowMapTexture == _runtimeShadowRegistrationTexture;
+            if (!ownsDirectAtlas) return;
+            _runtimeShadowFaceIndex = 0;
         }
 
         // Sets light source size or range data for LUT mode
@@ -693,7 +721,10 @@ namespace VRCLightVolumes {
             // Prepare render targets for the selected runtime shadow output path.
             RenderTextureFormat format = manager.ShadowTextureFormat == ShadowTextureFormatHalf ? RenderTextureFormat.ARGBHalf : RenderTextureFormat.ARGBFloat;
             if (_runtimeShadowFaceIndex >= bakeSliceCount) _runtimeShadowFaceIndex = 0;
-            EnsureRuntimeShadowDepthTexture(bakeResolution);
+            if (!EnsureRuntimeShadowDepthTexture(bakeResolution)) {
+                AbortRuntimeShadowBake();
+                return;
+            }
             if (useDirectOutput) {
                 // Direct output writes final faces straight into the manager atlas, so keep only a tiny registration source for metadata.
                 _runtimeShadowRegistrationTexture = EnsureRuntimeShadowOwnedArrayTexture(_runtimeShadowRegistrationTexture, format, 1, bakeSliceCount, FilterMode.Point, true);
@@ -711,9 +742,18 @@ namespace VRCLightVolumes {
                 }
                 _runtimeShadowTexture = EnsureRuntimeShadowOwnedArrayTexture(_runtimeShadowTexture, format, bakeResolution, bakeSliceCount, FilterMode.Bilinear, true);
             }
+            if ((useDirectOutput && _runtimeShadowRegistrationTexture == null)
+                || (!useDirectOutput && _runtimeShadowTexture == null)) {
+                AbortRuntimeShadowBake();
+                return;
+            }
             if (useBlur) {
                 // Blur needs one scratch array matching the active output layout.
                 _runtimeShadowBlurTempTexture = EnsureRuntimeShadowOwnedArrayTexture(_runtimeShadowBlurTempTexture, format, bakeResolution, bakeSliceCount, FilterMode.Bilinear, false);
+                if (_runtimeShadowBlurTempTexture == null) {
+                    AbortRuntimeShadowBake();
+                    return;
+                }
             } else if (_runtimeShadowBlurTempTexture != null) {
                 // No-blur path should not keep scratch VRAM alive between bakes.
                 ReleaseRuntimeShadowRenderTexture(_runtimeShadowBlurTempTexture);
@@ -767,7 +807,6 @@ namespace VRCLightVolumes {
                 ReleaseIdleRuntimeShadowTextures();
                 return;
             }
-
             // Resolve the output array and base slice that receive rendered shadow faces.
             RenderTexture outputTexture;
             int outputBaseSlice;
@@ -810,6 +849,7 @@ namespace VRCLightVolumes {
             ApplyExclusionMask();
 
             int face = firstFace;
+            bool encodedFaces = true;
             if (useCubemapShadow) {
                 // Point/cubemap shadows render each requested cubemap face with a fixed face rotation.
                 for (int i = 0; i < faceCount; i++) {
@@ -821,43 +861,46 @@ namespace VRCLightVolumes {
                     else runtimeShadowCameraTransform.rotation = bakeRotation;
 
                     runtimeShadowCamera.Render();
-                    BlitRuntimeShadowMaterialToSlice(_runtimeShadowDepthTexture, depthEncodeMaterial, 0, outputTexture, outputBaseSlice + face);
+                    if (!BlitRuntimeShadowMaterialToSlice(_runtimeShadowDepthTexture, depthEncodeMaterial, 0, outputTexture, outputBaseSlice + face)) encodedFaces = false;
                     face++;
                 }
             } else {
                 // Single-slice spot shadows render one projection using the light rotation.
                 runtimeShadowCameraTransform.rotation = bakeRotation;
                 runtimeShadowCamera.Render();
-                BlitRuntimeShadowMaterialToSlice(_runtimeShadowDepthTexture, depthEncodeMaterial, 0, outputTexture, outputBaseSlice);
+                if (!BlitRuntimeShadowMaterialToSlice(_runtimeShadowDepthTexture, depthEncodeMaterial, 0, outputTexture, outputBaseSlice)) encodedFaces = false;
             }
 
             RestoreExclusionMask();
             runtimeShadowCamera.targetTexture = previousTargetTexture;
             runtimeShadowCameraTransform.rotation = previousCameraRotation;
+            if (!encodedFaces) {
+                AbortRuntimeShadowBake();
+                return;
+            }
 
             // Finish this trigger and publish local-output slices when this is a real runtime source.
             bool cycleComplete = instantBake || face >= bakeSliceCount;
             _runtimeShadowFaceIndex = cycleComplete ? 0 : face;
             if (useBlur) {
                 // Blur is applied only after a full cycle so every face has matching source data.
-                if (cycleComplete) BlurRuntimeShadowFaces(bakeSliceCount, blurUsesUniformRadius, useDirectOutput, !useDirectOutput, outputTexture, outputBaseSlice, useSphericalBlur);
+                if (cycleComplete) {
+                    BlurRuntimeShadowFaces(bakeSliceCount, blurUsesUniformRadius, useDirectOutput, !useDirectOutput, outputTexture, outputBaseSlice, useSphericalBlur);
+                }
             } else if (!useDirectOutput) {
                 // Without blur, local-output faces can be copied to the manager immediately.
-                int copyFirstFace = cycleComplete ? 0 : firstFace;
-                int copyFaceCount = cycleComplete ? bakeSliceCount : faceCount;
-                for (int i = 0; i < copyFaceCount; i++) manager.UpdatePointLightShadowTextureSlice(this, copyFirstFace + i);
+                manager.UpdatePointLightShadowTextureRange(this, firstFace, faceCount);
             }
-
             if (cycleComplete && !useDirectOutput) ReleaseIdleRuntimeShadowTextures();
         }
 
         // Creates or validates the camera depth render target.
-        private void EnsureRuntimeShadowDepthTexture(int resolution) {
+        private bool EnsureRuntimeShadowDepthTexture(int resolution) {
             if (_runtimeShadowDepthTexture != null && _runtimeShadowDepthTexture.width == resolution && _runtimeShadowDepthTexture.height == resolution
 #if !COMPILER_UDONSHARP
                 && _runtimeShadowDepthTexture.format == RenderTextureFormat.Depth
 #endif
-                ) return;
+                ) return true;
 
             _runtimeShadowFaceIndex = 0;
             ReleaseRuntimeShadowRenderTexture(_runtimeShadowDepthTexture);
@@ -871,7 +914,10 @@ namespace VRCLightVolumes {
 #if !COMPILER_UDONSHARP
             _runtimeShadowDepthTexture.hideFlags = HideFlags.HideAndDontSave;
 #endif
-            _runtimeShadowDepthTexture.Create();
+            if (_runtimeShadowDepthTexture.Create()) return true;
+            ReleaseRuntimeShadowRenderTexture(_runtimeShadowDepthTexture);
+            _runtimeShadowDepthTexture = null;
+            return false;
         }
 
         // Reuses or recreates a locally-owned runtime shadow texture array.
@@ -883,6 +929,7 @@ namespace VRCLightVolumes {
                 ) return texture;
 
             if (resetBakeCycle) _runtimeShadowFaceIndex = 0;
+            if (ShadowMapTexture == texture) ShadowMapTexture = null;
             ReleaseRuntimeShadowRenderTexture(texture);
             texture = new RenderTexture(resolution, resolution, 0, format, RenderTextureReadWrite.Linear);
             texture.dimension = TextureDimension.Tex2DArray;
@@ -895,8 +942,9 @@ namespace VRCLightVolumes {
 #if !COMPILER_UDONSHARP
             texture.hideFlags = HideFlags.HideAndDontSave;
 #endif
-            texture.Create();
-            return texture;
+            if (texture.Create()) return texture;
+            ReleaseRuntimeShadowRenderTexture(texture);
+            return null;
         }
 
         // Updates this light's runtime shadow source and returns whether shader metadata changed.
@@ -989,7 +1037,7 @@ namespace VRCLightVolumes {
             LightVolumeManager manager = LightVolumeManager;
             if (copyToManager && manager != null) {
                 // Local-output blur must publish the finished faces to the manager atlas after blur completes.
-                for (int face = 0; face < sliceCount; face++) manager.UpdatePointLightShadowTextureSlice(this, face);
+                manager.UpdatePointLightShadowTextureRange(this, 0, sliceCount);
             }
         }
 
@@ -1080,15 +1128,19 @@ namespace VRCLightVolumes {
         }
 
         // Renders one material pass into a destination texture-array slice.
-        private void BlitRuntimeShadowMaterialToSlice(Texture sourceTexture, Material material, int pass, RenderTexture destination, int targetSlice) {
-            if (material == null || destination == null) return;
+        private bool BlitRuntimeShadowMaterialToSlice(Texture sourceTexture, Material material, int pass, RenderTexture destination, int targetSlice) {
+            if (material == null || destination == null) return false;
 #if COMPILER_UDONSHARP
             if (_runtimeShadowMaterialBlitInputTexture == null) {
                 _runtimeShadowMaterialBlitInputTexture = new RenderTexture(1, 1, 0, RenderTextureFormat.ARGB32, RenderTextureReadWrite.Linear);
                 _runtimeShadowMaterialBlitInputTexture.dimension = TextureDimension.Tex2D;
                 _runtimeShadowMaterialBlitInputTexture.useMipMap = false;
                 _runtimeShadowMaterialBlitInputTexture.autoGenerateMips = false;
-                _runtimeShadowMaterialBlitInputTexture.Create();
+                if (!_runtimeShadowMaterialBlitInputTexture.Create()) {
+                    ReleaseRuntimeShadowRenderTexture(_runtimeShadowMaterialBlitInputTexture);
+                    _runtimeShadowMaterialBlitInputTexture = null;
+                    return false;
+                }
             }
             Texture blitSource = _runtimeShadowMaterialBlitInputTexture;
             VRCGraphics.Blit(blitSource, destination, 0, targetSlice);
@@ -1099,6 +1151,7 @@ namespace VRCLightVolumes {
             VRCGraphics.Blit(sourceTexture, material, pass);
             RenderTexture.active = previousRenderTexture == destination ? null : previousRenderTexture;
 #endif
+            return true;
         }
 
         // Releases one runtime shadow render texture before replacing it.
@@ -1122,6 +1175,12 @@ namespace VRCLightVolumes {
             _runtimeShadowDepthTexture = null;
             _runtimeShadowBlurTempTexture = null;
             _runtimeShadowMaterialBlitInputTexture = null;
+        }
+
+        // Allocation/blit failures retain the previous manager atlas and reset this bake cycle.
+        private void AbortRuntimeShadowBake() {
+            _runtimeShadowFaceIndex = 0;
+            ReleaseIdleRuntimeShadowTextures();
         }
 
         // Releases all locally-owned runtime shadow textures.
@@ -1244,14 +1303,17 @@ namespace VRCLightVolumes {
             return null;
         }
 
+        // Returns the active authoring projection source when it is a texture.
         public Texture GetCustomTexture() {
             return GetProjectionSource() as Texture;
         }
 
+        // Returns the active authoring projection source when it is a material.
         public Material GetCustomTextureMaterial() {
             return GetProjectionSource() as Material;
         }
 
+        // Returns the runtime projection source type encoded for the Manager.
         public int GetProjectionType() {
             UnityEngine.Object source = GetProjectionSource();
             if (!HasProjectionSource()) return 0;
@@ -1260,6 +1322,7 @@ namespace VRCLightVolumes {
             return 0;
         }
 
+        // Checks whether the selected source is valid for the current light and projection type.
         public bool HasProjectionSource() {
             UnityEngine.Object source = GetProjectionSource();
             if (source is Material) return true;
@@ -1268,64 +1331,77 @@ namespace VRCLightVolumes {
             return Projection == 2 && (LightType == 0 || LightType == 1);
         }
 
+        // Checks whether this light consumes six cubemap slices in the projection atlas.
         public bool UsesCubemapProjection() {
             return LightType == 0 && Projection == 2 && HasProjectionSource();
         }
 
+        // Resolves authoring settings to the projection mode consumed at runtime.
         private int GetAuthoringProjectionMode() {
             if (!HasProjectionSource()) return 0;
             if (LightType == 2) return 2;
             return Projection == 1 ? 1 : Projection == 2 ? 2 : 0;
         }
 
+        // Checks whether an editor source may change without replacing its object reference.
         private static bool IsAnimatedEditorSource(UnityEngine.Object source) {
             return source is RenderTexture || source is Material;
         }
 
+        // Checks whether a texture is a Cubemap or cube-dimension RenderTexture.
         private static bool IsEditorCubemapTexture(Texture texture) {
             if (texture is Cubemap) return true;
             RenderTexture renderTexture = texture as RenderTexture;
             return renderTexture != null && renderTexture.dimension == TextureDimension.Cube;
         }
 
+        // Checks whether a texture stores independent array or cubemap-face slices.
         private static bool EditorTextureHasDepthSlices(Texture texture) {
             RenderTexture renderTexture = texture as RenderTexture;
             if (renderTexture != null) return renderTexture.dimension == TextureDimension.Tex2DArray && renderTexture.volumeDepth > 1;
             return texture is Texture2DArray;
         }
 
+        // Returns the persistent shadow source when it is a texture.
         public Texture GetShadowMapTexture() {
             return ShadowMap as Texture;
         }
 
+        // Returns the persistent shadow source when it is a material.
         public Material GetShadowMapMaterial() {
             return ShadowMap as Material;
         }
 
+        // Checks whether a supported texture or material shadow source is assigned.
         public bool HasShadowMapSource() {
             return ShadowMap is Texture || ShadowMap is Material;
         }
 
+        // Resolves whether the current light settings require a six-face shadow bake.
         public bool ShouldBakeCubemapShadows() {
             return LightType != 1 || ForceCubemapShadows || Angle >= Mathf.PI; // 1: spot
         }
 
+        // Checks whether the assigned or generated shadow source occupies six atlas slices.
         public bool UsesCubemapShadows() {
             Texture texture = GetShadowMapTexture();
             if (IsEditorCubemapTexture(texture) || EditorTextureHasDepthSlices(texture)) return true;
             return ShouldBakeCubemapShadows();
         }
 
+        // Returns a positive near clip distance safe for the shadow camera.
         public float GetShadowNearClip() {
             return Mathf.Max(NearClip, 0.0001f);
         }
 
+        // Returns a far clip beyond the near plane, using calculated range when no override is set.
         public float GetShadowFarClip() {
             float nearClip = GetShadowNearClip();
             float farClip = FarClip > 0f ? FarClip : GetCalculatedShadowFarClip();
             return Mathf.Max(farClip, nearClip + 0.0001f);
         }
 
+        // Calculates shadow-camera range from the current projection, size and brightness cutoff.
         private float GetCalculatedShadowFarClip() {
             Vector3 lossyScale = transform.lossyScale;
             float averageScale = (Mathf.Abs(lossyScale.x) + Mathf.Abs(lossyScale.y) + Mathf.Abs(lossyScale.z)) / 3f;
@@ -1344,6 +1420,7 @@ namespace VRCLightVolumes {
             return Mathf.Max(Mathf.Sqrt(squaredRange), 0.0001f);
         }
 
+        // Estimates the squared culling range of an Area Light for editor shadow baking.
         private static float ComputeEditorAreaLightSquaredRange(float width, float height, Color color, float intensity, float cutoff) {
             float luminance = Mathf.Max(color.r, Mathf.Max(color.g, color.b)) * Mathf.Abs(intensity);
             if (luminance <= 0.000001f) return 0f;
@@ -1361,6 +1438,7 @@ namespace VRCLightVolumes {
             return Mathf.Max((discriminant - scaledShape) * 0.125f / tangentSquared, 0f);
         }
 
+        // Prevents editor synchronization from replacing a live runtime-generated shadow source.
         private bool PreserveRuntimeShadowSourceInEditor() {
             if (!Application.isPlaying || !Shadows) return false;
             Texture sourceTexture = GetShadowMapTexture();
@@ -1368,6 +1446,7 @@ namespace VRCLightVolumes {
             return ShadowMapTexture != null && ShadowMapTexture != sourceTexture;
         }
 
+        // Compares authoring projection state with the runtime fields mirrored to this instance.
         public bool HasEditorCustomTextureChanges() {
             Texture texture = GetCustomTexture();
             Material material = GetCustomTextureMaterial();
@@ -1377,6 +1456,7 @@ namespace VRCLightVolumes {
                 || CustomTextureIsCubemap != IsEditorCubemapTexture(texture) || CustomTextureHasDepthSlices != EditorTextureHasDepthSlices(texture);
         }
 
+        // Compares authoring shadow state with the runtime fields mirrored to this instance.
         public bool HasEditorShadowTextureChanges() {
             if (PreserveRuntimeShadowSourceInEditor()) return ShadowMapUsesCubemap != ShouldBakeCubemapShadows();
 

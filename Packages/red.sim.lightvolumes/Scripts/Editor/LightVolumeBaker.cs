@@ -49,10 +49,12 @@ namespace VRCLightVolumes {
         private static bool _bakeryWatcherSubscribed;
 #endif
 
+        // Installs lightmapper lifecycle callbacks after each editor domain reload.
         static LightVolumeBaker() {
             Subscribe();
         }
 
+        // Registers Progressive, Bakery, scene and assembly-reload callbacks exactly once.
         private static void Subscribe() {
 #pragma warning disable CS0618
             UnityEditor.Experimental.Lightmapping.additionalBakedProbesCompleted -= OnAdditionalBakedProbesCompleted;
@@ -78,6 +80,7 @@ namespace VRCLightVolumes {
 #endif
         }
 
+        // Removes global callbacks, temporary probe groups and compute fallback textures.
         private static void Shutdown() {
 #pragma warning disable CS0618
             UnityEditor.Experimental.Lightmapping.additionalBakedProbesCompleted -= OnAdditionalBakedProbesCompleted;
@@ -110,6 +113,7 @@ namespace VRCLightVolumes {
             _probeBakeDummyTextureArray = null;
         }
 
+        // Registers one additional Progressive probe group for every eligible Light Volume.
         private static void OnUnityBakeStarted() {
             if (Application.isPlaying) return;
             EditorApplication.delayCall -= CleanupProgressiveBakeAfterCallbacks;
@@ -150,6 +154,7 @@ namespace VRCLightVolumes {
             }
         }
 
+        // Converts completed Progressive probe groups into per-volume 3D textures.
         private static void OnAdditionalBakedProbesCompleted() {
             if (Application.isPlaying || _unityManagers.Length == 0) return;
             EditorApplication.delayCall -= CleanupProgressiveBakeAfterCallbacks;
@@ -177,6 +182,7 @@ namespace VRCLightVolumes {
             if (_unityBakeCompleted) _unityManagers = Array.Empty<LightVolumeManager>();
         }
 
+        // Post-processes Unity probes and finalizes Managers after Progressive baking completes.
         private static void OnUnityBakeCompleted() {
             if (Application.isPlaying || _unityManagers.Length == 0) return;
             _unityBakeCompleted = true;
@@ -194,6 +200,7 @@ namespace VRCLightVolumes {
             EditorApplication.delayCall += CleanupProgressiveBakeAfterCallbacks;
         }
 
+        // Removes unresolved additional probes when Unity omits their completion callback.
         private static void CleanupProgressiveBakeAfterCallbacks() {
             EditorApplication.delayCall -= CleanupProgressiveBakeAfterCallbacks;
             _progressiveCleanupQueued = false;
@@ -204,6 +211,7 @@ namespace VRCLightVolumes {
             _unityManagers = Array.Empty<LightVolumeManager>();
         }
 
+        // Unregisters every temporary Progressive probe group still owned by this bake.
         private static void CleanupProgressiveProbeRegistrations() {
             for (int i = 0; i < _progressiveVolumes.Count; i++) {
                 try {
@@ -215,22 +223,26 @@ namespace VRCLightVolumes {
             _progressiveVolumes.Clear();
         }
 
+        // Runs light-probe post-processing at most once for the current Progressive bake.
         private static void PostProcessUnityProbesOnce() {
             if (_unityProbePostProcessAttempted) return;
             _unityProbePostProcessAttempted = true;
             PostProcessLightProbes(_unityManagers, false);
         }
 
+        // Checks Manager ownership, bake state and scene eligibility for one Light Volume.
         private static bool IsBakeVolume(LightVolumeManager manager, LightVolumeInstance volume) {
             return volume != null && volume.LightVolumeManager == manager && volume.Bake && volume.gameObject.activeInHierarchy && !volume.CompareTag("EditorOnly");
         }
 
+        // Allocates a stable non-negative ID for Unity's additional baked probes API.
         private static int AllocateAdditionalProbeId() {
             if (_nextAdditionalProbeId == int.MaxValue)
                 _nextAdditionalProbeId = AdditionalProbeIdStart;
             return _nextAdditionalProbeId++;
         }
 
+        // Queues shadows and atlas generation once after a Progressive bake.
         private static void FinalizeUnityManagersOnce() {
             if (_unityManagersFinalized) return;
             _unityManagersFinalized = true;
@@ -238,6 +250,7 @@ namespace VRCLightVolumes {
             Debug.Log("[LightVolume] Progressive Light Volume atlas generation queued.");
         }
 
+        // Queues shadow baking and atlas packing for every completed Manager.
         private static void FinalizeManagers(LightVolumeManager[] managers) {
             for (int i = 0; i < managers.Length; i++) {
                 LightVolumeManager manager = managers[i];
@@ -247,6 +260,7 @@ namespace VRCLightVolumes {
             }
         }
 
+        // Registers one Light Volume's voxel centers with Unity's Progressive lightmapper.
         private static void SetAdditionalProbes(LightVolumeInstance volume, int id) {
             if (volume == null) return;
             LightVolumeTools.Recalculate(volume);
@@ -256,12 +270,14 @@ namespace VRCLightVolumes {
 #pragma warning restore CS0618
         }
 
+        // Removes one temporary group from Unity's additional baked probes API.
         private static void RemoveAdditionalProbes(int id) {
 #pragma warning disable CS0618
             UnityEditor.Experimental.Lightmapping.SetAdditionalBakedProbes(id, new Vector3[0]);
 #pragma warning restore CS0618
         }
 
+        // Reads a Progressive probe group and saves its L0/L1 data as volume textures.
         private static void Save3DTexturesProgressive(LightVolumeInstance volume, int id) {
             if (volume == null) return;
 
@@ -299,6 +315,7 @@ namespace VRCLightVolumes {
             }
         }
 
+        // Validates, processes and persists custom-lightmapper SH output for one Light Volume.
         internal static bool SaveCustomProbesBaked(LightVolumeInstance volume, Vector3[] l0, Vector3[] l1r, Vector3[] l1g, Vector3[] l1b, float[] validity, bool denoise) {
             if (volume == null || volume.LightVolumeManager == null) return false;
 
@@ -339,6 +356,7 @@ namespace VRCLightVolumes {
             return true;
         }
 
+        // Creates a clamp-wrapped half-float 3D texture suitable for baked SH coefficients.
         private static Texture3D CreateTexture(int width, int height, int depth) {
             return new Texture3D(width, height, depth, TextureFormat.RGBAHalf, false) {
                 wrapMode = TextureWrapMode.Clamp,
@@ -347,20 +365,24 @@ namespace VRCLightVolumes {
         }
 
 #if BAKERY_INCLUDED
+        // Coalesces hierarchy and scene changes into one Bakery watcher refresh.
         internal static void QueueBakeryWatcherRefresh() {
             if (_bakeryWatcherRefreshQueued) return;
             _bakeryWatcherRefreshQueued = true;
             EditorApplication.delayCall += RefreshBakeryWatcher;
         }
 
+        // Re-evaluates Bakery monitoring after a scene is opened.
         private static void OnSceneOpened(Scene scene, OpenSceneMode mode) {
             QueueBakeryWatcherRefresh();
         }
 
+        // Re-evaluates Bakery monitoring after a scene is closed.
         private static void OnSceneClosed(Scene scene) {
             QueueBakeryWatcherRefresh();
         }
 
+        // Enables per-frame Bakery state polling only while a Bakery Manager exists or a bake is active.
         private static void RefreshBakeryWatcher() {
             EditorApplication.delayCall -= RefreshBakeryWatcher;
             _bakeryWatcherRefreshQueued = false;
@@ -387,6 +409,7 @@ namespace VRCLightVolumes {
             QueueBakeryCompletion();
         }
 
+        // Captures Bakery Managers, prepares helpers and starts the global bitmask override.
         private static void BeginBakeryBake() {
             EditorApplication.delayCall -= CompleteBakeryBake;
             _bakeryCompletionQueued = false;
@@ -403,11 +426,13 @@ namespace VRCLightVolumes {
             _bakeryBitmaskPending = true;
         }
 
+        // Defers Bakery completion until its outer render loop has fully stopped.
         private static void OnBakeryFinished(object sender, EventArgs args) {
             if (Application.isPlaying || _bakeryCompletionHandled) return;
             QueueBakeryCompletion();
         }
 
+        // Coalesces Bakery completion callbacks into one delayed finalization.
         private static void QueueBakeryCompletion() {
             if (_bakeryCompletionQueued || _bakeryCompletionHandled) return;
             _bakeryCompletionQueued = true;
@@ -415,6 +440,7 @@ namespace VRCLightVolumes {
             EditorApplication.delayCall += CompleteBakeryBake;
         }
 
+        // Imports Bakery textures, post-processes probes and finalizes restored scene Managers.
         private static void CompleteBakeryBake() {
             EditorApplication.delayCall -= CompleteBakeryBake;
             _bakeryCompletionQueued = false;
@@ -472,6 +498,7 @@ namespace VRCLightVolumes {
             return GetActiveManagers(1);
         }
 
+        // Clears all Bakery completion state after a cancelled bake.
         private static void CancelBakeryCompletion() {
             EditorApplication.delayCall -= CompleteBakeryBake;
             _bakeryCompletionQueued = false;
@@ -482,6 +509,7 @@ namespace VRCLightVolumes {
             QueueBakeryWatcherRefresh();
         }
 
+        // Synchronizes already-created Bakery Volume helpers before rendering begins.
         private static void ConfigureExistingBakeryVolumes(LightVolumeManager[] managers) {
             for (int managerIndex = 0; managerIndex < managers.Length; managerIndex++) {
                 LightVolumeManager manager = managers[managerIndex];
@@ -495,6 +523,7 @@ namespace VRCLightVolumes {
             }
         }
 
+        // Chooses deterministic global Bakery bitmasks and warns about conflicting Managers.
         private static void ResolveBakeryBitmasks(LightVolumeManager[] managers, out int volumeBitmask, out int probeBitmask) {
             LightVolumeManager selected = managers[0];
             volumeBitmask = selected.VolumeBitmask;
@@ -510,6 +539,7 @@ namespace VRCLightVolumes {
             Debug.LogWarning($"[LightVolume] Active Bakery managers use different global bitmasks. Using Volume={volumeBitmask}, Probes={probeBitmask} from \"{GetManagerSortKey(selected)}\" for this bake.", selected);
         }
 
+        // Applies bitmasks once Bakery creates its live implicit probe groups.
         private static void TryApplyBakeryRuntimeBitmasks() {
             if (_bakeryManagers.Length == 0) {
                 _bakeryBitmaskPending = false;
@@ -520,12 +550,14 @@ namespace VRCLightVolumes {
             _bakeryBitmaskPending = false;
         }
 
+        // Updates stored groups and clears Bakery's cached implicit groups before a bake.
         private static void BeginBakeryBitmaskOverride(int volumeBitmask, int probeBitmask) {
             ApplyBakeryBitmasksToStoredGroups(volumeBitmask, probeBitmask);
             _bakeryLightProbeGroupField?.SetValue(null, null);
             _bakeryVolumeGroupField?.SetValue(null, null);
         }
 
+        // Updates Bakery's live implicit probe groups once they become available.
         private static bool TryApplyBakeryBitmaskOverride(int volumeBitmask, int probeBitmask) {
             BakeryLightmapGroup lightProbeGroup = _bakeryLightProbeGroupField?.GetValue(null) as BakeryLightmapGroup;
             BakeryLightmapGroup volumeGroup = _bakeryVolumeGroupField?.GetValue(null) as BakeryLightmapGroup;
@@ -536,6 +568,7 @@ namespace VRCLightVolumes {
             return true;
         }
 
+        // Writes selected bitmasks to serialized implicit groups in every loaded scene.
         private static void ApplyBakeryBitmasksToStoredGroups(int volumeBitmask, int probeBitmask) {
             for (int i = 0; i < SceneManager.sceneCount; i++) {
                 Scene scene = SceneManager.GetSceneAt(i);
@@ -553,6 +586,7 @@ namespace VRCLightVolumes {
         }
 #endif
 
+        // Optionally derings L1 probes and accumulates eligible Point Light Volumes into them.
         private static bool PostProcessLightProbes(LightVolumeManager[] managers, bool dering) {
             bool bakePointLights = HasProbeBakedPointLights(managers);
             if (!dering && !bakePointLights) return false;
@@ -599,6 +633,7 @@ namespace VRCLightVolumes {
             return true;
         }
 
+        // Checks whether any active registered Point Light Volume requests probe baking.
         private static bool HasProbeBakedPointLights(LightVolumeManager[] managers) {
             for (int managerIndex = 0; managerIndex < managers.Length; managerIndex++) {
                 LightVolumeManager manager = managers[managerIndex];
@@ -612,6 +647,7 @@ namespace VRCLightVolumes {
             return false;
         }
 
+        // Uses the runtime-compatible compute path to add one Manager's lights to baked probes.
         private static int BakePointLightsIntoProbes(LightVolumeManager manager, SphericalHarmonicsL2[] sh, Vector3[] probePositions, int lightCapacity) {
             int probeCount = Mathf.Min(sh.Length, probePositions.Length);
             if (probeCount == 0) return 0;
@@ -680,11 +716,13 @@ namespace VRCLightVolumes {
             return pointLightCount;
         }
 
+        // Returns the Manager projection array or a valid one-slice fallback texture.
         private static Texture GetProbeBakeCustomTexture(LightVolumeManager manager) {
             RenderTexture texture = manager.CustomTextures;
             return texture != null && texture.volumeDepth > 0 && texture.IsCreated() ? texture : GetProbeBakeDummyTextureArray();
         }
 
+        // Lazily creates the dummy 3D texture required by the shared lighting compute shader.
         private static Texture3D GetProbeBakeDummyVolumeTexture() {
             if (_probeBakeDummyVolumeTexture != null)
                 return _probeBakeDummyVolumeTexture;
@@ -693,6 +731,7 @@ namespace VRCLightVolumes {
             return _probeBakeDummyVolumeTexture;
         }
 
+        // Lazily creates the dummy texture array required for unused projection and shadow inputs.
         private static Texture2DArray GetProbeBakeDummyTextureArray() {
             if (_probeBakeDummyTextureArray != null)
                 return _probeBakeDummyTextureArray;
@@ -701,6 +740,7 @@ namespace VRCLightVolumes {
             return _probeBakeDummyTextureArray;
         }
 
+        // Packs L0/L1 probe coefficients into the compute shader's three-vector layout.
         private static void PackProbeSH(SphericalHarmonicsL2[] sh, Vector4[] packed, int count) {
             for (int i = 0; i < count; i++) {
                 int index = i * 3;
@@ -710,6 +750,7 @@ namespace VRCLightVolumes {
             }
         }
 
+        // Writes compute-shader L0/L1 output back into Unity probe coefficients.
         private static void UnpackProbeSH(Vector4[] packed, SphericalHarmonicsL2[] sh, int count) {
             for (int i = 0; i < count; i++) {
                 int index = i * 3;
@@ -728,6 +769,7 @@ namespace VRCLightVolumes {
             }
         }
 
+        // Collects active scene Managers for one lightmapper mode in deterministic hierarchy order.
         private static LightVolumeManager[] GetActiveManagers(int bakingMode) {
             LightVolumeManager[] all = Resources.FindObjectsOfTypeAll<LightVolumeManager>();
             List<LightVolumeManager> result = new List<LightVolumeManager>();
@@ -743,10 +785,12 @@ namespace VRCLightVolumes {
             return managers;
         }
 
+        // Compares Managers by their deterministic scene and hierarchy keys.
         private static int CompareManagers(LightVolumeManager first, LightVolumeManager second) {
             return string.CompareOrdinal(GetManagerSortKey(first), GetManagerSortKey(second));
         }
 
+        // Builds a stable scene-path and sibling-index key for one Manager.
         private static string GetManagerSortKey(LightVolumeManager manager) {
             if (manager == null) return string.Empty;
             Transform current = manager.transform;

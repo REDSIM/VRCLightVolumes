@@ -74,11 +74,13 @@ namespace VRCLightVolumes {
         private MaterialPropertyBlock _block;
         private float _prevData = 0f;
 
+        // Caches the material property IDs updated by the AudioLink effect.
         private void InitIDs() {
             _colorID = VRCShader.PropertyToID("_Color");
             _emissionColorID = VRCShader.PropertyToID("_EmissionColor");
         }
 
+        // Initializes renderer state and enables AudioLink readback.
         private void Start() {
             _block = new MaterialPropertyBlock();
             InitIDs();
@@ -88,6 +90,7 @@ namespace VRCLightVolumes {
             }
         }
 
+        // Samples AudioLink and applies the resulting color and intensity to every configured target.
         private void Update() {
             int band = (int)AudioBand;
 
@@ -156,10 +159,12 @@ namespace VRCLightVolumes {
             }
         }
 
+        // Applies inversion and the configured additive and multiplicative response curves.
         private float ApplyALFactors(float alData) {
             return (Invert ? (1 - alData) : alData) * Mathf.Lerp(MinimumMultiply, MaximumMultiply, alData) + Mathf.Lerp(MinimumAdd, MaximumAdd, alData);
         }
 
+        // Samples the selected AudioLink band and optionally smooths abrupt changes.
         private float SampleALData(int delay, int band) {
             float alData = 0f;
 
@@ -185,7 +190,7 @@ namespace VRCLightVolumes {
             return alData;
         }
 
-
+        // Calculates a perceptually weighted distance between two colors.
         private float ColorDifference(Color colorA, Color colorB) {
             float rmean = (colorA.r + colorB.r) * 0.5f;
             float r = colorA.r - colorB.r;
@@ -194,6 +199,7 @@ namespace VRCLightVolumes {
             return Mathf.Sqrt((2f + rmean) * r * r + 4f * g * g + (3f - rmean) * b * b) / 3;
         }
 
+        // Keeps AudioLink GPU readback enabled after inspector changes.
         private void OnValidate() {
             if (AudioLink != null) {
                 AudioLink.EnableReadback();

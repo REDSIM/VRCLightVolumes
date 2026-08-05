@@ -3,6 +3,7 @@ using UnityEngine;
 
 namespace VRCLightVolumes {
     public static class LightVolumeTools {
+        // Initializes a Light Volume's world-space bounds from a Reflection Probe on its parent.
         public static void ResetFromParentReflectionProbe(LightVolumeInstance volume) {
             if (volume == null || volume.transform.parent == null) return;
             if (!volume.transform.parent.TryGetComponent(out ReflectionProbe probe)) return;
@@ -13,14 +14,17 @@ namespace VRCLightVolumes {
             ApplyRuntimeState(volume, true);
         }
 
+        // Returns the current world-space center of a Light Volume.
         public static Vector3 GetPosition(LightVolumeInstance volume) {
             return volume == null ? Vector3.zero : volume.transform.position;
         }
 
+        // Returns the current world-space size of a Light Volume, including parent scaling.
         public static Vector3 GetScale(LightVolumeInstance volume) {
             return volume == null ? Vector3.zero : volume.transform.lossyScale;
         }
 
+        // Returns the rotation supported by the active lightmapper and Bakery version.
         public static Quaternion GetRotation(LightVolumeInstance volume) {
             if (volume == null) return Quaternion.identity;
 
@@ -34,14 +38,17 @@ namespace VRCLightVolumes {
             return Quaternion.identity;
         }
 
+        // Builds the world-space transform matrix used to place this Light Volume.
         public static Matrix4x4 GetMatrixTRS(LightVolumeInstance volume) {
             return Matrix4x4.TRS(GetPosition(volume), GetRotation(volume), GetScale(volume));
         }
 
+        // Calculates the padded voxel count for a Light Volume, or -1 when it would overflow.
         public static int GetVoxelCount(LightVolumeInstance volume, int padding = 0) {
             return volume == null ? -1 : GetVoxelCount(volume.Resolution, padding);
         }
 
+        // Calculates a padded voxel count from a resolution, or -1 for invalid or overflowing dimensions.
         public static int GetVoxelCount(Vector3Int resolution, int padding = 0) {
             long width = (long)resolution.x + padding * 2L;
             long height = (long)resolution.y + padding * 2L;
@@ -52,6 +59,7 @@ namespace VRCLightVolumes {
             return sliceSize > int.MaxValue / depth ? -1 : (int)(sliceSize * depth);
         }
 
+        // Updates a Light Volume's resolution from its world size and voxel density.
         public static bool RecalculateAdaptiveResolution(LightVolumeInstance volume) {
             if (volume == null) return false;
 
@@ -65,10 +73,12 @@ namespace VRCLightVolumes {
             return true;
         }
 
+        // Recalculates resolution when adaptive resolution is enabled and reports whether it changed.
         public static bool Recalculate(LightVolumeInstance volume) {
             return volume != null && volume.AdaptiveResolution && RecalculateAdaptiveResolution(volume);
         }
 
+        // Synchronizes derived transform, blending and active state and optionally notifies the Manager.
         public static bool ApplyRuntimeState(LightVolumeInstance volume, bool notifyManager) {
             if (volume == null) return false;
 
@@ -115,6 +125,7 @@ namespace VRCLightVolumes {
             return changed;
         }
 
+        // Generates world-space probe positions at the center of every voxel in the requested grid.
         public static bool TryCalculateProbePositions(LightVolumeInstance volume, Vector3Int resolution, out Vector3[] positions) {
             int voxelCount = GetVoxelCount(resolution);
             if (volume == null || voxelCount < 0) {
@@ -140,6 +151,7 @@ namespace VRCLightVolumes {
             return true;
         }
 
+        // Recalculates a Light Volume and returns its current world-space voxel probe positions.
         public static Vector3[] GetCustomProbes(LightVolumeInstance volume) {
             if (volume == null) return new Vector3[0];
             Recalculate(volume);
@@ -147,6 +159,7 @@ namespace VRCLightVolumes {
             return positions;
         }
 
+        // Creates, removes or synchronizes the hidden Bakery Volume owned by a Light Volume.
         public static void SetupBakeryDependencies(LightVolumeInstance volume, bool createIfMissing = true) {
 #if BAKERY_INCLUDED
             if (volume == null || volume.LightVolumeManager == null) return;
@@ -194,6 +207,7 @@ namespace VRCLightVolumes {
 #endif
         }
 
+        // Imports newly baked Bakery SH textures into their owning Light Volume.
         public static bool TryImportBakeryTextures(LightVolumeInstance volume) {
 #if BAKERY_INCLUDED
             if (volume == null || !volume.Bake || !TryFindOwnedBakeryVolume(volume, out BakeryVolume bakeryVolume)) return false;
@@ -211,6 +225,7 @@ namespace VRCLightVolumes {
         }
 
 #if BAKERY_INCLUDED
+        // Finds the single direct Bakery Volume helper owned by a Light Volume and rejects duplicates.
         private static bool TryFindOwnedBakeryVolume(LightVolumeInstance volume, out BakeryVolume bakeryVolume) {
             bakeryVolume = null;
             BakeryVolume[] candidates = volume.GetComponentsInChildren<BakeryVolume>(true);

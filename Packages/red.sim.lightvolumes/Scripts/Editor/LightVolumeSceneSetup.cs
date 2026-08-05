@@ -14,6 +14,7 @@ namespace VRCLightVolumes {
     internal static class LightVolumeSceneSetup {
         private const string UndoName = "Set Up VRC Light Volumes";
 
+        // Checks whether an object belongs to a loaded main-stage scene rather than a prefab or preview stage.
         internal static bool IsMainStageSceneObject(GameObject gameObject) {
             if (gameObject == null || EditorUtility.IsPersistent(gameObject)) return false;
             Scene scene = gameObject.scene;
@@ -25,12 +26,14 @@ namespace VRCLightVolumes {
                 && StageUtility.GetMainStageHandle().Contains(gameObject);
         }
 
+        // Checks whether a scene is loaded in the main stage and safe for automatic setup.
         internal static bool IsMainStageScene(Scene scene) {
             if (!scene.IsValid() || !scene.isLoaded || EditorSceneManager.IsPreviewScene(scene)) return false;
             GameObject[] roots = scene.GetRootGameObjects();
             return roots.Length == 0 || IsMainStageSceneObject(roots[0]);
         }
 
+        // Checks whether a hierarchy contains unified or migratable Light Volumes authoring components.
         internal static bool ContainsAuthoringComponents(GameObject root) {
             if (root == null) return false;
             if (root.GetComponentInChildren<LightVolumeInstance>(true) != null
@@ -46,6 +49,7 @@ namespace VRCLightVolumes {
 #endif
         }
 
+        // Migrates and registers a hierarchy with the scene's single Manager, creating one when required.
         internal static bool OnboardHierarchy(GameObject root, out LightVolumeManager manager) {
             manager = null;
             if (!IsMainStageSceneObject(root) || !ContainsAuthoringComponents(root)) return false;
@@ -98,6 +102,7 @@ namespace VRCLightVolumes {
         }
 
 #if UDONSHARP
+        // Migrates a legacy LightVolumeSetup graph before individual hierarchy registration begins.
         private static bool MigrateLegacySetupGraph(GameObject root, out bool migrated) {
             migrated = false;
 #pragma warning disable CS0618
@@ -112,6 +117,7 @@ namespace VRCLightVolumes {
             return false;
         }
 
+        // Checks whether a hierarchy has at least one ready unified component or a safe migration path.
         private static bool CanOnboardHierarchy(GameObject root) {
             List<LightVolumeInstance> volumes = new List<LightVolumeInstance>();
             root.GetComponentsInChildren(true, volumes);
@@ -127,11 +133,13 @@ namespace VRCLightVolumes {
             return LightVolumeMigration.CanMigrateHierarchy(root);
         }
 
+        // Reports legacy helpers that automatic onboarding intentionally left unchanged.
         private static void LogBlockedMigration(GameObject root, int blocked) {
             Debug.LogWarning($"[VRC Light Volumes] Left {blocked} legacy helper component(s) on '{root.name}' unchanged because no complete unified Udon component was available. Prefab assets and Prefab Stage contents are never modified automatically.", root);
         }
 #endif
 
+        // Registers every ready Light Volume below one hierarchy with the selected Manager.
         private static bool RegisterHierarchy(GameObject root, LightVolumeManager manager, bool hierarchyMigrated) {
             bool changed = false;
             List<LightVolumeInstance> volumes = new List<LightVolumeInstance>();
@@ -162,6 +170,7 @@ namespace VRCLightVolumes {
             return changed;
         }
 
+        // Registers authoring components from every root hierarchy in a scene.
         private static bool RegisterScene(Scene scene, LightVolumeManager manager, bool hierarchyMigrated) {
             bool changed = false;
             GameObject[] roots = scene.GetRootGameObjects();
@@ -170,6 +179,7 @@ namespace VRCLightVolumes {
             return changed;
         }
 
+        // Creates an Undo-aware unified Manager with a valid Udon backing component.
         private static LightVolumeManager CreateManager(Scene scene) {
             GameObject managerObject = new GameObject("Light Volume Manager");
             Undo.RegisterCreatedObjectUndo(managerObject, UndoName);
@@ -195,6 +205,7 @@ namespace VRCLightVolumes {
             return manager;
         }
 
+        // Collects components of one type from every hierarchy in a scene, including inactive objects.
         private static List<T> CollectSceneComponents<T>(Scene scene) where T : Component {
             List<T> result = new List<T>();
             List<T> buffer = new List<T>();

@@ -37,6 +37,7 @@ namespace VRCLightVolumes {
         private SerializedProperty _voxelsPerUnit;
         private SerializedProperty _resolution;
 
+        // Caches the selected volume, serialized fields and editor-only preview state.
         private void OnEnable() {
             _volume = target as LightVolumeInstance;
             _debugExpanded = SessionState.GetBool(DebugFoldoutSessionKey, false);
@@ -47,6 +48,7 @@ namespace VRCLightVolumes {
             Undo.undoRedoPerformed += OnUndoRedoPerformed;
         }
 
+        // Draws authoring controls and synchronizes explicit inspector changes to runtime data.
         public override void OnInspectorGUI() {
             if (_volume == null) return;
 
@@ -73,6 +75,7 @@ namespace VRCLightVolumes {
             Undo.CollapseUndoOperations(undoGroup);
         }
 
+        // Resolves every serialized authoring property used by the custom inspector.
         private void CacheProperties() {
             _isDynamic = serializedObject.FindProperty("IsDynamic");
             _isAdditive = serializedObject.FindProperty("IsAdditive");
@@ -92,12 +95,15 @@ namespace VRCLightVolumes {
             _resolution = serializedObject.FindProperty("Resolution");
         }
 
+        // Draws Scene View bounds editing and voxel preview toggles.
         private void DrawToolbar() {
             GUIContent editBounds = EditorGUIUtility.IconContent("EditCollider");
             editBounds.text = " Edit Bounds";
+            editBounds.tooltip = "Edit the Light Volume bounds directly in the Scene view.";
 
             GUIContent previewVoxels = EditorGUIUtility.IconContent("LightProbeGroup Gizmo");
             previewVoxels.text = " Preview Voxels";
+            previewVoxels.tooltip = "Preview Light Volume voxels in the Scene view.";
 
             GUIStyle toggleStyle = new GUIStyle(GUI.skin.button) {
                 imagePosition = ImagePosition.ImageLeft,
@@ -122,6 +128,7 @@ namespace VRCLightVolumes {
             }
         }
 
+        // Displays estimated memory and compressed bundle cost for the current resolution.
         private void DrawDataSize() {
             int voxelCount = LightVolumeTools.GetVoxelCount(_volume, 1);
             GUILayout.Space(10f);
@@ -131,10 +138,19 @@ namespace VRCLightVolumes {
             }
 
             GUIStyle dataStyle = new GUIStyle(EditorStyles.label) { richText = true };
-            GUILayout.Label($"Size in VRAM: <b>{SizeInVRAM(voxelCount)} MB</b>", dataStyle);
-            GUILayout.Label($"Size in bundle: <b>{SizeInBundle(voxelCount)} MB (Approximately)</b>", dataStyle);
+            GUILayout.Label(
+                new GUIContent(
+                    $"Size in VRAM: <b>{SizeInVRAM(voxelCount)} MB</b>",
+                    "Estimated GPU memory used by this volume's three SH textures before atlas packing."),
+                dataStyle);
+            GUILayout.Label(
+                new GUIContent(
+                    $"Size in bundle: <b>{SizeInBundle(voxelCount)} MB (Approximately)</b>",
+                    "Estimated compressed build size of this volume's three SH textures before atlas packing."),
+                dataStyle);
         }
 
+        // Warns when the installed Bakery version cannot represent the volume's rotation.
         private void DrawBakeryWarning() {
             LightVolumeManager manager = _volume.LightVolumeManager;
             if (manager == null || !manager.IsBakeryMode) return;
@@ -164,6 +180,7 @@ namespace VRCLightVolumes {
 #endif
         }
 
+        // Draws volume lighting, baked data, correction and resolution properties.
         private void DrawAuthoringProperties() {
             DrawProperty(_isDynamic, "Dynamic");
             DrawProperty(_isAdditive, "Additive");
@@ -193,12 +210,14 @@ namespace VRCLightVolumes {
             DrawProperty(_resolution);
         }
 
+        // Draws a serialized field while preserving its field-level tooltip for custom labels.
         private static void DrawProperty(SerializedProperty property, string label = null) {
             if (property == null) return;
             if (label == null) EditorGUILayout.PropertyField(property);
             else EditorGUILayout.PropertyField(property, new GUIContent(label, property.tooltip));
         }
 
+        // Draws the action that opens the Light Probe placement window.
         private void DrawProbeButton() {
             GUIStyle buttonStyle = new GUIStyle(GUI.skin.button) {
                 fixedHeight = 20f,
@@ -208,13 +227,14 @@ namespace VRCLightVolumes {
             GUILayout.Space(8f);
             using (new EditorGUILayout.HorizontalScope()) {
                 GUILayout.FlexibleSpace();
-                if (GUILayout.Button("Generate Light Probes", buttonStyle) && _probePlacerWindow == null) {
+                if (GUILayout.Button(new GUIContent("Generate Light Probes", "Opens the probe placer for this Light Volume."), buttonStyle) && _probePlacerWindow == null) {
                     _probePlacerWindow = LightProbePlacerWindow.Show(_volume);
                 }
                 GUILayout.FlexibleSpace();
             }
         }
 
+        // Draws read-only registration, atlas and derived-transform diagnostics.
         private void DrawDebugSection() {
             GUILayout.Space(InspectorSectionSpacing);
             EditorGUI.BeginChangeCheck();
@@ -263,6 +283,7 @@ namespace VRCLightVolumes {
             EditorGUILayout.EndFoldoutHeaderGroup();
         }
 
+        // Exits bounds edit mode when the user selects another Unity transform tool.
         private void HandleEditModeState() {
             if (!_isEditMode || _previousTool == Tools.current) return;
             _previousTool = Tools.current;
@@ -271,6 +292,7 @@ namespace VRCLightVolumes {
             RepaintAll();
         }
 
+        // Enters or exits bounds edit mode while preserving the user's previous Unity tool.
         private void SetEditMode(bool enabled) {
             if (enabled) {
                 _savedTool = Tools.current;
@@ -287,12 +309,14 @@ namespace VRCLightVolumes {
         }
 
 #if BAKERY_INCLUDED
+        // Captures dependency-affecting values before the inspector applies a multi-object edit.
         private int[] CaptureBakeryDependencyStates() {
             int[] states = new int[targets.Length];
             for (int i = 0; i < targets.Length; i++) states[i] = GetBakeryDependencyState(targets[i] as LightVolumeInstance);
             return states;
         }
 
+        // Updates Bakery helpers only for volumes whose relevant inspector settings changed.
         private void ApplyExplicitBakeryDependencyChanges(int[] previousStates) {
             for (int i = 0; i < targets.Length; i++) {
                 LightVolumeInstance volume = targets[i] as LightVolumeInstance;
@@ -303,6 +327,7 @@ namespace VRCLightVolumes {
             }
         }
 
+        // Hashes Manager, baking mode and volume bake state for explicit-change detection.
         private static int GetBakeryDependencyState(LightVolumeInstance volume) {
             if (volume == null) return 0;
             LightVolumeManager manager = volume.LightVolumeManager;
@@ -315,12 +340,14 @@ namespace VRCLightVolumes {
         }
 #endif
 
+        // Rebuilds derived data and previews after an Undo or Redo operation.
         private void OnUndoRedoPerformed() {
             serializedObject.UpdateIfRequiredOrScript();
             SyncTargets(false, false);
             Repaint();
         }
 
+        // Synchronizes all selected volumes, queues atlas changes and refreshes their Managers.
         private void SyncTargets(bool recordUndo, bool refreshRuntimeImmediately = true) {
             EnsureAtlasStateCache();
             HashSet<LightVolumeManager> runtimeManagers = null;
@@ -356,6 +383,7 @@ namespace VRCLightVolumes {
             SceneView.RepaintAll();
         }
 
+        // Draws visible and occluded wireframes for one Light Volume's oriented bounds.
         private static void DrawVolumeBounds(LightVolumeInstance volume) {
             Handles.matrix = LightVolumeTools.GetMatrixTRS(volume);
             Handles.zTest = UnityEngine.Rendering.CompareFunction.LessEqual;
@@ -367,6 +395,7 @@ namespace VRCLightVolumes {
             Handles.matrix = Matrix4x4.identity;
         }
 
+        // Draws selected volume bounds and interactive face handles in the Scene View.
         protected void OnSceneGUI() {
             if (_volume == null) return;
 
@@ -381,6 +410,7 @@ namespace VRCLightVolumes {
             DrawBoundsHandles();
         }
 
+        // Draws six axis-aligned face handles that resize bounds around the dragged face.
         private void DrawBoundsHandles() {
             Transform volumeTransform = _volume.transform;
             Vector3 position = LightVolumeTools.GetPosition(_volume);
@@ -431,6 +461,7 @@ namespace VRCLightVolumes {
             }
         }
 
+        // Immediately synchronizes one volume changed through a Scene View handle.
         private static void SyncSingleTarget(LightVolumeInstance volume) {
             LightVolumeTools.ApplyRuntimeState(volume, true);
             LightVolumeManagerTools.CopyProxyToUdon(volume);
@@ -439,12 +470,14 @@ namespace VRCLightVolumes {
             LightVolumePreviewSceneRenderer.RequestRefresh();
         }
 
+        // Ensures atlas-affecting state hashes match the current multi-object selection.
         private void EnsureAtlasStateCache() {
             if (_atlasStateHashes != null && _atlasStateHashes.Length == targets.Length) return;
             _atlasStateHashes = new int[targets.Length];
             CacheAtlasStates();
         }
 
+        // Captures atlas-affecting state for every selected volume.
         private void CacheAtlasStates() {
             if (_atlasStateHashes == null || _atlasStateHashes.Length != targets.Length) {
                 _atlasStateHashes = new int[targets.Length];
@@ -454,6 +487,7 @@ namespace VRCLightVolumes {
             }
         }
 
+        // Hashes baked textures and correction settings that require atlas regeneration.
         private static int GetAtlasStateHash(LightVolumeInstance volume) {
             if (volume == null) return 0;
             unchecked {
@@ -470,6 +504,7 @@ namespace VRCLightVolumes {
             }
         }
 
+        // Releases editor hooks and restores the Unity tool hidden by bounds editing.
         private void OnDisable() {
             Undo.undoRedoPerformed -= OnUndoRedoPerformed;
             LightVolumePreviewSceneRenderer.RequestRefresh();
@@ -479,26 +514,31 @@ namespace VRCLightVolumes {
             _previousTool = _savedTool;
         }
 
+        // Formats the uncompressed three-texture GPU cost for a voxel count.
         private static string SizeInVRAM(int voxelCount) {
             double megabytes = (ulong)(voxelCount * 3f) * 8d / (1024d * 1024d);
             return megabytes.ToString("0.00");
         }
 
+        // Formats the estimated compressed bundle cost for a voxel count.
         private static string SizeInBundle(int voxelCount) {
             double megabytes = (ulong)(voxelCount * 3f) * 8d * 0.315d / (1024d * 1024d);
             return megabytes.ToString("0.00");
         }
 
+        // Schedules Scene View and editor-loop repaint work for the next update.
         private static void RepaintAll() {
             EditorApplication.update += ForceRepaintNextFrame;
         }
 
+        // Performs the queued repaint once and removes its editor update callback.
         private static void ForceRepaintNextFrame() {
             SceneView.RepaintAll();
             EditorApplication.QueuePlayerLoopUpdate();
             EditorApplication.update -= ForceRepaintNextFrame;
         }
 
+        // Keeps live debug values updating while their foldout is visible in play mode.
         public override bool RequiresConstantRepaint() {
             return _debugExpanded && EditorApplication.isPlaying;
         }

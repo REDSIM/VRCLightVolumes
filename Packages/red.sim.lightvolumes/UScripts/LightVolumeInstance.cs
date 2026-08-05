@@ -106,15 +106,18 @@ namespace VRCLightVolumes {
         public void _onVarChange_IsDynamic() {
             NotifyManager(true);
         }
+        // Rebuilds volume ordering when Udon changes additive mode.
         public void _onVarChange_IsAdditive() {
             NotifyManager(true);
         }
+        // Uploads a new Udon color without rebuilding transform data.
         public void _onVarChange_Color() {
             if (_old_Color != Color) {
                 _old_Color = Color;
                 NotifyManager(false);
             }
         }
+        // Uploads a new Udon intensity without rebuilding transform data.
         public void _onVarChange_Intensity() {
             if (_old_Intensity != Intensity) {
                 _old_Intensity = Intensity;
@@ -164,6 +167,7 @@ namespace VRCLightVolumes {
             if (LightVolumeManager != null) LightVolumeManager.DeinitializeLightVolume(this);
         }
 
+        // Resolves the standalone Manager fallback and performs initial registration.
         private void Start() {
 #if !UDONSHARP
             if (LightVolumeManager == null) {
@@ -173,10 +177,12 @@ namespace VRCLightVolumes {
             RegisterWithManager();
         }
 
+        // Registers the volume when its component or GameObject becomes active.
         private void OnEnable() {
             RegisterWithManager();
         }
 
+        // Marks the volume inactive and removes it from the Manager registry.
         private void OnDisable() {
             IsActive = false;
             UnregisterFromManager();

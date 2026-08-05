@@ -11,6 +11,7 @@ namespace VRCLightVolumes {
         private bool _isWindowActive;
         private LightVolumePreviewRenderer _previewRenderer;
 
+        // Opens a probe-placement window initialized from the selected Light Volume.
         public static LightProbePlacerWindow Show(LightVolumeInstance volume) {
             if (volume == null) return null;
 
@@ -26,6 +27,7 @@ namespace VRCLightVolumes {
             return window;
         }
 
+        // Centers the window and begins drawing the Scene View probe preview.
         private void OnEnable() {
             const float width = 220f;
             const float height = 150f;
@@ -36,12 +38,14 @@ namespace VRCLightVolumes {
             _isWindowActive = true;
         }
 
+        // Unsubscribes Scene View drawing and releases preview resources.
         private void OnDisable() {
             SceneView.duringSceneGui -= OnSceneGUI;
             ReleasePreviewRenderer();
             _isWindowActive = false;
         }
 
+        // Draws the current probe grid preview into the active Scene View.
         private void OnSceneGUI(SceneView sceneView) {
             if (!_isWindowActive || Event.current.type != EventType.Repaint || _lightVolume == null) return;
 
@@ -51,12 +55,14 @@ namespace VRCLightVolumes {
             _previewRenderer.DrawProbeGrid(_lightVolume, _resolution, sceneView.camera);
         }
 
+        // Disposes the temporary probe-grid renderer.
         private void ReleasePreviewRenderer() {
             if (_previewRenderer == null) return;
             _previewRenderer.Dispose();
             _previewRenderer = null;
         }
 
+        // Draws probe density controls and the creation action.
         private void OnGUI() {
             if (_lightVolume == null) {
                 Close();
@@ -90,6 +96,7 @@ namespace VRCLightVolumes {
             SceneView.RepaintAll();
         }
 
+        // Creates an Undo-aware LightProbeGroup containing the previewed positions.
         private void CreateLightProbeGroup() {
             Recalculate();
             if (!LightVolumeTools.TryCalculateProbePositions(_lightVolume, _resolution, out _probePositions)) return;
@@ -103,6 +110,7 @@ namespace VRCLightVolumes {
             Selection.activeObject = probeObject;
         }
 
+        // Derives probe resolution from world size when adaptive mode is enabled.
         private void Recalculate() {
             if (!_adaptiveResolution) return;
 
@@ -112,6 +120,7 @@ namespace VRCLightVolumes {
             _resolution = new Vector3Int(Mathf.Max(Mathf.RoundToInt(count.x), 1), Mathf.Max(Mathf.RoundToInt(count.y), 1), Mathf.Max(Mathf.RoundToInt(count.z), 1));
         }
 
+        // Keeps every probe-grid dimension at one or greater.
         private void ClampResolution() {
             _resolution = new Vector3Int(Mathf.Max(_resolution.x, 1), Mathf.Max(_resolution.y, 1), Mathf.Max(_resolution.z, 1));
         }

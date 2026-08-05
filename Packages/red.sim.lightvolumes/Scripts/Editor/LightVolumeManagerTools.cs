@@ -136,6 +136,7 @@ namespace VRCLightVolumes {
             return true;
         }
 
+        // Registers a Point Light Volume without invoking runtime lifecycle callbacks and reports actual mutation.
         internal static bool EnsureRegistered(LightVolumeManager manager, PointLightVolumeInstance pointLight, string undoName, out bool changed) {
             changed = false;
             if (manager == null || pointLight == null) return false;
@@ -167,6 +168,7 @@ namespace VRCLightVolumes {
             return true;
         }
 
+        // Synchronizes Manager ownership and stable registry order for regular Light Volumes.
         private static void SynchronizeLightVolumeMetadata(LightVolumeManager manager, LightVolumeInstance[] volumes) {
             for (int i = 0; i < volumes.Length; i++) {
                 LightVolumeInstance volume = volumes[i];
@@ -203,6 +205,7 @@ namespace VRCLightVolumes {
             return changed;
         }
 
+        // Compares two volumes by descending weight and then explicit resolution priority.
         private static bool ComesBeforeByWeightAndResolution(LightVolumeInstance volume, LightVolumeInstance previous) {
             if (volume == null) return false;
             if (previous == null) return true;
@@ -233,14 +236,17 @@ namespace VRCLightVolumes {
             manager.UpdateVolumes();
         }
 
+        // Rebuilds the Manager's shared projection texture array.
         public static void ReinitializeCustomTextures(LightVolumeManager manager) {
             ReinitializeTextures(manager, true, false);
         }
 
+        // Rebuilds the Manager's shared shadow texture array.
         public static void ReinitializeShadowTextures(LightVolumeManager manager) {
             ReinitializeTextures(manager, false, true);
         }
 
+        // Rebuilds selected runtime texture caches immediately or through the play-mode Udon queue.
         internal static void ReinitializeTextures(LightVolumeManager manager, bool customTextures, bool shadowTextures) {
             if (manager == null || !customTextures && !shadowTextures) return;
             if (QueueRuntimeManagerRefresh(manager, customTextures, shadowTextures)) return;
@@ -259,6 +265,7 @@ namespace VRCLightVolumes {
             EditorApplication.delayCall += GenerateQueuedAtlases;
         }
 
+        // Packs every Manager collected by the coalesced atlas-generation queue.
         private static void GenerateQueuedAtlases() {
             EditorApplication.delayCall -= GenerateQueuedAtlases;
             _atlasGenerationQueued = false;
@@ -287,6 +294,7 @@ namespace VRCLightVolumes {
             _atlasCoroutines[managerId] = coroutine;
         }
 
+        // Chooses depth-optimized packing for post-processing chains and minimum-VRAM packing otherwise.
         private static TexturePackingStrategy ResolveAtlasPackingStrategy(LightVolumeManager manager) {
             PostProcessor[] postProcessors = manager != null ? manager.AtlasPostProcessors : null;
             // Post-processed 3D textures are commonly updated slice by slice, so minimizing atlas
@@ -296,6 +304,7 @@ namespace VRCLightVolumes {
                 : TexturePackingStrategy.MinimumVRAM;
         }
 
+        // Returns a dense snapshot of non-null Light Volumes in registry order.
         private static LightVolumeInstance[] GetAtlasVolumes(LightVolumeManager manager) {
             LightVolumeInstance[] source = manager.LightVolumeInstances;
             int count = 0;
@@ -308,6 +317,7 @@ namespace VRCLightVolumes {
             return result;
         }
 
+        // Assigns a completed atlas, writes per-volume UVW bounds and schedules asset persistence.
         private static void CompleteAtlas(LightVolumeManager manager, LightVolumeInstance[] volumes, Atlas3D atlas) {
             if (manager == null) return;
             _atlasCoroutines.Remove(manager.GetInstanceID());
@@ -341,6 +351,7 @@ namespace VRCLightVolumes {
             }
         }
 
+        // Returns the number of active bake-enabled volumes exposed to a custom lightmapper.
         public static int GetCustomProbesCount(this LightVolumeManager manager) {
             if (manager == null || Application.isPlaying) return 0;
             int count = 0;
@@ -349,23 +360,28 @@ namespace VRCLightVolumes {
             return count;
         }
 
+        // Returns world-space voxel probe positions for one custom-lightmapper volume ID.
         public static Vector3[] GetCustomProbes(this LightVolumeManager manager, int id) {
             LightVolumeInstance volume = GetCustomProbeVolume(manager, id);
             return volume != null ? LightVolumeTools.GetCustomProbes(volume) : Array.Empty<Vector3>();
         }
 
+        // Stores custom-lightmapper SH data using Manager denoising and no validity channel.
         public static void SetCustomProbesBaked(this LightVolumeManager manager, int id, Vector3[] l0, Vector3[] l1r, Vector3[] l1g, Vector3[] l1b) {
             SetCustomProbesBaked(manager, id, l0, l1r, l1g, l1b, null, manager != null && manager.Denoise);
         }
 
+        // Stores custom-lightmapper SH data with an explicit denoising choice.
         public static void SetCustomProbesBaked(this LightVolumeManager manager, int id, Vector3[] l0, Vector3[] l1r, Vector3[] l1g, Vector3[] l1b, bool denoise) {
             SetCustomProbesBaked(manager, id, l0, l1r, l1g, l1b, null, denoise);
         }
 
+        // Stores custom-lightmapper SH and validity data using the Manager's denoising setting.
         public static void SetCustomProbesBaked(this LightVolumeManager manager, int id, Vector3[] l0, Vector3[] l1r, Vector3[] l1g, Vector3[] l1b, float[] validity) {
             SetCustomProbesBaked(manager, id, l0, l1r, l1g, l1b, validity, manager != null && manager.Denoise);
         }
 
+        // Saves complete custom-lightmapper output and queues shadow and atlas finalization.
         public static void SetCustomProbesBaked(this LightVolumeManager manager, int id, Vector3[] l0, Vector3[] l1r, Vector3[] l1g, Vector3[] l1b, float[] validity, bool denoise) {
             LightVolumeInstance volume = GetCustomProbeVolume(manager, id);
             if (volume == null || !LightVolumeBaker.SaveCustomProbesBaked(volume, l0, l1r, l1g, l1b, validity, denoise)) return;
@@ -375,10 +391,12 @@ namespace VRCLightVolumes {
             QueueCustomProbeAtlasGeneration(manager);
         }
 
+        // Checks whether a volume participates in the custom lightmapper API.
         private static bool IsCustomProbeVolume(LightVolumeInstance volume) {
             return volume != null && volume.Bake && volume.gameObject.activeInHierarchy && !volume.CompareTag("EditorOnly");
         }
 
+        // Resolves a compact custom-lightmapper ID to its registered Light Volume.
         private static LightVolumeInstance GetCustomProbeVolume(LightVolumeManager manager, int id) {
             if (manager == null || Application.isPlaying) return null;
             int customId = 0;
@@ -393,6 +411,7 @@ namespace VRCLightVolumes {
             return null;
         }
 
+        // Coalesces completed custom probe volumes into one deferred Manager finalization.
         private static void QueueCustomProbeAtlasGeneration(LightVolumeManager manager) {
             if (manager == null) return;
             _queuedCustomProbeManagers.Add(manager);
@@ -401,6 +420,7 @@ namespace VRCLightVolumes {
             EditorApplication.delayCall += FinalizeCustomProbeAtlases;
         }
 
+        // Bakes eligible shadows and regenerates atlases after custom probe output is complete.
         private static void FinalizeCustomProbeAtlases() {
             EditorApplication.delayCall -= FinalizeCustomProbeAtlases;
             _customProbeFinalizeQueued = false;
@@ -415,6 +435,7 @@ namespace VRCLightVolumes {
             }
         }
 
+        // Checks whether every non-reserved registered volume has all three baked textures.
         private static bool CanGenerateAtlas(LightVolumeManager manager) {
             LightVolumeInstance[] volumes = manager.LightVolumeInstances;
             if (volumes == null || volumes.Length == 0) return false;
@@ -427,10 +448,12 @@ namespace VRCLightVolumes {
             return true;
         }
 
+        // Batch-bakes shadows marked for rebaking on the requested Manager.
         public static void BakeShadowMaps(this LightVolumeManager manager) {
             BakeShadowMaps(manager, false);
         }
 
+        // Batch-bakes eligible shadows and optionally ignores each light's Rebake Shadows flag.
         public static bool BakeShadowMaps(LightVolumeManager manager, bool forceAll) {
             if (manager == null || Application.isPlaying) return false;
             bool rebaked = false;
@@ -445,39 +468,48 @@ namespace VRCLightVolumes {
             return rebaked;
         }
 
+        // Registers a CustomRenderTexture as an atlas post-processing stage.
         public static void RegisterPostProcessorCRT(this LightVolumeManager manager, CustomRenderTexture texture) {
             if (manager != null) manager.RegisterPostProcessorCRT(texture);
         }
 
+        // Registers a configured atlas post-processing stage through the editor extension API.
         public static void RegisterPostProcessor(this LightVolumeManager manager, PostProcessor processor) {
             if (manager != null) manager.RegisterPostProcessor(processor);
         }
 
+        // Removes atlas post processors associated with a CustomRenderTexture target.
         public static void UnregisterPostProcessorCRT(this LightVolumeManager manager, CustomRenderTexture texture) {
             if (manager != null) manager.UnregisterPostProcessorCRT(texture);
         }
 
+        // Removes atlas post processors associated with a RenderTexture target.
         public static void UnregisterPostProcessor(this LightVolumeManager manager, RenderTexture texture) {
             if (manager != null) manager.UnregisterPostProcessor(texture);
         }
 
+        // Removes an atlas post processor matching the requested target or callback.
         public static void UnregisterPostProcessor(this LightVolumeManager manager, PostProcessor processor) {
             if (manager != null) manager.UnregisterPostProcessor(processor);
         }
 
+        // Re-runs the Manager's post-processor chain after its base atlas changes.
         private static void RefreshAtlasOutput(LightVolumeManager manager) {
             if (manager != null) manager.RefreshAtlasPostProcessors();
         }
 
+        // Converts the normalized inspector slider to a logarithmic EVSM variance value.
         public static float GetShadowMinVarianceValue(float slider) {
             return ShadowMinVarianceValueMin * Mathf.Pow(ShadowMinVarianceValueMax / ShadowMinVarianceValueMin, Mathf.Clamp01(slider));
         }
 
+        // Checks whether the active Unity build target uses mobile shadow defaults.
         public static bool IsMobileBuildTarget() {
             BuildTarget target = EditorUserBuildSettings.activeBuildTarget;
             return target == BuildTarget.Android || target == BuildTarget.iOS;
         }
 
+        // Snaps a requested coarse clustering reduction to the supported factors 2, 4 or 8.
         public static int ResolveCoarseFactor(int value) {
             return value <= 2 ? 2 : value <= 5 ? 4 : 8;
         }
@@ -549,18 +581,21 @@ namespace VRCLightVolumes {
 #endif
         }
 
+        // Applies lightweight Manager settings without rebuilding registries or texture arrays.
         public static void ApplyRuntimeManagerSettings(LightVolumeManager manager) {
             if (manager == null) return;
             manager._ApplyEditorSettings();
         }
 
 #if UDONSHARP
+        // Schedules one delayed flush after UdonSharp completes inspector proxy serialization.
         private static void QueueRuntimeRefreshFlush() {
             EditorApplication.delayCall -= FlushRuntimeManagerRefreshes;
             EditorApplication.delayCall += FlushRuntimeManagerRefreshes;
             EditorApplication.QueuePlayerLoopUpdate();
         }
 
+        // Applies coalesced runtime cache rebuilds directly to Manager backing behaviours.
         private static void FlushRuntimeManagerRefreshes() {
             EditorApplication.delayCall -= FlushRuntimeManagerRefreshes;
             LightVolumeManager[] queued = new LightVolumeManager[_queuedRuntimeManagerRefreshes.Count];

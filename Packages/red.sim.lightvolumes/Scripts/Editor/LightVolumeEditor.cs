@@ -10,6 +10,8 @@ namespace VRCLightVolumes {
         private const float ToolbarButtonWidth = 150f;
         private const float ActionButtonWidth = 170f;
         private const float InspectorSectionSpacing = 10f;
+        private const float MinBoundsSize = 0.01f;
+        private const float MinDivisorSize = 0.0001f;
 
         private bool _isEditMode;
         private bool _debugExpanded;
@@ -450,12 +452,31 @@ namespace VRCLightVolumes {
 
                 if (!EditorGUI.EndChangeCheck()) continue;
 
+                // Option (Alt) grows both faces at once, Shift scales every axis by the same ratio.
+                // Control and Command snapping is already handled by the snap argument of Handles.Slider above.
+                EventModifiers modifiers = Event.current.modifiers;
+                bool symmetric = (modifiers & EventModifiers.Alt) != 0;
+                bool uniform = (modifiers & EventModifiers.Shift) != 0;
+
+                float delta = Vector3.Dot(movedPosition - handlePosition, worldDirection);
+                float oldSize = scale[axis];
+                float newSize = Mathf.Max(oldSize + (symmetric ? delta * 2f : delta), MinBoundsSize);
+
+                Vector3 modifiedScale = scale;
+                if (uniform && oldSize > MinDivisorSize) {
+                    // Clamp through the ratio so the proportions survive the minimum size floor.
+                    float ratio = newSize / oldSize;
+                    float smallestAxis = Mathf.Min(scale.x, Mathf.Min(scale.y, scale.z));
+                    if (smallestAxis > MinDivisorSize) ratio = Mathf.Max(ratio, MinBoundsSize / smallestAxis);
+                    modifiedScale = scale * ratio;
+                } else {
+                    modifiedScale[axis] = newSize;
+                }
+
                 Undo.RecordObject(volumeTransform, "Scale Bounds Size");
                 Undo.RecordObject(_volume, "Scale Bounds Size");
-                float delta = Vector3.Dot(movedPosition - handlePosition, worldDirection);
-                Vector3 modifiedScale = scale;
-                modifiedScale[axis] += delta;
-                volumeTransform.position += worldDirection * delta * 0.5f;
+                // Derived from the clamped scale so the opposite face never drifts.
+                if (!symmetric) volumeTransform.position += worldDirection * (modifiedScale[axis] - oldSize) * 0.5f;
                 LVUtils.SetLossyScale(volumeTransform, modifiedScale);
                 SyncSingleTarget(_volume);
             }

@@ -5,7 +5,7 @@ using UnityEngine;
 
 namespace VRCLightVolumes {
     [CustomEditor(typeof(LightVolumeManager))]
-    public sealed class LightVolumeManagerEditor : Editor {
+    public sealed class LightVolumeManagerEditor : UnityEditor.Editor {
         private const string DebugFoldoutSessionKey = "VRCLightVolumes.LightVolumeManagerEditor.DebugFoldout";
         private const string SortLightVolumesMenu = "CONTEXT/LightVolumeManager/Sort Light Volumes";
         private const int VisibleRegistryRows = 12;
@@ -70,31 +70,31 @@ namespace VRCLightVolumes {
         private ulong _cachedBundleBytes;
         private bool _canBatchBakeShadows;
         private bool _multipleManagers;
+        private LightVolumeManager _primaryManager;
         private bool _debugExpanded;
         private readonly HashSet<Texture> _countedShadowTextures = new HashSet<Texture>();
 
         [MenuItem(SortLightVolumesMenu)]
         // Sorts the selected Manager's Light Volumes by effective voxel density.
         private static void SortLightVolumes(MenuCommand command) {
-            if (command.context is LightVolumeManager manager)
-                LightVolumeManagerTools.SortLightVolumesByVoxelsPerUnit(manager);
+            if (command.context is LightVolumeManager manager) LightVolumeManagerEditorBackend.SortLightVolumesByVoxelsPerUnit(manager);
         }
 
         [MenuItem(SortLightVolumesMenu, true)]
         // Enables the sort command only for editable Managers with multiple volumes.
         private static bool CanSortLightVolumes(MenuCommand command) {
-            if (EditorApplication.isPlayingOrWillChangePlaymode || !(command.context is LightVolumeManager manager))
-                return false;
-            return manager.LightVolumeInstances != null && manager.LightVolumeInstances.Length > 1;
+            if (EditorApplication.isPlayingOrWillChangePlaymode || !(command.context is LightVolumeManager manager)) return false;
+            return manager == LightVolumeManagerEditorBackend.GetPrimaryManager() && manager.LightVolumeInstances != null && manager.LightVolumeInstances.Length > 1;
         }
 
         // Caches registries, repairs stale entries and installs editor callbacks.
         private void OnEnable() {
             _manager = (LightVolumeManager)target;
             _debugExpanded = SessionState.GetBool(DebugFoldoutSessionKey, false);
-            if (_manager != null && _manager.SanitizeRegistries()) {
-                LightVolumeManagerTools.CopyProxyToUdon(_manager);
-                LightVolumeManagerTools.QueueRuntimeManagerRefresh(_manager);
+            RefreshManagerCount();
+            if (_manager != null && _manager == _primaryManager && _manager.SanitizeRegistries()) {
+                LightVolumeManagerEditorBackend.CopyProxyToUdon(_manager);
+                LightVolumeManagerEditorBackend.QueueRuntimeManagerRefresh(_manager);
                 LVUtils.MarkDirty(_manager);
             }
             serializedObject.Update();
@@ -102,7 +102,6 @@ namespace VRCLightVolumes {
             _pointLights = serializedObject.FindProperty("PointLightVolumeInstances");
             _lightVolumeList = CreateRegistryList(_lightVolumes, false);
             _pointLightList = CreateRegistryList(_pointLights, true);
-            RefreshManagerCount();
             Undo.undoRedoPerformed += OnUndoRedoPerformed;
         }
 
@@ -111,7 +110,7 @@ namespace VRCLightVolumes {
             Undo.undoRedoPerformed -= OnUndoRedoPerformed;
         }
 
-        // Recounts scene Managers after hierarchy changes.
+        // Recounts eligible Managers across loaded scenes after hierarchy changes.
         private void OnHierarchyChange() {
             RefreshManagerCount();
         }
@@ -119,18 +118,13 @@ namespace VRCLightVolumes {
         // Reapplies restored settings and fully refreshes runtime texture caches after Undo or Redo.
         private void OnUndoRedoPerformed() {
             if (_manager == null) return;
+            RefreshManagerCount();
+            if (_manager != _primaryManager) return;
             serializedObject.UpdateIfRequiredOrScript();
-            // Undo can restore source/layout fields together with their hidden derived values, so
-            // change detection alone cannot reliably invalidate either runtime texture cache.
-            LightVolumeManagerTools.ApplySettings(_manager, false, updateVolumes: false, copyProxyToUdon: false);
-            if (!LightVolumeManagerTools.RefreshRuntimeManagerFromProxyImmediately(
-                    _manager,
-                    reinitializeCustomTextures: true,
-                    reinitializeShadowTextures: true))
-                LightVolumeManagerTools.ReinitializeTextures(_manager, true, true);
-#if BAKERY_INCLUDED
+            // Undo can restore source/layout fields together with their hidden derived values, so change detection alone cannot reliably invalidate either runtime texture cache.
+            LightVolumeManagerEditorBackend.ApplySettings(_manager, false, updateVolumes: false, copyProxyToUdon: false);
+            if (!LightVolumeManagerEditorBackend.RefreshRuntimeManagerFromProxyImmediately(_manager, true, true)) LightVolumeManagerEditorBackend.ReinitializeTextures(_manager, true, true);
             LightVolumeBaker.QueueBakeryWatcherRefresh();
-#endif
             _cachedPointCount = -1;
             _nextStatsRefresh = 0d;
             Repaint();
@@ -144,8 +138,12 @@ namespace VRCLightVolumes {
 
             if (LVUtils.IsInPrefabAsset(_manager))
                 EditorGUILayout.HelpBox("This component is part of a prefab asset.\nEdit the instance placed in a scene.", MessageType.Warning);
-            if (_multipleManagers)
-                EditorGUILayout.HelpBox("Multiple Light Volume Managers were found in this scene!\nRemove the extra Managers before building!", MessageType.Error);
+            if (_multipleManagers) {
+                string primaryName = _primaryManager != null ? _primaryManager.name : "none";
+                string selection = _manager == _primaryManager ? "This is the primary Manager; all other Managers are ignored." : $"This Manager is ignored; '{primaryName}' is the primary Manager.";
+                EditorGUILayout.HelpBox($"Multiple Light Volume Managers were found in loaded scenes. {selection}\nRemove the extra Managers before building.", MessageType.Error);
+                if (_manager != _primaryManager) return;
+            }
 
             RefreshStats();
             GUILayout.Label(
@@ -206,15 +204,15 @@ namespace VRCLightVolumes {
             bool pointLightRangesChanged = previousBrightnessCutoff != _manager.LightsBrightnessCutoff;
             bool rebuildRuntimeData = _registryChanged || _pointRegistryChanged || previousAutoUpdateTextures != _manager.AutoUpdateTextures || previousAtlas != _manager.LightVolumeAtlas;
             bool fullRuntimeRefresh = rebuildRuntimeData || cookieLayoutChanged || shadowLayoutChanged;
-            LightVolumeManagerTools.ApplySettings( _manager, false, cookieLayoutChanged, shadowLayoutChanged, fullRuntimeRefresh, !EditorApplication.isPlaying);
+            LightVolumeManagerEditorBackend.ApplySettings( _manager, false, cookieLayoutChanged, shadowLayoutChanged, fullRuntimeRefresh, !EditorApplication.isPlaying);
             if (!fullRuntimeRefresh) {
                 if (pointLightRangesChanged) {
-                    if (!LightVolumeManagerTools.RefreshRuntimeManagerFromProxyImmediately(_manager)) _manager.UpdateVolumes();
+                    if (!LightVolumeManagerEditorBackend.RefreshRuntimeManagerFromProxyImmediately(_manager)) _manager.UpdateVolumes();
                 } else {
-                    LightVolumeManagerTools.ApplyRuntimeManagerSettings(_manager);
+                    LightVolumeManagerEditorBackend.ApplyRuntimeManagerSettings(_manager);
                 }
             }
-            LightVolumeManagerTools.HandleBakingModeChanged(_manager, previousBakingMode);
+            LightVolumeManagerEditorBackend.HandleBakingModeChanged(_manager, previousBakingMode);
             _registryChanged = false;
             _pointRegistryChanged = false;
             _nextStatsRefresh = 0d;
@@ -255,10 +253,7 @@ namespace VRCLightVolumes {
                 titleRight = weightRect.x;
             }
             EditorGUI.LabelField(new Rect(titleX, rect.y, Mathf.Max(0f, titleRight - titleX), rect.height), title);
-            if (!pointLights)
-                EditorGUI.LabelField(
-                    weightRect,
-                    new GUIContent("Weight", "Higher weights have higher render priority."));
+            if (!pointLights) EditorGUI.LabelField(weightRect, "Weight");
 
             Event current = Event.current;
             if (current.type != EventType.DragUpdated && current.type != EventType.DragPerform || !rect.Contains(current.mousePosition)) return;
@@ -282,15 +277,13 @@ namespace VRCLightVolumes {
 
         // Checks whether a serialized registry already contains an object reference.
         private static bool ContainsReference(SerializedProperty source, UnityEngine.Object value) {
-            for (int i = 0; i < source.arraySize; i++)
-                if (source.GetArrayElementAtIndex(i).objectReferenceValue == value) return true;
+            for (int i = 0; i < source.arraySize; i++) if (source.GetArrayElementAtIndex(i).objectReferenceValue == value) return true;
             return false;
         }
 
         // Checks whether a serialized registry contains at least one live entry.
         private static bool HasRegistryEntries(SerializedProperty source) {
-            for (int i = 0; i < source.arraySize; i++)
-                if (source.GetArrayElementAtIndex(i).objectReferenceValue != null) return true;
+            for (int i = 0; i < source.arraySize; i++) if (source.GetArrayElementAtIndex(i).objectReferenceValue != null) return true;
             return false;
         }
 
@@ -306,19 +299,14 @@ namespace VRCLightVolumes {
             EditorGUI.LabelField(iconRect, GetRegistryIcon(value, pointLights));
             EditorGUI.LabelField(nameRect, value != null ? value.name : "None");
             if (pointLights) {
-                if (value is PointLightVolumeInstance pointLight)
-                    DrawPointLightIndicators(new Rect(rect.xMax - indicatorWidth, rect.y, indicatorWidth, EditorGUIUtility.singleLineHeight), pointLight);
+                if (value is PointLightVolumeInstance pointLight) DrawPointLightIndicators(new Rect(rect.xMax - indicatorWidth, rect.y, indicatorWidth, EditorGUIUtility.singleLineHeight), pointLight);
                 return;
             }
             if (!(value is LightVolumeInstance volume)) return;
 
             if (volume.IsDynamic) {
                 Rect dynamicGroupRect = new Rect(rect.xMax - RegistryWeightWidth - indicatorWidth, rect.y, indicatorWidth, EditorGUIUtility.singleLineHeight);
-                Rect dynamicRect = new Rect(
-                    dynamicGroupRect.x + RegistryIndicatorOuterSpacing,
-                    dynamicGroupRect.y + (dynamicGroupRect.height - RegistryDynamicIndicatorSize) * 0.5f,
-                    RegistryDynamicIndicatorSize,
-                    RegistryDynamicIndicatorSize);
+                Rect dynamicRect = new Rect(dynamicGroupRect.x + RegistryIndicatorOuterSpacing, dynamicGroupRect.y + (dynamicGroupRect.height - RegistryDynamicIndicatorSize) * 0.5f, RegistryDynamicIndicatorSize, RegistryDynamicIndicatorSize);
                 DrawDynamicIndicator(dynamicRect, true);
             }
             Rect weightRect = new Rect(rect.xMax - RegistryWeightWidth + 3f, rect.y, RegistryWeightWidth - 3f, EditorGUIUtility.singleLineHeight);
@@ -328,14 +316,13 @@ namespace VRCLightVolumes {
             Undo.RecordObject(volume, "Change Light Volume Weight");
             volume.RegistryWeight = weight;
             LVUtils.MarkDirty(volume);
-            LightVolumeManagerTools.CopyProxyToUdon(volume);
+            LightVolumeManagerEditorBackend.CopyProxyToUdon(volume);
             _registryChanged = true;
         }
 
         // Calculates the trailing width required by the indicators present on one registry row.
         private static float GetRegistryIndicatorWidth(UnityEngine.Object value, bool pointLights) {
-            if (!pointLights)
-                return value is LightVolumeInstance volume && volume.IsDynamic ? RegistryLightVolumeIndicatorsWidth : 0f;
+            if (!pointLights) return value is LightVolumeInstance volume && volume.IsDynamic ? RegistryLightVolumeIndicatorsWidth : 0f;
             if (!(value is PointLightVolumeInstance pointLight)) return 0f;
 
             float width = RegistryIndicatorOuterSpacing * 2f + RegistryColorIndicatorSize;
@@ -375,28 +362,19 @@ namespace VRCLightVolumes {
         // Draws Unity's animation icon for dynamic lights and volumes.
         private static void DrawDynamicIndicator(Rect rect, bool isDynamic) {
             if (!isDynamic) return;
-            if (_dynamicIndicatorContent == null)
-                _dynamicIndicatorContent = new GUIContent(EditorGUIUtility.IconContent("d_AnimationClip On Icon").image, "Dynamic");
+            if (_dynamicIndicatorContent == null) _dynamicIndicatorContent = new GUIContent(GetThemedUnityIcon("AnimationClip On Icon").image, "Dynamic");
             GUI.Label(rect, _dynamicIndicatorContent);
         }
 
         // Draws a borderless circular light-color swatch.
         private static void DrawRoundedColor(Rect rect, Color color) {
-            GUI.DrawTexture(
-                rect,
-                Texture2D.whiteTexture,
-                ScaleMode.StretchToFill,
-                true,
-                0f,
-                color,
-                0f,
-                rect.width * 0.5f);
+            GUI.DrawTexture(rect, Texture2D.whiteTexture, ScaleMode.StretchToFill, true, 0f, color, 0f, rect.width * 0.5f);
         }
 
         // Returns the Unity shadow icon and tooltip matching the light's bake state.
         private static GUIContent GetShadowIndicatorContent(bool baked, bool bakeInGame) {
             if (_bakedShadowIndicatorContent == null) {
-                Texture icon = EditorGUIUtility.IconContent(EditorGUIUtility.isProSkin ? "d_Shadow Icon" : "Shadow Icon").image;
+                Texture icon = GetThemedUnityIcon("Shadow Icon").image;
                 _bakedShadowIndicatorContent = new GUIContent(icon, "Shadows are enabled and baked");
                 _pendingShadowIndicatorContent = new GUIContent(icon, "Shadows are enabled but not baked");
                 _runtimeShadowIndicatorContent = new GUIContent(icon, "Shadows are enabled and will be baked at runtime");
@@ -408,24 +386,26 @@ namespace VRCLightVolumes {
         // Returns the cached Unity icon for a registry entry's volume or light type.
         private static GUIContent GetRegistryIcon(UnityEngine.Object value, bool pointLights) {
             if (!pointLights && value is LightVolumeInstance volume) {
-                if (volume.IsAdditive)
-                    return GetRegistryIconContent(ref _additiveLightVolumeIconContent, "d_LightProbes Icon", "Additive Light Volume");
-                return GetRegistryIconContent(ref _regularLightVolumeIconContent, "d_PreMatLight1@2x", "Regular Light Volume");
+                if (volume.IsAdditive) return GetRegistryIconContent(ref _additiveLightVolumeIconContent, "LightProbes Icon", "Additive Light Volume");
+                return GetRegistryIconContent(ref _regularLightVolumeIconContent, "PreMatLight1@2x", "Regular Light Volume");
             }
             if (value is PointLightVolumeInstance pointLight) {
-                if (pointLight.LightType == 1)
-                    return GetRegistryIconContent(ref _spotLightIconContent, "d_Spotlight Icon", "Spot Light");
-                if (pointLight.LightType == 2)
-                    return GetRegistryIconContent(ref _areaLightIconContent, "d_AreaLight Icon", "Area Light");
-                return GetRegistryIconContent(ref _pointLightIconContent, "d_Light Icon", "Point Light");
+                if (pointLight.LightType == 1) return GetRegistryIconContent(ref _spotLightIconContent, "Spotlight Icon", "Spot Light");
+                if (pointLight.LightType == 2) return GetRegistryIconContent(ref _areaLightIconContent, "AreaLight Icon", "Area Light");
+                return GetRegistryIconContent(ref _pointLightIconContent, "Light Icon", "Point Light");
             }
-            return EditorGUIUtility.IconContent("d_Light Icon");
+            return GetThemedUnityIcon("Light Icon");
         }
 
         // Lazily creates reusable icon content with a descriptive tooltip.
         private static GUIContent GetRegistryIconContent(ref GUIContent content, string iconName, string tooltip) {
-            if (content == null) content = new GUIContent(EditorGUIUtility.IconContent(iconName).image, tooltip);
+            if (content == null) content = new GUIContent(GetThemedUnityIcon(iconName).image, tooltip);
             return content;
+        }
+
+        // Returns the Unity icon variant matching the active Editor theme.
+        private static GUIContent GetThemedUnityIcon(string iconName) {
+            return EditorGUIUtility.IconContent(EditorGUIUtility.isProSkin ? $"d_{iconName}" : iconName);
         }
 
         // Draws shared projection, shadow and culling settings for Point Light Volumes.
@@ -433,7 +413,7 @@ namespace VRCLightVolumes {
             DrawIntPopup("Cookie Resolution", "CustomTexturesWidth", TextureResolutionLabels, TextureResolutions);
             DrawIntPopup("Shadow Resolution", "ShadowTexturesWidth", TextureResolutionLabels, TextureResolutions);
             DrawSlider("ShadowBleedReduction", "Shadow Bleed Reduction", 0f, 1f);
-            string varianceName = LightVolumeManagerTools.IsMobileBuildTarget() ? "ShadowMinVarianceMobile" : "ShadowMinVarianceDesktop";
+            string varianceName = LightVolumeManagerEditorBackend.IsMobileBuildTarget() ? "ShadowMinVarianceMobile" : "ShadowMinVarianceDesktop";
             DrawSlider(varianceName, "Shadow Min Variance", 0f, 1f);
             DrawSlider("LightsBrightnessCutoff", "Brightness Cutoff", 0.05f, 1f);
         }
@@ -456,7 +436,7 @@ namespace VRCLightVolumes {
             int columns = Mathf.Clamp(Mathf.CeilToInt(horizontalFov * density), 1, 256);
             int rows = Mathf.Clamp(Mathf.CeilToInt(verticalFov * density), 1, 256);
             int slices = Mathf.Clamp(serializedObject.FindProperty("FroxelSlices").intValue, 8, 256);
-            int coarse = LightVolumeManagerTools.ResolveCoarseFactor(serializedObject.FindProperty("FroxelCoarse").intValue);
+            int coarse = LightVolumeManagerEditorBackend.ResolveCoarseFactor(serializedObject.FindProperty("FroxelCoarse").intValue);
             int shift = coarse == 2 ? 1 : coarse == 4 ? 2 : 3;
             int coarseColumns = (columns + coarse - 1) >> shift;
             int coarseRows = (rows + coarse - 1) >> shift;
@@ -491,14 +471,16 @@ namespace VRCLightVolumes {
                 }
             }
 
-#if BAKERY_INCLUDED
             if (isBakery) {
-                DrawMask("Volume Bitmask", "VolumeBitmask");
-                DrawMask("Probe Bitmask", "ProbeBitmask");
-                EditorGUILayout.PropertyField(serializedObject.FindProperty("FixLightProbesL1"));
-                EditorGUILayout.PropertyField(serializedObject.FindProperty("Denoise"));
+                if (BakeryEditorBridge.IsAvailable) {
+                    DrawMask("Volume Bitmask", "VolumeBitmask");
+                    DrawMask("Probe Bitmask", "ProbeBitmask");
+                    EditorGUILayout.PropertyField(serializedObject.FindProperty("FixLightProbesL1"));
+                    EditorGUILayout.PropertyField(serializedObject.FindProperty("Denoise"));
+                } else {
+                    EditorGUILayout.HelpBox("Bakery mode requires the Bakery asset.", MessageType.Error);
+                }
             }
-#endif
             DrawIntPopup("Downscale Volumes", "DownscaleVolumes", DownscaleLabels, DownscaleValues);
             DrawProperty("LightVolumeAtlas", "Light Volume Atlas");
         }
@@ -520,13 +502,11 @@ namespace VRCLightVolumes {
             GUILayout.Space(InspectorSectionSpacing);
             using (new EditorGUILayout.HorizontalScope()) {
                 if (hasLightVolumes) {
-                    if (GUILayout.Button(new GUIContent("Pack Light Volumes", "Rebuilds the Light Volume 3D atlas.")))
-                        LightVolumeManagerTools.GenerateAtlas(_manager);
+                    if (GUILayout.Button(new GUIContent("Pack Light Volumes", "Rebuilds the Light Volume 3D atlas."))) LightVolumeManagerEditorBackend.GenerateAtlas(_manager);
                 }
                 if (hasPointLights) {
                     using (new EditorGUI.DisabledScope(!_canBatchBakeShadows)) {
-                        if (GUILayout.Button(new GUIContent("Bake Shadows", "Bakes every shadow-enabled light with Rebake Shadows enabled.")))
-                            LightVolumeManagerTools.BakeShadowMaps(_manager);
+                        if (GUILayout.Button(new GUIContent("Bake Shadows", "Bakes every shadow-enabled light with Rebake Shadows enabled."))) LightVolumeManagerEditorBackend.BakeShadowMaps(_manager);
                     }
                 }
             }
@@ -537,25 +517,22 @@ namespace VRCLightVolumes {
             GUILayout.Space(InspectorSectionSpacing);
             EditorGUI.BeginChangeCheck();
             _debugExpanded = EditorGUILayout.BeginFoldoutHeaderGroup(_debugExpanded, new GUIContent("Debug", "Shows read-only live Manager data for troubleshooting."));
-            if (EditorGUI.EndChangeCheck()) {
-                SessionState.SetBool(DebugFoldoutSessionKey, _debugExpanded);
-            }
+            if (EditorGUI.EndChangeCheck()) SessionState.SetBool(DebugFoldoutSessionKey, _debugExpanded);
 
             if (_debugExpanded) {
-                if (!EditorApplication.isPlaying)
-                    EditorGUILayout.HelpBox("Live values are populated in Play Mode. Runtime texture arrays are rebuilt on initialization and are not stored in the build.", MessageType.Info);
+                if (!EditorApplication.isPlaying) EditorGUILayout.HelpBox("Live values are populated in Play Mode. Runtime texture arrays are rebuilt on initialization and are not stored in the build.", MessageType.Info);
 
                 LightVolumeDebugGUI.DrawGroupHeader("Runtime Texture Arrays", false, "Live texture arrays rebuilt by the Manager and sampled by shaders.");
-                LightVolumeDebugGUI.DrawObject("Cookie Array", _manager.CustomTextures, typeof(RenderTexture), "The live cookie, LUT and cubemap array. Its serialized reference is cleared for builds and the Manager rebuilds it at runtime.");
+                LightVolumeDebugGUI.DrawObject(serializedObject, nameof(LightVolumeManager.CustomTextures), _manager.CustomTextures, typeof(RenderTexture), "Cookie Array");
                 LightVolumeDebugGUI.DrawInt("Cookie Slices", GetTextureDepth(_manager.CustomTextures), "Number of allocated array slices. Each cubemap uses six slices.");
-                LightVolumeDebugGUI.DrawInt("Cookie Cubemaps", _manager.CubemapsCount, "Number of cubemap cookie sources packed into the live array.");
+                LightVolumeDebugGUI.DrawInt(serializedObject, nameof(LightVolumeManager.CubemapsCount), _manager.CubemapsCount, "Cookie Cubemaps");
                 LightVolumeDebugGUI.DrawBool("Dynamic Cookie Sources", _manager.HasAutoCustomTextureUpdates, "Whether any cookie source must be copied again at runtime.");
 
                 GUILayout.Space(EditorGUIUtility.standardVerticalSpacing);
-                LightVolumeDebugGUI.DrawObject("Shadow Array", _manager.ShadowTextures, typeof(RenderTexture), "The live shadow array. Its serialized reference is cleared for builds and the Manager rebuilds it at runtime.");
+                LightVolumeDebugGUI.DrawObject(serializedObject, nameof(LightVolumeManager.ShadowTextures), _manager.ShadowTextures, typeof(RenderTexture), "Shadow Array");
                 LightVolumeDebugGUI.DrawInt("Shadow Slices", GetTextureDepth(_manager.ShadowTextures), "Number of allocated array slices. Each cubemap shadow uses six slices.");
-                LightVolumeDebugGUI.DrawInt("Shadow Maps", _manager.ShadowMapsCount, "Number of 2D shadow maps packed into the live array.");
-                LightVolumeDebugGUI.DrawInt("Shadow Cubemaps", _manager.ShadowCubemapsCount, "Number of cubemap shadow sources packed into the live array.");
+                LightVolumeDebugGUI.DrawInt(serializedObject, nameof(LightVolumeManager.ShadowMapsCount), _manager.ShadowMapsCount, "Shadow Maps");
+                LightVolumeDebugGUI.DrawInt(serializedObject, nameof(LightVolumeManager.ShadowCubemapsCount), _manager.ShadowCubemapsCount, "Shadow Cubemaps");
                 LightVolumeDebugGUI.DrawBool("Dynamic Shadow Sources", _manager.HasAutoShadowTextureUpdates, "Whether any shadow source must be copied again at runtime.");
 
                 LightVolumeDebugGUI.DrawGroupHeader("Froxel Clustering", true, "Live clustering textures and the current clustering state.");
@@ -654,28 +631,19 @@ namespace VRCLightVolumes {
             double now = EditorApplication.timeSinceStartup;
             float deltaTime = scroll.LastRepaintTime > 0d ? Mathf.Min((float)(now - scroll.LastRepaintTime), 0.05f) : 1f / 60f;
             scroll.LastRepaintTime = now;
-            if (GUIUtility.hotControl != 0 && list.index >= 0 && current.mousePosition.x >= viewport.x
-                && current.mousePosition.x <= viewport.x + 36f) {
+            if (GUIUtility.hotControl != 0 && list.index >= 0 && current.mousePosition.x >= viewport.x && current.mousePosition.x <= viewport.x + 36f) {
                 float direction = 0f;
                 if (current.mousePosition.y >= viewport.y && current.mousePosition.y < viewport.y + RegistryDragScrollEdge) direction = -1f;
                 else if (current.mousePosition.y <= viewport.yMax && current.mousePosition.y > viewport.yMax - RegistryDragScrollEdge) direction = 1f;
-                if (direction != 0f) {
-                    scroll.TargetY = Mathf.Clamp(scroll.TargetY + direction * RegistryDragScrollSpeed * deltaTime, 0f, maxScrollY);
-                }
+                if (direction != 0f) scroll.TargetY = Mathf.Clamp(scroll.TargetY + direction * RegistryDragScrollSpeed * deltaTime, 0f, maxScrollY);
+
             }
             if (Mathf.Abs(scroll.Position.y - scroll.TargetY) < 0.05f && Mathf.Abs(scroll.Velocity) < 0.05f) {
                 scroll.Position.y = scroll.TargetY;
                 scroll.Velocity = 0f;
                 return;
             }
-
-            scroll.Position.y = Mathf.SmoothDamp(
-                scroll.Position.y,
-                scroll.TargetY,
-                ref scroll.Velocity,
-                RegistryScrollSmoothTime,
-                Mathf.Infinity,
-                deltaTime);
+            scroll.Position.y = Mathf.SmoothDamp(scroll.Position.y, scroll.TargetY, ref scroll.Velocity, RegistryScrollSmoothTime, Mathf.Infinity, deltaTime);
             Repaint();
         }
 
@@ -758,20 +726,10 @@ namespace VRCLightVolumes {
             property.intValue = EditorGUILayout.MaskField(new GUIContent(label, property.tooltip), property.intValue, BakeryMaskLabels);
         }
 
-        // Detects whether the inspected scene contains more than one Manager.
+        // Detects duplicate Managers across all loaded scenes and resolves the primary one.
         private void RefreshManagerCount() {
-            _multipleManagers = false;
-            if (_manager == null || !_manager.gameObject.scene.IsValid()) return;
-            LightVolumeManager[] managers = FindObjectsByType<LightVolumeManager>(FindObjectsInactive.Include, FindObjectsSortMode.None);
-            int count = 0;
-            for (int i = 0; i < managers.Length; i++) {
-                LightVolumeManager manager = managers[i];
-                if (manager == null || manager.gameObject.scene != _manager.gameObject.scene) continue;
-                if (++count > 1) {
-                    _multipleManagers = true;
-                    return;
-                }
-            }
+            _primaryManager = LightVolumeManagerEditorBackend.GetPrimaryManager(out int count);
+            _multipleManagers = count > 1;
         }
 
         private GUIStyle RichLabelStyle => _richLabelStyle ?? (_richLabelStyle = new GUIStyle(EditorStyles.label) { richText = true });

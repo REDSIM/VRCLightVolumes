@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using UnityEditor;
 using UnityEngine;
@@ -19,7 +20,7 @@ namespace VRCLightVolumes {
         static readonly SceneView.CameraMode L0Mode;
         static readonly SceneView.CameraMode FineMode;
         static readonly SceneView.CameraMode CoarseMode;
-        static readonly HashSet<SceneView> SetupViews = new HashSet<SceneView>();
+        static readonly Dictionary<SceneView, Action<SceneView.CameraMode>> ModeHandlers = new Dictionary<SceneView, Action<SceneView.CameraMode>>();
 
         // Registers Light Volumes Scene View camera modes and begins configuring opened views.
         static SceneLightVolumeDebugModes() {
@@ -29,14 +30,28 @@ namespace VRCLightVolumes {
             CoarseMode = SceneView.AddCameraMode("VRCLV Coarse Clustering", Section);
 
             SceneView.beforeSceneGui += SetupSceneView;
+            AssemblyReloadEvents.beforeAssemblyReload += Shutdown;
+            EditorApplication.quitting += Shutdown;
         }
 
         // Installs one camera-mode callback for a newly encountered Scene View.
         static void SetupSceneView(SceneView view) {
-            if (!SetupViews.Add(view)) return;
-
-            view.onCameraModeChanged += mode => ApplyMode(view, mode);
+            if (ModeHandlers.ContainsKey(view)) return;
+            Action<SceneView.CameraMode> handler = mode => ApplyMode(view, mode);
+            ModeHandlers.Add(view, handler);
+            view.onCameraModeChanged += handler;
             ApplyMode(view, view.cameraMode);
+        }
+
+        // Removes the global hook and every per-view callback before this editor domain ends.
+        static void Shutdown() {
+            SceneView.beforeSceneGui -= SetupSceneView;
+            AssemblyReloadEvents.beforeAssemblyReload -= Shutdown;
+            EditorApplication.quitting -= Shutdown;
+            foreach (KeyValuePair<SceneView, Action<SceneView.CameraMode>> pair in ModeHandlers) {
+                if (pair.Key != null) pair.Key.onCameraModeChanged -= pair.Value;
+            }
+            ModeHandlers.Clear();
         }
 
         // Applies the replacement shader associated with a Light Volumes debug camera mode.

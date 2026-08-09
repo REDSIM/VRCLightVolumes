@@ -5,8 +5,7 @@ using UnityEngine;
 using UnityEngine.Serialization;
 
 namespace VRCLightVolumes {
-    // Transitional 2.x/early-3.x migration payload. The original script GUID is intentionally
-    // retained so Unity can deserialize legacy scene and prefab data before the migrator removes it.
+    // Transitional 2.x/early-3.x migration payload. The original script GUID is intentionally retained so Unity can deserialize legacy scene and prefab data before the migrator removes it.
     [AddComponentMenu("")]
     [Obsolete("Legacy authoring data. Use LightVolumeManager; this component is consumed by the 3.x migration.")]
     public sealed class LightVolumeSetup : MonoBehaviour {
@@ -30,11 +29,7 @@ namespace VRCLightVolumes {
         public int FroxelCoarse = 4;
         public int ClusteringMinLights = 16;
 
-#if BAKERY_INCLUDED
-        public Baking BakingMode = Baking.Bakery;
-#else
         public Baking BakingMode = Baking.Progressive;
-#endif
         [FormerlySerializedAs("BakeryBitmask")]
         public int VolumeBitmask = 1;
         public int ProbeBitmask = 1;
@@ -102,8 +97,6 @@ namespace VRCLightVolumes {
     public struct LightVolumeData {
         public float Weight;
         public LightVolumeInstance LightVolumeInstance;
-
-
     }
 }
 #endif

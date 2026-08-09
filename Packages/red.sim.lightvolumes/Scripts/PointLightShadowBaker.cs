@@ -28,7 +28,7 @@ namespace VRCLightVolumes {
 
             bool customTexturesChanged = pointLightVolume.HasEditorCustomTextureChanges();
             bool shadowTexturesChanged = pointLightVolume.HasEditorShadowTextureChanges();
-            pointLightVolume.EditorApplyAuthoringData(customTexturesChanged, shadowTexturesChanged);
+            pointLightVolume.EditorApplyAuthoringData(customTexturesChanged, shadowTexturesChanged, false);
             if (!EnsureRuntimeShadowBakeDependencies(manager, pointLightVolume)) return false;
 
             bool cubemapShadows = pointLightVolume.ShouldBakeCubemapShadows();
@@ -90,9 +90,12 @@ namespace VRCLightVolumes {
                 pointLightVolume.EditorRestoreExclusionMask();
                 manager.ShadowTextureFormat = oldShadowTextureFormat;
                 ResetManagerRuntimeShadowBlurState(manager);
-                pointLightVolume.EditorApplyAuthoringData(false, true);
+                pointLightVolume.EditorApplyAuthoringData(false, true, false);
                 pointLightInstance.enabled = oldPointLightInstanceEnabled;
-                if (baked && regenerateArray) manager.ReinitializeShadowTextures();
+                if (regenerateArray) {
+                    if (baked) manager.ReinitializeShadowTextures();
+                    else manager.UpdateVolumes();
+                }
                 ReleaseTemporaryRenderTexture(runtimeShadowTexture);
                 RenderTexture.active = oldActive;
             }

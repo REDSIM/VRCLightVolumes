@@ -36,46 +36,47 @@ namespace VRCLightVolumes {
         // Checks whether a hierarchy contains unified or migratable Light Volumes authoring components.
         internal static bool ContainsAuthoringComponents(GameObject root) {
             if (root == null) return false;
-            if (root.GetComponentInChildren<LightVolumeInstance>(true) != null
-                || root.GetComponentInChildren<PointLightVolumeInstance>(true) != null) return true;
+            if (root.GetComponentInChildren<LightVolumeInstance>(true) != null || root.GetComponentInChildren<PointLightVolumeInstance>(true) != null) return true;
 #if UDONSHARP
 #pragma warning disable CS0618
-            return LightVolumeMigration.CanMigrateHierarchy(root)
-                || root.GetComponentInChildren<LightVolume>(true) != null
-                || root.GetComponentInChildren<PointLightVolume>(true) != null;
+            return LightVolumeMigration.CanMigrateHierarchy(root) || root.GetComponentInChildren<LightVolume>(true) != null || root.GetComponentInChildren<PointLightVolume>(true) != null;
 #pragma warning restore CS0618
 #else
             return false;
 #endif
         }
 
-        // Migrates and registers a hierarchy with the scene's single Manager, creating one when required.
+        // Migrates and registers a hierarchy with the single global Manager, creating one when required.
         internal static bool OnboardHierarchy(GameObject root, out LightVolumeManager manager) {
             manager = null;
             if (!IsMainStageSceneObject(root) || !ContainsAuthoringComponents(root)) return false;
+
+            // Reject another loaded scene before migration can modify this hierarchy.
+            manager = LightVolumeManagerEditorBackend.GetPrimaryManager();
+            if (manager != null && manager.gameObject.scene != root.scene) {
+                Debug.LogError($"[LightVolumes] The hierarchy was not assigned because the primary Light Volume Manager belongs to another loaded scene ('{manager.gameObject.scene.name}'). Close that scene or move the hierarchy before setup.", root);
+                manager = null;
+                return false;
+            }
 #if UDONSHARP
             if (!MigrateLegacySetupGraph(root, out bool legacyGraphMigrated)) return false;
             if (!CanOnboardHierarchy(root)) {
-                int blockedLegacyCount = root.GetComponentsInChildren<LightVolume>(true).Length
-                    + root.GetComponentsInChildren<PointLightVolume>(true).Length;
+                int blockedLegacyCount = root.GetComponentsInChildren<LightVolume>(true).Length + root.GetComponentsInChildren<PointLightVolume>(true).Length;
                 if (blockedLegacyCount > 0) LogBlockedMigration(root, blockedLegacyCount);
                 return false;
             }
 #endif
 
-            List<LightVolumeManager> managers = CollectSceneComponents<LightVolumeManager>(root.scene);
-            if (managers.Count > 1) {
-                Debug.LogError("[VRC Light Volumes] The hierarchy was not assigned because its scene contains multiple Light Volume Managers.", root);
-                return false;
-            }
+            // Legacy graph migration can create the scene's unified Manager.
+            manager = LightVolumeManagerEditorBackend.GetPrimaryManager();
 
-            bool managerCreated = managers.Count == 0;
-            manager = managerCreated ? CreateManager(root.scene) : managers[0];
+            bool managerCreated = manager == null;
+            if (managerCreated) manager = CreateManager(root.scene);
             if (manager == null) return false;
 
 #if UDONSHARP
             if (!LightVolumeMigration.IsReadyRuntimeComponent(manager)) {
-                Debug.LogError("[VRC Light Volumes] The hierarchy was not assigned because the scene manager has no valid Udon backing program.", manager);
+                Debug.LogError("[LightVolumes] The hierarchy was not assigned because the scene manager has no valid Udon backing program.", manager);
                 manager = null;
                 return false;
             }
@@ -87,12 +88,9 @@ namespace VRCLightVolumes {
 #endif
 
             bool hierarchyMigrated = legacyGraphMigrated || migrated > 0;
-            // The updater treats true as a mutation signal. A successful reconciliation that finds
-            // everything already registered must remain false and perform no serialized writes.
+            // The updater treats true as a mutation signal. A successful reconciliation that finds everything already registered must remain false and perform no serialized writes.
             bool changed = hierarchyMigrated;
-            changed |= (managerCreated || legacyGraphMigrated)
-                ? RegisterScene(root.scene, manager, hierarchyMigrated)
-                : RegisterHierarchy(root, manager, hierarchyMigrated);
+            changed |= (managerCreated || legacyGraphMigrated) ? RegisterScene(root.scene, manager, hierarchyMigrated) : RegisterHierarchy(root, manager, hierarchyMigrated);
             if (!changed && managerCreated) {
                 Undo.DestroyObjectImmediate(manager.gameObject);
                 manager = null;
@@ -107,13 +105,12 @@ namespace VRCLightVolumes {
             migrated = false;
 #pragma warning disable CS0618
             if (root.GetComponentInChildren<LightVolumeSetup>(true) == null) return true;
-            // Setup ownership and registry ambiguity are scene-wide invariants. Reuse the existing
-            // coherent migration pass instead of validating a deceptively incomplete root subset.
+            // Setup ownership and registry ambiguity are scene-wide invariants. Reuse the existing coherent migration pass instead of validating a deceptively incomplete root subset.
             int blocked = 0;
             migrated = LightVolumeMigration.MigrateScene(root.scene, ref blocked) > 0;
             if (root.GetComponentInChildren<LightVolumeSetup>(true) == null) return true;
 #pragma warning restore CS0618
-            Debug.LogWarning($"[VRC Light Volumes] Legacy manager settings on '{root.name}' could not be migrated as a coherent Udon graph. Automatic registration stopped so the configured data stays intact.", root);
+            Debug.LogWarning($"[LightVolumes] Legacy manager settings on '{root.name}' could not be migrated as a coherent Udon graph. Automatic registration stopped so the configured data stays intact.", root);
             return false;
         }
 
@@ -135,7 +132,7 @@ namespace VRCLightVolumes {
 
         // Reports legacy helpers that automatic onboarding intentionally left unchanged.
         private static void LogBlockedMigration(GameObject root, int blocked) {
-            Debug.LogWarning($"[VRC Light Volumes] Left {blocked} legacy helper component(s) on '{root.name}' unchanged because no complete unified Udon component was available. Prefab assets and Prefab Stage contents are never modified automatically.", root);
+            Debug.LogWarning($"[LightVolumes] Left {blocked} legacy helper component(s) on '{root.name}' unchanged because no complete unified Udon component was available. Prefab assets and Prefab Stage contents are never modified automatically.", root);
         }
 #endif
 
@@ -149,12 +146,9 @@ namespace VRCLightVolumes {
 #if UDONSHARP
                 if (!LightVolumeMigration.IsReadyRuntimeComponent(volume)) continue;
 #endif
-                if (!LightVolumeManagerTools.EnsureRegistered(manager, volume, UndoName, out bool volumeChanged)) continue;
+                if (!LightVolumeManagerEditorBackend.EnsureRegistered(manager, volume, UndoName, out bool volumeChanged)) continue;
                 changed |= volumeChanged;
-#if BAKERY_INCLUDED
-                if ((volumeChanged || hierarchyMigrated) && manager.IsBakeryMode && volume.Bake)
-                    LightVolumeTools.SetupBakeryDependencies(volume, true);
-#endif
+                if (BakeryEditorBridge.IsAvailable && (volumeChanged || hierarchyMigrated) && manager.EditorIsBakeryMode && volume.Bake) LightVolumeTools.SetupBakeryDependencies(volume, true);
             }
 
             List<PointLightVolumeInstance> pointLights = new List<PointLightVolumeInstance>();
@@ -164,8 +158,7 @@ namespace VRCLightVolumes {
 #if UDONSHARP
                 if (!LightVolumeMigration.IsReadyRuntimeComponent(pointLight)) continue;
 #endif
-                if (LightVolumeManagerTools.EnsureRegistered(manager, pointLight, UndoName, out bool pointLightChanged))
-                    changed |= pointLightChanged;
+                if (LightVolumeManagerEditorBackend.EnsureRegistered(manager, pointLight, UndoName, out bool pointLightChanged)) changed |= pointLightChanged;
             }
             return changed;
         }
@@ -174,16 +167,15 @@ namespace VRCLightVolumes {
         private static bool RegisterScene(Scene scene, LightVolumeManager manager, bool hierarchyMigrated) {
             bool changed = false;
             GameObject[] roots = scene.GetRootGameObjects();
-            for (int i = 0; i < roots.Length; i++)
-                changed |= RegisterHierarchy(roots[i], manager, hierarchyMigrated);
+            for (int i = 0; i < roots.Length; i++) changed |= RegisterHierarchy(roots[i], manager, hierarchyMigrated);
             return changed;
         }
 
         // Creates an Undo-aware unified Manager with a valid Udon backing component.
         private static LightVolumeManager CreateManager(Scene scene) {
             GameObject managerObject = new GameObject("Light Volume Manager");
-            Undo.RegisterCreatedObjectUndo(managerObject, UndoName);
             if (managerObject.scene != scene) SceneManager.MoveGameObjectToScene(managerObject, scene);
+            Undo.RegisterCreatedObjectUndo(managerObject, UndoName);
 
 #if UDONSHARP
             LightVolumeManager manager;
@@ -191,7 +183,7 @@ namespace VRCLightVolumes {
                 manager = UdonSharpUndo.AddComponent<LightVolumeManager>(managerObject);
             } catch (System.Exception exception) {
                 Undo.DestroyObjectImmediate(managerObject);
-                Debug.LogWarning($"[VRC Light Volumes] Could not create the scene manager. {exception.Message}");
+                Debug.LogWarning($"[LightVolumes] Could not create the scene manager. {exception.Message}");
                 return null;
             }
             if (!LightVolumeMigration.IsReadyRuntimeComponent(manager)) {
@@ -201,21 +193,8 @@ namespace VRCLightVolumes {
 #else
             LightVolumeManager manager = Undo.AddComponent<LightVolumeManager>(managerObject);
 #endif
-            LightVolumeManagerTools.CopyProxyToUdon(manager);
+            LightVolumeManagerEditorBackend.CopyProxyToUdon(manager);
             return manager;
-        }
-
-        // Collects components of one type from every hierarchy in a scene, including inactive objects.
-        private static List<T> CollectSceneComponents<T>(Scene scene) where T : Component {
-            List<T> result = new List<T>();
-            List<T> buffer = new List<T>();
-            GameObject[] roots = scene.GetRootGameObjects();
-            for (int i = 0; i < roots.Length; i++) {
-                buffer.Clear();
-                roots[i].GetComponentsInChildren(true, buffer);
-                result.AddRange(buffer);
-            }
-            return result;
         }
     }
 }

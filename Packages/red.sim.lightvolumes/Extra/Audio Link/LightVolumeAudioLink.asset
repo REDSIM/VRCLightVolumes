@@ -130,7 +130,7 @@ MonoBehaviour:
       Data: 8|System.RuntimeType, mscorlib
     - Name: 
       Entry: 1
-      Data: VRCLightVolumes.AudioLinkBand, red.sim.LightVolumesUdon
+      Data: VRCLightVolumes.AudioLinkBand, red.sim.LightVolumes.AudioLinkUdon
     - Name: 
       Entry: 8
       Data: 
@@ -697,7 +697,7 @@ MonoBehaviour:
       Data: 41|System.RuntimeType, mscorlib
     - Name: 
       Entry: 1
-      Data: VRCLightVolumes.AudioLinkColor, red.sim.LightVolumesUdon
+      Data: VRCLightVolumes.AudioLinkColor, red.sim.LightVolumes.AudioLinkUdon
     - Name: 
       Entry: 8
       Data: 

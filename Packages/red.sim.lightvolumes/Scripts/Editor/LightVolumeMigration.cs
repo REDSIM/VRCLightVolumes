@@ -10,14 +10,13 @@ using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 using VRC.Udon;
+using AtlasPostProcessor = VRCLightVolumes.Editor.AtlasPostProcessor;
 
 namespace VRCLightVolumes {
     // This file intentionally consumes the obsolete serialized bridge schema.
 #pragma warning disable CS0618
 
-    // One-way migration and read-only validation for the unified Udon authoring model.
-    // It creates a complete Udon graph only for a coherent pure-v2 graph; existing Udon components
-    // are never repaired, replaced, guessed between duplicates, or resolved through stale links.
+    // One-way migration and read-only validation for the unified Udon authoring model. It creates a complete Udon graph only for a coherent pure-v2 graph; existing Udon components are never repaired, replaced, guessed between duplicates, or resolved through stale links.
     [InitializeOnLoad]
     public static class LightVolumeMigration {
         private const string UndoName = "Migrate VRC Light Volumes";
@@ -41,8 +40,7 @@ namespace VRCLightVolumes {
             "  ShadowmaskIndex:",
             "  _legacyShadowmaskIndex:"
         };
-        // Keep the object alongside its instance ID: Unity can reuse IDs after a scene unload, and a
-        // bare HashSet<int> could then suppress migration for an unrelated component in a later scene.
+        // Keep the object alongside its instance ID: Unity can reuse IDs after a scene unload, and a bare HashSet<int> could then suppress migration for an unrelated component in a later scene.
         private static readonly Dictionary<int, Component> MigratedRuntimeComponents = new Dictionary<int, Component>();
         private static readonly List<string> IssueExamples = new List<string>(MaxIssueExamples);
         private static bool _migrationQueued;
@@ -50,7 +48,21 @@ namespace VRCLightVolumes {
         // Installs scene-open migration hooks and schedules the initial loaded-scene pass.
         static LightVolumeMigration() {
             EditorSceneManager.sceneOpened += OnSceneOpened;
+            AssemblyReloadEvents.beforeAssemblyReload += Shutdown;
+            EditorApplication.quitting += Shutdown;
             QueueLoadedScenesMigration();
+        }
+
+        // Removes editor callbacks and discards transient migration caches before this editor domain ends.
+        private static void Shutdown() {
+            EditorSceneManager.sceneOpened -= OnSceneOpened;
+            AssemblyReloadEvents.beforeAssemblyReload -= Shutdown;
+            EditorApplication.quitting -= Shutdown;
+            EditorApplication.delayCall -= RunQueuedMigration;
+            _migrationQueued = false;
+            SceneLegacyRuntimeBlocksCache.Clear();
+            MigratedRuntimeComponents.Clear();
+            IssueExamples.Clear();
         }
 
         // Queues a coalesced migration after Unity and UdonSharp finish opening a scene.
@@ -91,7 +103,7 @@ namespace VRCLightVolumes {
                 if (!LightVolumeSceneSetup.IsMainStageScene(scene)) continue;
                 migrated += MigrateScene(scene, ref blocked);
             }
-            if (blocked > 0) Debug.LogWarning($"[LightVolume] Left {blocked} legacy component(s) unchanged because neither a coherent pure-v2 graph nor a complete existing unified Udon graph was available. Existing Udon components were not repaired or replaced.");
+            if (blocked > 0) Debug.LogWarning($"[LightVolumes] Left {blocked} legacy component(s) unchanged because neither a coherent pure-v2 graph nor a complete existing unified Udon graph was available. Existing Udon components were not repaired or replaced.");
             return migrated;
         }
 
@@ -99,16 +111,14 @@ namespace VRCLightVolumes {
         internal static int MigrateScene(Scene scene, ref int blocked) {
             if (!LightVolumeSceneSetup.IsMainStageScene(scene)) return 0;
 
-            // Disk-only packed fields are authoritative only before anything has modified the loaded scene.
-            // Never replay stale saved YAML over unsaved proxy edits after a domain reload.
+            // Disk-only packed fields are authoritative only before anything has modified the loaded scene. Never replay stale saved YAML over unsaved proxy edits after a domain reload.
             bool savedSceneYamlIsAuthoritative = !scene.isDirty;
             GameObject[] roots = scene.GetRootGameObjects();
             List<LightVolumeSetup> setups = Collect<LightVolumeSetup>(roots);
             List<LightVolume> volumes = Collect<LightVolume>(roots);
             List<PointLightVolume> pointLights = Collect<PointLightVolume>(roots);
 
-            // A complete v2 authoring graph has no Udon components yet. Convert that graph once,
-            // before validation; existing partial or broken Udon graphs are never repaired here.
+            // A complete v2 authoring graph has no Udon components yet. Convert that graph once, before validation; existing partial or broken Udon graphs are never repaired here.
             CreatePureLegacyGraphs(setups, volumes, pointLights);
 
             List<LightVolumeManager> managers = Collect<LightVolumeManager>(roots);
@@ -124,8 +134,7 @@ namespace VRCLightVolumes {
                 return 0;
             }
 
-            // Validate the complete one-to-one graph before touching a legacy destination.
-            // Unique co-located destinations and unambiguous registries are authoritative.
+            // Validate the complete one-to-one graph before touching a legacy destination. Unique co-located destinations and unambiguous registries are authoritative.
             Dictionary<LightVolume, LightVolumeInstance> volumeDestinations = new Dictionary<LightVolume, LightVolumeInstance>();
             Dictionary<PointLightVolume, PointLightVolumeInstance> pointDestinations = new Dictionary<PointLightVolume, PointLightVolumeInstance>();
             Dictionary<LightVolumeSetup, LightVolumeManager> setupDestinations = new Dictionary<LightVolumeSetup, LightVolumeManager>();
@@ -236,7 +245,7 @@ namespace VRCLightVolumes {
 
             // Canonicalize and rebuild each affected manager once after the whole batch is coherent.
             foreach (LightVolumeManager manager in changedManagers) {
-                LightVolumeManagerTools.ApplySettings(manager, false);
+                LightVolumeManagerEditorBackend.ApplySettings(manager, false);
                 MarkDirty(manager);
             }
 
@@ -266,9 +275,7 @@ namespace VRCLightVolumes {
             return removed;
         }
 
-        // Migrates obsolete helper components only inside a hierarchy that has just entered a real
-        // scene. Existing unified prefab components are reused; UdonSharp cannot safely create a new
-        // backing behaviour as an added override on a prefab instance, so that case stays untouched.
+        // Migrates obsolete helper components only inside a hierarchy that has just entered a real scene. Existing unified prefab components are reused; UdonSharp cannot safely create a new backing behaviour as an added override on a prefab instance, so that case stays untouched.
         internal static int MigrateHierarchy(GameObject root, LightVolumeManager manager, out int blocked) {
             blocked = 0;
             if (!LightVolumeSceneSetup.IsMainStageSceneObject(root)
@@ -323,9 +330,7 @@ namespace VRCLightVolumes {
             if (source == null || source.GetComponents<TLegacy>().Length != 1) return false;
             TUnified[] destinations = source.GetComponents<TUnified>();
             if (destinations.Length == 1) return IsExactReadyRuntimeComponent(destinations[0]);
-            return destinations.Length == 0
-                && !PrefabUtility.IsPartOfPrefabInstance(source.gameObject)
-                && !HasUnmatchedUdonSharpBacking(source.gameObject);
+            return destinations.Length == 0 && !PrefabUtility.IsPartOfPrefabInstance(source.gameObject) && !HasUnmatchedUdonSharpBacking(source.gameObject);
         }
 
         // Migrates and registers one hierarchy Light Volume with rollback on any incomplete mutation.
@@ -334,7 +339,7 @@ namespace VRCLightVolumes {
             try {
                 Undo.RecordObject(destination, UndoName);
                 CopyLegacyLightVolume(source, destination);
-                if (!LightVolumeManagerTools.EnsureRegistered(manager, destination, UndoName, out _)) throw new InvalidOperationException("Could not register LightVolumeInstance.");
+                if (!LightVolumeManagerEditorBackend.EnsureRegistered(manager, destination, UndoName, out _)) throw new InvalidOperationException("Could not register LightVolumeInstance.");
                 MarkDirty(destination);
                 CopyProxyToUdon(destination);
                 if (!IsRegistered(manager.LightVolumeInstances, destination, manager)) throw new InvalidOperationException("LightVolumeInstance registration did not persist.");
@@ -348,7 +353,7 @@ namespace VRCLightVolumes {
                     CopyProxyToUdon(manager);
                     RollbackCreatedProxies<LightVolumeInstance>(source.gameObject);
                 }
-                Debug.LogWarning($"[LightVolume] Could not migrate legacy LightVolume on '{source.gameObject.name}'. It was left unchanged. {exception.Message}", source);
+                Debug.LogWarning($"[LightVolumes] Could not migrate legacy LightVolume on '{source.gameObject.name}'. It was left unchanged. {exception.Message}", source);
                 return false;
             }
         }
@@ -359,7 +364,7 @@ namespace VRCLightVolumes {
             try {
                 Undo.RecordObject(destination, UndoName);
                 CopyLegacyPointLight(source, destination);
-                if (!LightVolumeManagerTools.EnsureRegistered(manager, destination, UndoName, out _)) throw new InvalidOperationException("Could not register PointLightVolumeInstance.");
+                if (!LightVolumeManagerEditorBackend.EnsureRegistered(manager, destination, UndoName, out _)) throw new InvalidOperationException("Could not register PointLightVolumeInstance.");
                 destination.EditorApplyAuthoringData(true, true, false);
                 destination.CacheEditorObservedValues();
                 MarkDirty(destination);
@@ -375,7 +380,7 @@ namespace VRCLightVolumes {
                     CopyProxyToUdon(manager);
                     RollbackCreatedProxies<PointLightVolumeInstance>(source.gameObject);
                 }
-                Debug.LogWarning($"[LightVolume] Could not migrate legacy PointLightVolume on '{source.gameObject.name}'. It was left unchanged. {exception.Message}", source);
+                Debug.LogWarning($"[LightVolumes] Could not migrate legacy PointLightVolume on '{source.gameObject.name}'. It was left unchanged. {exception.Message}", source);
                 return false;
             }
         }
@@ -392,9 +397,7 @@ namespace VRCLightVolumes {
                 destination = destinations[0];
                 return IsExactReadyRuntimeComponent(destination);
             }
-            if (destinations.Length != 0
-                || PrefabUtility.IsPartOfPrefabInstance(source.gameObject)
-                || HasUnmatchedUdonSharpBacking(source.gameObject)) return false;
+            if (destinations.Length != 0 || PrefabUtility.IsPartOfPrefabInstance(source.gameObject) || HasUnmatchedUdonSharpBacking(source.gameObject)) return false;
 
             try {
                 destination = UdonSharpUndo.AddComponent<TUnified>(source.gameObject);
@@ -419,8 +422,7 @@ namespace VRCLightVolumes {
             return false;
         }
 
-        // UdonSharp proxy lifecycle events do not run in Edit Mode. Refresh valid managers only
-        // after migration actually changed their serialized runtime data.
+        // UdonSharp proxy lifecycle events do not run in Edit Mode. Refresh valid managers only after migration actually changed their serialized runtime data.
         private static void RefreshManagerRuntimeState(List<LightVolumeManager> managers) {
             for (int i = 0; i < managers.Count; i++) {
                 LightVolumeManager manager = managers[i];
@@ -462,17 +464,14 @@ namespace VRCLightVolumes {
             public readonly List<PointLightVolume> PointLights = new List<PointLightVolume>();
         }
 
-        // v2 scenes contain only the three editor authoring components. Creating their Udon
-        // counterparts is migration, not repair: the whole ownership group must be unambiguous and
-        // contain no existing counterpart before any component is added.
+        // v2 scenes contain only the three editor authoring components. Creating their Udon counterparts is migration, not repair: the whole ownership group must be unambiguous and contain no existing counterpart before any component is added.
         private static void CreatePureLegacyGraphs(List<LightVolumeSetup> setups, List<LightVolume> volumes, List<PointLightVolume> pointLights) {
             if (setups.Count == 0) return;
             Dictionary<LightVolume, LightVolumeSetup> volumeOwners = new Dictionary<LightVolume, LightVolumeSetup>();
             Dictionary<PointLightVolume, LightVolumeSetup> pointOwners = new Dictionary<PointLightVolume, LightVolumeSetup>();
             HashSet<LightVolume> ambiguousVolumes = new HashSet<LightVolume>();
             HashSet<PointLightVolume> ambiguousPointLights = new HashSet<PointLightVolume>();
-            for (int i = 0; i < setups.Count; i++)
-                RegisterRegistryOwners(setups[i], volumeOwners, ambiguousVolumes, pointOwners, ambiguousPointLights);
+            for (int i = 0; i < setups.Count; i++) RegisterRegistryOwners(setups[i], volumeOwners, ambiguousVolumes, pointOwners, ambiguousPointLights);
 
             for (int i = 0; i < setups.Count; i++) {
                 if (!TryCollectPureLegacyGroup(setups[i], volumes, pointLights, volumeOwners, pointOwners, ambiguousVolumes, ambiguousPointLights, out PureLegacyGroup group)) continue;
@@ -606,13 +605,12 @@ namespace VRCLightVolumes {
                 return true;
             } catch (Exception exception) {
                 RollbackCreatedLegacyGroup(group);
-                Debug.LogWarning($"[LightVolume] Could not create the unified Udon graph for legacy setup '{group.Setup.gameObject.name}'. The complete legacy group was left unchanged. " + exception.Message, group.Setup);
+                Debug.LogWarning($"[LightVolumes] Could not create the unified Udon graph for legacy setup '{group.Setup.gameObject.name}'. The complete legacy group was left unchanged. " + exception.Message, group.Setup);
                 return false;
             }
         }
 
-        // Preflight guarantees that these exact proxy types did not exist before creation, so a
-        // failed group can safely remove every counterpart even when AddComponent threw before return.
+        // Preflight guarantees that these exact proxy types did not exist before creation, so a failed group can safely remove every counterpart even when AddComponent threw before return.
         private static void RollbackCreatedLegacyGroup(PureLegacyGroup group) {
             for (int i = group.PointLights.Count - 1; i >= 0; i--) RollbackCreatedProxies<PointLightVolumeInstance>(group.PointLights[i].gameObject);
             for (int i = group.Volumes.Count - 1; i >= 0; i--) RollbackCreatedProxies<LightVolumeInstance>(group.Volumes[i].gameObject);
@@ -651,8 +649,7 @@ namespace VRCLightVolumes {
             return ResolveExactAttached<LightVolumeManager>(setup);
         }
 
-        // Co-location is the invariant shared by every supported legacy version. A unique attached
-        // destination is authoritative; serialized bridge links may be stale after prefab overrides.
+        // Co-location is the invariant shared by every supported legacy version. A unique attached destination is authoritative; serialized bridge links may be stale after prefab overrides.
         private static T ResolveExactAttached<T>(Component source) where T : Component {
             if (source == null) return null;
             T[] attached = source.GetComponents<T>();
@@ -663,8 +660,7 @@ namespace VRCLightVolumes {
         private static void RemoveLegacyComponent(Component component) {
             if (component == null) return;
 
-            // On an inherited prefab component Unity records a removed-component override. The prefab
-            // stays connected and its unified sibling receives the migrated instance overrides.
+            // On an inherited prefab component Unity records a removed-component override. The prefab stays connected and its unified sibling receives the migrated instance overrides.
             Undo.DestroyObjectImmediate(component);
         }
 
@@ -816,9 +812,7 @@ namespace VRCLightVolumes {
             destination.Texture0 = source.Texture0;
             destination.Texture1 = source.Texture1;
             destination.Texture2 = source.Texture2;
-#if BAKERY_INCLUDED
             destination.BakeryVolume = source.BakeryVolume;
-#endif
             destination.Exposure = source.Exposure;
             destination.Shadows = source.Shadows;
             destination.Highlights = source.Highlights;
@@ -838,8 +832,7 @@ namespace VRCLightVolumes {
             UnityEngine.Object falloffLut = source.FalloffLUT;
             UnityEngine.Object cookie = source.Cookie;
             UnityEngine.Object cubemap = source.Cubemap;
-            // Authoring data stays authoritative. Recover only a missing active source when the old
-            // runtime cache agrees on the same light type, non-parametric mode and source kind.
+            // Authoring data stays authoritative. Recover only a missing active source when the old runtime cache agrees on the same light type, non-parametric mode and source kind.
             if (GetLegacyProjectionSource(lightType, projection, falloffLut, cookie, cubemap) == null
                 && TryGetMatchingLegacyRuntimeProjectionSource(lightType, projection, destination, out UnityEngine.Object runtimeProjectionSource)) {
                 if (lightType == 2 || (lightType == 1 && projection == 2)) cookie = runtimeProjectionSource;
@@ -889,9 +882,7 @@ namespace VRCLightVolumes {
 
         // Recovers a missing legacy authoring source only when cached runtime metadata matches exactly.
         private static bool TryGetMatchingLegacyRuntimeProjectionSource(int lightType, int projection, PointLightVolumeInstance destination, out UnityEngine.Object source) {
-            source = destination.CustomTexture != null
-                ? (UnityEngine.Object)destination.CustomTexture
-                : destination.CustomTextureMaterial;
+            source = destination.CustomTexture != null ? (UnityEngine.Object)destination.CustomTexture : destination.CustomTextureMaterial;
             int expectedProjectionMode = lightType == 2 ? 2 : projection;
             if (expectedProjectionMode == 0 || destination.LightType != lightType || destination.ProjectionMode != expectedProjectionMode) return false;
             if (source is Texture) return destination.ProjectionType == 1;
@@ -1049,18 +1040,18 @@ namespace VRCLightVolumes {
             LightVolumeSetup.PostProcessor[] processors = source.AtlasPostProcessors;
             if (processors == null) return;
 
-            LightVolumeManager.PostProcessor[] migrated = new LightVolumeManager.PostProcessor[processors.Length];
+            AtlasPostProcessor[] migrated = new AtlasPostProcessor[processors.Length];
             for (int i = 0; i < processors.Length; i++) {
                 LightVolumeSetup.PostProcessor processor = processors[i];
-                migrated[i] = new LightVolumeManager.PostProcessor {
-                    RT = processor.RT,
-                    Mat = processor.Mat,
-                    TextureName = processor.TextureName,
+                migrated[i] = new AtlasPostProcessor {
+                    Target = processor.RT,
+                    Material = processor.Mat,
+                    InputTextureProperty = processor.TextureName,
                     Update = processor.Update,
                     UpdateWithInput = processor.UpdateWithInput
                 };
             }
-            destination.AtlasPostProcessors = migrated;
+            destination.EditorSetAtlasPostProcessors(migrated);
         }
 
         // Checks that a UdonSharp proxy has a co-located backing behaviour of the exact proxy type.
@@ -1083,13 +1074,16 @@ namespace VRCLightVolumes {
             IssueExamples.Clear();
             Dictionary<LightVolumeInstance, LightVolumeManager> volumeRegistryOwners = new Dictionary<LightVolumeInstance, LightVolumeManager>();
             Dictionary<PointLightVolumeInstance, LightVolumeManager> pointRegistryOwners = new Dictionary<PointLightVolumeInstance, LightVolumeManager>();
+            int loadedManagerCount = 0;
             for (int sceneIndex = 0; sceneIndex < SceneManager.sceneCount; sceneIndex++) {
                 Scene scene = SceneManager.GetSceneAt(sceneIndex);
                 if (!scene.isLoaded) continue;
                 GameObject[] roots = scene.GetRootGameObjects();
                 List<LightVolumeManager> managers = Collect<LightVolumeManager>(roots);
-                if (managers.Count > 1)
-                    RegisterIssue($"scene '{scene.name}' contains {managers.Count} Light Volume Managers; only one is supported", ref issueCount);
+                for (int i = 0; i < managers.Count; i++) {
+                    LightVolumeManager manager = managers[i];
+                    if (manager != null && !manager.CompareTag("EditorOnly")) loadedManagerCount++;
+                }
                 ValidateComponents(managers, ref issueCount);
                 ValidateComponents(Collect<LightVolumeInstance>(roots), ref issueCount);
                 ValidateComponents(Collect<PointLightVolumeInstance>(roots), ref issueCount);
@@ -1099,6 +1093,7 @@ namespace VRCLightVolumes {
                 RegisterLegacyComponents(Collect<LightVolume>(roots), ref issueCount);
                 RegisterLegacyComponents(Collect<PointLightVolume>(roots), ref issueCount);
             }
+            if (loadedManagerCount > 1) RegisterIssue($"loaded scene setup contains {loadedManagerCount} Light Volume Managers; only the primary Manager is supported", ref issueCount);
             issueSummary = IssueExamples.Count == 0 ? string.Empty : string.Join("; ", IssueExamples.ToArray());
             return issueCount == 0;
         }

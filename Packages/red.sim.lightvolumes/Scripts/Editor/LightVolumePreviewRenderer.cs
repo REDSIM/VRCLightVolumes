@@ -102,7 +102,7 @@ namespace VRCLightVolumes {
                 Correction = new Vector4(-volume.Shadows * 0.5f, 1f - volume.Highlights * 0.5f, Mathf.Pow(2f, volume.Exposure), 0f),
                 VolumeRotation = volumeRotation,
                 ShRotation = shRotation,
-                IsRotated = Quaternion.Dot(shRotation, Quaternion.identity) < 0.999999f,
+                IsRotated = Mathf.Abs(Quaternion.Dot(shRotation, Quaternion.identity)) < 0.999999f,
                 Position = LightVolumeTools.GetPosition(volume),
                 Scale = LightVolumeTools.GetScale(volume)
             };
@@ -133,7 +133,7 @@ namespace VRCLightVolumes {
             if (voxelCount <= 0) return;
             if (!SystemInfo.supportsInstancing) {
                 if (!_reportedMissingInstancing) {
-                    Debug.LogError("[LightVolumePreview] GPU instancing is not supported by the current graphics device. Voxel preview cannot be rendered.");
+                    Debug.LogError("[LightVolumes] GPU instancing is not supported by the current graphics device. Voxel preview cannot be rendered.");
                     _reportedMissingInstancing = true;
                 }
 
@@ -172,9 +172,7 @@ namespace VRCLightVolumes {
             int instanceCount = (int)(((long)voxelCount + CardsPerInstance - 1L) / CardsPerInstance);
             int fullDrawCallCount = instanceCount / InstancesPerDrawCall;
             int extraDrawCount = instanceCount % InstancesPerDrawCall;
-            for (int i = 0; i < fullDrawCallCount; i++) {
-                DrawChunk(i, InstancesPerDrawCall, resolvedCamera);
-            }
+            for (int i = 0; i < fullDrawCallCount; i++) DrawChunk(i, InstancesPerDrawCall, resolvedCamera);
 
             if (extraDrawCount > 0) DrawChunk(fullDrawCallCount, extraDrawCount, resolvedCamera);
         }
@@ -197,11 +195,11 @@ namespace VRCLightVolumes {
                     _material.enableInstancing = true;
                     _material.hideFlags = HideFlags.HideAndDontSave;
                     if (!shader.isSupported && !_reportedMissingShader) {
-                        Debug.LogError($"[LightVolumePreview] Shader '{PreviewShaderName}' is not supported by the current graphics API. Voxel preview cannot be rendered.");
+                        Debug.LogError($"[LightVolumes] Shader '{PreviewShaderName}' is not supported by the current graphics API. Voxel preview cannot be rendered.");
                         _reportedMissingShader = true;
                     }
                 } else if (!_reportedMissingShader) {
-                    Debug.LogError($"[LightVolumePreview] Shader '{PreviewShaderName}' was not found. Voxel preview cannot be rendered.");
+                    Debug.LogError($"[LightVolumes] Shader '{PreviewShaderName}' was not found. Voxel preview cannot be rendered.");
                     _reportedMissingShader = true;
                 }
             }
@@ -347,11 +345,22 @@ namespace VRCLightVolumes {
         static LightVolumePreviewSceneRenderer() {
             Selection.selectionChanged += RequestRefresh;
             EditorApplication.update += Update;
-            EditorApplication.quitting += DisposeRenderer;
-            AssemblyReloadEvents.beforeAssemblyReload += DisposeRenderer;
-            Camera.onPreCull -= OnCameraPreCull;
             Camera.onPreCull += OnCameraPreCull;
+            AssemblyReloadEvents.beforeAssemblyReload += Shutdown;
+            EditorApplication.quitting += Shutdown;
             RequestRefresh();
+        }
+
+        // Removes every global render callback and releases preview resources before this editor domain ends.
+        private static void Shutdown() {
+            Selection.selectionChanged -= RequestRefresh;
+            EditorApplication.update -= Update;
+            Camera.onPreCull -= OnCameraPreCull;
+            AssemblyReloadEvents.beforeAssemblyReload -= Shutdown;
+            EditorApplication.quitting -= Shutdown;
+            _previewModeActive = false;
+            _selectedVolumeCount = 0;
+            DisposeRenderer();
         }
 
         // Refreshes selected preview volumes and repaints SceneView.

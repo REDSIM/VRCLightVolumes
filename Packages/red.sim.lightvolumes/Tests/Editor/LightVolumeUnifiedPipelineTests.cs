@@ -5,6 +5,7 @@ using UnityEditor;
 using UnityEngine;
 using UnityEngine.Rendering;
 using UnityEngine.TestTools;
+using VRCLightVolumes.Editor;
 
 namespace VRCLightVolumes.Tests {
     [Category("Editor")]
@@ -45,8 +46,8 @@ namespace VRCLightVolumes.Tests {
             Assert.That(manager.ShadowMinVarianceDesktop, Is.Zero);
             Assert.That(manager.ShadowMinVarianceMobile, Is.EqualTo(1f));
             Assert.That(manager.ShadowMinVariance, Is.EqualTo(0.0001f).Within(0.0000001f));
-            Assert.That(LightVolumeManagerTools.GetShadowMinVarianceValue(0f), Is.EqualTo(0.0001f).Within(0.0000001f));
-            Assert.That(LightVolumeManagerTools.GetShadowMinVarianceValue(1f), Is.EqualTo(1f).Within(Epsilon));
+            Assert.That(LightVolumeManagerEditorBackend.GetShadowMinVarianceValue(0f), Is.EqualTo(0.0001f).Within(0.0000001f));
+            Assert.That(LightVolumeManagerEditorBackend.GetShadowMinVarianceValue(1f), Is.EqualTo(1f).Within(Epsilon));
 
 #pragma warning disable CS0618
             LightVolumeSetup legacySetup = CreateComponent<LightVolumeSetup>("Legacy Default Shadow Setup");
@@ -71,8 +72,8 @@ namespace VRCLightVolumes.Tests {
             volume.transform.localScale = new Vector3(4f, 2f, 2f);
             manager.LightVolumeInstances = new[] { volume };
 
-            Assert.That(manager.GetCustomProbesCount(), Is.EqualTo(1));
-            Vector3[] probes = manager.GetCustomProbes(0);
+            Assert.That(manager.Editor.GetCustomProbesCount(), Is.EqualTo(1));
+            Vector3[] probes = manager.Editor.GetCustomProbes(0);
             Assert.That(probes, Has.Length.EqualTo(2));
             AssertVector3Close(
                 LVUtils.TransformPoint(new Vector3(-0.25f, 0f, 0f), LightVolumeTools.GetPosition(volume), LightVolumeTools.GetRotation(volume), LightVolumeTools.GetScale(volume)),
@@ -81,38 +82,37 @@ namespace VRCLightVolumes.Tests {
                 LVUtils.TransformPoint(new Vector3(0.25f, 0f, 0f), LightVolumeTools.GetPosition(volume), LightVolumeTools.GetRotation(volume), LightVolumeTools.GetScale(volume)),
                 probes[1]);
 
-            LogAssert.Expect(LogType.Error, "[LightVolumeManager] Custom probe Light Volume ID -1 is invalid. Available volume count: 1.");
-            Assert.That(manager.GetCustomProbes(-1), Is.Empty);
+            LogAssert.Expect(LogType.Error, "[LightVolumes] Custom probe Light Volume ID -1 is invalid. Available volume count: 1.");
+            Assert.That(manager.Editor.GetCustomProbes(-1), Is.Empty);
 
             volume.Bake = false;
-            Assert.That(manager.GetCustomProbesCount(), Is.Zero);
+            Assert.That(manager.Editor.GetCustomProbesCount(), Is.Zero);
             volume.Bake = true;
             volume.gameObject.SetActive(false);
-            Assert.That(manager.GetCustomProbesCount(), Is.Zero);
+            Assert.That(manager.Editor.GetCustomProbesCount(), Is.Zero);
         }
 
         // A canonical manager pass after scene load must not make an already-normalized scene dirty.
         [Test]
         public void ManagerAuthoringNoOpDoesNotMarkUnifiedProxyDirty() {
             LightVolumeManager manager = CreateComponent<LightVolumeManager>("No Op Authoring Manager");
-            LightVolumeManagerTools.ApplySettings(manager, true, updateVolumes: false);
+            LightVolumeManagerEditorBackend.ApplySettings(manager, true, updateVolumes: false);
             EditorUtility.ClearDirty(manager);
 
-            LightVolumeManagerTools.ApplySettings(manager, true, updateVolumes: false);
+            LightVolumeManagerEditorBackend.ApplySettings(manager, true, updateVolumes: false);
 
             Assert.That(EditorUtility.IsDirty(manager), Is.False);
 
             manager.CustomTexturesWidth = 31;
-            LightVolumeManagerTools.ApplySettings(manager, true, updateVolumes: false);
+            LightVolumeManagerEditorBackend.ApplySettings(manager, true, updateVolumes: false);
             Assert.That(manager.CustomTexturesWidth, Is.EqualTo(31));
             Assert.That(manager.CustomTexturesHeight, Is.EqualTo(31));
             Assert.That(EditorUtility.IsDirty(manager), Is.True);
         }
 
-#if BAKERY_INCLUDED
         // Deferred Bakery bakes can destroy every pre-bake scene object before loading the scene again.
         [Test]
-        public void BakeryCompletionResolvesManagersFromRestoredSceneInsteadOfDestroyedCache() {
+        public void BakeryCompletionResolvesPrimaryManagerFromRestoredSceneInsteadOfDestroyedCache() {
             LightVolumeManager restoredManager = CreateComponent<LightVolumeManager>("Restored Bakery Manager");
             restoredManager.BakingMode = 1;
 
@@ -120,26 +120,24 @@ namespace VRCLightVolumes.Tests {
             destroyedManager.BakingMode = 1;
             Object.DestroyImmediate(destroyedManager.gameObject);
 
-            System.Type bakerType = typeof(LightVolumeManagerTools).Assembly.GetType("VRCLightVolumes.LightVolumeBaker");
-            FieldInfo cachedManagersField = bakerType?.GetField("_bakeryManagers", _nonPublicStaticFlags);
-            MethodInfo resolveManagers = bakerType?.GetMethod("ResolveBakeryCompletionManagers", _nonPublicStaticFlags);
+            System.Type bakerType = typeof(LightVolumeManagerEditorBackend).Assembly.GetType("VRCLightVolumes.LightVolumeBaker");
+            FieldInfo cachedManagerField = bakerType?.GetField("_bakeryManager", _nonPublicStaticFlags);
+            MethodInfo resolveManager = bakerType?.GetMethod("ResolveBakeryCompletionManager", _nonPublicStaticFlags);
             Assert.That(bakerType, Is.Not.Null);
-            Assert.That(cachedManagersField, Is.Not.Null);
-            Assert.That(resolveManagers, Is.Not.Null);
+            Assert.That(cachedManagerField, Is.Not.Null);
+            Assert.That(resolveManager, Is.Not.Null);
 
-            object previousCache = cachedManagersField.GetValue(null);
+            object previousCache = cachedManagerField.GetValue(null);
             try {
-                cachedManagersField.SetValue(null, new[] { destroyedManager });
-                LightVolumeManager[] result = (LightVolumeManager[])resolveManagers.Invoke(null, null);
+                cachedManagerField.SetValue(null, destroyedManager);
+                LightVolumeManager result = (LightVolumeManager)resolveManager.Invoke(null, null);
 
-                Assert.That(result, Does.Contain(restoredManager));
-                for (int i = 0; i < result.Length; i++)
-                    Assert.That(ReferenceEquals(result[i], destroyedManager), Is.False);
+                Assert.That(result, Is.SameAs(restoredManager));
+                Assert.That(ReferenceEquals(result, destroyedManager), Is.False);
             } finally {
-                cachedManagersField.SetValue(null, previousCache);
+                cachedManagerField.SetValue(null, previousCache);
             }
         }
-#endif
 
         // Unified authoring infers animation only when a projection source changes and detects cubemap RenderTextures.
         [Test]
@@ -303,6 +301,7 @@ namespace VRCLightVolumes.Tests {
             point.ShadowMapTextureIsCubemap = true;
             point.ShadowMapTextureHasDepthSlices = true;
 
+            InvokePreprocessor("ClearManagerBuildOnlySerializedReferences", manager);
             InvokePreprocessor("ClearBuildOnlySerializedReferences", manager.gameObject);
 
             Assert.That(manager.LightVolumeAtlas, Is.SameAs(finalAtlas));
@@ -353,7 +352,7 @@ namespace VRCLightVolumes.Tests {
 
             MethodInfo prepare = GetLightVolumePreprocessorType().GetMethod("PreparePointLightForRuntime", _nonPublicStaticFlags);
             Assert.That(prepare, Is.Not.Null);
-            prepare.Invoke(null, new object[] { point, null, null, true });
+            prepare.Invoke(null, new object[] { point, manager, true });
 
             Assert.That(point.ShadowMap, Is.SameAs(shadow));
             Assert.That(point.BakeInGame, Is.True);
@@ -461,10 +460,10 @@ namespace VRCLightVolumes.Tests {
             return material;
         }
 
-        private static void InvokePreprocessor(string methodName, GameObject root) {
+        private static void InvokePreprocessor(string methodName, object argument) {
             MethodInfo method = GetLightVolumePreprocessorType().GetMethod(methodName, _nonPublicStaticFlags);
             Assert.That(method, Is.Not.Null);
-            method.Invoke(null, new object[] { root });
+            method.Invoke(null, new[] { argument });
         }
 
         private static System.Type GetLightVolumePreprocessorType() {

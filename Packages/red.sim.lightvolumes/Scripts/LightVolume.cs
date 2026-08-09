@@ -2,8 +2,7 @@
 using UnityEngine;
 
 namespace VRCLightVolumes {
-    // Serialized v2/v3-dev authoring payload retained only so the project migrator can
-    // read existing scenes and prefabs before removing this component.
+    // Serialized v2/v3-dev authoring payload retained only so the project migrator can read existing scenes and prefabs before removing this component.
     [AddComponentMenu("")]
     [DisallowMultipleComponent]
     public class LightVolume : MonoBehaviour {
@@ -36,9 +35,7 @@ namespace VRCLightVolumes {
         public float VoxelsPerUnit = 3f;
         public Vector3Int Resolution = new Vector3Int(16, 16, 16);
 
-#if BAKERY_INCLUDED
-        public BakeryVolume BakeryVolume;
-#endif
+        public Component BakeryVolume;
 
         public LightVolumeInstance LightVolumeInstance;
 #pragma warning disable CS0618

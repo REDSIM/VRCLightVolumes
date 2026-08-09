@@ -1,11 +1,10 @@
-using System.Collections.Generic;
 using UnityEditor;
 using UnityEngine;
 
 namespace VRCLightVolumes {
     [CanEditMultipleObjects]
     [CustomEditor(typeof(LightVolumeInstance))]
-    public class LightVolumeEditor : Editor {
+    public class LightVolumeEditor : UnityEditor.Editor {
         private const string DebugFoldoutSessionKey = "VRCLightVolumes.LightVolumeEditor.DebugFoldout";
         private const float ToolbarButtonWidth = 150f;
         private const float ActionButtonWidth = 170f;
@@ -18,7 +17,46 @@ namespace VRCLightVolumes {
         private LightProbePlacerWindow _probePlacerWindow;
         private LightVolumeInstance _volume;
 
-        private int[] _atlasStateHashes;
+        private AtlasState[] _atlasStates;
+        private long[] _bakeryDependencyStates;
+
+        // Exact atlas dependency snapshot used to detect Inspector changes without hash collisions.
+        private readonly struct AtlasState {
+            private readonly Texture3D _texture0;
+            private readonly Texture3D _texture1;
+            private readonly Texture3D _texture2;
+            private readonly float _exposure;
+            private readonly float _shadows;
+            private readonly float _highlights;
+            private readonly bool _bake;
+            private readonly bool _reserveUvSpace;
+            private readonly Vector3Int _resolution;
+
+            public AtlasState(LightVolumeInstance volume) {
+                _texture0 = volume.Texture0;
+                _texture1 = volume.Texture1;
+                _texture2 = volume.Texture2;
+                _exposure = volume.Exposure;
+                _shadows = volume.Shadows;
+                _highlights = volume.Highlights;
+                _bake = volume.Bake;
+                _reserveUvSpace = volume.ReserveUVSpace;
+                _resolution = volume.Resolution;
+            }
+
+            public bool Matches(LightVolumeInstance volume) {
+                return volume != null
+                    && _texture0 == volume.Texture0
+                    && _texture1 == volume.Texture1
+                    && _texture2 == volume.Texture2
+                    && _exposure.Equals(volume.Exposure)
+                    && _shadows.Equals(volume.Shadows)
+                    && _highlights.Equals(volume.Highlights)
+                    && _bake == volume.Bake
+                    && _reserveUvSpace == volume.ReserveUVSpace
+                    && _resolution == volume.Resolution;
+            }
+        }
 
         private SerializedProperty _isDynamic;
         private SerializedProperty _isAdditive;
@@ -54,9 +92,7 @@ namespace VRCLightVolumes {
 
             serializedObject.UpdateIfRequiredOrScript();
             int undoGroup = Undo.GetCurrentGroup();
-#if BAKERY_INCLUDED
-            int[] previousBakeryStates = CaptureBakeryDependencyStates();
-#endif
+            long[] previousBakeryStates = CaptureBakeryDependencyStates();
 
             DrawToolbar();
             DrawDataSize();
@@ -68,9 +104,7 @@ namespace VRCLightVolumes {
 
             if (!serializedObject.ApplyModifiedProperties()) return;
 
-#if BAKERY_INCLUDED
             ApplyExplicitBakeryDependencyChanges(previousBakeryStates);
-#endif
             SyncTargets(true);
             Undo.CollapseUndoOperations(undoGroup);
         }
@@ -153,31 +187,26 @@ namespace VRCLightVolumes {
         // Warns when the installed Bakery version cannot represent the volume's rotation.
         private void DrawBakeryWarning() {
             LightVolumeManager manager = _volume.LightVolumeManager;
-            if (manager == null || !manager.IsBakeryMode) return;
+            if (manager == null || !manager.EditorIsBakeryMode) return;
 
-#if BAKERY_INCLUDED
+            if (!BakeryEditorBridge.IsAvailable) {
+                GUILayout.Space(10f);
+                EditorGUILayout.HelpBox("To use Bakery mode, please include Bakery into your project!", MessageType.Error);
+                return;
+            }
+
             Vector3 euler = _volume.transform.rotation.eulerAngles;
-            bool fullRotation = typeof(BakeryVolume).GetField("_rotateAroundXYZ") != null;
-            if (fullRotation) return;
+            if (BakeryEditorBridge.SupportsFullRotation) return;
 
-            bool yRotation = typeof(BakeryVolume).GetField("rotateAroundY") != null;
+            bool yRotation = BakeryEditorBridge.SupportsYRotation;
             bool unsupportedRotation = yRotation ? euler.x != 0f || euler.z != 0f : euler.x != 0f || euler.y != 0f || euler.z != 0f;
             if (!unsupportedRotation) return;
 
             GUILayout.Space(10f);
-            EditorGUILayout.HelpBox(
-                yRotation
-                    ? "With your Bakery version, only Y-axis rotation is supported in the " +
-                      "editor. Apply the latest Bakery patch to have full rotation support. " +
-                      "Free rotation will still work at runtime."
-                    : "With your Bakery version, volume rotation is not supported in the " +
-                      "editor. Apply the latest Bakery patch to have full rotation support. " +
-                      "Free rotation will still work at runtime.",
+            EditorGUILayout.HelpBox(yRotation ?
+                "With your Bakery version, only Y-axis rotation is supported in the editor. Apply the latest Bakery patch to have full rotation support. Free rotation will still work at runtime."
+                : "With your Bakery version, volume rotation is not supported in the editor. Apply the latest Bakery patch to have full rotation support. Free rotation will still work at runtime.",
                 MessageType.Warning);
-#else
-            GUILayout.Space(10f);
-            EditorGUILayout.HelpBox("To use Bakery mode, please include Bakery into your project!", MessageType.Error);
-#endif
         }
 
         // Draws volume lighting, baked data, correction and resolution properties.
@@ -238,12 +267,8 @@ namespace VRCLightVolumes {
         private void DrawDebugSection() {
             GUILayout.Space(InspectorSectionSpacing);
             EditorGUI.BeginChangeCheck();
-            _debugExpanded = EditorGUILayout.BeginFoldoutHeaderGroup(
-                _debugExpanded,
-                new GUIContent("Debug", "Shows read-only live Light Volume data for troubleshooting."));
-            if (EditorGUI.EndChangeCheck()) {
-                SessionState.SetBool(DebugFoldoutSessionKey, _debugExpanded);
-            }
+            _debugExpanded = EditorGUILayout.BeginFoldoutHeaderGroup(_debugExpanded, new GUIContent("Debug", "Shows read-only live Light Volume data for troubleshooting."));
+            if (EditorGUI.EndChangeCheck()) SessionState.SetBool(DebugFoldoutSessionKey, _debugExpanded);
 
             if (_debugExpanded) {
                 if (!EditorApplication.isPlaying)
@@ -251,34 +276,23 @@ namespace VRCLightVolumes {
                 if (targets.Length > 1)
                     EditorGUILayout.HelpBox("Debug values are shown for the first selected Light Volume.", MessageType.Info);
 
-                LightVolumeDebugGUI.DrawGroupHeader(
-                    "Registration",
-                    false,
-                    "Shows which Manager owns this volume and its registry priority.");
-                LightVolumeDebugGUI.DrawObject("Manager", _volume.LightVolumeManager, typeof(LightVolumeManager), "The scene Manager used by this volume.");
+                LightVolumeDebugGUI.DrawGroupHeader("Registration", false, "Shows which Manager owns this volume and its registry priority.");
+                LightVolumeDebugGUI.DrawObject(serializedObject, nameof(LightVolumeInstance.LightVolumeManager), _volume.LightVolumeManager, typeof(LightVolumeManager), "Manager");
                 LightVolumeDebugGUI.DrawBool("Registered", _volume.RegisteredWithManagerPreview, "Whether this volume is currently in a Manager registry.");
                 LightVolumeDebugGUI.DrawBool("Active", _volume.IsActive, "Whether this volume is currently eligible for rendering.");
-                LightVolumeDebugGUI.DrawInt("Registry Order", _volume.RegistryOrder, "Stable tie-breaker used when registry weights are equal.");
-                LightVolumeDebugGUI.DrawFloat("Registry Weight", _volume.RegistryWeight, "Higher weights are uploaded to shaders first.");
-
-                LightVolumeDebugGUI.DrawGroupHeader(
-                    "Atlas Placement",
-                    true,
-                    "Shows this volume's resolution and packed location in the shared 3D atlas.");
-                LightVolumeDebugGUI.DrawVector3Int("Resolution", _volume.Resolution, "Voxel resolution used for this volume.");
-                LightVolumeDebugGUI.DrawVector4("Texture 0 UVW", _volume.BoundsUvwMin0, "Packed atlas position for texture 0; W stores its X scale.");
-                LightVolumeDebugGUI.DrawVector4("Texture 1 UVW", _volume.BoundsUvwMin1, "Packed atlas position for texture 1; W stores its Y scale.");
-                LightVolumeDebugGUI.DrawVector4("Texture 2 UVW", _volume.BoundsUvwMin2, "Packed atlas position for texture 2; W stores its Z scale.");
-
-                LightVolumeDebugGUI.DrawGroupHeader(
-                    "Derived Transform",
-                    true,
-                    "Values calculated from the volume bounds and rotation for shaders.");
-                LightVolumeDebugGUI.DrawVector4("Edge Smoothing", _volume.InvLocalEdgeSmoothing, "Inverse edge-blending distances used by shaders.");
-                LightVolumeDebugGUI.DrawBool("Rotated", _volume.IsRotated, "Whether the volume is rotated relative to its baked pose.");
-                LightVolumeDebugGUI.DrawQuaternion("Inverse Baked Rotation", _volume.InvBakedRotation, "Inverse rotation of the pose used when this volume was baked.");
-                LightVolumeDebugGUI.DrawVector3("Relative Rotation Row 0", _volume.RelativeRotationRow0, "First row of the relative rotation used for directional lighting.");
-                LightVolumeDebugGUI.DrawVector3("Relative Rotation Row 1", _volume.RelativeRotationRow1, "Second row of the relative rotation used for directional lighting.");
+                LightVolumeDebugGUI.DrawInt(serializedObject, nameof(LightVolumeInstance.RegistryOrder), _volume.RegistryOrder);
+                LightVolumeDebugGUI.DrawFloat(serializedObject, nameof(LightVolumeInstance.RegistryWeight), _volume.RegistryWeight);
+                LightVolumeDebugGUI.DrawGroupHeader("Atlas Placement", true, "Shows this volume's resolution and packed location in the shared 3D atlas.");
+                LightVolumeDebugGUI.DrawVector3Int(serializedObject, nameof(LightVolumeInstance.Resolution), _volume.Resolution);
+                LightVolumeDebugGUI.DrawVector4(serializedObject, nameof(LightVolumeInstance.BoundsUvwMin0), _volume.BoundsUvwMin0, "Texture 0 UVW");
+                LightVolumeDebugGUI.DrawVector4(serializedObject, nameof(LightVolumeInstance.BoundsUvwMin1), _volume.BoundsUvwMin1, "Texture 1 UVW");
+                LightVolumeDebugGUI.DrawVector4(serializedObject, nameof(LightVolumeInstance.BoundsUvwMin2), _volume.BoundsUvwMin2, "Texture 2 UVW");
+                LightVolumeDebugGUI.DrawGroupHeader("Derived Transform", true, "Values calculated from the volume bounds and rotation for shaders.");
+                LightVolumeDebugGUI.DrawVector4(serializedObject, nameof(LightVolumeInstance.InvLocalEdgeSmoothing), _volume.InvLocalEdgeSmoothing, "Edge Smoothing");
+                LightVolumeDebugGUI.DrawBool(serializedObject, nameof(LightVolumeInstance.IsRotated), _volume.IsRotated, "Rotated");
+                LightVolumeDebugGUI.DrawQuaternion(serializedObject, nameof(LightVolumeInstance.InvBakedRotation), _volume.InvBakedRotation, "Inverse Baked Rotation");
+                LightVolumeDebugGUI.DrawVector3(serializedObject, nameof(LightVolumeInstance.RelativeRotationRow0), _volume.RelativeRotationRow0);
+                LightVolumeDebugGUI.DrawVector3(serializedObject, nameof(LightVolumeInstance.RelativeRotationRow1), _volume.RelativeRotationRow1);
             }
             EditorGUILayout.EndFoldoutHeaderGroup();
         }
@@ -308,37 +322,33 @@ namespace VRCLightVolumes {
             RepaintAll();
         }
 
-#if BAKERY_INCLUDED
         // Captures dependency-affecting values before the inspector applies a multi-object edit.
-        private int[] CaptureBakeryDependencyStates() {
-            int[] states = new int[targets.Length];
-            for (int i = 0; i < targets.Length; i++) states[i] = GetBakeryDependencyState(targets[i] as LightVolumeInstance);
-            return states;
+        private long[] CaptureBakeryDependencyStates() {
+            if (_bakeryDependencyStates == null || _bakeryDependencyStates.Length != targets.Length) _bakeryDependencyStates = new long[targets.Length];
+            for (int i = 0; i < targets.Length; i++) _bakeryDependencyStates[i] = GetBakeryDependencyState(targets[i] as LightVolumeInstance);
+            return _bakeryDependencyStates;
         }
 
         // Updates Bakery helpers only for volumes whose relevant inspector settings changed.
-        private void ApplyExplicitBakeryDependencyChanges(int[] previousStates) {
+        private void ApplyExplicitBakeryDependencyChanges(long[] previousStates) {
             for (int i = 0; i < targets.Length; i++) {
                 LightVolumeInstance volume = targets[i] as LightVolumeInstance;
                 if (volume == null || previousStates == null || i >= previousStates.Length || previousStates[i] == GetBakeryDependencyState(volume)) continue;
                 LightVolumeManager manager = volume.LightVolumeManager;
                 if (manager == null) continue;
-                LightVolumeTools.SetupBakeryDependencies(volume, manager.IsBakeryMode && volume.Bake);
+                LightVolumeTools.SetupBakeryDependencies(volume, manager.EditorIsBakeryMode && volume.Bake);
             }
         }
 
-        // Hashes Manager, baking mode and volume bake state for explicit-change detection.
-        private static int GetBakeryDependencyState(LightVolumeInstance volume) {
+        // Packs Manager identity, baking mode and volume bake state without hash collisions.
+        private static long GetBakeryDependencyState(LightVolumeInstance volume) {
             if (volume == null) return 0;
             LightVolumeManager manager = volume.LightVolumeManager;
-            unchecked {
-                int state = manager == null ? 0 : manager.GetInstanceID();
-                state = state * 31 + (manager != null && manager.IsBakeryMode ? 1 : 0);
-                state = state * 31 + (volume.Bake ? 1 : 0);
-                return state;
-            }
+            long state = manager == null ? 0L : (long)manager.GetInstanceID() << 2;
+            if (manager != null && manager.EditorIsBakeryMode) state |= 2L;
+            if (volume.Bake) state |= 1L;
+            return state;
         }
-#endif
 
         // Rebuilds derived data and previews after an Undo or Redo operation.
         private void OnUndoRedoPerformed() {
@@ -347,36 +357,28 @@ namespace VRCLightVolumes {
             Repaint();
         }
 
-        // Synchronizes all selected volumes, queues atlas changes and refreshes their Managers.
+        // Synchronizes all selected volumes, then refreshes the single primary Manager once.
         private void SyncTargets(bool recordUndo, bool refreshRuntimeImmediately = true) {
             EnsureAtlasStateCache();
-            HashSet<LightVolumeManager> runtimeManagers = null;
+            LightVolumeManager manager = LightVolumeManagerEditorBackend.GetPrimaryManager();
+            bool refreshManager = false;
             for (int i = 0; i < targets.Length; i++) {
                 LightVolumeInstance volume = targets[i] as LightVolumeInstance;
                 if (volume == null) continue;
 
-                int previousAtlasState = _atlasStateHashes[i];
+                AtlasState previousAtlasState = _atlasStates[i];
                 if (recordUndo) Undo.RecordObject(volume, "Update Light Volume");
-                LightVolumeTools.ApplyRuntimeState(volume, true);
+                LightVolumeTools.ApplyRuntimeState(volume, false);
 
-                LightVolumeManagerTools.CopyProxyToUdon(volume);
-                if (volume.LightVolumeManager != null) {
-                    if (runtimeManagers == null) runtimeManagers = new HashSet<LightVolumeManager>();
-                    runtimeManagers.Add(volume.LightVolumeManager);
-                }
+                LightVolumeManagerEditorBackend.CopyProxyToUdon(volume);
+                if (manager != null && volume.LightVolumeManager == manager) refreshManager = true;
                 EditorUtility.SetDirty(volume);
 
-                if (previousAtlasState != GetAtlasStateHash(volume) && volume.LightVolumeManager != null) {
-                    LightVolumeManagerTools.QueueAtlasGeneration(volume.LightVolumeManager);
-                }
+                if (manager != null && !previousAtlasState.Matches(volume) && volume.LightVolumeManager == manager)
+                    LightVolumeManagerEditorBackend.QueueAtlasGeneration(manager);
             }
 
-            if (runtimeManagers != null) {
-                foreach (LightVolumeManager manager in runtimeManagers) {
-                    if (refreshRuntimeImmediately) LightVolumeManagerTools.RefreshRuntimeManagerImmediately(manager);
-                    else LightVolumeManagerTools.QueueRuntimeManagerRefresh(manager);
-                }
-            }
+            if (refreshManager) LightVolumeManagerEditorBackend.RefreshManagerOnce(manager, refreshRuntimeImmediately);
 
             CacheAtlasStates();
             LightVolumePreviewSceneRenderer.RequestRefresh();
@@ -387,10 +389,10 @@ namespace VRCLightVolumes {
         private static void DrawVolumeBounds(LightVolumeInstance volume) {
             Handles.matrix = LightVolumeTools.GetMatrixTRS(volume);
             Handles.zTest = UnityEngine.Rendering.CompareFunction.LessEqual;
-            Handles.color = UnityEngine.Color.white;
+            Handles.color = Color.white;
             Handles.DrawWireCube(Vector3.zero, Vector3.one);
             Handles.zTest = UnityEngine.Rendering.CompareFunction.Greater;
-            Handles.color = new UnityEngine.Color(1f, 1f, 1f, 0.2f);
+            Handles.color = new Color(1f, 1f, 1f, 0.2f);
             Handles.DrawWireCube(Vector3.zero, Vector3.one);
             Handles.matrix = Matrix4x4.identity;
         }
@@ -444,9 +446,9 @@ namespace VRCLightVolumes {
                 Quaternion planeRotation = Quaternion.LookRotation(worldDirection, worldUp);
                 Vector3[] plane = LVUtils.GetPlaneVertices(handlePosition, planeRotation, handleSize);
                 Handles.zTest = UnityEngine.Rendering.CompareFunction.LessEqual;
-                Handles.DrawSolidRectangleWithOutline(plane, new UnityEngine.Color(1f, 1f, 1f, 0.15f), UnityEngine.Color.white);
+                Handles.DrawSolidRectangleWithOutline(plane, new Color(1f, 1f, 1f, 0.15f), Color.white);
                 Handles.zTest = UnityEngine.Rendering.CompareFunction.Greater;
-                Handles.DrawSolidRectangleWithOutline(plane, UnityEngine.Color.clear, new UnityEngine.Color(1f, 1f, 1f, 0.25f));
+                Handles.DrawSolidRectangleWithOutline(plane, Color.clear, new Color(1f, 1f, 1f, 0.25f));
 
                 if (!EditorGUI.EndChangeCheck()) continue;
 
@@ -463,44 +465,28 @@ namespace VRCLightVolumes {
 
         // Immediately synchronizes one volume changed through a Scene View handle.
         private static void SyncSingleTarget(LightVolumeInstance volume) {
-            LightVolumeTools.ApplyRuntimeState(volume, true);
-            LightVolumeManagerTools.CopyProxyToUdon(volume);
-            LightVolumeManagerTools.RefreshRuntimeManagerImmediately(volume.LightVolumeManager);
+            LightVolumeTools.ApplyRuntimeState(volume, false);
+            LightVolumeManagerEditorBackend.CopyProxyToUdon(volume);
+            LightVolumeManagerEditorBackend.RefreshManagerOnce(volume.LightVolumeManager, true);
             EditorUtility.SetDirty(volume);
             LightVolumePreviewSceneRenderer.RequestRefresh();
         }
 
-        // Ensures atlas-affecting state hashes match the current multi-object selection.
+        // Ensures atlas-affecting snapshots match the current multi-object selection.
         private void EnsureAtlasStateCache() {
-            if (_atlasStateHashes != null && _atlasStateHashes.Length == targets.Length) return;
-            _atlasStateHashes = new int[targets.Length];
+            if (_atlasStates != null && _atlasStates.Length == targets.Length) return;
+            _atlasStates = new AtlasState[targets.Length];
             CacheAtlasStates();
         }
 
         // Captures atlas-affecting state for every selected volume.
         private void CacheAtlasStates() {
-            if (_atlasStateHashes == null || _atlasStateHashes.Length != targets.Length) {
-                _atlasStateHashes = new int[targets.Length];
+            if (_atlasStates == null || _atlasStates.Length != targets.Length) {
+                _atlasStates = new AtlasState[targets.Length];
             }
             for (int i = 0; i < targets.Length; i++) {
-                _atlasStateHashes[i] = GetAtlasStateHash(targets[i] as LightVolumeInstance);
-            }
-        }
-
-        // Hashes baked textures and correction settings that require atlas regeneration.
-        private static int GetAtlasStateHash(LightVolumeInstance volume) {
-            if (volume == null) return 0;
-            unchecked {
-                int hash = 17;
-                hash = hash * 31 + (volume.Texture0 == null ? 0 : volume.Texture0.GetInstanceID());
-                hash = hash * 31 + (volume.Texture1 == null ? 0 : volume.Texture1.GetInstanceID());
-                hash = hash * 31 + (volume.Texture2 == null ? 0 : volume.Texture2.GetInstanceID());
-                hash = hash * 31 + volume.Exposure.GetHashCode();
-                hash = hash * 31 + volume.Shadows.GetHashCode();
-                hash = hash * 31 + volume.Highlights.GetHashCode();
-                hash = hash * 31 + (volume.Bake ? 1 : 0);
-                hash = hash * 31 + (volume.ReserveUVSpace ? 1 : 0);
-                return hash;
+                LightVolumeInstance volume = targets[i] as LightVolumeInstance;
+                _atlasStates[i] = volume == null ? default : new AtlasState(volume);
             }
         }
 

@@ -1,36 +1,78 @@
 using System;
-using System.Collections.Generic;
 using System.IO;
 using Unity.EditorCoroutines.Editor;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.SceneManagement;
-using PostProcessor = VRCLightVolumes.LightVolumeManager.PostProcessor;
 #if UDONSHARP
 using UdonSharpEditor;
 #endif
 
 namespace VRCLightVolumes {
-    // Central editor backend for the unified Udon manager. It owns transient state only;
-    // every persistent setting remains on LightVolumeManager or its runtime instances.
-    public static class LightVolumeManagerTools {
+
+    // Internal editor backend for the unified Udon manager. Public integrations enter through the Editor facade or the removable Legacy compatibility files.
+    internal static class LightVolumeManagerEditorBackend {
         private const float ShadowMinVarianceValueMin = 0.0001f;
         private const float ShadowMinVarianceValueMax = 1f;
 
-        private static readonly Dictionary<int, EditorCoroutine> _atlasCoroutines = new Dictionary<int, EditorCoroutine>();
-        private static readonly HashSet<LightVolumeManager> _queuedCustomProbeManagers = new HashSet<LightVolumeManager>();
+        private static EditorCoroutine _atlasCoroutine;
         private static bool _customProbeFinalizeQueued;
-        private static readonly HashSet<LightVolumeManager> _queuedAtlasManagers = new HashSet<LightVolumeManager>();
         private static bool _atlasGenerationQueued;
 #if UDONSHARP
-        private static readonly HashSet<LightVolumeManager> _queuedRuntimeManagerRefreshes = new HashSet<LightVolumeManager>();
-        private static readonly HashSet<LightVolumeManager> _queuedRuntimeCustomTextureReinitializations = new HashSet<LightVolumeManager>();
-        private static readonly HashSet<LightVolumeManager> _queuedRuntimeShadowTextureReinitializations = new HashSet<LightVolumeManager>();
+        private static bool _queuedRuntimeCustomTextureReinitialization;
+        private static bool _queuedRuntimeShadowTextureReinitialization;
+        private static bool _runtimeManagerRefreshQueued;
 #endif
 
-        // Applies target-dependent authoring values and optional texture-cache rebuilds.
-        // Custom Inspectors can leave the final Play Mode proxy copy to UdonSharp's own wrapper.
-        public static void ApplySettings(LightVolumeManager manager, bool markDirty = true, bool reinitializeCustomTextures = false, bool reinitializeShadowTextures = false, bool updateVolumes = true, bool copyProxyToUdon = true) {
+        // Returns the single Manager allowed to own global Light Volumes state. Invalid duplicate setups consistently use the first scene/hierarchy entry until the extras are removed.
+        internal static LightVolumeManager GetPrimaryManager() {
+            return GetPrimaryManager(out _);
+        }
+
+        // Returns the primary Manager and the total number of eligible Managers in loaded scenes.
+        internal static LightVolumeManager GetPrimaryManager(out int managerCount) {
+            LightVolumeManager[] managers = UnityEngine.Object.FindObjectsByType<LightVolumeManager>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+            LightVolumeManager primary = null;
+            string primaryKey = null;
+            managerCount = 0;
+            for (int i = 0; i < managers.Length; i++) {
+                LightVolumeManager manager = managers[i];
+                if (!IsLoadedManager(manager)) continue;
+                managerCount++;
+                if (primary == null) {
+                    primary = manager;
+                    continue;
+                }
+                if (primaryKey == null) primaryKey = GetManagerOrderKey(primary);
+                string key = GetManagerOrderKey(manager);
+                if (string.CompareOrdinal(key, primaryKey) >= 0) continue;
+                primary = manager;
+                primaryKey = key;
+            }
+            return primary;
+        }
+
+        // Excludes prefab/preview data and EditorOnly fixtures from the global Manager invariant.
+        private static bool IsLoadedManager(LightVolumeManager manager) {
+            return manager != null && !manager.CompareTag("EditorOnly") && LightVolumeSceneSetup.IsMainStageSceneObject(manager.gameObject);
+        }
+
+        // Mirrors Unity's Hierarchy order: first loaded scene, then first hierarchy entry.
+        private static string GetManagerOrderKey(LightVolumeManager manager) {
+            Transform current = manager.transform;
+            string hierarchy = string.Empty;
+            while (current != null) {
+                hierarchy = $"/{current.GetSiblingIndex():D6}{hierarchy}";
+                current = current.parent;
+            }
+            Scene scene = manager.gameObject.scene;
+            int sceneIndex = 0;
+            while (sceneIndex < SceneManager.sceneCount && SceneManager.GetSceneAt(sceneIndex) != scene) sceneIndex++;
+            return $"{sceneIndex:D6}" + hierarchy;
+        }
+
+        // Applies target-dependent authoring values and optional texture-cache rebuilds. Custom Inspectors can leave the final Play Mode proxy copy to UdonSharp's own wrapper.
+        internal static void ApplySettings(LightVolumeManager manager, bool markDirty = true, bool reinitializeCustomTextures = false, bool reinitializeShadowTextures = false, bool updateVolumes = true, bool copyProxyToUdon = true) {
             if (manager == null) return;
 
             string previousState = markDirty ? LVUtils.GetSerializedState(manager) : null;
@@ -62,8 +104,8 @@ namespace VRCLightVolumes {
         }
 
         // Bakery helpers are created or removed only as a direct result of an explicit mode edit.
-        public static void HandleBakingModeChanged(LightVolumeManager manager, int previousBakingMode) {
-#if BAKERY_INCLUDED
+        internal static void HandleBakingModeChanged(LightVolumeManager manager, int previousBakingMode) {
+            if (!BakeryEditorBridge.IsAvailable) return;
             if (manager == null || manager.BakingMode == previousBakingMode) return;
             LightVolumeInstance[] volumes = manager.LightVolumeInstances ?? Array.Empty<LightVolumeInstance>();
             bool createIfMissing = manager.BakingMode == 1;
@@ -73,11 +115,10 @@ namespace VRCLightVolumes {
                 LightVolumeTools.SetupBakeryDependencies(volume, createIfMissing);
             }
             LightVolumeBaker.QueueBakeryWatcherRefresh();
-#endif
         }
 
         // Synchronizes registry ownership and stable authoring order without rearranging the list.
-        public static void SynchronizeRegistryMetadata(LightVolumeManager manager) {
+        internal static void SynchronizeRegistryMetadata(LightVolumeManager manager) {
             if (manager == null) return;
 
             LightVolumeInstance[] volumes = manager.LightVolumeInstances;
@@ -102,9 +143,7 @@ namespace VRCLightVolumes {
             }
         }
 
-        // Registers an authoring component without invoking its runtime OnEnable path. This is used
-        // both by hierarchy creation and by scene-instance prefab onboarding. Success and mutation
-        // are separate so callers cannot mistake an already-correct registration for a new change.
+        // Registers an authoring component without invoking its runtime OnEnable path. This is used both by hierarchy creation and by scene-instance prefab onboarding. Success and mutation are separate so callers cannot mistake an already-correct registration for a new change.
         internal static bool EnsureRegistered(LightVolumeManager manager, LightVolumeInstance volume, string undoName, out bool changed) {
             changed = false;
             if (manager == null || volume == null) return false;
@@ -209,15 +248,13 @@ namespace VRCLightVolumes {
         private static bool ComesBeforeByWeightAndResolution(LightVolumeInstance volume, LightVolumeInstance previous) {
             if (volume == null) return false;
             if (previous == null) return true;
-            if (volume.RegistryWeight != previous.RegistryWeight)
-                return volume.RegistryWeight > previous.RegistryWeight;
-            if (volume.AdaptiveResolution != previous.AdaptiveResolution)
-                return !volume.AdaptiveResolution;
+            if (volume.RegistryWeight != previous.RegistryWeight) return volume.RegistryWeight > previous.RegistryWeight;
+            if (volume.AdaptiveResolution != previous.AdaptiveResolution) return !volume.AdaptiveResolution;
             return volume.AdaptiveResolution && volume.VoxelsPerUnit > previous.VoxelsPerUnit;
         }
 
         // Keeps authoring weights authoritative and only resolves equal-weight groups by resolution settings.
-        public static void SortLightVolumesByVoxelsPerUnit(LightVolumeManager manager) {
+        internal static void SortLightVolumesByVoxelsPerUnit(LightVolumeManager manager) {
             if (manager == null) return;
 
             const string undoName = "Sort Light Volumes by Voxels Per Unit";
@@ -237,12 +274,12 @@ namespace VRCLightVolumes {
         }
 
         // Rebuilds the Manager's shared projection texture array.
-        public static void ReinitializeCustomTextures(LightVolumeManager manager) {
+        internal static void ReinitializeCustomTextures(LightVolumeManager manager) {
             ReinitializeTextures(manager, true, false);
         }
 
         // Rebuilds the Manager's shared shadow texture array.
-        public static void ReinitializeShadowTextures(LightVolumeManager manager) {
+        internal static void ReinitializeShadowTextures(LightVolumeManager manager) {
             ReinitializeTextures(manager, false, true);
         }
 
@@ -257,51 +294,41 @@ namespace VRCLightVolumes {
         }
 
         // Coalesces a burst of Inspector edits into one atlas pack without adding Update polling.
-        public static void QueueAtlasGeneration(LightVolumeManager manager) {
-            if (manager == null || Application.isPlaying) return;
-            _queuedAtlasManagers.Add(manager);
-            if (_atlasGenerationQueued) return;
+        internal static void QueueAtlasGeneration(LightVolumeManager manager) {
+            if (manager == null || Application.isPlaying || _atlasGenerationQueued || manager != GetPrimaryManager()) return;
             _atlasGenerationQueued = true;
             EditorApplication.delayCall += GenerateQueuedAtlases;
         }
 
-        // Packs every Manager collected by the coalesced atlas-generation queue.
+        // Packs the world's single primary Manager after the coalesced edit batch.
         private static void GenerateQueuedAtlases() {
             EditorApplication.delayCall -= GenerateQueuedAtlases;
             _atlasGenerationQueued = false;
-            LightVolumeManager[] managers = new LightVolumeManager[_queuedAtlasManagers.Count];
-            _queuedAtlasManagers.CopyTo(managers);
-            _queuedAtlasManagers.Clear();
-            for (int i = 0; i < managers.Length; i++) {
-                LightVolumeManager manager = managers[i];
-                if (manager == null || !CanGenerateAtlas(manager)) continue;
-                GenerateAtlas(manager);
-            }
+            LightVolumeManager manager = GetPrimaryManager();
+            if (manager != null && CanGenerateAtlas(manager)) GenerateAtlasCore(manager);
         }
 
         // Packs every explicitly registered Light Volume; no scene scanning or implicit component creation occurs.
-        public static void GenerateAtlas(this LightVolumeManager manager) {
-            if (manager == null || Application.isPlaying || LVUtils.IsInPrefabAsset(manager)) return;
+        internal static void GenerateAtlas(LightVolumeManager manager) {
+            if (manager == null || Application.isPlaying || manager != GetPrimaryManager()) return;
+            GenerateAtlasCore(manager);
+        }
+
+        // Starts atlas generation for the accepted primary Manager.
+        private static void GenerateAtlasCore(LightVolumeManager manager) {
             LightVolumeInstance[] volumes = GetAtlasVolumes(manager);
             if (volumes.Length == 0) return;
 
-            int managerId = manager.GetInstanceID();
-            if (_atlasCoroutines.TryGetValue(managerId, out EditorCoroutine running) && running != null)
-                EditorCoroutineUtility.StopCoroutine(running);
+            if (_atlasCoroutine != null) EditorCoroutineUtility.StopCoroutine(_atlasCoroutine);
 
+            // Post-processed atlases are commonly updated slice by slice, so minimizing depth reduces per-frame draw calls even when that costs a little more VRAM.
             TexturePackingStrategy strategy = ResolveAtlasPackingStrategy(manager);
-            EditorCoroutine coroutine = EditorCoroutineUtility.StartCoroutine(Texture3DAtlasGenerator.CreateAtlas(volumes, atlas => CompleteAtlas(manager, volumes, atlas), manager.DownscaleVolumes, strategy), manager);
-            _atlasCoroutines[managerId] = coroutine;
+            _atlasCoroutine = EditorCoroutineUtility.StartCoroutine(Texture3DAtlasGenerator.CreateAtlas(volumes, atlas => CompleteAtlas(manager, volumes, atlas), manager.DownscaleVolumes, strategy), manager);
         }
 
-        // Chooses depth-optimized packing for post-processing chains and minimum-VRAM packing otherwise.
+        // Post-processing is commonly slice-driven, so prefer minimum depth whenever a processor is present.
         private static TexturePackingStrategy ResolveAtlasPackingStrategy(LightVolumeManager manager) {
-            PostProcessor[] postProcessors = manager != null ? manager.AtlasPostProcessors : null;
-            // Post-processed 3D textures are commonly updated slice by slice, so minimizing atlas
-            // depth reduces per-frame draw calls even when that costs a little more VRAM.
-            return postProcessors != null && postProcessors.Length > 0
-                ? TexturePackingStrategy.MinimumDepth
-                : TexturePackingStrategy.MinimumVRAM;
+            return manager.EditorGetAtlasPostProcessors().Length > 0 ? TexturePackingStrategy.MinimumDepth : TexturePackingStrategy.MinimumVRAM;
         }
 
         // Returns a dense snapshot of non-null Light Volumes in registry order.
@@ -319,8 +346,8 @@ namespace VRCLightVolumes {
 
         // Assigns a completed atlas, writes per-volume UVW bounds and schedules asset persistence.
         private static void CompleteAtlas(LightVolumeManager manager, LightVolumeInstance[] volumes, Atlas3D atlas) {
+            _atlasCoroutine = null;
             if (manager == null) return;
-            _atlasCoroutines.Remove(manager.GetInstanceID());
             if (atlas.Texture == null) return;
 
             manager.LightVolumeAtlasBase = atlas.Texture;
@@ -336,13 +363,12 @@ namespace VRCLightVolumes {
                 volume.BoundsUvwMin0 = new Vector4(uvw0.x, uvw0.y, uvw0.z, scale.x);
                 volume.BoundsUvwMin1 = new Vector4(uvw1.x, uvw1.y, uvw1.z, scale.y);
                 volume.BoundsUvwMin2 = new Vector4(uvw2.x, uvw2.y, uvw2.z, scale.z);
-                if (!volume.Bake && volume.ReserveUVSpace)
-                    volume.InvBakedRotation = Quaternion.Inverse(LightVolumeTools.GetRotation(volume));
+                if (!volume.Bake && volume.ReserveUVSpace) volume.InvBakedRotation = Quaternion.Inverse(LightVolumeTools.GetRotation(volume));
                 LVUtils.MarkDirty(volume);
                 CopyProxyToUdon(volume);
             }
 
-            RefreshAtlasOutput(manager);
+            manager.EditorRefreshAtlasPostProcessors();
             Scene scene = manager.gameObject.scene;
             string scenePath = scene.path;
             if (!string.IsNullOrEmpty(scenePath)) {
@@ -352,8 +378,8 @@ namespace VRCLightVolumes {
         }
 
         // Returns the number of active bake-enabled volumes exposed to a custom lightmapper.
-        public static int GetCustomProbesCount(this LightVolumeManager manager) {
-            if (manager == null || Application.isPlaying) return 0;
+        internal static int GetCustomProbesCount(LightVolumeManager manager) {
+            if (manager == null || Application.isPlaying || manager != GetPrimaryManager()) return 0;
             int count = 0;
             LightVolumeInstance[] volumes = manager.LightVolumeInstances;
             for (int i = 0; i < volumes.Length; i++) if (IsCustomProbeVolume(volumes[i])) count++;
@@ -361,34 +387,34 @@ namespace VRCLightVolumes {
         }
 
         // Returns world-space voxel probe positions for one custom-lightmapper volume ID.
-        public static Vector3[] GetCustomProbes(this LightVolumeManager manager, int id) {
+        internal static Vector3[] GetCustomProbes(LightVolumeManager manager, int id) {
             LightVolumeInstance volume = GetCustomProbeVolume(manager, id);
             return volume != null ? LightVolumeTools.GetCustomProbes(volume) : Array.Empty<Vector3>();
         }
 
         // Stores custom-lightmapper SH data using Manager denoising and no validity channel.
-        public static void SetCustomProbesBaked(this LightVolumeManager manager, int id, Vector3[] l0, Vector3[] l1r, Vector3[] l1g, Vector3[] l1b) {
+        internal static void SetCustomProbesBaked(LightVolumeManager manager, int id, Vector3[] l0, Vector3[] l1r, Vector3[] l1g, Vector3[] l1b) {
             SetCustomProbesBaked(manager, id, l0, l1r, l1g, l1b, null, manager != null && manager.Denoise);
         }
 
         // Stores custom-lightmapper SH data with an explicit denoising choice.
-        public static void SetCustomProbesBaked(this LightVolumeManager manager, int id, Vector3[] l0, Vector3[] l1r, Vector3[] l1g, Vector3[] l1b, bool denoise) {
+        internal static void SetCustomProbesBaked(LightVolumeManager manager, int id, Vector3[] l0, Vector3[] l1r, Vector3[] l1g, Vector3[] l1b, bool denoise) {
             SetCustomProbesBaked(manager, id, l0, l1r, l1g, l1b, null, denoise);
         }
 
         // Stores custom-lightmapper SH and validity data using the Manager's denoising setting.
-        public static void SetCustomProbesBaked(this LightVolumeManager manager, int id, Vector3[] l0, Vector3[] l1r, Vector3[] l1g, Vector3[] l1b, float[] validity) {
+        internal static void SetCustomProbesBaked(LightVolumeManager manager, int id, Vector3[] l0, Vector3[] l1r, Vector3[] l1g, Vector3[] l1b, float[] validity) {
             SetCustomProbesBaked(manager, id, l0, l1r, l1g, l1b, validity, manager != null && manager.Denoise);
         }
 
         // Saves complete custom-lightmapper output and queues shadow and atlas finalization.
-        public static void SetCustomProbesBaked(this LightVolumeManager manager, int id, Vector3[] l0, Vector3[] l1r, Vector3[] l1g, Vector3[] l1b, float[] validity, bool denoise) {
+        internal static void SetCustomProbesBaked(LightVolumeManager manager, int id, Vector3[] l0, Vector3[] l1r, Vector3[] l1g, Vector3[] l1b, float[] validity, bool denoise) {
             LightVolumeInstance volume = GetCustomProbeVolume(manager, id);
             if (volume == null || !LightVolumeBaker.SaveCustomProbesBaked(volume, l0, l1r, l1g, l1b, validity, denoise)) return;
             volume.InvBakedRotation = Quaternion.Inverse(LightVolumeTools.GetRotation(volume));
             LVUtils.MarkDirty(volume);
             CopyProxyToUdon(volume);
-            QueueCustomProbeAtlasGeneration(manager);
+            QueueCustomProbeAtlasGeneration();
         }
 
         // Checks whether a volume participates in the custom lightmapper API.
@@ -398,7 +424,7 @@ namespace VRCLightVolumes {
 
         // Resolves a compact custom-lightmapper ID to its registered Light Volume.
         private static LightVolumeInstance GetCustomProbeVolume(LightVolumeManager manager, int id) {
-            if (manager == null || Application.isPlaying) return null;
+            if (manager == null || Application.isPlaying || manager != GetPrimaryManager()) return null;
             int customId = 0;
             LightVolumeInstance[] volumes = manager.LightVolumeInstances;
             for (int i = 0; i < volumes.Length; i++) {
@@ -407,32 +433,25 @@ namespace VRCLightVolumes {
                 if (customId == id) return volume;
                 customId++;
             }
-            Debug.LogError($"[LightVolumeManager] Custom probe Light Volume ID {id} is invalid. Available volume count: {customId}.", manager);
+            Debug.LogError($"[LightVolumes] Custom probe Light Volume ID {id} is invalid. Available volume count: {customId}.", manager);
             return null;
         }
 
         // Coalesces completed custom probe volumes into one deferred Manager finalization.
-        private static void QueueCustomProbeAtlasGeneration(LightVolumeManager manager) {
-            if (manager == null) return;
-            _queuedCustomProbeManagers.Add(manager);
+        private static void QueueCustomProbeAtlasGeneration() {
             if (_customProbeFinalizeQueued) return;
             _customProbeFinalizeQueued = true;
             EditorApplication.delayCall += FinalizeCustomProbeAtlases;
         }
 
-        // Bakes eligible shadows and regenerates atlases after custom probe output is complete.
+        // Bakes eligible shadows and regenerates the primary atlas after custom probe output is complete.
         private static void FinalizeCustomProbeAtlases() {
             EditorApplication.delayCall -= FinalizeCustomProbeAtlases;
             _customProbeFinalizeQueued = false;
-            LightVolumeManager[] managers = new LightVolumeManager[_queuedCustomProbeManagers.Count];
-            _queuedCustomProbeManagers.CopyTo(managers);
-            _queuedCustomProbeManagers.Clear();
-            for (int i = 0; i < managers.Length; i++) {
-                LightVolumeManager manager = managers[i];
-                if (manager == null || !CanGenerateAtlas(manager)) continue;
-                BakeShadowMaps(manager, false);
-                GenerateAtlas(manager);
-            }
+            LightVolumeManager manager = GetPrimaryManager();
+            if (manager == null || Application.isPlaying || !CanGenerateAtlas(manager)) return;
+            BakeShadowMapsCore(manager);
+            GenerateAtlasCore(manager);
         }
 
         // Checks whether every non-reserved registered volume has all three baked textures.
@@ -449,73 +468,45 @@ namespace VRCLightVolumes {
         }
 
         // Batch-bakes shadows marked for rebaking on the requested Manager.
-        public static void BakeShadowMaps(this LightVolumeManager manager) {
-            BakeShadowMaps(manager, false);
+        internal static void BakeShadowMaps(LightVolumeManager manager) {
+            if (manager == null || Application.isPlaying || manager != GetPrimaryManager()) return;
+            BakeShadowMapsCore(manager);
         }
 
-        // Batch-bakes eligible shadows and optionally ignores each light's Rebake Shadows flag.
-        public static bool BakeShadowMaps(LightVolumeManager manager, bool forceAll) {
-            if (manager == null || Application.isPlaying) return false;
+        // Bakes dirty shadows for the accepted primary Manager.
+        private static void BakeShadowMapsCore(LightVolumeManager manager) {
             bool rebaked = false;
+            bool synchronized = false;
             PointLightVolumeInstance[] pointLights = manager.PointLightVolumeInstances;
             for (int i = 0; i < pointLights.Length; i++) {
                 PointLightVolumeInstance pointLight = pointLights[i];
-                if (pointLight == null || !pointLight.Shadows || (!forceAll && !pointLight.RebakeShadows)) continue;
+                if (pointLight == null || !pointLight.Shadows || !pointLight.RebakeShadows) continue;
                 PointLightVolumeEditorUtility.Sync(pointLight, false, false);
+                synchronized = true;
                 if (PointLightShadowBaker.BakeShadowMap(pointLight, $"| {pointLight.gameObject.name} ({i}/{pointLights.Length})", false)) rebaked = true;
             }
             if (rebaked) ReinitializeShadowTextures(manager);
-            return rebaked;
-        }
-
-        // Registers a CustomRenderTexture as an atlas post-processing stage.
-        public static void RegisterPostProcessorCRT(this LightVolumeManager manager, CustomRenderTexture texture) {
-            if (manager != null) manager.RegisterPostProcessorCRT(texture);
-        }
-
-        // Registers a configured atlas post-processing stage through the editor extension API.
-        public static void RegisterPostProcessor(this LightVolumeManager manager, PostProcessor processor) {
-            if (manager != null) manager.RegisterPostProcessor(processor);
-        }
-
-        // Removes atlas post processors associated with a CustomRenderTexture target.
-        public static void UnregisterPostProcessorCRT(this LightVolumeManager manager, CustomRenderTexture texture) {
-            if (manager != null) manager.UnregisterPostProcessorCRT(texture);
-        }
-
-        // Removes atlas post processors associated with a RenderTexture target.
-        public static void UnregisterPostProcessor(this LightVolumeManager manager, RenderTexture texture) {
-            if (manager != null) manager.UnregisterPostProcessor(texture);
-        }
-
-        // Removes an atlas post processor matching the requested target or callback.
-        public static void UnregisterPostProcessor(this LightVolumeManager manager, PostProcessor processor) {
-            if (manager != null) manager.UnregisterPostProcessor(processor);
-        }
-
-        // Re-runs the Manager's post-processor chain after its base atlas changes.
-        private static void RefreshAtlasOutput(LightVolumeManager manager) {
-            if (manager != null) manager.RefreshAtlasPostProcessors();
+            else if (synchronized) RefreshManagerOnce(manager, true);
         }
 
         // Converts the normalized inspector slider to a logarithmic EVSM variance value.
-        public static float GetShadowMinVarianceValue(float slider) {
+        internal static float GetShadowMinVarianceValue(float slider) {
             return ShadowMinVarianceValueMin * Mathf.Pow(ShadowMinVarianceValueMax / ShadowMinVarianceValueMin, Mathf.Clamp01(slider));
         }
 
         // Checks whether the active Unity build target uses mobile shadow defaults.
-        public static bool IsMobileBuildTarget() {
+        internal static bool IsMobileBuildTarget() {
             BuildTarget target = EditorUserBuildSettings.activeBuildTarget;
             return target == BuildTarget.Android || target == BuildTarget.iOS;
         }
 
         // Snaps a requested coarse clustering reduction to the supported factors 2, 4 or 8.
-        public static int ResolveCoarseFactor(int value) {
+        internal static int ResolveCoarseFactor(int value) {
             return value <= 2 ? 2 : value <= 5 ? 4 : 8;
         }
 
         // Serializes explicit authoring edits into the existing backing UdonBehaviour.
-        public static void CopyProxyToUdon(Component proxy) {
+        internal static void CopyProxyToUdon(Component proxy) {
 #if UDONSHARP
             UdonSharp.UdonSharpBehaviour behaviour = proxy as UdonSharp.UdonSharpBehaviour;
             if (behaviour != null && UdonSharpEditorUtility.GetBackingUdonBehaviour(behaviour) != null)
@@ -523,11 +514,18 @@ namespace VRCLightVolumes {
 #endif
         }
 
-        // The volume and manager are separate Udon behaviours, so UdonSharp's final volume proxy
-        // copy cannot overwrite this synchronous manager refresh.
-        public static bool RefreshRuntimeManagerImmediately(LightVolumeManager manager) {
+        // Applies one Manager rebuild directly in Edit Mode or through the appropriate UdonSharp play-mode path.
+        internal static void RefreshManagerOnce(LightVolumeManager manager, bool immediate) {
+            if (manager == null) return;
+            bool handledByUdon = immediate ? RefreshRuntimeManagerImmediately(manager) : QueueRuntimeManagerRefresh(manager);
+            if (!handledByUdon) manager.UpdateVolumes();
+        }
+
+        // The volume and manager are separate Udon behaviours, so UdonSharp's final volume proxy copy cannot overwrite this synchronous manager refresh.
+        internal static bool RefreshRuntimeManagerImmediately(LightVolumeManager manager) {
 #if UDONSHARP
             if (!Application.isPlaying || manager == null) return false;
+            if (manager != GetPrimaryManager()) return true;
             var backingBehaviour = UdonSharpEditorUtility.GetBackingUdonBehaviour(manager);
             if (backingBehaviour == null) return false;
             backingBehaviour.SendCustomEvent(nameof(LightVolumeManager.UpdateVolumes));
@@ -537,21 +535,19 @@ namespace VRCLightVolumes {
 #endif
         }
 
-        // Manager Inspector edits originate on the proxy. Mirror UdonSharp's custom-event round trip
-        // so the synchronous event result survives the Inspector wrapper's final proxy serialization.
-        public static bool RefreshRuntimeManagerFromProxyImmediately(
+        // Manager Inspector edits originate on the proxy. Mirror UdonSharp's custom-event round trip so the synchronous event result survives the Inspector wrapper's final proxy serialization.
+        internal static bool RefreshRuntimeManagerFromProxyImmediately(
             LightVolumeManager manager,
             bool reinitializeCustomTextures = false,
             bool reinitializeShadowTextures = false) {
 #if UDONSHARP
             if (!Application.isPlaying || manager == null) return false;
+            if (manager != GetPrimaryManager()) return true;
             var backingBehaviour = UdonSharpEditorUtility.GetBackingUdonBehaviour(manager);
             if (backingBehaviour == null) return false;
             UdonSharpEditorUtility.CopyProxyToUdon(manager, ProxySerializationPolicy.All);
-            if (reinitializeCustomTextures)
-                backingBehaviour.SendCustomEvent(nameof(LightVolumeManager.ReinitializeCustomTextures));
-            if (reinitializeShadowTextures)
-                backingBehaviour.SendCustomEvent(nameof(LightVolumeManager.ReinitializeShadowTextures));
+            if (reinitializeCustomTextures) backingBehaviour.SendCustomEvent(nameof(LightVolumeManager.ReinitializeCustomTextures));
+            if (reinitializeShadowTextures) backingBehaviour.SendCustomEvent(nameof(LightVolumeManager.ReinitializeShadowTextures));
             backingBehaviour.SendCustomEvent(nameof(LightVolumeManager.UpdateVolumes));
             UdonSharpEditorUtility.CopyUdonToProxy(manager, ProxySerializationPolicy.All);
             return true;
@@ -560,21 +556,24 @@ namespace VRCLightVolumes {
 #endif
         }
 
-        // UdonSharp performs its recursive Inspector serialization after the custom Inspector returns.
-        // Rebuild manager-owned caches once that final copy has completed.
-        public static bool QueueRuntimeManagerRefresh(
+        // UdonSharp performs its recursive Inspector serialization after the custom Inspector returns. Rebuild manager-owned caches once that final copy has completed.
+        internal static bool QueueRuntimeManagerRefresh(
             LightVolumeManager manager,
             bool reinitializeCustomTextures = false,
             bool reinitializeShadowTextures = false) {
 #if UDONSHARP
             if (!Application.isPlaying || manager == null) return false;
+            if (manager != GetPrimaryManager()) return true;
             var backingBehaviour = UdonSharpEditorUtility.GetBackingUdonBehaviour(manager);
             if (backingBehaviour == null) return false;
 
-            _queuedRuntimeManagerRefreshes.Add(manager);
-            if (reinitializeCustomTextures) _queuedRuntimeCustomTextureReinitializations.Add(manager);
-            if (reinitializeShadowTextures) _queuedRuntimeShadowTextureReinitializations.Add(manager);
-            QueueRuntimeRefreshFlush();
+            _queuedRuntimeCustomTextureReinitialization |= reinitializeCustomTextures;
+            _queuedRuntimeShadowTextureReinitialization |= reinitializeShadowTextures;
+            if (!_runtimeManagerRefreshQueued) {
+                _runtimeManagerRefreshQueued = true;
+                EditorApplication.delayCall += FlushRuntimeManagerRefreshes;
+            }
+            EditorApplication.QueuePlayerLoopUpdate();
             return true;
 #else
             return false;
@@ -582,39 +581,28 @@ namespace VRCLightVolumes {
         }
 
         // Applies lightweight Manager settings without rebuilding registries or texture arrays.
-        public static void ApplyRuntimeManagerSettings(LightVolumeManager manager) {
+        internal static void ApplyRuntimeManagerSettings(LightVolumeManager manager) {
             if (manager == null) return;
             manager._ApplyEditorSettings();
         }
 
 #if UDONSHARP
-        // Schedules one delayed flush after UdonSharp completes inspector proxy serialization.
-        private static void QueueRuntimeRefreshFlush() {
-            EditorApplication.delayCall -= FlushRuntimeManagerRefreshes;
-            EditorApplication.delayCall += FlushRuntimeManagerRefreshes;
-            EditorApplication.QueuePlayerLoopUpdate();
-        }
-
         // Applies coalesced runtime cache rebuilds directly to Manager backing behaviours.
         private static void FlushRuntimeManagerRefreshes() {
             EditorApplication.delayCall -= FlushRuntimeManagerRefreshes;
-            LightVolumeManager[] queued = new LightVolumeManager[_queuedRuntimeManagerRefreshes.Count];
-            _queuedRuntimeManagerRefreshes.CopyTo(queued);
-            _queuedRuntimeManagerRefreshes.Clear();
-
-            for (int i = 0; i < queued.Length; i++) {
-                LightVolumeManager manager = queued[i];
-                bool reinitializeCustomTextures = _queuedRuntimeCustomTextureReinitializations.Remove(manager);
-                bool reinitializeShadowTextures = _queuedRuntimeShadowTextureReinitializations.Remove(manager);
-                if (!Application.isPlaying || manager == null) continue;
-                var backingBehaviour = UdonSharpEditorUtility.GetBackingUdonBehaviour(manager);
-                if (backingBehaviour == null) continue;
-                if (reinitializeCustomTextures) backingBehaviour.SendCustomEvent(nameof(LightVolumeManager.ReinitializeCustomTextures));
-                if (reinitializeShadowTextures) backingBehaviour.SendCustomEvent(nameof(LightVolumeManager.ReinitializeShadowTextures));
-                backingBehaviour.SendCustomEvent(nameof(LightVolumeManager.UpdateVolumes));
-            }
+            _runtimeManagerRefreshQueued = false;
+            bool reinitializeCustomTextures = _queuedRuntimeCustomTextureReinitialization;
+            bool reinitializeShadowTextures = _queuedRuntimeShadowTextureReinitialization;
+            _queuedRuntimeCustomTextureReinitialization = false;
+            _queuedRuntimeShadowTextureReinitialization = false;
+            LightVolumeManager manager = GetPrimaryManager();
+            if (!Application.isPlaying || manager == null) return;
+            var backingBehaviour = UdonSharpEditorUtility.GetBackingUdonBehaviour(manager);
+            if (backingBehaviour == null) return;
+            if (reinitializeCustomTextures) backingBehaviour.SendCustomEvent(nameof(LightVolumeManager.ReinitializeCustomTextures));
+            if (reinitializeShadowTextures) backingBehaviour.SendCustomEvent(nameof(LightVolumeManager.ReinitializeShadowTextures));
+            backingBehaviour.SendCustomEvent(nameof(LightVolumeManager.UpdateVolumes));
         }
 #endif
     }
-
 }

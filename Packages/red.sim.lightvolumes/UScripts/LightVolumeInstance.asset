@@ -445,7 +445,7 @@ MonoBehaviour:
     - Name: tooltip
       Entry: 1
       Data: Inversed edge smoothing in 3D atlas space. Recalculates via SetSmoothBlending(float
-        radius) method.
+        radius), UpdateTransform(), and dynamic auto-update.
     - Name: 
       Entry: 8
       Data: 
@@ -1465,9 +1465,9 @@ MonoBehaviour:
       Data: 86|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Inverse rotation of the pose the volume was baked in. Automatically recalculated
-        for dynamic volumes with auto-update, or manually via the UpdateRotation()
-        method.
+      Data: Inverse rotation of the pose the volume was baked in. Updated when baked
+        data is imported or the atlas is generated; runtime transform updates use
+        this stored bake pose.
     - Name: 
       Entry: 8
       Data: 
@@ -1530,8 +1530,8 @@ MonoBehaviour:
       Data: 90|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Inversed TRS matrix of this volume that transforms it into the 1x1x1
-        cube. Recalculates via the UpdateRotation() method.
+      Data: Inverse TRS matrix that transforms world positions into this volume's
+        unit cube. Updated by UpdateTransform() and dynamic auto-update.
     - Name: 
       Entry: 8
       Data: 
@@ -1594,9 +1594,8 @@ MonoBehaviour:
       Data: 94|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Current volume's rotation matrix row 0 relative to the rotation it was
-        baked with. Mandatory for dynamic volumes. Recalculates via the UpdateRotation()
-        method.
+      Data: Current volume rotation row 0 relative to its baked pose. Updated by
+        UpdateTransform() and dynamic auto-update.
     - Name: 
       Entry: 8
       Data: 
@@ -1653,9 +1652,8 @@ MonoBehaviour:
       Data: 97|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Current volume's rotation matrix row 1 relative to the rotation it was
-        baked with. Mandatory for dynamic volumes. Recalculates via the UpdateRotation()
-        method.
+      Data: Current volume rotation row 1 relative to its baked pose. Updated by
+        UpdateTransform() and dynamic auto-update.
     - Name: 
       Entry: 8
       Data: 
@@ -1712,8 +1710,9 @@ MonoBehaviour:
       Data: 100|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: True if there is any relative rotation. No relative rotation improves
-        performance. Recalculated via the UpdateRotation() method.
+      Data: True when the current pose is rotated relative to the baked pose. Updated
+        by UpdateTransform() and dynamic auto-update; an unrotated volume is cheaper
+        to sample.
     - Name: 
       Entry: 8
       Data: 
@@ -1792,7 +1791,7 @@ MonoBehaviour:
       Data: 106|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Reference to the scene's single Light Volume Manager. Assign it before
+      Data: Reference to the world's single Light Volume Manager. Assign it before
         registration and do not change it afterwards.
     - Name: 
       Entry: 8

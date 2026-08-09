@@ -66,6 +66,49 @@ namespace VRCLightVolumes.Tests {
             AssertBackingManager(pointLight, manager);
         }
 
+        [Test]
+        public void DuplicateManagersUseFirstHierarchyEntryForOnboarding() {
+            _scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+            GameObject firstObject = new GameObject("Primary Manager");
+            SceneManager.MoveGameObjectToScene(firstObject, _scene);
+            LightVolumeManager first = UdonSharpUndo.AddComponent<LightVolumeManager>(firstObject);
+            GameObject secondObject = new GameObject("Ignored Manager");
+            SceneManager.MoveGameObjectToScene(secondObject, _scene);
+            LightVolumeManager second = UdonSharpUndo.AddComponent<LightVolumeManager>(secondObject);
+            GameObject prefabAsset = CreatePrefab(includeLegacyHelpers: false, includeUnifiedComponents: true);
+            GameObject instanceRoot = (GameObject)PrefabUtility.InstantiatePrefab(prefabAsset, _scene);
+
+            QueueAndFlush(instanceRoot);
+
+            LightVolumeInstance volume = instanceRoot.GetComponentInChildren<LightVolumeInstance>(true);
+            PointLightVolumeInstance pointLight = instanceRoot.GetComponentInChildren<PointLightVolumeInstance>(true);
+            Assert.That(LightVolumeManagerEditorBackend.GetPrimaryManager(out int count), Is.SameAs(first));
+            Assert.That(count, Is.EqualTo(2));
+            AssertRegistered(first, volume, pointLight);
+            Assert.That(second.LightVolumeInstances, Is.Empty);
+            Assert.That(second.PointLightVolumeInstances, Is.Empty);
+        }
+
+        [Test]
+        public void PrimaryManagerUsesLoadedSceneOrderBeforeHierarchyOrder() {
+            _scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+            GameObject firstObject = new GameObject("First Loaded Scene Manager");
+            SceneManager.MoveGameObjectToScene(firstObject, _scene);
+            LightVolumeManager first = UdonSharpUndo.AddComponent<LightVolumeManager>(firstObject);
+
+            _sceneAssetPath = AssetDatabase.GenerateUniqueAssetPath("Assets/VRCLightVolumesPrimaryManagerSceneOrderTest.unity");
+            Assert.That(EditorSceneManager.SaveScene(_scene, _sceneAssetPath), Is.True);
+
+            Scene secondScene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Additive);
+            GameObject secondObject = new GameObject("Active Additive Scene Manager");
+            SceneManager.MoveGameObjectToScene(secondObject, secondScene);
+            UdonSharpUndo.AddComponent<LightVolumeManager>(secondObject);
+
+            Assert.That(SceneManager.GetActiveScene(), Is.EqualTo(secondScene));
+            Assert.That(LightVolumeManagerEditorBackend.GetPrimaryManager(out int count), Is.SameAs(first));
+            Assert.That(count, Is.EqualTo(2));
+        }
+
         [TestCase(false)]
         [TestCase(true)]
         public void UnifiedSingleTypePrefabRegistersOnlyItsPresentType(bool pointLightOnly) {
@@ -134,15 +177,15 @@ namespace VRCLightVolumes.Tests {
             Assert.That(manager.PointLightVolumeInstances, Is.EqualTo(new[] { oldPoint }));
         }
 
-#if BAKERY_INCLUDED
         [Test]
         public void UnifiedPrefabCreatesItsBakeryDependencyWhenTheSceneManagerUsesBakery() {
+            if (FindBakeryVolumeType() == null) Assert.Ignore("Bakery is not installed.");
             _scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
             GameObject managerObject = new GameObject("Existing Light Volume Manager");
             SceneManager.MoveGameObjectToScene(managerObject, _scene);
             LightVolumeManager manager = UdonSharpUndo.AddComponent<LightVolumeManager>(managerObject);
             manager.BakingMode = 1;
-            LightVolumeManagerTools.CopyProxyToUdon(manager);
+            LightVolumeManagerEditorBackend.CopyProxyToUdon(manager);
             GameObject prefabAsset = CreatePrefab(
                 includeLegacyHelpers: false,
                 includeUnifiedComponents: true,
@@ -163,6 +206,7 @@ namespace VRCLightVolumes.Tests {
 
         [Test]
         public void ProgressiveOnboardingPreservesAnInheritedBakeryDependency() {
+            if (FindBakeryVolumeType() == null) Assert.Ignore("Bakery is not installed.");
             _scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
             CreatePrefab(
                 includeLegacyHelpers: false,
@@ -183,7 +227,6 @@ namespace VRCLightVolumes.Tests {
             Assert.That(PrefabUtility.GetCorrespondingObjectFromSource(inheritedDependency), Is.Not.Null);
             Assert.That(PrefabUtility.GetRemovedComponents(instanceRoot), Is.Empty);
         }
-#endif
 
         [UnityTest]
         public IEnumerator PrefabInstantiationEventRunsAutomaticOnboarding() {
@@ -585,7 +628,6 @@ namespace VRCLightVolumes.Tests {
                 if (includeVolume) unifiedVolume = UdonSharpUndo.AddComponent<LightVolumeInstance>(volumeObject);
                 if (includePointLight) UdonSharpUndo.AddComponent<PointLightVolumeInstance>(pointObject);
             }
-#if BAKERY_INCLUDED
             if (includeBakeryDependency) {
                 Assert.That(unifiedVolume, Is.Not.Null);
                 Type bakeryVolumeType = FindBakeryVolumeType();
@@ -593,9 +635,8 @@ namespace VRCLightVolumes.Tests {
                 GameObject helper = new GameObject($"Bakery Volume - {volumeObject.name}") { tag = "EditorOnly" };
                 helper.transform.SetParent(volumeObject.transform, false);
                 unifiedVolume.BakeryVolume = helper.AddComponent(bakeryVolumeType);
-                LightVolumeManagerTools.CopyProxyToUdon(unifiedVolume);
+                LightVolumeManagerEditorBackend.CopyProxyToUdon(unifiedVolume);
             }
-#endif
 
             PrefabUtility.SaveAsPrefabAsset(root, _prefabAssetPath);
             UnityEngine.Object.DestroyImmediate(root);
@@ -638,9 +679,9 @@ namespace VRCLightVolumes.Tests {
             manager.PointLightVolumeInstances = new[] { pointLight };
             volume.LightVolumeManager = manager;
             pointLight.LightVolumeManager = manager;
-            LightVolumeManagerTools.CopyProxyToUdon(volume);
-            LightVolumeManagerTools.CopyProxyToUdon(pointLight);
-            LightVolumeManagerTools.CopyProxyToUdon(manager);
+            LightVolumeManagerEditorBackend.CopyProxyToUdon(volume);
+            LightVolumeManagerEditorBackend.CopyProxyToUdon(pointLight);
+            LightVolumeManagerEditorBackend.CopyProxyToUdon(manager);
 
             PrefabUtility.SaveAsPrefabAsset(root, _prefabAssetPath);
             UnityEngine.Object.DestroyImmediate(root);
@@ -648,14 +689,12 @@ namespace VRCLightVolumes.Tests {
             return AssetDatabase.LoadAssetAtPath<GameObject>(_prefabAssetPath);
         }
 
-#if BAKERY_INCLUDED
         private static Type FindBakeryVolumeType() {
             foreach (Type componentType in TypeCache.GetTypesDerivedFrom<Component>()) {
                 if (componentType.Name == "BakeryVolume") return componentType;
             }
             return null;
         }
-#endif
 
         private static void QueueAndFlush(GameObject root) {
             LightVolumeEditorUpdater.QueueHierarchyOnboarding(root);

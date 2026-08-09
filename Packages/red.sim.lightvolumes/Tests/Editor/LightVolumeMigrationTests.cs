@@ -133,6 +133,49 @@ namespace VRCLightVolumes.Tests {
         }
 
         [Test]
+        public void ValidationAcceptsHealthyExactBidirectionalUdonPairsWithoutDirtyingScene() {
+            _scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+            GameObject managerObject = new GameObject("Healthy Manager");
+            GameObject volumeObject = new GameObject("Healthy Light Volume");
+            GameObject pointObject = new GameObject("Healthy Point Light Volume");
+            SceneManager.MoveGameObjectToScene(managerObject, _scene);
+            SceneManager.MoveGameObjectToScene(volumeObject, _scene);
+            SceneManager.MoveGameObjectToScene(pointObject, _scene);
+
+            LightVolumeManager manager = UdonSharpUndo.AddComponent<LightVolumeManager>(managerObject);
+            LightVolumeInstance volume = UdonSharpUndo.AddComponent<LightVolumeInstance>(volumeObject);
+            PointLightVolumeInstance point = UdonSharpUndo.AddComponent<PointLightVolumeInstance>(pointObject);
+            volume.LightVolumeManager = manager;
+            point.LightVolumeManager = manager;
+            manager.LightVolumeInstances = new[] { volume };
+            manager.PointLightVolumeInstances = new[] { point };
+            UdonSharpEditorUtility.CopyProxyToUdon(volume);
+            UdonSharpEditorUtility.CopyProxyToUdon(point);
+            UdonSharpEditorUtility.CopyProxyToUdon(manager);
+
+            _sceneAssetPath = AssetDatabase.GenerateUniqueAssetPath("Assets/VRCLightVolumesHealthyPairsTest.unity");
+            Assert.That(EditorSceneManager.SaveScene(_scene, _sceneAssetPath), Is.True);
+            Assert.That(_scene.isDirty, Is.False);
+
+            UdonBehaviour managerBacking = UdonSharpEditorUtility.GetBackingUdonBehaviour(manager);
+            UdonBehaviour volumeBacking = UdonSharpEditorUtility.GetBackingUdonBehaviour(volume);
+            UdonBehaviour pointBacking = UdonSharpEditorUtility.GetBackingUdonBehaviour(point);
+            Assert.That(managerBacking, Is.Not.Null);
+            Assert.That(volumeBacking, Is.Not.Null);
+            Assert.That(pointBacking, Is.Not.Null);
+            Assert.That(UdonSharpEditorUtility.GetProxyBehaviour(managerBacking), Is.SameAs(manager));
+            Assert.That(UdonSharpEditorUtility.GetProxyBehaviour(volumeBacking), Is.SameAs(volume));
+            Assert.That(UdonSharpEditorUtility.GetProxyBehaviour(pointBacking), Is.SameAs(point));
+
+            bool valid = LightVolumeMigration.ValidateLoadedSceneUdonPairs(out int issueCount, out string issueSummary);
+
+            Assert.That(valid, Is.True);
+            Assert.That(issueCount, Is.Zero);
+            Assert.That(issueSummary, Is.Empty);
+            Assert.That(_scene.isDirty, Is.False);
+        }
+
+        [Test]
         public void ValidationReportsDuplicateManagerRegistryEntryWithoutDirtyingScene() {
             _scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
             GameObject managerObject = new GameObject("Duplicate Registry Manager");

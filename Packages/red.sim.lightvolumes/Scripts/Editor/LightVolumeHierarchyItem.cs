@@ -17,10 +17,12 @@ namespace VRCLightVolumes {
             LightVolumeInstance volume = Undo.AddComponent<LightVolumeInstance>(gameObject);
 #endif
 
+            Transform parent = volume.transform.parent;
+            bool initializedFromProbe = parent != null && parent.TryGetComponent(out ReflectionProbe _);
             LightVolumeTools.ResetFromParentReflectionProbe(volume);
-            LightVolumeTools.ApplyRuntimeState(volume, false);
+            if (!initializedFromProbe) LightVolumeTools.ApplyRuntimeState(volume, false);
             LightVolumeSceneSetup.OnboardHierarchy(gameObject, out _);
-            LightVolumeManagerTools.CopyProxyToUdon(volume);
+            LightVolumeManagerEditorBackend.CopyProxyToUdon(volume);
             Selection.activeGameObject = gameObject;
         }
 
@@ -35,7 +37,7 @@ namespace VRCLightVolumes {
 #endif
 
             LightVolumeSceneSetup.OnboardHierarchy(gameObject, out _);
-            PointLightVolumeEditorUtility.Sync(volume, false, false);
+            PointLightVolumeEditorUtility.Sync(volume);
             Selection.activeGameObject = gameObject;
         }
 

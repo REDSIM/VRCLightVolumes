@@ -1,12 +1,11 @@
 using UnityEngine;
 using UnityEditor;
 using UnityEditorInternal;
-using System.Collections.Generic;
 
 namespace VRCLightVolumes {
     [CanEditMultipleObjects]
     [CustomEditor(typeof(PointLightVolumeInstance))]
-    public class PointLightVolumeEditor : Editor {
+    public class PointLightVolumeEditor : UnityEditor.Editor {
         private const string DebugFoldoutSessionKey = "VRCLightVolumes.PointLightVolumeEditor.DebugFoldout";
         private PointLightVolumeInstance PointLightVolume;
 
@@ -77,7 +76,6 @@ namespace VRCLightVolumes {
 
             if (drawShadowFields) {
                 DrawProperty("WorldSpaceShadows", "Use World Space");
-
                 GUILayout.Space(ShadowGroupSpacing);
                 DrawLayerMask();
                 DrawProperty("ExclusionMask", "Exclusion Mask");
@@ -105,7 +103,7 @@ namespace VRCLightVolumes {
                 using (new EditorGUILayout.HorizontalScope()) {
                     if (GUILayout.Button(_bakeShadowsButtonContent)) {
                         propertiesChanged |= serializedObject.ApplyModifiedProperties();
-                        propertiesChanged |= BakeSelectedShadowMaps();
+                        BakeSelectedShadowMaps();
                         serializedObject.Update();
                         shadowMapProperty = serializedObject.FindProperty("ShadowMap");
                     }
@@ -133,58 +131,39 @@ namespace VRCLightVolumes {
         private void DrawDebugSection() {
             GUILayout.Space(InspectorSectionSpacing);
             EditorGUI.BeginChangeCheck();
-            _debugExpanded = EditorGUILayout.BeginFoldoutHeaderGroup(
-                _debugExpanded,
-                new GUIContent("Debug", "Shows read-only live Point Light Volume data for troubleshooting."));
-            if (EditorGUI.EndChangeCheck()) {
-                SessionState.SetBool(DebugFoldoutSessionKey, _debugExpanded);
-            }
+            _debugExpanded = EditorGUILayout.BeginFoldoutHeaderGroup(_debugExpanded, new GUIContent("Debug", "Shows read-only live Point Light Volume data for troubleshooting."));
+            if (EditorGUI.EndChangeCheck()) SessionState.SetBool(DebugFoldoutSessionKey, _debugExpanded);
 
             if (_debugExpanded && PointLightVolume != null) {
-                if (!EditorApplication.isPlaying)
-                    EditorGUILayout.HelpBox("Live values are populated in Play Mode. Resolved light, projection and shadow values show the current editor state.", MessageType.Info);
-                if (targets.Length > 1)
-                    EditorGUILayout.HelpBox("Debug values are shown for the first selected Point Light Volume.", MessageType.Info);
+                if (!EditorApplication.isPlaying) EditorGUILayout.HelpBox("Live values are populated in Play Mode. Resolved light, projection and shadow values show the current editor state.", MessageType.Info);
+                if (targets.Length > 1) EditorGUILayout.HelpBox("Debug values are shown for the first selected Point Light Volume.", MessageType.Info);
 
-                LightVolumeDebugGUI.DrawGroupHeader(
-                    "Registration",
-                    false,
-                    "Shows which Manager owns this light and its registry priority.");
-                LightVolumeDebugGUI.DrawObject("Manager", PointLightVolume.LightVolumeManager, typeof(LightVolumeManager), "The scene Manager used by this light.");
+                LightVolumeDebugGUI.DrawGroupHeader("Registration", false, "Shows which Manager owns this light and its registry priority.");
+                LightVolumeDebugGUI.DrawObject(serializedObject, nameof(PointLightVolumeInstance.LightVolumeManager), PointLightVolume.LightVolumeManager, typeof(LightVolumeManager), "Manager");
                 LightVolumeDebugGUI.DrawBool("Registered", PointLightVolume.RegisteredWithManagerPreview, "Whether this light is currently in a Manager registry.");
                 LightVolumeDebugGUI.DrawBool("Active", PointLightVolume.IsActive, "Whether this light is currently eligible for rendering.");
-                LightVolumeDebugGUI.DrawInt("Registry Order", PointLightVolume.RegistryOrder, "Stable tie-breaker used when registry weights are equal.");
-                LightVolumeDebugGUI.DrawFloat("Registry Weight", PointLightVolume.RegistryWeight, "Higher weights are uploaded to shaders first.");
+                LightVolumeDebugGUI.DrawInt(serializedObject, nameof(PointLightVolumeInstance.RegistryOrder), PointLightVolume.RegistryOrder);
+                LightVolumeDebugGUI.DrawFloat(serializedObject, nameof(PointLightVolumeInstance.RegistryWeight), PointLightVolume.RegistryWeight);
 
-                LightVolumeDebugGUI.DrawGroupHeader(
-                    "Resolved Light Data",
-                    true,
-                    "Values calculated from the Transform and light settings for shaders.");
-                LightVolumeDebugGUI.DrawVector3("Position", PointLightVolume.Position, "World-space light position sent to shaders.");
-                if (PointLightVolume.LightType != 2)
-                    LightVolumeDebugGUI.DrawVector3("Direction", PointLightVolume.Direction, "World-space light direction sent to shaders.");
-                LightVolumeDebugGUI.DrawQuaternion("Rotation", PointLightVolume.Rotation, "Rotation used by projected and Area Light calculations.");
-                LightVolumeDebugGUI.DrawFloat("Squared Range", PointLightVolume.SquaredRange, "Squared effective light range used by shaders.");
-                LightVolumeDebugGUI.DrawFloat("Squared Scale", PointLightVolume.SquaredScale, "Squared average Transform scale.");
+                LightVolumeDebugGUI.DrawGroupHeader("Resolved Light Data", true, "Values calculated from the Transform and light settings for shaders.");
+                LightVolumeDebugGUI.DrawVector3(serializedObject, nameof(PointLightVolumeInstance.Position), PointLightVolume.Position);
+                if (PointLightVolume.LightType != 2) LightVolumeDebugGUI.DrawVector3(serializedObject, nameof(PointLightVolumeInstance.Direction), PointLightVolume.Direction);
+                LightVolumeDebugGUI.DrawQuaternion(serializedObject, nameof(PointLightVolumeInstance.Rotation), PointLightVolume.Rotation);
+                LightVolumeDebugGUI.DrawFloat(serializedObject, nameof(PointLightVolumeInstance.SquaredRange), PointLightVolume.SquaredRange);
+                LightVolumeDebugGUI.DrawFloat(serializedObject, nameof(PointLightVolumeInstance.SquaredScale), PointLightVolume.SquaredScale);
                 LightVolumeDebugGUI.DrawBool("Range Dirty", PointLightVolume.IsRangeDirty, "Whether the Manager still needs to recalculate the effective range.");
 
-                LightVolumeDebugGUI.DrawGroupHeader(
-                    "Resolved Projection",
-                    true,
-                    "Resolved runtime source and layout for this light's projection.");
-                LightVolumeDebugGUI.DrawText("Projection Mode", GetProjectionModeName(PointLightVolume.ProjectionMode), "Projection method currently sent to shaders.");
-                LightVolumeDebugGUI.DrawText("Source Type", GetSourceTypeName(PointLightVolume.ProjectionType), "Whether the resolved source is a texture, a material, or none.");
-                LightVolumeDebugGUI.DrawObject("Texture", PointLightVolume.CustomTexture, typeof(Texture), "Resolved texture sampled by this projection.");
-                LightVolumeDebugGUI.DrawObject("Material", PointLightVolume.CustomTextureMaterial, typeof(Material), "Resolved material rendered into the runtime cookie array.");
+                LightVolumeDebugGUI.DrawGroupHeader("Resolved Projection", true, "Resolved runtime source and layout for this light's projection.");
+                LightVolumeDebugGUI.DrawText(serializedObject, nameof(PointLightVolumeInstance.ProjectionMode), GetProjectionModeName(PointLightVolume.ProjectionMode));
+                LightVolumeDebugGUI.DrawText(serializedObject, nameof(PointLightVolumeInstance.ProjectionType), GetSourceTypeName(PointLightVolume.ProjectionType), "Source Type");
+                LightVolumeDebugGUI.DrawObject(serializedObject, nameof(PointLightVolumeInstance.CustomTexture), PointLightVolume.CustomTexture, typeof(Texture), "Texture");
+                LightVolumeDebugGUI.DrawObject(serializedObject, nameof(PointLightVolumeInstance.CustomTextureMaterial), PointLightVolume.CustomTextureMaterial, typeof(Material), "Material");
                 LightVolumeDebugGUI.DrawBool("Cubemap Source", PointLightVolume.CustomTextureIsCubemap, "Whether the resolved texture is a cubemap.");
                 LightVolumeDebugGUI.DrawBool("Depth Slices", PointLightVolume.CustomTextureHasDepthSlices, "Whether the resolved texture already contains array slices.");
-                LightVolumeDebugGUI.DrawBool("Dynamic Source", PointLightVolume.AutoUpdateCustomTexture, "Whether the projection source is copied again at runtime.");
+                LightVolumeDebugGUI.DrawBool(serializedObject, nameof(PointLightVolumeInstance.AutoUpdateCustomTexture), PointLightVolume.AutoUpdateCustomTexture, "Dynamic Source");
 
                 if (PointLightVolume.LightType == 2) {
-                    LightVolumeDebugGUI.DrawGroupHeader(
-                        "Area Cookie",
-                        true,
-                        "Live fallback color and GPU readback state for an Area Light cookie.");
+                    LightVolumeDebugGUI.DrawGroupHeader("Area Cookie", true, "Live fallback color and GPU readback state for an Area Light cookie.");
                     LightVolumeDebugGUI.DrawText("Fallback Color", "#" + ColorUtility.ToHtmlStringRGBA(PointLightVolume.AreaLightFallbackColor), "Average cookie color used before detailed projection data is ready.");
                     LightVolumeDebugGUI.DrawFloat("Mirror", PointLightVolume.AreaCookieMirror, "Sign used to keep the Area Light cookie orientation correct.");
                     LightVolumeDebugGUI.DrawInt("Average Custom ID", PointLightVolume.AreaCookieAverageCustomId, "Runtime cookie-array source used for average-color readback.");
@@ -193,27 +172,21 @@ namespace VRCLightVolumes {
                 }
 
                 if (PointLightVolume.Shadows) {
-                    LightVolumeDebugGUI.DrawGroupHeader(
-                        "Resolved Shadows",
-                        true,
-                        "Resolved shadow source and bake pose used by shaders.");
-                    LightVolumeDebugGUI.DrawObject("Texture", PointLightVolume.ShadowMapTexture, typeof(Texture), "Resolved texture packed into the runtime shadow array.");
-                    LightVolumeDebugGUI.DrawObject("Material", PointLightVolume.ShadowMapMaterial, typeof(Material), "Resolved material rendered into the runtime shadow array.");
-                    LightVolumeDebugGUI.DrawFloat("Shadow Map ID", PointLightVolume.ShadowMapID, "First slice assigned in the Manager's shadow array; -1 means none.");
+                    LightVolumeDebugGUI.DrawGroupHeader("Resolved Shadows", true, "Resolved shadow source and bake pose used by shaders.");
+                    LightVolumeDebugGUI.DrawObject(serializedObject, nameof(PointLightVolumeInstance.ShadowMapTexture), PointLightVolume.ShadowMapTexture, typeof(Texture), "Texture");
+                    LightVolumeDebugGUI.DrawObject(serializedObject, nameof(PointLightVolumeInstance.ShadowMapMaterial), PointLightVolume.ShadowMapMaterial, typeof(Material), "Material");
+                    LightVolumeDebugGUI.DrawFloat(serializedObject, nameof(PointLightVolumeInstance.ShadowMapID), PointLightVolume.ShadowMapID);
                     LightVolumeDebugGUI.DrawBool("Uses Cubemap", PointLightVolume.ShadowMapUsesCubemap, "Whether this light samples a six-face shadow.");
                     LightVolumeDebugGUI.DrawBool("Cubemap Source", PointLightVolume.ShadowMapTextureIsCubemap, "Whether the assigned shadow texture is a cubemap.");
                     LightVolumeDebugGUI.DrawBool("Depth Slices", PointLightVolume.ShadowMapTextureHasDepthSlices, "Whether the assigned texture already contains array slices.");
-                    LightVolumeDebugGUI.DrawBool("Dynamic Source", PointLightVolume.AutoUpdateShadowMap, "Whether the shadow source is copied again at runtime.");
+                    LightVolumeDebugGUI.DrawBool(serializedObject, nameof(PointLightVolumeInstance.AutoUpdateShadowMap), PointLightVolume.AutoUpdateShadowMap, "Dynamic Source");
                     LightVolumeDebugGUI.DrawFloat("Baked Far Clip", PointLightVolume.BakedFarClip, "Far clipping plane used to encode the current shadow map.");
-                    LightVolumeDebugGUI.DrawVector3("Bake Position", PointLightVolume.ShadowBakePosition, "World-space position used when the current shadow was baked.");
-                    LightVolumeDebugGUI.DrawQuaternion("Bake Rotation", PointLightVolume.ShadowBakeRotation, "World-space rotation used when the current shadow was baked.");
+                    LightVolumeDebugGUI.DrawVector3(serializedObject, nameof(PointLightVolumeInstance.ShadowBakePosition), PointLightVolume.ShadowBakePosition, "Bake Position");
+                    LightVolumeDebugGUI.DrawQuaternion(serializedObject, nameof(PointLightVolumeInstance.ShadowBakeRotation), PointLightVolume.ShadowBakeRotation, "Bake Rotation");
                 }
 
                 if (PointLightVolume.BakeInGame) {
-                    LightVolumeDebugGUI.DrawGroupHeader(
-                        "Runtime Shadow Baking",
-                        true,
-                        "Live state and temporary resources used while baking shadows in-game.");
+                    LightVolumeDebugGUI.DrawGroupHeader("Runtime Shadow Baking", true, "Live state and temporary resources used while baking shadows in-game.");
                     LightVolumeDebugGUI.DrawBool("Bake Started", PointLightVolume.RuntimeShadowBakeStartedPreview, "Whether this light has started its runtime shadow bake.");
                     LightVolumeDebugGUI.DrawBool("Source Initialized", PointLightVolume.RuntimeShadowSourceInitializedPreview, "Whether the runtime shadow source is ready for the Manager.");
                     LightVolumeDebugGUI.DrawInt("Current Face", PointLightVolume.RuntimeShadowFaceIndexPreview, "Next cubemap face to render; non-cubemap shadows use one face.");
@@ -246,8 +219,8 @@ namespace VRCLightVolumes {
         // Draws a serialized field while preserving its field-level tooltip.
         private void DrawProperty(string propertyName, string label = null) {
             SerializedProperty property = serializedObject.FindProperty(propertyName);
-            GUIContent content = label == null ? EditorGUIUtility.TrTextContent(property.displayName, property.tooltip) : new GUIContent(label, property.tooltip);
-            EditorGUILayout.PropertyField(property, content, true);
+            if (label == null) EditorGUILayout.PropertyField(property, true);
+            else EditorGUILayout.PropertyField(property, new GUIContent(label, property.tooltip), true);
         }
 
         // Draws an integer-backed popup with correct mixed-selection handling.
@@ -280,75 +253,50 @@ namespace VRCLightVolumes {
             EditorGUI.showMixedValue = false;
         }
 
-        // Bakes selected lights and rebuilds each affected manager shadow array once.
-        private bool BakeSelectedShadowMaps() {
-            bool bakedAny = false;
-            HashSet<LightVolumeManager> managers = null;
+        // Bakes selected lights and rebuilds the primary Manager's shadow array once.
+        private void BakeSelectedShadowMaps() {
+            LightVolumeManager manager = LightVolumeManagerEditorBackend.GetPrimaryManager();
+            bool rebuildShadowTextures = false;
+            bool synchronized = false;
             for (int i = 0; i < targets.Length; i++) {
                 PointLightVolumeInstance pointLightVolume = targets[i] as PointLightVolumeInstance;
                 if (pointLightVolume == null || !pointLightVolume.Shadows) continue;
-
                 PointLightVolumeEditorUtility.Sync(pointLightVolume, false, false);
+                if (manager != null && pointLightVolume.LightVolumeManager == manager) synchronized = true;
                 if (!PointLightShadowBaker.BakeShadowMap(pointLightVolume, $"| {pointLightVolume.gameObject.name} ({i + 1}/{targets.Length})", false)) continue;
-
-                bakedAny = true;
                 PointLightVolumeEditorUtility.Sync(pointLightVolume, false, false);
-                if (pointLightVolume.LightVolumeManager == null) continue;
-                if (managers == null) managers = new HashSet<LightVolumeManager>();
-                managers.Add(pointLightVolume.LightVolumeManager);
+                if (manager != null && pointLightVolume.LightVolumeManager == manager) rebuildShadowTextures = true;
             }
-            if (managers != null) {
-                foreach (LightVolumeManager manager in managers) {
-                    LightVolumeManagerTools.ReinitializeShadowTextures(manager);
-                }
-            }
-            return bakedAny;
+            if (rebuildShadowTextures) LightVolumeManagerEditorBackend.ReinitializeShadowTextures(manager);
+            else if (synchronized) LightVolumeManagerEditorBackend.RefreshManagerOnce(manager, true);
         }
 
         // Applies all selected proxies first, then rebuilds each shared array at most once.
         private void SyncTargets(bool recordUndo, bool reinitializeTextures = false, bool refreshRuntimeImmediately = true) {
-            Dictionary<LightVolumeManager, int> managerChanges = null;
-            HashSet<LightVolumeManager> runtimeManagers = null;
+            LightVolumeManager manager = LightVolumeManagerEditorBackend.GetPrimaryManager();
+            int managerChanges = 0;
+            bool refreshManager = false;
             for (int i = 0; i < targets.Length; i++) {
                 PointLightVolumeInstance pointLightVolume = targets[i] as PointLightVolumeInstance;
                 if (pointLightVolume == null) continue;
-
-                int changes = PointLightVolumeEditorUtility.Sync(pointLightVolume, recordUndo, false, false);
+                int changes = PointLightVolumeEditorUtility.Sync(pointLightVolume, recordUndo, false);
                 if (reinitializeTextures) changes |= PointLightVolumeEditorUtility.CustomTexturesChanged | PointLightVolumeEditorUtility.ShadowTexturesChanged;
-                LightVolumeManager manager = pointLightVolume.LightVolumeManager;
-                if (manager == null) continue;
-                if (runtimeManagers == null) runtimeManagers = new HashSet<LightVolumeManager>();
-                runtimeManagers.Add(manager);
-                if (changes == 0) continue;
-                if (managerChanges == null) managerChanges = new Dictionary<LightVolumeManager, int>();
-                int previous;
-                managerChanges.TryGetValue(manager, out previous);
-                managerChanges[manager] = previous | changes;
+                if (manager == null || pointLightVolume.LightVolumeManager != manager) continue;
+                refreshManager = true;
+                managerChanges |= changes;
             }
 
-            if (runtimeManagers != null) {
-                foreach (LightVolumeManager manager in runtimeManagers) {
-                    if (refreshRuntimeImmediately) LightVolumeManagerTools.RefreshRuntimeManagerImmediately(manager);
-                    else LightVolumeManagerTools.QueueRuntimeManagerRefresh(manager);
-                }
-            }
-
-            if (managerChanges == null) return;
-            foreach (KeyValuePair<LightVolumeManager, int> entry in managerChanges) {
-                LightVolumeManager manager = entry.Key;
-                if (manager == null) continue;
+            if (managerChanges != 0) {
                 if (recordUndo) Undo.RecordObject(manager, "Sync Point Light Volume Textures");
-                LightVolumeManagerTools.ReinitializeTextures(
-                    manager,
-                    (entry.Value & PointLightVolumeEditorUtility.CustomTexturesChanged) != 0,
-                    (entry.Value & PointLightVolumeEditorUtility.ShadowTexturesChanged) != 0);
+                LightVolumeManagerEditorBackend.ReinitializeTextures(manager, (managerChanges & PointLightVolumeEditorUtility.CustomTexturesChanged) != 0, (managerChanges & PointLightVolumeEditorUtility.ShadowTexturesChanged) != 0);
+            } else if (refreshManager) {
+                LightVolumeManagerEditorBackend.RefreshManagerOnce(manager, refreshRuntimeImmediately);
             }
         }
 
         // Rebuilds derived data and both texture arrays after an Undo or Redo operation.
         private void OnUndoRedoPerformed() {
-            // Undo also restores hidden derived source fields, which makes ordinary source-change
-            // detection intentionally inconclusive. Rebuild both shared arrays once per manager.
+            // Undo also restores hidden derived source fields, which makes ordinary source-change detection intentionally inconclusive. Rebuild both shared arrays once per manager.
             SyncTargets(false, true, false);
             Repaint();
         }
@@ -430,7 +378,6 @@ namespace VRCLightVolumes {
                 _projectionSourceHintStyle.normal.textColor = EditorStyles.objectField.normal.textColor;
                 _projectionSourceHintStyle.clipping = TextClipping.Clip;
             }
-
             Rect hintRect = fieldRect;
             hintRect.xMax -= ObjectSelectorButtonWidth;
             GUI.Label(hintRect, acceptedTypesHint, _projectionSourceHintStyle);
@@ -442,7 +389,6 @@ namespace VRCLightVolumes {
             if (isShadowSource) return value is Texture2DArray || value is Cubemap || value is RenderTexture || value is Material;
             if (value is RenderTexture || value is Material) return true;
             if (!(value is Texture)) return false;
-
             int lightType = Mathf.Clamp(serializedObject.FindProperty("LightType").intValue, 0, 2);
             int projection = Mathf.Clamp(serializedObject.FindProperty("Projection").intValue, 0, 2);
             return lightType == 2 || projection == 1 || projection == 2 && (lightType == 0 || lightType == 1);
@@ -466,69 +412,48 @@ namespace VRCLightVolumes {
             if (pointLightVolume.LightType == 0) { // Point Light Visualization
 
                 // Calculating
-
                 float bounds = 0;
-
                 bool isDebug = pointLightVolume.DebugRange && (pointLightVolume.Projection != 1 || pointLightVolume.FalloffLUT == null);
-
-                if (isDebug) {
-                    bounds = Mathf.Sqrt(ComputePointLightSquaredBoundingSphere(pointLightVolume.Color, pointLightVolume.Intensity, range, GetBrightnessCutoff(pointLightVolume)));
-                }
+                if (isDebug) bounds = Mathf.Sqrt(ComputePointLightSquaredBoundingSphere(pointLightVolume.Color, pointLightVolume.Intensity, range, GetBrightnessCutoff(pointLightVolume)));
 
                 // Drawing
-
                 Handles.zTest = UnityEngine.Rendering.CompareFunction.LessEqual;
                 Handles.color = new Color(1f, 1f, 0f, 0.6f);
                 DrawPointLight(origin, range);
-                if (isDebug) {
-                    DrawPointLight(origin, bounds);
-                }
+                if (isDebug) DrawPointLight(origin, bounds);
                 DrawShadowClipGUI(pointLightVolume, origin, t);
 
                 Handles.zTest = UnityEngine.Rendering.CompareFunction.Greater;
                 Handles.color = new Color(1f, 1f, 0f, 0.15f);
                 DrawPointLight(origin, range);
-                if (isDebug) {
-                    DrawPointLight(origin, bounds);
-                }
+                if (isDebug) DrawPointLight(origin, bounds);
                 DrawShadowClipGUI(pointLightVolume, origin, t);
 
             } else if (pointLightVolume.LightType == 1) { // Spot Light Visualization
 
                 // Calculating
-
                 Vector3 forward = t.forward;
                 Vector3 right = t.right;
                 Vector3 up = t.up;
-
                 float halfAngleRad = Mathf.Clamp(pointLightVolume.Angle, 0.05f * Mathf.Deg2Rad, Mathf.PI);
-                
                 Vector3[] dirs = new Vector3[] { right, -right, up, -up };
                 float bounds = 0;
-
                 bool isDebug = pointLightVolume.DebugRange && (pointLightVolume.Projection != 1 || pointLightVolume.FalloffLUT == null);
-
-                if (isDebug) {
-                    bounds = Mathf.Sqrt(ComputePointLightSquaredBoundingSphere(pointLightVolume.Color, pointLightVolume.Intensity, range, GetBrightnessCutoff(pointLightVolume)));
-                }
+                if (isDebug) bounds = Mathf.Sqrt(ComputePointLightSquaredBoundingSphere(pointLightVolume.Color, pointLightVolume.Intensity, range, GetBrightnessCutoff(pointLightVolume)));
 
                 // Drawing
-
                 Handles.zTest = UnityEngine.Rendering.CompareFunction.LessEqual;
                 Handles.color = new Color(1f, 1f, 0f, 0.6f);
                 DrawSpotLight(origin, forward, halfAngleRad, range, dirs);
 
-                if (isDebug)
-                    DrawSpotLight(origin, forward, halfAngleRad, bounds, dirs);
+                if (isDebug) DrawSpotLight(origin, forward, halfAngleRad, bounds, dirs);
                 DrawShadowClipGUI(pointLightVolume, origin, t);
 
                 Handles.zTest = UnityEngine.Rendering.CompareFunction.Greater;
                 Handles.color = new Color(1f, 1f, 0f, 0.15f);
                 DrawSpotLight(origin, forward, halfAngleRad, range, dirs);
 
-                if (isDebug) {
-                    DrawSpotLight(origin, forward, halfAngleRad, bounds, dirs);
-                }
+                if (isDebug) DrawSpotLight(origin, forward, halfAngleRad, bounds, dirs);
                 DrawShadowClipGUI(pointLightVolume, origin, t);
 
             } else { // Area light
@@ -540,16 +465,14 @@ namespace VRCLightVolumes {
                 Handles.color = new Color(1f, 1f, 0f, 0.6f);
                 DrawAreaLight(origin, t.rotation, x, y);
 
-                if(pointLightVolume.DebugRange)
-                    DrawAreaLightDebug(origin, t.rotation, x, y, pointLightVolume.Color, pointLightVolume.Intensity, GetBrightnessCutoff(pointLightVolume));
+                if(pointLightVolume.DebugRange) DrawAreaLightDebug(origin, t.rotation, x, y, pointLightVolume.Color, pointLightVolume.Intensity, GetBrightnessCutoff(pointLightVolume));
                 DrawShadowClipGUI(pointLightVolume, origin, t);
 
                 Handles.zTest = UnityEngine.Rendering.CompareFunction.Greater;
                 Handles.color = new Color(1f, 1f, 0f, 0.15f);
                 DrawAreaLight(origin, t.rotation, x, y);
 
-                if (pointLightVolume.DebugRange)
-                    DrawAreaLightDebug(origin, t.rotation, x, y, pointLightVolume.Color, pointLightVolume.Intensity, GetBrightnessCutoff(pointLightVolume));
+                if (pointLightVolume.DebugRange) DrawAreaLightDebug(origin, t.rotation, x, y, pointLightVolume.Color, pointLightVolume.Intensity, GetBrightnessCutoff(pointLightVolume));
                 DrawShadowClipGUI(pointLightVolume, origin, t);
 
             }
@@ -560,9 +483,7 @@ namespace VRCLightVolumes {
         void OnSceneGUI() {
             foreach (var obj in Selection.gameObjects) {
                 var volume = obj.GetComponent<PointLightVolumeInstance>();
-                if (volume != null) {
-                    DrawVolumeGUI(volume);
-                }
+                if (volume != null) DrawVolumeGUI(volume);
             }
         }
 

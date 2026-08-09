@@ -1,4 +1,8 @@
-﻿using UnityEngine;
+#if !UDONSHARP && (UNITY_EDITOR || COMPILER_UDONSHARP)
+#define UDONSHARP
+#endif
+
+using UnityEngine;
 
 #if UDONSHARP
 using VRC.SDKBase;
@@ -6,7 +10,6 @@ using UdonSharp;
 using VRC.SDK3.Rendering;
 using VRC.Udon.Common.Interfaces;
 #endif
-
 
 namespace VRCLightVolumes {
 #if UDONSHARP
@@ -32,6 +35,7 @@ namespace VRCLightVolumes {
         private Color _prevColor;
         private float _timePrev;
         private RenderTexture _downsampledTex;
+        private bool _readbackPending;
 
         // Creates the mipmapped reduction texture used to estimate the video's average color.
         private void Start() {
@@ -46,15 +50,34 @@ namespace VRCLightVolumes {
 #endif
         }
 
+        // Releases the runtime reduction texture when this component is destroyed.
+        private void OnDestroy() {
+            _readbackPending = false;
+            RenderTexture texture = _downsampledTex;
+            _downsampledTex = null;
+            if (texture == null) return;
+#if COMPILER_UDONSHARP
+            Destroy(texture);
+#else
+            RenderTexture.active = null;
+            texture.Release();
+            if (Application.isPlaying) Destroy(texture);
+            else DestroyImmediate(texture);
+#endif
+        }
+
 #if UDONSHARP
         // Blits the current video frame and requests its smallest mip through the VRChat readback API.
         void Update() {
+            if (_readbackPending) return;
             VRCGraphics.Blit(TargetRenderTexture, _downsampledTex);
+            _readbackPending = true;
             VRCAsyncGPUReadback.Request(_downsampledTex, _downsampledTex.mipmapCount - 1, (IUdonEventReceiver)this);
         }
 
         // Receives the reduced video color from the VRChat GPU readback request.
         public override void OnAsyncGpuReadbackComplete(VRCAsyncGPUReadbackRequest request) {
+            _readbackPending = false;
             if (request.TryGetData(_pixels)) {
                 SetColor(_pixels[0]);
             }
@@ -63,12 +86,15 @@ namespace VRCLightVolumes {
 #else
         // Blits the current video frame and requests its smallest mip through Unity's readback API.
         void Update() {
+            if (_readbackPending) return;
             Graphics.Blit(TargetRenderTexture, _downsampledTex);
-            UnityEngine.Rendering.AsyncGPUReadback.Request(_downsampledTex, _downsampledTex.mipmapCount - 1, OnAsyncGpuReadbackComplete);
+            _readbackPending = true;
+            UnityEngine.Rendering.AsyncGPUReadback.Request(_downsampledTex, _downsampledTex.mipmapCount - 1, OnUnityAsyncGpuReadbackComplete);
         }
 
         // Receives the reduced video color from Unity's GPU readback request.
-        public void OnAsyncGpuReadbackComplete(UnityEngine.Rendering.AsyncGPUReadbackRequest request) {
+        private void OnUnityAsyncGpuReadbackComplete(UnityEngine.Rendering.AsyncGPUReadbackRequest request) {
+            _readbackPending = false;
             if (request.hasError) return;
             Unity.Collections.NativeArray<Color32> pixels = request.GetData<Color32>();
             if (pixels.Length > 0) SetColor(pixels[0]);
@@ -83,7 +109,11 @@ namespace VRCLightVolumes {
             _timePrev = Time.time;
 
             if (AntiFlickering) {
-                float diff = ColorDifference(color, _prevColor); // Difference between prev and current color
+                float rmean = (color.r + _prevColor.r) * 0.5f;
+                float r = color.r - _prevColor.r;
+                float g = color.g - _prevColor.g;
+                float b = color.b - _prevColor.b;
+                float diff = Mathf.Sqrt((2f + rmean) * r * r + 4f * g * g + (3f - rmean) * b * b) / 3;
                 float smoothing = dTime / Mathf.Lerp(0.25f, 1e-05f, Mathf.Pow(diff * 1.5f, 0.1f)); // Smoothing speed depends on the color difference
                 _prevColor = Color.Lerp(_prevColor, color, smoothing); // Actually smooths colors
             } else {
@@ -91,25 +121,19 @@ namespace VRCLightVolumes {
             }
 
             // Applying all colors
-            for (int i = 0; i < TargetLightVolumes.Length; i++) {
-                TargetLightVolumes[i].Color = _prevColor;
+            Color targetColor = _prevColor;
+            LightVolumeInstance[] targetLightVolumes = TargetLightVolumes;
+            int lightVolumeCount = targetLightVolumes.Length;
+            for (int i = 0; i < lightVolumeCount; i++) {
+                targetLightVolumes[i].SetColor(targetColor);
             }
 
-            for (int i = 0; i < TargetPointLightVolumes.Length; i++) {
-                TargetPointLightVolumes[i].Color = _prevColor;
-                TargetPointLightVolumes[i].IsRangeDirty = true;
+            PointLightVolumeInstance[] targetPointLightVolumes = TargetPointLightVolumes;
+            int pointLightVolumeCount = targetPointLightVolumes.Length;
+            for (int i = 0; i < pointLightVolumeCount; i++) {
+                targetPointLightVolumes[i].SetColor(targetColor);
             }
 
         }
-
-        // Calculates a perceptually weighted distance between two colors.
-        private float ColorDifference(Color colorA, Color colorB) {
-            float rmean = (colorA.r + colorB.r) * 0.5f;
-            float r = colorA.r - colorB.r;
-            float g = colorA.g - colorB.g;
-            float b = colorA.b - colorB.b;
-            return Mathf.Sqrt((2f + rmean) * r * r + 4f * g * g + (3f - rmean) * b * b) / 3;
-        }
-
     }
 }

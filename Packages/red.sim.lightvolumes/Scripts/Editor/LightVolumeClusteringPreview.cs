@@ -1,4 +1,3 @@
-using System;
 using System.Collections.Generic;
 using UnityEditor;
 using UnityEngine;
@@ -16,37 +15,47 @@ namespace VRCLightVolumes {
         private static readonly int PointLightShadowCountID = Shader.PropertyToID("_UdonPointLightVolumeShadowCount");
         private static readonly int PointLightShadowCubeCountID = Shader.PropertyToID("_UdonPointLightVolumeShadowCubeCount");
         private static readonly Stack<float> ClusteringEnabledStack = new Stack<float>(4);
-        private static LightVolumeManager[] _managers = Array.Empty<LightVolumeManager>();
+        private static LightVolumeManager _manager;
         private static bool _refreshPending;
 
         // Installs editor lifecycle hooks and initializes clustering preview globals after domain reload.
         static LightVolumeClusteringPreview() {
             Shader.SetGlobalFloat(ClusteringEnabledID, 0f);
-            RefreshManagers();
-            Camera.onPreCull -= OnCameraPreCull;
+            RefreshManager();
             Camera.onPreCull += OnCameraPreCull;
-            Camera.onPostRender -= OnCameraPostRender;
             Camera.onPostRender += OnCameraPostRender;
-            EditorApplication.hierarchyChanged -= RefreshManagers;
-            EditorApplication.hierarchyChanged += RefreshManagers;
-            UnityEditor.SceneManagement.EditorSceneManager.sceneOpened -= OnSceneOpened;
+            EditorApplication.hierarchyChanged += RefreshManager;
             UnityEditor.SceneManagement.EditorSceneManager.sceneOpened += OnSceneOpened;
-            UnityEditor.SceneManagement.EditorSceneManager.sceneSaving -= OnSceneSaving;
             UnityEditor.SceneManagement.EditorSceneManager.sceneSaving += OnSceneSaving;
-            UnityEditor.SceneManagement.EditorSceneManager.sceneSaved -= OnSceneSaved;
             UnityEditor.SceneManagement.EditorSceneManager.sceneSaved += OnSceneSaved;
-            EditorApplication.playModeStateChanged -= OnPlayModeStateChanged;
             EditorApplication.playModeStateChanged += OnPlayModeStateChanged;
-            AssemblyReloadEvents.beforeAssemblyReload -= ReleasePreviewResourcesBeforeAssemblyReload;
-            AssemblyReloadEvents.beforeAssemblyReload += ReleasePreviewResourcesBeforeAssemblyReload;
-            EditorApplication.quitting -= ReleasePreviewResources;
-            EditorApplication.quitting += ReleasePreviewResources;
+            AssemblyReloadEvents.beforeAssemblyReload += Shutdown;
+            EditorApplication.quitting += Shutdown;
             RequestPreviewRefresh();
         }
 
-        // Refreshes the cached set of Managers that can provide Scene View clustering data.
-        private static void RefreshManagers() {
-            _managers = UnityEngine.Object.FindObjectsByType<LightVolumeManager>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+        // Removes every global callback and releases transient preview state before this editor domain ends.
+        private static void Shutdown() {
+            Camera.onPreCull -= OnCameraPreCull;
+            Camera.onPostRender -= OnCameraPostRender;
+            EditorApplication.hierarchyChanged -= RefreshManager;
+            UnityEditor.SceneManagement.EditorSceneManager.sceneOpened -= OnSceneOpened;
+            UnityEditor.SceneManagement.EditorSceneManager.sceneSaving -= OnSceneSaving;
+            UnityEditor.SceneManagement.EditorSceneManager.sceneSaved -= OnSceneSaved;
+            EditorApplication.playModeStateChanged -= OnPlayModeStateChanged;
+            AssemblyReloadEvents.beforeAssemblyReload -= Shutdown;
+            EditorApplication.quitting -= Shutdown;
+            _refreshPending = false;
+            ReleasePreviewResources(true);
+            _manager = null;
+        }
+
+        // Refreshes the only Manager allowed to provide Scene View clustering data.
+        private static void RefreshManager() {
+            LightVolumeManager manager = LightVolumeManagerEditorBackend.GetPrimaryManager();
+            if (_manager == manager) return;
+            if (_manager != null) _manager.ReleaseClusteringPreview();
+            _manager = manager;
         }
 
         // Defers a clustering preview rebuild after a scene is opened.
@@ -57,7 +66,7 @@ namespace VRCLightVolumes {
         // Releases transient preview resources before Unity serializes a scene.
         private static void OnSceneSaving(UnityEngine.SceneManagement.Scene scene, string path) {
             _refreshPending = true;
-            RefreshManagers();
+            RefreshManager();
             ReleasePreviewResources();
         }
 
@@ -76,17 +85,14 @@ namespace VRCLightVolumes {
                 Shader.SetGlobalFloat(ClusteringEnabledID, 0f);
                 return;
             }
-            // ObjectChangeEvents already coalesces edits. Consume that batch at the last safe
-            // point before rendering so light buffers and froxel masks use current transforms.
+            // ObjectChangeEvents already coalesces edits. Consume that batch at the last safe point before rendering so light buffers and froxel masks use current transforms.
             LightVolumeEditorUpdater.FlushPendingSceneChanges();
-            LightVolumeManager manager = null;
-            for (int i = 0; i < _managers.Length; i++) {
-                LightVolumeManager candidate = _managers[i];
-                if (candidate == null || !candidate.isActiveAndEnabled || !candidate.Clustering) continue;
-                manager = candidate;
-                break;
-            }
+            LightVolumeManager manager = _manager;
             if (manager == null || camera.orthographic) {
+                Shader.SetGlobalFloat(ClusteringEnabledID, 0f);
+                return;
+            }
+            if (!manager.isActiveAndEnabled || !manager.Clustering) {
                 Shader.SetGlobalFloat(ClusteringEnabledID, 0f);
                 return;
             }
@@ -116,23 +122,13 @@ namespace VRCLightVolumes {
             ReleasePreviewResources(false);
         }
 
-        // Releases transient clustering resources for every cached Manager.
+        // Releases transient clustering resources for the cached primary Manager.
         private static void ReleasePreviewResources(bool releaseGeneratedMaterials) {
             ClusteringEnabledStack.Clear();
             Shader.SetGlobalFloat(ClusteringEnabledID, 0f);
-            for (int i = 0; i < _managers.Length; i++) {
-                LightVolumeManager manager = _managers[i];
-                if (manager == null) continue;
-                if (releaseGeneratedMaterials) manager.ReleaseClusteringPreviewForAssemblyReload();
-                else manager.ReleaseClusteringPreview();
-            }
-        }
-
-        // Fully releases preview resources that cannot survive an assembly reload.
-        private static void ReleasePreviewResourcesBeforeAssemblyReload() {
-            _refreshPending = false;
-            RefreshManagers();
-            ReleasePreviewResources(true);
+            if (_manager == null) return;
+            if (releaseGeneratedMaterials) _manager.ReleaseClusteringPreviewForAssemblyReload();
+            else _manager.ReleaseClusteringPreview();
         }
 
         // Tears down editor previews around play mode and rebuilds them on returning to edit mode.
@@ -145,8 +141,7 @@ namespace VRCLightVolumes {
             }
         }
 
-        // Asset refreshes may restore serialized Udon proxy fields. Rebuild their derived editor
-        // state exactly once, immediately before the next Scene View render.
+        // Asset refreshes may restore serialized Udon proxy fields. Rebuild their derived editor state exactly once, immediately before the next Scene View render.
         internal static void RequestPreviewRefresh() {
             if (Application.isPlaying || EditorApplication.isPlayingOrWillChangePlaymode) return;
             _refreshPending = true;
@@ -158,27 +153,20 @@ namespace VRCLightVolumes {
         private static void ApplyPendingPreviewRefresh() {
             if (!_refreshPending) return;
             _refreshPending = false;
-            RefreshManagers();
-            RecoverLoadedManagers();
+            RefreshManager();
+            RecoverManager();
         }
 
-        // Rebuilds one stable manager snapshot without serializing or dirtying scene objects.
-        private static void RecoverLoadedManagers() {
+        // Rebuilds one stable Manager snapshot without serializing or dirtying scene objects.
+        private static void RecoverManager() {
             ClusteringEnabledStack.Clear();
             Shader.SetGlobalFloat(ClusteringEnabledID, 0f);
-            bool hasActiveManager = false;
-            for (int i = 0; i < _managers.Length; i++) {
-                LightVolumeManager manager = _managers[i];
-                if (manager == null) continue;
-                if (!manager.isActiveAndEnabled) {
-                    manager.ReleaseClusteringPreview();
-                    continue;
-                }
-                manager.RebuildClusteringPreviewState();
-                hasActiveManager = true;
+            if (_manager == null || !_manager.isActiveAndEnabled) {
+                if (_manager != null) _manager.ReleaseClusteringPreview();
+                SetDisabledShaderState();
+                return;
             }
-
-            if (!hasActiveManager) SetDisabledShaderState();
+            _manager.RebuildClusteringPreviewState();
         }
 
         // Clears every Light Volumes shader count when no active Manager can populate preview data.
@@ -193,8 +181,7 @@ namespace VRCLightVolumes {
             Shader.SetGlobalFloat(LightVolumeEnabledID, 0f);
         }
     }
-    // Any AssetDatabase refresh may restore serialized Udon proxy state. The actual rebuild is
-    // deferred to the next Scene View render, so multiple imports collapse into one operation.
+    // Any AssetDatabase refresh may restore serialized Udon proxy state. The actual rebuild is deferred to the next Scene View render, so multiple imports collapse into one operation.
     internal sealed class LightVolumeClusteringImportPostprocessor : AssetPostprocessor {
         // Requests a deferred preview rebuild after any AssetDatabase refresh.
         private static void OnPostprocessAllAssets(string[] importedAssets, string[] deletedAssets, string[] movedAssets, string[] movedFromAssetPaths, bool didDomainReload) {

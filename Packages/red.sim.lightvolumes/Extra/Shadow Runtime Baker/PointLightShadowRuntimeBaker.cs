@@ -1,3 +1,7 @@
+#if !UDONSHARP && (UNITY_EDITOR || COMPILER_UDONSHARP)
+#define UDONSHARP
+#endif
+
 using UnityEngine;
 
 #if UDONSHARP
@@ -52,7 +56,6 @@ namespace VRCLightVolumes {
         // Starts one-shot or realtime target baking when this external baker becomes active.
         private void OnEnable() {
 #if UDONSHARP
-            _realtimeLoopScheduled = false;
             if (Realtime) StartTargetRealtimeBakeLoop();
             else if (BakeOnEnable) BakeShadows();
 #else
@@ -62,17 +65,9 @@ namespace VRCLightVolumes {
 #endif
         }
 
-        // Clears cached target configuration and pending delayed work.
+        // Clears cached target configuration. A queued Udon event owns the scheduled flag until it runs. Keeping the flag prevents a quick disable-enable cycle from creating a second loop.
         private void OnDisable() {
-#if UDONSHARP
-            _realtimeLoopScheduled = false;
-#endif
             _configuredTargetPointLightVolume = null;
-            _configuredResolution = -1;
-            _configuredShadowBlurSamplePreset = -1;
-            _configuredFacesPerFrame = -1;
-            _configuredSphericalBlur = false;
-            _configuredDirectOutput = false;
         }
 
 #if !UDONSHARP
@@ -105,7 +100,6 @@ namespace VRCLightVolumes {
                 target.BakeShadows();
             }
 #if UDONSHARP
-            if (_realtimeLoopScheduled) return;
             _realtimeLoopScheduled = true;
             SendCustomEventDelayedFrames(nameof(_RealtimeBakeLoop), 1);
 #endif

@@ -1,4 +1,3 @@
-using System;
 using System.Collections.Generic;
 using UnityEditor;
 using UnityEditor.SceneManagement;
@@ -9,36 +8,49 @@ namespace VRCLightVolumes {
     // Centralizes event-driven and continuous Edit Mode updates without per-object polling.
     [InitializeOnLoad]
     internal static class LightVolumeEditorUpdater {
-        private static readonly HashSet<LightVolumeManager> _managers = new HashSet<LightVolumeManager>();
         private static readonly HashSet<LightVolumeInstance> _volumes = new HashSet<LightVolumeInstance>();
         private static readonly HashSet<PointLightVolumeInstance> _pointLights = new HashSet<PointLightVolumeInstance>();
         private static readonly HashSet<GameObject> _hierarchyRoots = new HashSet<GameObject>();
         private static readonly HashSet<GameObject> _onboardingRoots = new HashSet<GameObject>();
-        private static readonly List<LightVolumeManager> _managerBuffer = new List<LightVolumeManager>();
         private static readonly List<LightVolumeInstance> _volumeBuffer = new List<LightVolumeInstance>();
         private static readonly List<PointLightVolumeInstance> _pointLightBuffer = new List<PointLightVolumeInstance>();
         private static readonly List<GameObject> _onboardingRootsInOrder = new List<GameObject>();
-        private static LightVolumeManager[] _loadedManagers = Array.Empty<LightVolumeManager>();
-        private static bool _refreshAllManagers;
+        private static LightVolumeManager _primaryManager;
+        private static bool _managerUpdateQueued;
         private static bool _flushQueued;
         private static bool _isFlushing;
 
-        // Installs editor change hooks and initializes the cache of loaded Managers.
+        // Installs editor change hooks and initializes the primary Manager cache.
         static LightVolumeEditorUpdater() {
-            RefreshLoadedManagers();
-            ObjectChangeEvents.changesPublished -= OnChangesPublished;
+            RefreshPrimaryManager();
             ObjectChangeEvents.changesPublished += OnChangesPublished;
-            LightVolumeManager.AtlasPostProcessorsChanged -= OnAtlasPostProcessorsChanged;
-            LightVolumeManager.AtlasPostProcessorsChanged += OnAtlasPostProcessorsChanged;
-            EditorApplication.hierarchyChanged -= RefreshLoadedManagers;
-            EditorApplication.hierarchyChanged += RefreshLoadedManagers;
-            EditorApplication.update -= UpdateAnimatedCookies;
+            LightVolumeManager.EditorAtlasPostProcessorsChanged += OnAtlasPostProcessorsChanged;
+            EditorApplication.hierarchyChanged += RefreshPrimaryManager;
             EditorApplication.update += UpdateAnimatedCookies;
 #if !UDONSHARP
-            EditorSceneManager.sceneOpened -= OnSceneOpened;
             EditorSceneManager.sceneOpened += OnSceneOpened;
             QueueLoadedSceneOnboarding();
 #endif
+            AssemblyReloadEvents.beforeAssemblyReload += Shutdown;
+            EditorApplication.quitting += Shutdown;
+        }
+
+        // Removes every editor callback and discards queued work before this editor domain ends.
+        private static void Shutdown() {
+            ObjectChangeEvents.changesPublished -= OnChangesPublished;
+            LightVolumeManager.EditorAtlasPostProcessorsChanged -= OnAtlasPostProcessorsChanged;
+            EditorApplication.hierarchyChanged -= RefreshPrimaryManager;
+            EditorApplication.update -= UpdateAnimatedCookies;
+#if !UDONSHARP
+            EditorSceneManager.sceneOpened -= OnSceneOpened;
+#endif
+            AssemblyReloadEvents.beforeAssemblyReload -= Shutdown;
+            EditorApplication.quitting -= Shutdown;
+            EditorApplication.delayCall -= Flush;
+            _flushQueued = false;
+            _isFlushing = false;
+            _primaryManager = null;
+            Clear();
         }
 
 #if !UDONSHARP
@@ -48,30 +60,26 @@ namespace VRCLightVolumes {
         }
 #endif
 
-        // Refreshes the cached set of loaded Manager components.
-        private static void RefreshLoadedManagers() {
-            _loadedManagers = UnityEngine.Object.FindObjectsByType<LightVolumeManager>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+        // Refreshes the only loaded Manager allowed to own global runtime data.
+        private static void RefreshPrimaryManager() {
+            _primaryManager = LightVolumeManagerEditorBackend.GetPrimaryManager();
         }
 
-        // Refreshes animated projection sources for Managers that opt into edit-mode updates.
+        // Refreshes animated projection sources for the primary Manager in Edit Mode.
         private static void UpdateAnimatedCookies() {
             if (EditorApplication.isPlayingOrWillChangePlaymode || EditorApplication.isCompiling || EditorApplication.isUpdating || Undo.isProcessing) return;
-            bool repaint = false;
-            for (int i = 0; i < _loadedManagers.Length; i++) {
-                LightVolumeManager manager = _loadedManagers[i];
-                if (manager == null || !manager.isActiveAndEnabled || !manager.AutoUpdateTextures || !manager.HasAutoCustomTextureUpdates) continue;
-                manager.UpdateAutoCustomTextures();
-                repaint = true;
-            }
-            if (repaint) SceneView.RepaintAll();
+            LightVolumeManager manager = _primaryManager;
+            if (manager == null || !manager.isActiveAndEnabled || !manager.AutoUpdateTextures || !manager.HasAutoCustomTextureUpdates) return;
+            manager.UpdateAutoCustomTextures();
+            SceneView.RepaintAll();
         }
 
         // Persists a changed atlas post-processor chain and queues the runtime mirror refresh.
         private static void OnAtlasPostProcessorsChanged(LightVolumeManager manager) {
             if (manager == null) return;
             LVUtils.MarkDirty(manager);
-            LightVolumeManagerTools.CopyProxyToUdon(manager);
-            LightVolumeManagerTools.QueueRuntimeManagerRefresh(manager);
+            LightVolumeManagerEditorBackend.CopyProxyToUdon(manager);
+            LightVolumeManagerEditorBackend.QueueRuntimeManagerRefresh(manager);
         }
 
         // Translates Unity object-change events into coalesced Light Volumes update requests.
@@ -81,7 +89,7 @@ namespace VRCLightVolumes {
                 ObjectChangeKind kind = stream.GetEventType(i);
                 switch (kind) {
                     case ObjectChangeKind.ChangeScene:
-                        QueueAllManagers();
+                        QueueManagerRefresh();
                         break;
                     case ObjectChangeKind.CreateGameObjectHierarchy:
                         stream.GetCreateGameObjectHierarchyEvent(i, out CreateGameObjectHierarchyEventArgs createData);
@@ -92,13 +100,13 @@ namespace VRCLightVolumes {
                         stream.GetChangeGameObjectStructureEvent(i, out ChangeGameObjectStructureEventArgs structureData);
                         GameObject structureObject = GetGameObject(structureData.instanceId);
                         QueueHierarchyForSetup(structureObject);
-                        QueueAllManagers();
+                        QueueManagerRefresh();
                         break;
                     case ObjectChangeKind.ChangeGameObjectStructureHierarchy:
                         stream.GetChangeGameObjectStructureHierarchyEvent(i, out ChangeGameObjectStructureHierarchyEventArgs structureHierarchyData);
                         GameObject structureHierarchyObject = GetGameObject(structureHierarchyData.instanceId);
                         QueueHierarchyForSetup(structureHierarchyObject);
-                        QueueAllManagers();
+                        QueueManagerRefresh();
                         break;
                     case ObjectChangeKind.ChangeGameObjectOrComponentProperties:
                         stream.GetChangeGameObjectOrComponentPropertiesEvent(i, out ChangeGameObjectOrComponentPropertiesEventArgs propertyData);
@@ -113,13 +121,13 @@ namespace VRCLightVolumes {
                     case ObjectChangeKind.DestroyGameObjectHierarchy:
                         stream.GetDestroyGameObjectHierarchyEvent(i, out DestroyGameObjectHierarchyEventArgs destroyData);
                         QueueHierarchy(GetGameObject(destroyData.parentInstanceId));
-                        QueueAllManagers();
+                        QueueManagerRefresh();
                         break;
                     case ObjectChangeKind.UpdatePrefabInstances:
                         stream.GetUpdatePrefabInstancesEvent(i, out UpdatePrefabInstancesEventArgs prefabData);
                         for (int instanceIndex = 0; instanceIndex < prefabData.instanceIds.Length; instanceIndex++)
                             QueueHierarchy(GetGameObject(prefabData.instanceIds[instanceIndex]));
-                        QueueAllManagers();
+                        QueueManagerRefresh();
                         break;
                 }
             }
@@ -163,7 +171,10 @@ namespace VRCLightVolumes {
         // Routes a changed Unity object to the relevant Manager, volume or hierarchy queue.
         private static void QueueObject(UnityEngine.Object changedObject) {
             if (changedObject == null) return;
-            if (changedObject is GameObject gameObject) QueueHierarchy(gameObject);
+            if (changedObject is GameObject gameObject) {
+                if (gameObject.GetComponent<LightVolumeManager>() != null) QueueManagerRefresh();
+                QueueHierarchy(gameObject);
+            }
             else if (changedObject is Transform transform) QueueHierarchy(transform.gameObject);
             else if (changedObject is LightVolumeManager manager) QueueManager(manager);
             else if (changedObject is LightVolumeInstance volume) QueueVolume(volume);
@@ -173,18 +184,17 @@ namespace VRCLightVolumes {
         // Collects all Light Volumes components under a changed hierarchy into the update batch.
         private static void QueueHierarchy(GameObject root) {
             if (!IsEditableSceneObject(root) || !_hierarchyRoots.Add(root)) return;
-            _managerBuffer.Clear();
-            root.GetComponentsInChildren(true, _managerBuffer);
+            LightVolumeManager manager = root.GetComponentInChildren<LightVolumeManager>(true);
             _volumeBuffer.Clear();
             root.GetComponentsInChildren(true, _volumeBuffer);
             _pointLightBuffer.Clear();
             root.GetComponentsInChildren(true, _pointLightBuffer);
-            bool hasRelevant = _managerBuffer.Count != 0 || _volumeBuffer.Count != 0 || _pointLightBuffer.Count != 0;
+            bool hasRelevant = manager != null || _volumeBuffer.Count != 0 || _pointLightBuffer.Count != 0;
             if (!hasRelevant) {
                 _hierarchyRoots.Remove(root);
                 return;
             }
-            for (int i = 0; i < _managerBuffer.Count; i++) QueueManager(_managerBuffer[i]);
+            QueueManager(manager);
             for (int i = 0; i < _volumeBuffer.Count; i++) QueueVolume(_volumeBuffer[i]);
             for (int i = 0; i < _pointLightBuffer.Count; i++) QueuePointLight(_pointLightBuffer[i]);
         }
@@ -203,15 +213,19 @@ namespace VRCLightVolumes {
             QueueManager(pointLight.LightVolumeManager);
         }
 
-        // Adds an editable Manager and schedules a deferred batch flush.
+        // Queues one rebuild for the cached primary Manager and schedules a deferred batch flush.
         private static void QueueManager(LightVolumeManager manager) {
-            if (IsEditableSceneObject(manager)) _managers.Add(manager);
+            if (IsEditableSceneObject(manager)) {
+                if (_primaryManager == null && !manager.CompareTag("EditorOnly") && LightVolumeSceneSetup.IsMainStageSceneObject(manager.gameObject)) _primaryManager = manager;
+                if (manager == _primaryManager) _managerUpdateQueued = true;
+            }
             if (!_isFlushing) QueueFlush();
         }
 
-        // Requests that every loaded Manager join the next update batch.
-        private static void QueueAllManagers() {
-            _refreshAllManagers = true;
+        // Refreshes the primary Manager at most once for a coalesced structural-change batch.
+        private static void QueueManagerRefresh() {
+            if (!_flushQueued) RefreshPrimaryManager();
+            if (IsEditableSceneObject(_primaryManager)) _managerUpdateQueued = true;
             QueueFlush();
         }
 
@@ -247,13 +261,12 @@ namespace VRCLightVolumes {
                     GameObject root = _onboardingRootsInOrder[i];
                     if (!LightVolumeSceneSetup.OnboardHierarchy(root, out LightVolumeManager manager)) continue;
                     QueueHierarchy(root);
-                    _managers.Add(manager);
+                    QueueManager(manager);
                 }
                 foreach (LightVolumeInstance volume in _volumes) {
                     if (!IsEditableSceneObject(volume)) continue;
                     LightVolumeTools.ApplyRuntimeState(volume, false);
-                    volume.IsActive = volume.isActiveAndEnabled && volume.Intensity != 0f && volume.Color != Color.black;
-                    LightVolumeManagerTools.CopyProxyToUdon(volume);
+                    LightVolumeManagerEditorBackend.CopyProxyToUdon(volume);
                 }
                 foreach (PointLightVolumeInstance pointLight in _pointLights) {
                     if (!IsEditableSceneObject(pointLight)) continue;
@@ -261,20 +274,9 @@ namespace VRCLightVolumes {
                     bool shadowTexturesChanged = pointLight.HasEditorShadowTextureChanges();
                     pointLight.EditorApplyAuthoringData(customTexturesChanged, shadowTexturesChanged, false);
                     pointLight.IsActive = pointLight.isActiveAndEnabled && pointLight.Intensity != 0f && pointLight.Color != Color.black;
-                    LightVolumeManagerTools.CopyProxyToUdon(pointLight);
+                    LightVolumeManagerEditorBackend.CopyProxyToUdon(pointLight);
                 }
-                if (_refreshAllManagers) {
-                    RefreshLoadedManagers();
-                    for (int i = 0; i < _loadedManagers.Length; i++) {
-                        if (IsEditableSceneObject(_loadedManagers[i])) _managers.Add(_loadedManagers[i]);
-                    }
-                }
-                foreach (LightVolumeManager manager in _managers) {
-                    if (IsEditableSceneObject(manager) && !manager.isActiveAndEnabled) manager.UpdateVolumes();
-                }
-                foreach (LightVolumeManager manager in _managers) {
-                    if (IsEditableSceneObject(manager) && manager.isActiveAndEnabled) manager.UpdateVolumes();
-                }
+                if (_managerUpdateQueued && IsEditableSceneObject(_primaryManager)) _primaryManager.UpdateVolumes();
             } finally {
                 Clear();
                 _isFlushing = false;
@@ -295,16 +297,14 @@ namespace VRCLightVolumes {
 
         // Clears every coalescing buffer after a flush or play-mode transition.
         private static void Clear() {
-            _managers.Clear();
             _volumes.Clear();
             _pointLights.Clear();
             _hierarchyRoots.Clear();
             _onboardingRoots.Clear();
             _onboardingRootsInOrder.Clear();
-            _managerBuffer.Clear();
             _volumeBuffer.Clear();
             _pointLightBuffer.Clear();
-            _refreshAllManagers = false;
+            _managerUpdateQueued = false;
         }
     }
 }

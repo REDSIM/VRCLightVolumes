@@ -1,3 +1,7 @@
+#if !UDONSHARP && (UNITY_EDITOR || COMPILER_UDONSHARP)
+#define UDONSHARP
+#endif
+
 using UnityEngine;
 using UnityEngine.Rendering;
 using System;
@@ -18,9 +22,9 @@ namespace VRCLightVolumes {
     [DisallowMultipleComponent]
 #if UDONSHARP
     [UdonBehaviourSyncMode(BehaviourSyncMode.None)]
-    public class PointLightVolumeInstance : UdonSharpBehaviour
+    public partial class PointLightVolumeInstance : UdonSharpBehaviour
 #else
-    public class PointLightVolumeInstance : MonoBehaviour
+    public partial class PointLightVolumeInstance : MonoBehaviour
 #endif
     {
         [Tooltip("Defines whether this point light volume can be moved at runtime. Disabling this option slightly improves performance. Don't forget to enable \"Auto Update Volumes\" in your Light Volumes Setup to get these dynamic updates!")]
@@ -69,14 +73,13 @@ namespace VRCLightVolumes {
         public float SquaredRange = 1f;
         [Tooltip("Average squared lossy scale of the light. Light Source Size uses this for range and size-aware specular calculations. Updates with UpdateTransform() method.")]
         public float SquaredScale = 1f;
-        [Tooltip("Reference to the scene's single Light Volume Manager. Assign it before registration and do not change it afterwards.")]
+        [Tooltip("Reference to the world's single Light Volume Manager. Assign it before registration and do not change it afterwards.")]
         public LightVolumeManager LightVolumeManager;
         [Tooltip("Internal stable manager registry tie-breaker used when this point light volume is enabled at runtime. Use SetWeight(float weight) to change priority.")]
         [HideInInspector] public int RegistryOrder = 2147483647;
         [Tooltip("Manager registry sort weight. Higher weights are uploaded to shaders first.")]
         [HideInInspector] public float RegistryWeight = 0f;
         [HideInInspector] public bool IsActive = true;
-
         [Header("Projection Source")]
         [Tooltip("Texture source used by this light's active LUT, cookie or cubemap projection.")]
         public Texture CustomTexture;
@@ -135,10 +138,8 @@ namespace VRCLightVolumes {
         [Tooltip("Writes runtime shadow output directly into the manager shadow atlas when the bake resolution matches it. Intended for external realtime baking; Bake In Game keeps a full-size source texture.")]
         [HideInInspector] public bool RuntimeShadowDirectOutput = false;
 
-        // Persistent authoring state. These fields deliberately remain part of the Udon program so the
-        // UdonSharp proxy and backing behaviour always share one serializable schema. Duplicate texture
-        // references are cleared from the temporary build scene, while runtime authoring references such as
-        // the shadow exclusion roots remain available to Udon.
+        // Persistent authoring state. These fields deliberately remain part of the Udon program so the UdonSharp proxy and backing behaviour always share one serializable schema. Duplicate texture
+        // references are cleared from the temporary build scene, while runtime authoring references such as the shadow exclusion roots remain available to Udon.
         [Tooltip("Parametric computes light falloff from settings. LUT uses X for cone falloff and Y for attenuation. Custom projects a cookie or cubemap.")]
         [HideInInspector] public int Projection = 0; // 0: parametric, 1: LUT, 2: custom cookie or cubemap
         [Tooltip("Radius in meters beyond which the light is culled. Fewer overlapping lights improve performance.")]
@@ -176,8 +177,9 @@ namespace VRCLightVolumes {
         [NonSerialized] public Material RuntimeShadowBlurMaterial;
 
         // Temporary exclusion state kept only while the shadow camera renders.
-        private Renderer[] _shadowExclusionRenderers = new Renderer[0];
-        private bool[] _shadowExclusionRendererStates = new bool[0];
+        private Renderer[] _shadowExclusionRenderers;
+        private bool[] _shadowExclusionRendererStates;
+        private int _shadowExclusionRendererCount;
 
         // Internal projection source metadata resolved by the editor authoring layer
         [HideInInspector] public bool CustomTextureIsCubemap = false;
@@ -205,7 +207,7 @@ namespace VRCLightVolumes {
         [NonSerialized] public bool AreaCookieAverageReadbackPending = false;
         [NonSerialized] public bool AreaCookieAverageReadbackDirty = false;
 #if COMPILER_UDONSHARP
-        private Color32[] _areaCookieAveragePixels = new Color32[0];
+        private Color32[] _areaCookieAveragePixels = new Color32[1];
 #endif
 
         // Local shader keywords used by runtime shadow blur material
@@ -235,19 +237,6 @@ namespace VRCLightVolumes {
         private RenderTexture _runtimeShadowRegistrationTexture;
         private RenderTexture _runtimeShadowBlurTempTexture;
         private RenderTexture _runtimeShadowMaterialBlitInputTexture;
-
-#if UNITY_EDITOR && !COMPILER_UDONSHARP
-        // Editor-only views of existing runtime state; no backing fields are added.
-        public bool RegisteredWithManagerPreview => _isRegisteredWithManager;
-        public bool RuntimeShadowBakeStartedPreview => _inGameBakeStarted;
-        public bool RuntimeShadowSourceInitializedPreview => _runtimeShadowSourceInitialized;
-        public int RuntimeShadowFaceIndexPreview => _runtimeShadowFaceIndex;
-        public float RuntimeShadowReceiverNearClipPreview => _runtimeShadowReceiverNearClip;
-        public float RuntimeShadowReceiverFarClipPreview => _runtimeShadowReceiverFarClip;
-        public RenderTexture RuntimeShadowDepthTexturePreview => _runtimeShadowDepthTexture;
-        public RenderTexture RuntimeShadowTexturePreview => _runtimeShadowTexture;
-        public RenderTexture RuntimeShadowRegistrationTexturePreview => _runtimeShadowRegistrationTexture;
-#endif
 
         // Local cubemap face rotations used by point-light runtime shadow rendering.
         private Quaternion _runtimeShadowFaceRotation0 = new Quaternion(0f, -0.70710678f, 0f, 0.70710678f);
@@ -284,14 +273,14 @@ namespace VRCLightVolumes {
         public void _onVarChange_Color() {
             if (_old_Color != Color) {
                 _old_Color = Color;
-                MarkRangeDirtyAndNotify(false, false, false);
+                MarkColorRangeDirtyAndNotify();
             }
         }
         // Recalculates range and uploads data when Udon changes light intensity.
         public void _onVarChange_Intensity() {
             if (_old_Intensity != Intensity) {
                 _old_Intensity = Intensity;
-                MarkRangeDirtyAndNotify(false, false, false);
+                MarkColorRangeDirtyAndNotify();
             }
         }
         // Rebuilds active-light data when Udon changes shading strength across zero.
@@ -311,20 +300,12 @@ namespace VRCLightVolumes {
         }
 #endif
 
-#if UNITY_EDITOR && !COMPILER_UDONSHARP
-        // Caches editor-observed scalar values after the editor coordinator mirrors them without proxy polling.
-        public void CacheEditorObservedValues() {
-            _old_Color = Color;
-            _old_Intensity = Intensity;
-            _old_ShadingStrength = ShadingStrength;
-        }
-#endif
-
         // Sends this instance change to the manager when it is active.
         private void NotifyManager(bool rebuildFinalData, bool customTexturesChanged, bool shadowTexturesChanged) {
             bool wasActive = IsActive;
-            IsActive = enabled && gameObject.activeInHierarchy && Intensity != 0 && Color != Color.black;
-            if (!enabled || !gameObject.activeInHierarchy) return;
+            bool runtimeEnabled = enabled && gameObject.activeInHierarchy;
+            IsActive = runtimeEnabled && Intensity != 0 && Color != Color.black;
+            if (!runtimeEnabled) return;
             RegisterWithManager();
             if (LightVolumeManager == null) return;
             if (wasActive != IsActive) {
@@ -334,21 +315,13 @@ namespace VRCLightVolumes {
             LightVolumeManager.NotifyPointLightVolumeChanged(this, rebuildFinalData, customTexturesChanged, shadowTexturesChanged);
         }
 
-        // Registers once with the scene's single manager.
+        // Registers once with the world's single manager.
         private void RegisterWithManager() {
+            if (_isRegisteredWithManager) return;
             IsActive = enabled && gameObject.activeInHierarchy && Intensity != 0 && Color != Color.black;
-            if (LightVolumeManager == null || !gameObject.activeInHierarchy || !enabled || _isRegisteredWithManager) return;
+            if (LightVolumeManager == null || !gameObject.activeInHierarchy || !enabled) return;
             _isRegisteredWithManager = true;
             LightVolumeManager.InitializePointLightVolume(this);
-        }
-
-        // Removes this instance from the scene's manager.
-        private void UnregisterFromManager() {
-            _isRegisteredWithManager = false;
-            if (LightVolumeManager == null) return;
-            bool customTexturesChanged = IsActive && (CustomTexture != null || CustomTextureMaterial != null);
-            bool shadowTexturesChanged = IsActive && ShadowMapID >= 0;
-            LightVolumeManager.DeinitializePointLightVolume(this, customTexturesChanged, shadowTexturesChanged);
         }
 
         // Registers the light and starts its optional one-shot runtime shadow bake.
@@ -376,13 +349,30 @@ namespace VRCLightVolumes {
 
         // Removes the light from the Manager registry and marks it inactive.
         private void OnDisable() {
-            UnregisterFromManager();
+            _isRegisteredWithManager = false;
+            if (LightVolumeManager != null) {
+                bool customTexturesChanged = IsActive && (CustomTexture != null || CustomTextureMaterial != null);
+                bool shadowTexturesChanged = IsActive && ShadowMapID >= 0;
+                LightVolumeManager.DeinitializePointLightVolume(this, customTexturesChanged, shadowTexturesChanged);
+            }
             IsActive = false;
         }
 
         // Releases runtime shadow resources owned by this point light.
         private void OnDestroy() {
-            ReleaseRuntimeShadowTextures();
+            if (ShadowMapTexture == _runtimeShadowTexture || ShadowMapTexture == _runtimeShadowRegistrationTexture) ShadowMapTexture = null;
+            ReleaseRuntimeShadowRenderTexture(_runtimeShadowDepthTexture);
+            ReleaseRuntimeShadowRenderTexture(_runtimeShadowTexture);
+            ReleaseRuntimeShadowRenderTexture(_runtimeShadowRegistrationTexture);
+            ReleaseRuntimeShadowRenderTexture(_runtimeShadowBlurTempTexture);
+            ReleaseRuntimeShadowRenderTexture(_runtimeShadowMaterialBlitInputTexture);
+            _runtimeShadowDepthTexture = null;
+            _runtimeShadowTexture = null;
+            _runtimeShadowRegistrationTexture = null;
+            _runtimeShadowBlurTempTexture = null;
+            _runtimeShadowMaterialBlitInputTexture = null;
+            _runtimeShadowFaceIndex = 0;
+            _runtimeShadowSourceInitialized = false;
         }
 
 #if COMPILER_UDONSHARP
@@ -398,7 +388,6 @@ namespace VRCLightVolumes {
                 LightVolumeManager.CompleteAreaCookieAverageReadback(this, false, Color.clear);
                 return;
             }
-            if (_areaCookieAveragePixels.Length != 1) _areaCookieAveragePixels = new Color32[1];
             if (!request.TryGetData(_areaCookieAveragePixels)) {
                 LightVolumeManager.CompleteAreaCookieAverageReadback(this, false, Color.clear);
                 return;
@@ -407,7 +396,7 @@ namespace VRCLightVolumes {
         }
 #else
         // Receives the area-cookie fallback average and sends it back to the manager
-        public void OnAsyncGpuReadbackComplete(AsyncGPUReadbackRequest request) {
+        internal void OnUnityAsyncGpuReadbackComplete(AsyncGPUReadbackRequest request) {
             if (LightVolumeManager == null) {
                 AreaCookieAverageReadbackPending = false;
                 AreaCookieAverageReadbackDirty = false;
@@ -433,6 +422,14 @@ namespace VRCLightVolumes {
         }
 #endif
 
+        // Called before the manager replaces its complete atlas from registered source textures. A direct baker owns final pixels outside its 1x1 registration source, so it must restart.
+        public void InvalidateRuntimeDirectShadowAtlas() {
+            bool ownsDirectAtlas = RuntimeShadowDirectOutput && _runtimeShadowRegistrationTexture != null
+                && ShadowMapTexture == _runtimeShadowRegistrationTexture;
+            if (!ownsDirectAtlas) return;
+            _runtimeShadowFaceIndex = 0;
+        }
+
         // Sets dynamic mode and rebuilds the manager light list only when it changes
         public void SetDynamic(bool isDynamic) {
             if (IsDynamic == isDynamic) return;
@@ -444,17 +441,10 @@ namespace VRCLightVolumes {
         public void SetWeight(float weight) {
             if (RegistryWeight == weight) return;
             RegistryWeight = weight;
-            RegisterWithManager();
+            if (_isRegisteredWithManager)
+                IsActive = enabled && gameObject.activeInHierarchy && Intensity != 0 && Color != Color.black;
+            else RegisterWithManager();
             if (LightVolumeManager != null) LightVolumeManager.ReorderPointLightVolume(this);
-        }
-
-        // Called before the manager replaces its complete atlas from registered source textures.
-        // A direct baker owns final pixels outside its 1x1 registration source, so it must restart.
-        public void InvalidateRuntimeDirectShadowAtlas() {
-            bool ownsDirectAtlas = RuntimeShadowDirectOutput && _runtimeShadowRegistrationTexture != null
-                && ShadowMapTexture == _runtimeShadowRegistrationTexture;
-            if (!ownsDirectAtlas) return;
-            _runtimeShadowFaceIndex = 0;
         }
 
         // Sets light source size or range data for LUT mode
@@ -472,7 +462,7 @@ namespace VRCLightVolumes {
             ProjectionMode = 1; // 1: LUT
             if (LightType == 1) OuterAngleTan = Mathf.Tan(Angle); // 1: spot
             OuterAngleCos = Mathf.Cos(Angle);
-            UpdateRotation();
+            UpdateRotationFromTransformCore();
             MarkRangeDirtyAndNotify(true, CustomTexture != null || CustomTextureMaterial != null, false);
         }
 
@@ -536,13 +526,14 @@ namespace VRCLightVolumes {
 
         // Sets the light into the point light type
         public void SetPointLight() {
-            Vector3 position = transform.position;
+            Transform instanceTransform = transform;
+            Vector3 position = instanceTransform.position;
             if (LightType == 0 && Position == position && ShadowMapUsesCubemap) return;
             bool shadowTexturesChanged = !ShadowMapUsesCubemap && (ShadowMapID >= 0 || ShadowMapTexture != null || ShadowMapMaterial != null);
             LightType = 0; // 0: point
             ShadowMapUsesCubemap = true;
             Position = position;
-            UpdateRotation();
+            if (ProjectionMode != 0) UpdateRotationCore(instanceTransform.rotation, Matrix4x4.identity);
             MarkRangeDirtyAndNotify(false, false, shadowTexturesChanged);
         }
 
@@ -552,9 +543,11 @@ namespace VRCLightVolumes {
             float outerAngleTan = Mathf.Tan(angle);
             float outerAngleCos = Mathf.Cos(angle);
             float coneFalloff = 1f / (Mathf.Cos(angle * (1.0f - Mathf.Clamp01(falloff))) - outerAngleCos);
-            Vector3 position = transform.position;
-            Vector3 direction = transform.forward;
-            Quaternion rotation = Quaternion.Inverse(transform.rotation);
+            Transform instanceTransform = transform;
+            Vector3 position = instanceTransform.position;
+            Quaternion transformRotation = instanceTransform.rotation;
+            Vector3 direction = transformRotation * Vector3.forward;
+            Quaternion rotation = Quaternion.Inverse(transformRotation);
             if (LightType == 1 && Angle == angle && OuterAngleTan == outerAngleTan && Position == position && (ProjectionMode == 2 ? Rotation == rotation : Direction == direction && OuterAngleCos == outerAngleCos && ConeFalloff == coneFalloff)) return;
             LightType = 1; // 1: spot
             Angle = angle;
@@ -564,7 +557,7 @@ namespace VRCLightVolumes {
                 ConeFalloff = coneFalloff;
             }
             Position = position;
-            UpdateRotation();
+            UpdateRotationCore(transformRotation, Matrix4x4.identity);
             MarkRangeDirtyAndNotify(false, false, false);
         }
 
@@ -573,9 +566,11 @@ namespace VRCLightVolumes {
             float angle = angleDeg * Mathf.Deg2Rad * 0.5f;
             float outerAngleTan = Mathf.Tan(angle);
             float outerAngleCos = Mathf.Cos(angle);
-            Vector3 position = transform.position;
-            Vector3 direction = transform.forward;
-            Quaternion rotation = Quaternion.Inverse(transform.rotation);
+            Transform instanceTransform = transform;
+            Vector3 position = instanceTransform.position;
+            Quaternion transformRotation = instanceTransform.rotation;
+            Vector3 direction = transformRotation * Vector3.forward;
+            Quaternion rotation = Quaternion.Inverse(transformRotation);
             if (LightType == 1 && Angle == angle && OuterAngleTan == outerAngleTan && Position == position && (ProjectionMode == 2 ? Rotation == rotation : Direction == direction && OuterAngleCos == outerAngleCos)) return;
             LightType = 1; // 1: spot
             Angle = angle;
@@ -584,19 +579,22 @@ namespace VRCLightVolumes {
                 OuterAngleCos = outerAngleCos;
             }
             Position = position;
-            UpdateRotation();
+            UpdateRotationCore(transformRotation, Matrix4x4.identity);
             MarkRangeDirtyAndNotify(false, false, false);
         }
-        
+
         // Sets the light into the area light type
         public void SetAreaLight() {
             bool shadowTexturesChanged = !ShadowMapUsesCubemap && (ShadowMapID >= 0 || ShadowMapTexture != null || ShadowMapMaterial != null);
+            Transform instanceTransform = transform;
+            Vector3 lossyScale = instanceTransform.lossyScale;
+            Quaternion transformRotation = instanceTransform.rotation;
             LightType = 2; // 2: area
             ShadowMapUsesCubemap = true;
-            Position = transform.position;
-            Width = Mathf.Max(Mathf.Abs(transform.lossyScale.x), 0.001f);
-            Height = Mathf.Max(Mathf.Abs(transform.lossyScale.y), 0.001f);
-            UpdateRotation();
+            Position = instanceTransform.position;
+            Width = Mathf.Max(Mathf.Abs(lossyScale.x), 0.001f);
+            Height = Mathf.Max(Mathf.Abs(lossyScale.y), 0.001f);
+            UpdateRotationCore(transformRotation, instanceTransform.localToWorldMatrix);
             MarkRangeDirtyAndNotify(true, CustomTexture != null || CustomTextureMaterial != null, shadowTexturesChanged);
         }
 
@@ -605,7 +603,7 @@ namespace VRCLightVolumes {
             if (Color == color) return;
             Color = color;
             _old_Color = color;
-            MarkRangeDirtyAndNotify(false, false, false);
+            MarkColorRangeDirtyAndNotify();
         }
 
         // Sets light source intensity
@@ -613,7 +611,17 @@ namespace VRCLightVolumes {
             if (Intensity == intensity) return;
             Intensity = intensity;
             _old_Intensity = intensity;
-            MarkRangeDirtyAndNotify(false, false, false);
+            MarkColorRangeDirtyAndNotify();
+        }
+
+        // Sets color and intensity with one cross-behaviour manager notification.
+        public void SetColorAndIntensity(Color color, float intensity) {
+            if (Color == color && Intensity == intensity) return;
+            Color = color;
+            Intensity = intensity;
+            _old_Color = color;
+            _old_Intensity = intensity;
+            MarkColorRangeDirtyAndNotify();
         }
 
         // Sets Normal Masking and shadow strength
@@ -640,22 +648,24 @@ namespace VRCLightVolumes {
             int rootCount = ExclusionMask != null ? ExclusionMask.Length : 0;
             if (rootCount == 0) return;
 
-            Renderer[][] rendererGroups = new Renderer[rootCount][];
-            int rendererCount = 0;
+            int rendererIndex = 0;
             for (int i = 0; i < rootCount; i++) {
                 GameObject root = ExclusionMask[i];
                 if (root == null) continue;
                 Renderer[] rootRenderers = root.GetComponentsInChildren<Renderer>(true);
-                rendererGroups[i] = rootRenderers;
-                rendererCount += rootRenderers.Length;
-            }
-
-            _shadowExclusionRenderers = new Renderer[rendererCount];
-            _shadowExclusionRendererStates = new bool[rendererCount];
-            int rendererIndex = 0;
-            for (int i = 0; i < rootCount; i++) {
-                Renderer[] rootRenderers = rendererGroups[i];
-                if (rootRenderers == null) continue;
+                int requiredCapacity = rendererIndex + rootRenderers.Length;
+                if (_shadowExclusionRenderers == null || _shadowExclusionRenderers.Length < requiredCapacity) {
+                    int capacity = _shadowExclusionRenderers != null && _shadowExclusionRenderers.Length > 0 ? _shadowExclusionRenderers.Length : 8;
+                    while (capacity < requiredCapacity) capacity *= 2;
+                    Renderer[] renderers = new Renderer[capacity];
+                    bool[] states = new bool[capacity];
+                    if (rendererIndex > 0) {
+                        Array.Copy(_shadowExclusionRenderers, 0, renderers, 0, rendererIndex);
+                        Array.Copy(_shadowExclusionRendererStates, 0, states, 0, rendererIndex);
+                    }
+                    _shadowExclusionRenderers = renderers;
+                    _shadowExclusionRendererStates = states;
+                }
                 for (int j = 0; j < rootRenderers.Length; j++) {
                     Renderer renderer = rootRenderers[j];
                     if (renderer == null) continue;
@@ -663,27 +673,21 @@ namespace VRCLightVolumes {
                     _shadowExclusionRendererStates[rendererIndex] = renderer.forceRenderingOff;
                     renderer.forceRenderingOff = true;
                     rendererIndex++;
+                    _shadowExclusionRendererCount = rendererIndex;
                 }
             }
         }
 
         // Restores the exact renderer states captured by ApplyExclusionMask.
         private void RestoreExclusionMask() {
-            int rendererCount = _shadowExclusionRenderers != null ? _shadowExclusionRenderers.Length : 0;
-            for (int i = rendererCount - 1; i >= 0; i--) {
+            for (int i = _shadowExclusionRendererCount - 1; i >= 0; i--) {
                 Renderer renderer = _shadowExclusionRenderers[i];
                 if (renderer != null) renderer.forceRenderingOff = _shadowExclusionRendererStates[i];
+                _shadowExclusionRenderers[i] = null;
+                _shadowExclusionRendererStates[i] = false;
             }
-            _shadowExclusionRenderers = new Renderer[0];
-            _shadowExclusionRendererStates = new bool[0];
+            _shadowExclusionRendererCount = 0;
         }
-
-#if UNITY_EDITOR && !COMPILER_UDONSHARP
-        // Editor safety net used by the asset baker's finally block if rendering throws unexpectedly.
-        public void EditorRestoreExclusionMask() {
-            RestoreExclusionMask();
-        }
-#endif
 
         // Runs one runtime shadow bake trigger using the current runtime bake options.
         public void BakeShadows() {
@@ -840,8 +844,7 @@ namespace VRCLightVolumes {
             depthEncodeMaterial.SetTexture(_runtimeShadowDepthTextureID, _runtimeShadowDepthTexture, RenderTextureSubElement.Depth);
             if (useBlur) useBlur = PrepareRuntimeShadowBlurMaterial(blurUsesUniformRadius, bakeTanHalfFov, bakeResolution, useCubemapShadow, useSphericalBlur);
 
-            // Render selected faces into the output array using the shared camera. There are deliberately no
-            // early returns between Apply and Restore because Udon does not support try/finally.
+            // Render selected faces into the output array using the shared camera. There are deliberately no early returns between Apply and Restore because Udon does not support try/finally.
             Quaternion previousCameraRotation = runtimeShadowCameraTransform.rotation;
             runtimeShadowCameraTransform.position = bakePosition;
             RenderTexture previousTargetTexture = runtimeShadowCamera.targetTexture;
@@ -950,12 +953,9 @@ namespace VRCLightVolumes {
         // Updates this light's runtime shadow source and returns whether shader metadata changed.
         private bool ApplyRuntimeShadowSourceInternal(Vector3 bakePosition, Quaternion bakeRotation, bool rangeChanged, bool useDirectOutput, bool useCubemapShadow) {
             Texture sourceTexture = useDirectOutput ? _runtimeShadowRegistrationTexture : _runtimeShadowTexture;
-            bool sourceIsCubemap = sourceTexture != null && sourceTexture.dimension == TextureDimension.Cube;
-            bool sourceHasSlices = sourceTexture != null && sourceTexture.dimension == TextureDimension.Tex2DArray && useCubemapShadow;
-            bool sourceChanged = ShadowMapID < 0 || ShadowMapTexture != sourceTexture || ShadowMapMaterial != null || AutoUpdateShadowMap || ShadowMapTextureIsCubemap != sourceIsCubemap || ShadowMapTextureHasDepthSlices != sourceHasSlices || ShadowMapUsesCubemap != useCubemapShadow;
-            // Runtime shadow metadata must match the exact transform used by this bake. Unity's
-            // Vector3/Quaternion operators are approximate, which can otherwise retain a nearby
-            // stale origin/rotation and prevent the exact same-origin receiver path from engaging.
+            bool sourceHasSlices = sourceTexture != null && useCubemapShadow;
+            bool sourceChanged = ShadowMapID < 0 || ShadowMapTexture != sourceTexture || ShadowMapMaterial != null || AutoUpdateShadowMap || ShadowMapTextureIsCubemap || ShadowMapTextureHasDepthSlices != sourceHasSlices || ShadowMapUsesCubemap != useCubemapShadow;
+            // Runtime shadow metadata must match the exact transform used by this bake. Unity's Vector3/Quaternion operators are approximate, which can otherwise retain a nearby stale origin/rotation and prevent the exact same-origin receiver path from engaging.
             bool bakePositionChanged = ShadowBakePosition.x != bakePosition.x || ShadowBakePosition.y != bakePosition.y || ShadowBakePosition.z != bakePosition.z;
             bool bakeRotationChanged = ShadowBakeRotation.x != bakeRotation.x || ShadowBakeRotation.y != bakeRotation.y || ShadowBakeRotation.z != bakeRotation.z || ShadowBakeRotation.w != bakeRotation.w;
             bool metadataChanged = sourceChanged || rangeChanged || (WorldSpaceShadows && (bakePositionChanged || bakeRotationChanged));
@@ -965,7 +965,7 @@ namespace VRCLightVolumes {
                 ShadowMapTexture = sourceTexture;
                 ShadowMapMaterial = null;
                 AutoUpdateShadowMap = false;
-                ShadowMapTextureIsCubemap = sourceIsCubemap;
+                ShadowMapTextureIsCubemap = false;
                 ShadowMapTextureHasDepthSlices = sourceHasSlices;
                 ShadowMapUsesCubemap = useCubemapShadow;
                 _runtimeShadowSourceInitialized = false;
@@ -1098,10 +1098,9 @@ namespace VRCLightVolumes {
             // Upload blur constants after keywords select planar/spherical/direct shader code.
             blurMaterial.SetFloat(_runtimeShadowBlurRadiusID, blurRadius * (Mathf.Max(bakeResolution, 1) / ShadowBlurBaseResolution));
             if (blurUsesUniformRadius) blurMaterial.SetFloat(_runtimeShadowBlurDepthID, 0f);
-            else {
-                // Contact hardening is exponential so low values stay subtle while high values expand quickly.
-                blurMaterial.SetFloat(_runtimeShadowBlurDepthID, (Mathf.Pow(10f, blurDepth) - 1f) * 0.1111111111f);
-            }
+            // Contact hardening is exponential so low values stay subtle while high values expand quickly.
+            else blurMaterial.SetFloat(_runtimeShadowBlurDepthID, (Mathf.Pow(10f, blurDepth) - 1f) * 0.1111111111f);
+
             blurMaterial.SetFloat(_runtimeShadowInvResolutionID, 1f / bakeResolution);
             // Single-slice spot blur needs projection scale compensation; cubemap blur does not.
             if (!useCubemapShadow) blurMaterial.SetFloat(_runtimeShadowTanHalfFovID, tanHalfFov);
@@ -1183,34 +1182,42 @@ namespace VRCLightVolumes {
             ReleaseIdleRuntimeShadowTextures();
         }
 
-        // Releases all locally-owned runtime shadow textures.
-        private void ReleaseRuntimeShadowTextures() {
-            if (ShadowMapTexture == _runtimeShadowTexture || ShadowMapTexture == _runtimeShadowRegistrationTexture) ShadowMapTexture = null;
-            ReleaseRuntimeShadowRenderTexture(_runtimeShadowDepthTexture);
-            ReleaseRuntimeShadowRenderTexture(_runtimeShadowTexture);
-            ReleaseRuntimeShadowRenderTexture(_runtimeShadowRegistrationTexture);
-            ReleaseRuntimeShadowRenderTexture(_runtimeShadowBlurTempTexture);
-            ReleaseRuntimeShadowRenderTexture(_runtimeShadowMaterialBlitInputTexture);
-            _runtimeShadowDepthTexture = null;
-            _runtimeShadowTexture = null;
-            _runtimeShadowRegistrationTexture = null;
-            _runtimeShadowBlurTempTexture = null;
-            _runtimeShadowMaterialBlitInputTexture = null;
-            _runtimeShadowFaceIndex = 0;
-            _runtimeShadowSourceInitialized = false;
-        }
-
         // Marks this light range dirty and tells the manager which runtime data needs rebuilding.
         private void MarkRangeDirtyAndNotify(bool rebuildFinalData, bool customTexturesChanged, bool shadowTexturesChanged) {
             IsRangeDirty = true;
             NotifyManager(rebuildFinalData, customTexturesChanged, shadowTexturesChanged);
         }
 
+        // Color and intensity share a narrow notification; the manager coalesces repeated writes to this compact shader slot and widens unsupported Point profiles to a full record pack.
+        private void MarkColorRangeDirtyAndNotify() {
+            bool wasActive = IsActive;
+            bool wasRegistered = _isRegisteredWithManager;
+            IsRangeDirty = true;
+            bool runtimeEnabled = enabled && gameObject.activeInHierarchy;
+            IsActive = runtimeEnabled && Intensity != 0 && Color != Color.black;
+            if (!runtimeEnabled) return;
+            if (!wasRegistered) RegisterWithManager();
+            LightVolumeManager manager = LightVolumeManager;
+            if (manager == null) return;
+
+            // Suite 1.6 cases 138-139 show that moving this exact basic-Point calculation to the source is neutral for one write and wins when Color and Intensity both change. Keep structural transitions and every richer profile on the manager's canonical path.
+            bool sourceLocalRange = wasActive && IsActive && wasRegistered && LightType == 0 && ProjectionMode == 0 && ShadowMapID < 0f && ShadowMapTexture == null && ShadowMapMaterial == null;
+            if (sourceLocalRange) {
+                float cutoff = manager.LightsBrightnessCutoff;
+                float luminance = Mathf.Max(Color.r, Mathf.Max(Color.g, Color.b));
+                float squaredSize = Mathf.Abs(SquaredScale * LightSourceSize * LightSourceSize);
+                SquaredRange = Mathf.Max(Mathf.PI * 2f * luminance * Mathf.Abs(Intensity) / (cutoff * cutoff) - 1f, 0f) * squaredSize;
+                IsRangeDirty = false;
+            }
+
+            manager.NotifyPointLightColorRangeChanged(this);
+        }
+
         // Applies the internal custom projection mode without touching texture source fields
         private void SetCustomProjectionMode() {
             ProjectionMode = 2; // 2: custom cookie or cubemap
             if (LightType == 1) OuterAngleTan = Mathf.Tan(Angle); // 1: spot
-            UpdateRotation();
+            UpdateRotationFromTransformCore();
         }
 
         // Applies the internal parametric projection mode without touching texture source fields
@@ -1218,339 +1225,109 @@ namespace VRCLightVolumes {
             ProjectionMode = 0; // 0: parametric
             if (LightType == 1) OuterAngleTan = Mathf.Tan(Angle); // 1: spot
             OuterAngleCos = Mathf.Cos(Angle);
-            UpdateRotation();
+            UpdateRotationFromTransformCore();
         }
 
         // Updates data required for shader
         public void UpdateTransform() {
+            Transform instanceTransform = transform;
+            Vector3 position = instanceTransform.position;
+            Quaternion rotation = instanceTransform.rotation;
+            Vector3 lossyScale = instanceTransform.lossyScale;
+            bool positionChanged = _prevPosition != position;
+            bool rotationChanged = _prevRotation != rotation;
+            bool scaleChanged = _prevScale != lossyScale;
+            if (!positionChanged && !rotationChanged && !scaleChanged) return;
 
-            // Position Update
-            Vector3 pos = transform.position;
-            if (_prevPosition != pos) {
-                _prevPosition = pos;
-                UpdatePosition();
+            if (positionChanged) {
+                _prevPosition = position;
+                Position = position;
             }
-
-            // Rotation Update
-            Quaternion rot = transform.rotation;
-            if (_prevRotation != rot) {
-                _prevRotation = rot;
-                UpdateRotation();
+            if (scaleChanged) {
+                _prevScale = lossyScale;
+                UpdateScaleCore(lossyScale);
+                IsRangeDirty = true;
             }
-
-            // Scale Update
-            Vector3 lscale = transform.lossyScale;
-            if (_prevScale != lscale) {
-                _prevScale = lscale;
-                UpdateScale();
+            if (rotationChanged || (scaleChanged && LightType == 2)) {
+                _prevRotation = rotation;
+                Matrix4x4 localToWorldMatrix = LightType == 2 ? instanceTransform.localToWorldMatrix : Matrix4x4.identity;
+                UpdateRotationCore(rotation, localToWorldMatrix);
             }
-              
+            NotifyManager(false, false, false);
         }
 
         // Force update position
         public void UpdatePosition() {
-            Position = transform.position;
+            Transform instanceTransform = transform;
+            Vector3 position = instanceTransform.position;
+            _prevPosition = position;
+            Position = position;
             NotifyManager(false, false, false);
         }
 
         // Resolves the Area Cookie X/Y reflection relative to the quaternion frame sent to shaders.
-        private void RefreshAreaCookieMirror(Quaternion transformRotation) {
-            Matrix4x4 localToWorldMatrix = transform.localToWorldMatrix;
+        private void RefreshAreaCookieMirror(Quaternion transformRotation, Matrix4x4 localToWorldMatrix) {
             Vector3 matrixXAxis = new Vector3(localToWorldMatrix.m00, localToWorldMatrix.m10, localToWorldMatrix.m20);
             Vector3 matrixYAxis = new Vector3(localToWorldMatrix.m01, localToWorldMatrix.m11, localToWorldMatrix.m21);
             bool flipCookieX = Vector3.Dot(matrixXAxis, transformRotation * Vector3.right) < 0f;
             bool flipCookieY = Vector3.Dot(matrixYAxis, transformRotation * Vector3.up) < 0f;
             AreaCookieMirror = (flipCookieY ? 2f : 1f) * (flipCookieX ? -1f : 1f);
         }
-        
+
+        // Applies caller-cached rotation data without notifying the manager.
+        private void UpdateRotationCore(Quaternion transformRotation, Matrix4x4 localToWorldMatrix) {
+            if (LightType == 2) { // 2: area
+                Rotation = transformRotation;
+                RefreshAreaCookieMirror(transformRotation, localToWorldMatrix);
+            } else if (LightType == 1 && ProjectionMode != 2) { // 1: spot, 2: custom cookie
+                Direction = transformRotation * Vector3.forward;
+            } else if (ProjectionMode != 0) { // 0: parametric; non-parametric point/cookie uses inverse rotation
+                Rotation = Quaternion.Inverse(transformRotation);
+            }
+        }
+
+        // Reads the Transform once and applies rotation data without notifying the manager.
+        private void UpdateRotationFromTransformCore() {
+            Transform instanceTransform = transform;
+            Quaternion transformRotation = instanceTransform.rotation;
+            _prevRotation = transformRotation;
+            if (LightType == 0 && ProjectionMode == 0) return;
+            Matrix4x4 localToWorldMatrix = LightType == 2 ? instanceTransform.localToWorldMatrix : Matrix4x4.identity;
+            UpdateRotationCore(transformRotation, localToWorldMatrix);
+        }
+
         // Force update rotation
         public void UpdateRotation() {
-            Quaternion rot = transform.rotation;
-            if (LightType == 2) { // 2: area
-                Rotation = rot;
-                RefreshAreaCookieMirror(rot);
-            } else if (LightType == 1 && ProjectionMode != 2) { // 1: spot, 2: custom cookie
-                Direction = transform.forward;
-            } else if (ProjectionMode != 0) { // 0: parametric; non-parametric point/cookie uses inverse rotation
-                rot = Quaternion.Inverse(rot);
-                Rotation = rot;
-            }
+            UpdateRotationFromTransformCore();
             NotifyManager(false, false, false);
+        }
+
+        // Applies caller-cached scale data without notifying the manager.
+        private void UpdateScaleCore(Vector3 lossyScale) {
+            if (LightType == 2) { // 2: area
+                Width = Mathf.Max(Mathf.Abs(lossyScale.x), 0.001f);
+                Height = Mathf.Max(Mathf.Abs(lossyScale.y), 0.001f);
+            }
+            float averageScale = (Mathf.Abs(lossyScale.x) + Mathf.Abs(lossyScale.y) + Mathf.Abs(lossyScale.z)) / 3;
+            SquaredScale = averageScale * averageScale;
         }
 
         // Force update scale
         public void UpdateScale() {
-            Vector3 lscale = transform.lossyScale;
-            if (LightType == 2) { // 2: area
-                Width = Mathf.Max(Mathf.Abs(lscale.x), 0.001f);
-                Height = Mathf.Max(Mathf.Abs(lscale.y), 0.001f);
-                UpdateRotation();
-            }
-            float averageScale = (Mathf.Abs(lscale.x) + Mathf.Abs(lscale.y) + Mathf.Abs(lscale.z)) / 3;
-            SquaredScale = averageScale * averageScale;
-            MarkRangeDirtyAndNotify(false, false, false);
-        }
-
-
-#if UNITY_EDITOR && !COMPILER_UDONSHARP
-        // Returns the persistent source selected by the authoring projection mode.
-        public UnityEngine.Object GetProjectionSource() {
-            if (LightType == 2) return Cookie; // 2: area
-            if (Projection == 1) return FalloffLUT; // 1: LUT
-            if (Projection != 2) return null; // 2: custom
-            if (LightType == 0) return Cubemap; // 0: point
-            if (LightType == 1) return Cookie; // 1: spot
-            return null;
-        }
-
-        // Returns the active authoring projection source when it is a texture.
-        public Texture GetCustomTexture() {
-            return GetProjectionSource() as Texture;
-        }
-
-        // Returns the active authoring projection source when it is a material.
-        public Material GetCustomTextureMaterial() {
-            return GetProjectionSource() as Material;
-        }
-
-        // Returns the runtime projection source type encoded for the Manager.
-        public int GetProjectionType() {
-            UnityEngine.Object source = GetProjectionSource();
-            if (!HasProjectionSource()) return 0;
-            if (source is Texture) return 1;
-            if (source is Material) return 2;
-            return 0;
-        }
-
-        // Checks whether the selected source is valid for the current light and projection type.
-        public bool HasProjectionSource() {
-            UnityEngine.Object source = GetProjectionSource();
-            if (source is Material) return true;
-            if (!(source is Texture)) return false;
-            if (LightType == 2 || Projection == 1) return true;
-            return Projection == 2 && (LightType == 0 || LightType == 1);
-        }
-
-        // Checks whether this light consumes six cubemap slices in the projection atlas.
-        public bool UsesCubemapProjection() {
-            return LightType == 0 && Projection == 2 && HasProjectionSource();
-        }
-
-        // Resolves authoring settings to the projection mode consumed at runtime.
-        private int GetAuthoringProjectionMode() {
-            if (!HasProjectionSource()) return 0;
-            if (LightType == 2) return 2;
-            return Projection == 1 ? 1 : Projection == 2 ? 2 : 0;
-        }
-
-        // Checks whether an editor source may change without replacing its object reference.
-        private static bool IsAnimatedEditorSource(UnityEngine.Object source) {
-            return source is RenderTexture || source is Material;
-        }
-
-        // Checks whether a texture is a Cubemap or cube-dimension RenderTexture.
-        private static bool IsEditorCubemapTexture(Texture texture) {
-            if (texture is Cubemap) return true;
-            RenderTexture renderTexture = texture as RenderTexture;
-            return renderTexture != null && renderTexture.dimension == TextureDimension.Cube;
-        }
-
-        // Checks whether a texture stores independent array or cubemap-face slices.
-        private static bool EditorTextureHasDepthSlices(Texture texture) {
-            RenderTexture renderTexture = texture as RenderTexture;
-            if (renderTexture != null) return renderTexture.dimension == TextureDimension.Tex2DArray && renderTexture.volumeDepth > 1;
-            return texture is Texture2DArray;
-        }
-
-        // Returns the persistent shadow source when it is a texture.
-        public Texture GetShadowMapTexture() {
-            return ShadowMap as Texture;
-        }
-
-        // Returns the persistent shadow source when it is a material.
-        public Material GetShadowMapMaterial() {
-            return ShadowMap as Material;
-        }
-
-        // Checks whether a supported texture or material shadow source is assigned.
-        public bool HasShadowMapSource() {
-            return ShadowMap is Texture || ShadowMap is Material;
-        }
-
-        // Resolves whether the current light settings require a six-face shadow bake.
-        public bool ShouldBakeCubemapShadows() {
-            return LightType != 1 || ForceCubemapShadows || Angle >= Mathf.PI; // 1: spot
-        }
-
-        // Checks whether the assigned or generated shadow source occupies six atlas slices.
-        public bool UsesCubemapShadows() {
-            Texture texture = GetShadowMapTexture();
-            if (IsEditorCubemapTexture(texture) || EditorTextureHasDepthSlices(texture)) return true;
-            return ShouldBakeCubemapShadows();
-        }
-
-        // Returns a positive near clip distance safe for the shadow camera.
-        public float GetShadowNearClip() {
-            return Mathf.Max(NearClip, 0.0001f);
-        }
-
-        // Returns a far clip beyond the near plane, using calculated range when no override is set.
-        public float GetShadowFarClip() {
-            float nearClip = GetShadowNearClip();
-            float farClip = FarClip > 0f ? FarClip : GetCalculatedShadowFarClip();
-            return Mathf.Max(farClip, nearClip + 0.0001f);
-        }
-
-        // Calculates shadow-camera range from the current projection, size and brightness cutoff.
-        private float GetCalculatedShadowFarClip() {
-            Vector3 lossyScale = transform.lossyScale;
-            float averageScale = (Mathf.Abs(lossyScale.x) + Mathf.Abs(lossyScale.y) + Mathf.Abs(lossyScale.z)) / 3f;
-            float cutoff = LightVolumeManager != null ? LightVolumeManager.LightsBrightnessCutoff : 0.35f;
-
-            if (LightType == 2) {
-                float width = Mathf.Max(Mathf.Abs(lossyScale.x), 0.001f);
-                float height = Mathf.Max(Mathf.Abs(lossyScale.y), 0.001f);
-                return Mathf.Max(Mathf.Sqrt(ComputeEditorAreaLightSquaredRange(width, height, Color, Intensity * Mathf.PI, cutoff)), 0.0001f);
-            }
-            if (Projection == 1 && HasProjectionSource()) return Mathf.Max(Range * averageScale, 0.0001f);
-
-            float size = Mathf.Max(LightSourceSize * averageScale, 0.0001f);
-            float luminance = Mathf.Max(Color.r, Mathf.Max(Color.g, Color.b));
-            float squaredRange = Mathf.Max(Mathf.PI * 2f * luminance * Mathf.Abs(Intensity) / (cutoff * cutoff) - 1f, 0f) * size * size;
-            return Mathf.Max(Mathf.Sqrt(squaredRange), 0.0001f);
-        }
-
-        // Estimates the squared culling range of an Area Light for editor shadow baking.
-        private static float ComputeEditorAreaLightSquaredRange(float width, float height, Color color, float intensity, float cutoff) {
-            float luminance = Mathf.Max(color.r, Mathf.Max(color.g, color.b)) * Mathf.Abs(intensity);
-            if (luminance <= 0.000001f) return 0f;
-
-            float minSolidAngle = cutoff / luminance;
-            if (minSolidAngle >= Mathf.PI * 2f - 0.0001f) return 0f;
-            minSolidAngle = Mathf.Max(minSolidAngle, 0.000001f);
-
-            float area = width * height;
-            float shape = 0.25f * (width * width + height * height);
-            float tangent = Mathf.Tan(0.25f * minSolidAngle);
-            float tangentSquared = Mathf.Max(tangent * tangent, 0.000001f);
-            float scaledShape = tangentSquared * shape;
-            float discriminant = Mathf.Sqrt(scaledShape * scaledShape + 4f * tangentSquared * area * area);
-            return Mathf.Max((discriminant - scaledShape) * 0.125f / tangentSquared, 0f);
-        }
-
-        // Prevents editor synchronization from replacing a live runtime-generated shadow source.
-        private bool PreserveRuntimeShadowSourceInEditor() {
-            if (!Application.isPlaying || !Shadows) return false;
-            Texture sourceTexture = GetShadowMapTexture();
-            if (BakeInGame) return ShadowMapTexture != sourceTexture;
-            return ShadowMapTexture != null && ShadowMapTexture != sourceTexture;
-        }
-
-        // Compares authoring projection state with the runtime fields mirrored to this instance.
-        public bool HasEditorCustomTextureChanges() {
-            Texture texture = GetCustomTexture();
-            Material material = GetCustomTextureMaterial();
-            int mode = GetAuthoringProjectionMode();
-            int type = GetProjectionType();
-            return CustomTexture != texture || CustomTextureMaterial != material || ProjectionMode != mode || ProjectionType != type
-                || CustomTextureIsCubemap != IsEditorCubemapTexture(texture) || CustomTextureHasDepthSlices != EditorTextureHasDepthSlices(texture);
-        }
-
-        // Compares authoring shadow state with the runtime fields mirrored to this instance.
-        public bool HasEditorShadowTextureChanges() {
-            if (PreserveRuntimeShadowSourceInEditor()) return ShadowMapUsesCubemap != ShouldBakeCubemapShadows();
-
-            Texture texture = Shadows ? GetShadowMapTexture() : null;
-            Material material = Shadows ? GetShadowMapMaterial() : null;
-            bool usesCubemap = Shadows && UsesCubemapShadows();
-            return ShadowMapTexture != texture || ShadowMapMaterial != material || ShadowMapUsesCubemap != usesCubemap || ShadowMapTextureIsCubemap != IsEditorCubemapTexture(texture)
-                || ShadowMapTextureHasDepthSlices != EditorTextureHasDepthSlices(texture) || AutoUpdateShadowMap != (Shadows && IsAnimatedEditorSource(ShadowMap));
-        }
-
-        // Rebuilds all shader-facing data from the single serialized authoring/runtime component.
-        // The editor coordinator calls this only for explicit or coalesced changes; it never polls per object.
-        public void EditorApplyAuthoringData(bool customTexturesChanged, bool shadowTexturesChanged, bool notifyManager = true) {
-            int safeLightType = Mathf.Clamp(LightType, 0, 2);
-            int projectionMode = GetAuthoringProjectionMode();
-            float safeSourceSize = Mathf.Max(Mathf.Abs(LightSourceSize), 0.0001f);
-            float safeRange = Mathf.Max(Mathf.Abs(Range), 0.0001f);
-            float safeAngle = Mathf.Clamp(Angle, 0.05f * Mathf.Deg2Rad, Mathf.PI);
-            float safeFalloff = Mathf.Clamp(Falloff, 0.001f, 1f);
-            float safeAspect = Mathf.Max(Mathf.Abs(SpotCookieAspect), 0.001f);
-
-            LightType = safeLightType;
-            ProjectionMode = projectionMode;
-            LightSourceSize = safeSourceSize;
-            InverseSquaredRange = 1f / ((projectionMode == 1 ? safeRange : safeSourceSize) * (projectionMode == 1 ? safeRange : safeSourceSize));
-            Angle = safeAngle;
-            SpotCookieAspect = safeAspect;
-            ShadingStrength = Mathf.Clamp01(ShadingStrength);
-
-            Texture customTexture = GetCustomTexture();
-            Material customMaterial = GetCustomTextureMaterial();
-            CustomTexture = customTexture;
-            CustomTextureMaterial = customMaterial;
-            ProjectionType = GetProjectionType();
-            if (customTexturesChanged) AutoUpdateCustomTexture = IsAnimatedEditorSource(GetProjectionSource());
-            CustomTextureIsCubemap = IsEditorCubemapTexture(customTexture);
-            CustomTextureHasDepthSlices = EditorTextureHasDepthSlices(customTexture);
-
-            bool preserveRuntimeShadow = PreserveRuntimeShadowSourceInEditor();
-            if (!preserveRuntimeShadow) {
-                Texture shadowTexture = Shadows ? GetShadowMapTexture() : null;
-                Material shadowMaterial = Shadows ? GetShadowMapMaterial() : null;
-                bool shadowSourceChanged = ShadowMapTexture != shadowTexture || ShadowMapMaterial != shadowMaterial;
-                ShadowMapTexture = shadowTexture;
-                ShadowMapMaterial = shadowMaterial;
-                AutoUpdateShadowMap = Shadows && IsAnimatedEditorSource(ShadowMap);
-                ShadowMapTextureIsCubemap = IsEditorCubemapTexture(shadowTexture);
-                ShadowMapTextureHasDepthSlices = EditorTextureHasDepthSlices(shadowTexture);
-                ShadowMapUsesCubemap = Shadows && UsesCubemapShadows();
-                ShadowMapID = Shadows && (shadowTexture != null || shadowMaterial != null) ? 0f : -1f;
-                if (shadowSourceChanged) {
-                    ShadowBakePosition = transform.position;
-                    ShadowBakeRotation = transform.rotation;
-                }
-            }
-
-            RuntimeShadowResolution = LightVolumeManager != null ? Mathf.Max(LightVolumeManager.ShadowTexturesWidth, 16) : Mathf.Max(RuntimeShadowResolution, 16);
-            RuntimeShadowBlurSamplePreset = 2;
-            RuntimeShadowSphericalBlur = true;
-            RuntimeShadowFacesPerFrame = 6;
-            RuntimeShadowDirectOutput = false;
-
-            Position = transform.position;
-            Vector3 lossyScale = transform.lossyScale;
-            float averageScale = (Mathf.Abs(lossyScale.x) + Mathf.Abs(lossyScale.y) + Mathf.Abs(lossyScale.z)) / 3f;
-            SquaredScale = averageScale * averageScale;
-            if (safeLightType == 2) {
-                Rotation = transform.rotation;
-                Width = Mathf.Max(Mathf.Abs(lossyScale.x), 0.001f);
-                Height = Mathf.Max(Mathf.Abs(lossyScale.y), 0.001f);
-                RefreshAreaCookieMirror(transform.rotation);
-                ShadowMapUsesCubemap = Shadows;
-            } else if (safeLightType == 1) {
-                OuterAngleTan = Mathf.Tan(safeAngle);
-                OuterAngleCos = Mathf.Cos(safeAngle);
-                float denominator = Mathf.Cos(safeAngle * (1f - safeFalloff)) - OuterAngleCos;
-                ConeFalloff = 1f / Mathf.Max(denominator, 0.000001f);
-                if (projectionMode == 2) Rotation = Quaternion.Inverse(transform.rotation);
-                else Direction = transform.forward;
-            } else if (projectionMode != 0) {
-                Rotation = Quaternion.Inverse(transform.rotation);
-                ShadowMapUsesCubemap = Shadows;
-            }
-
-            _prevPosition = transform.position;
-            _prevRotation = transform.rotation;
+            Transform instanceTransform = transform;
+            Vector3 lossyScale = instanceTransform.lossyScale;
             _prevScale = lossyScale;
-            _old_Color = Color;
-            _old_Intensity = Intensity;
-            _old_ShadingStrength = ShadingStrength;
+            UpdateScaleCore(lossyScale);
+            if (LightType == 2) { // 2: area
+                Quaternion transformRotation = instanceTransform.rotation;
+                _prevRotation = transformRotation;
+                UpdateRotationCore(transformRotation, instanceTransform.localToWorldMatrix);
+            }
             IsRangeDirty = true;
-            if (notifyManager) NotifyManager(true, customTexturesChanged, shadowTexturesChanged);
+            NotifyManager(false, false, false);
         }
-#endif
+
+
     }
 
 }

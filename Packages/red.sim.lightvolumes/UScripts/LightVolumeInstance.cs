@@ -1,3 +1,7 @@
+#if !UDONSHARP && (UNITY_EDITOR || COMPILER_UDONSHARP)
+#define UDONSHARP
+#endif
+
 using UnityEngine;
 #if UDONSHARP
 using UdonSharp;
@@ -25,7 +29,7 @@ namespace VRCLightVolumes {
         public float Intensity = 1f;
         [Tooltip("Size in meters of this Light Volume's overlapping regions for smooth blending with other volumes.")]
         [Range(0, 1)] public float SmoothBlending = 0.25f;
-        [Tooltip("Inversed edge smoothing in 3D atlas space. Recalculates via SetSmoothBlending(float radius) method.")]
+        [Tooltip("Inversed edge smoothing in 3D atlas space. Recalculates via SetSmoothBlending(float radius), UpdateTransform(), and dynamic auto-update.")]
         public Vector4 InvLocalEdgeSmoothing = new Vector4();
 
         [Header("Baked Data")]
@@ -35,10 +39,8 @@ namespace VRCLightVolumes {
         public Texture3D Texture1;
         [Tooltip("Texture3D with baked SH data required for future atlas packing. It is removed from the build copy after the atlas is generated. (L1r.y, L1g.y, L1b.y, L1b.z)")]
         public Texture3D Texture2;
-#if BAKERY_INCLUDED
         [Tooltip("Editor-only Bakery helper reference. The build preprocessor clears it from the build scene.")]
         [HideInInspector] public Component BakeryVolume;
-#endif
 
         [Header("Color Correction")]
         [Tooltip("Makes volume brighter or darker.")]
@@ -69,19 +71,19 @@ namespace VRCLightVolumes {
         public Vector4 BoundsUvwMin2 = new Vector4();
 
         [Header("Transform Data")]
-        [Tooltip("Inverse rotation of the pose the volume was baked in. Automatically recalculated for dynamic volumes with auto-update, or manually via the UpdateRotation() method.")]
+        [Tooltip("Inverse rotation of the pose the volume was baked in. Updated when baked data is imported or the atlas is generated; runtime transform updates use this stored bake pose.")]
         public Quaternion InvBakedRotation = Quaternion.identity;
-        [Tooltip("Inversed TRS matrix of this volume that transforms it into the 1x1x1 cube. Recalculates via the UpdateRotation() method.")]
+        [Tooltip("Inverse TRS matrix that transforms world positions into this volume's unit cube. Updated by UpdateTransform() and dynamic auto-update.")]
         public Matrix4x4 InvWorldMatrix = Matrix4x4.identity;
-        [Tooltip("Current volume's rotation matrix row 0 relative to the rotation it was baked with. Mandatory for dynamic volumes. Recalculates via the UpdateRotation() method.")]
+        [Tooltip("Current volume rotation row 0 relative to its baked pose. Updated by UpdateTransform() and dynamic auto-update.")]
         public Vector3 RelativeRotationRow0 = Vector3.zero;
-        [Tooltip("Current volume's rotation matrix row 1 relative to the rotation it was baked with. Mandatory for dynamic volumes. Recalculates via the UpdateRotation() method.")]
+        [Tooltip("Current volume rotation row 1 relative to its baked pose. Updated by UpdateTransform() and dynamic auto-update.")]
         public Vector3 RelativeRotationRow1 = Vector3.zero;
-        [Tooltip("True if there is any relative rotation. No relative rotation improves performance. Recalculated via the UpdateRotation() method.")]
+        [Tooltip("True when the current pose is rotated relative to the baked pose. Updated by UpdateTransform() and dynamic auto-update; an unrotated volume is cheaper to sample.")]
         public bool IsRotated = false;
 
         [Header("Runtime State")]
-        [Tooltip("Reference to the scene's single Light Volume Manager. Assign it before registration and do not change it afterwards.")]
+        [Tooltip("Reference to the world's single Light Volume Manager. Assign it before registration and do not change it afterwards.")]
         public LightVolumeManager LightVolumeManager;
         [Tooltip("Internal stable manager registry tie-breaker used when this volume is enabled at runtime. Use SetWeight(float weight) to change priority.")]
         [HideInInspector] public int RegistryOrder = 2147483647;
@@ -95,7 +97,7 @@ namespace VRCLightVolumes {
 
 #if UNITY_EDITOR && !COMPILER_UDONSHARP
         // Editor-only views of existing runtime state; no backing fields are added.
-        public bool RegisteredWithManagerPreview => _isRegisteredWithManager;
+        internal bool RegisteredWithManagerPreview => _isRegisteredWithManager;
 #endif
 
 #if UDONSHARP
@@ -114,14 +116,14 @@ namespace VRCLightVolumes {
         public void _onVarChange_Color() {
             if (_old_Color != Color) {
                 _old_Color = Color;
-                NotifyManager(false);
+                NotifyManagerColor();
             }
         }
         // Uploads a new Udon intensity without rebuilding transform data.
         public void _onVarChange_Intensity() {
             if (_old_Intensity != Intensity) {
                 _old_Intensity = Intensity;
-                NotifyManager(false);
+                NotifyManagerColor();
             }
         }
 #endif
@@ -139,43 +141,49 @@ namespace VRCLightVolumes {
             if (_old_Color != Color || _old_Intensity != Intensity) {
                 _old_Color = Color;
                 _old_Intensity = Intensity;
-                NotifyManager(false);
+                NotifyManagerColor();
             }
         }
 #endif
 
         // Sends this instance change to the manager when it is active.
         private void NotifyManager(bool rebuildFinalData) {
-            IsActive = enabled && gameObject.activeInHierarchy && Intensity != 0 && Color != Color.black;
-            if (!enabled || !gameObject.activeInHierarchy) return;
+            bool runtimeEnabled = enabled && gameObject.activeInHierarchy;
+            IsActive = runtimeEnabled && Intensity != 0 && Color != Color.black;
+            if (!runtimeEnabled) return;
             RegisterWithManager();
             if (LightVolumeManager == null) return;
             LightVolumeManager.NotifyLightVolumeChanged(this, rebuildFinalData);
         }
 
-        // Registers once with the scene's single manager.
+        // Color and intensity are the only changed record fields, so the manager can avoid pulling and repacking the other regular-volume data across the Udon boundary.
+        private void NotifyManagerColor() {
+            bool runtimeEnabled = enabled && gameObject.activeInHierarchy;
+            IsActive = runtimeEnabled && Intensity != 0 && Color != Color.black;
+            if (!runtimeEnabled) return;
+            if (!_isRegisteredWithManager) RegisterWithManager();
+            if (LightVolumeManager == null) return;
+            LightVolumeManager.NotifyLightVolumeColorChanged(this);
+        }
+
+        // Registers once with the world's single manager.
         private void RegisterWithManager() {
+            if (_isRegisteredWithManager) return;
             IsActive = enabled && gameObject.activeInHierarchy && Intensity != 0 && Color != Color.black;
-            if (LightVolumeManager == null || !gameObject.activeInHierarchy || !enabled || _isRegisteredWithManager) return;
+            if (LightVolumeManager == null || !gameObject.activeInHierarchy || !enabled) return;
             _isRegisteredWithManager = true;
             LightVolumeManager.InitializeLightVolume(this);
         }
 
-        // Removes this instance from the scene's manager.
-        private void UnregisterFromManager() {
-            _isRegisteredWithManager = false;
-            if (LightVolumeManager != null) LightVolumeManager.DeinitializeLightVolume(this);
-        }
-
-        // Resolves the standalone Manager fallback and performs initial registration.
-        private void Start() {
 #if !UDONSHARP
+        // Resolves the standalone Manager fallback after OnEnable runs without an assigned Manager.
+        private void Start() {
             if (LightVolumeManager == null) {
                 LightVolumeManager = FindObjectOfType<LightVolumeManager>();
             }
-#endif
             RegisterWithManager();
         }
+#endif
 
         // Registers the volume when its component or GameObject becomes active.
         private void OnEnable() {
@@ -185,7 +193,8 @@ namespace VRCLightVolumes {
         // Marks the volume inactive and removes it from the Manager registry.
         private void OnDisable() {
             IsActive = false;
-            UnregisterFromManager();
+            _isRegisteredWithManager = false;
+            if (LightVolumeManager != null) LightVolumeManager.DeinitializeLightVolume(this);
         }
 
         // Sets dynamic mode and rebuilds the manager volume list only when it changes
@@ -207,7 +216,7 @@ namespace VRCLightVolumes {
             if (Color == color) return;
             Color = color;
             _old_Color = color;
-            NotifyManager(false);
+            NotifyManagerColor();
         }
 
         // Sets light source intensity
@@ -215,14 +224,25 @@ namespace VRCLightVolumes {
             if (Intensity == intensity) return;
             Intensity = intensity;
             _old_Intensity = intensity;
-            NotifyManager(false);
+            NotifyManagerColor();
+        }
+
+        // Sets color and intensity together and publishes one manager notification.
+        public void SetColorAndIntensity(Color color, float intensity) {
+            if (Color == color && Intensity == intensity) return;
+            Color = color;
+            Intensity = intensity;
+            _old_Color = color;
+            _old_Intensity = intensity;
+            NotifyManagerColor();
         }
 
         // Sets runtime render priority without changing the manager's authoring order
         public void SetWeight(float weight) {
             if (RegistryWeight == weight) return;
             RegistryWeight = weight;
-            RegisterWithManager();
+            if (_isRegisteredWithManager) IsActive = enabled && gameObject.activeInHierarchy && Intensity != 0 && Color != Color.black;
+            else RegisterWithManager();
             if (LightVolumeManager != null) LightVolumeManager.ReorderLightVolume(this);
         }
 
@@ -237,16 +257,20 @@ namespace VRCLightVolumes {
             NotifyManager(false);
         }
 
-        // Recalculates inv TRS matrix and Relative L1 rotation
+        // Recalculates the inverse world matrix and Relative L1 rotation from one Transform matrix read.
         public void UpdateTransform() {
-            Quaternion transformRot = transform.rotation;
-            InvWorldMatrix = Matrix4x4.TRS(transform.position, transformRot, transform.lossyScale).inverse;
+            Transform instanceTransform = transform;
+            Matrix4x4 localToWorldMatrix = instanceTransform.localToWorldMatrix;
+            Quaternion transformRot = localToWorldMatrix.rotation;
+            InvWorldMatrix = localToWorldMatrix.inverse;
+            Vector3 lossyScale = localToWorldMatrix.lossyScale;
+            float safeSmoothing = Mathf.Max(SmoothBlending, 0.00001f);
+            InvLocalEdgeSmoothing = new Vector4(lossyScale.x / safeSmoothing, lossyScale.y / safeSmoothing, lossyScale.z / safeSmoothing, 0f);
             Quaternion rot = transformRot * InvBakedRotation;
-            IsRotated = Quaternion.Dot(rot, Quaternion.identity) < 0.999999f;
-
-            Matrix4x4 m = Matrix4x4.Rotate(rot);
-            RelativeRotationRow0 = m.GetRow(0);
-            RelativeRotationRow1 = m.GetRow(1);
+            IsRotated = Mathf.Abs(Quaternion.Dot(rot, Quaternion.identity)) < 0.999999f;
+            Matrix4x4 rotationMatrix = Matrix4x4.Rotate(rot);
+            RelativeRotationRow0 = rotationMatrix.GetRow(0);
+            RelativeRotationRow1 = rotationMatrix.GetRow(1);
             NotifyManager(false);
         }
 

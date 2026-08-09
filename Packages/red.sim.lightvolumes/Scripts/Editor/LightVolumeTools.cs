@@ -27,14 +27,10 @@ namespace VRCLightVolumes {
         // Returns the rotation supported by the active lightmapper and Bakery version.
         public static Quaternion GetRotation(LightVolumeInstance volume) {
             if (volume == null) return Quaternion.identity;
-
             LightVolumeManager manager = volume.LightVolumeManager;
-            if (manager == null || !manager.IsBakeryMode || Application.isPlaying || !volume.Bake) return volume.transform.rotation;
-
-#if BAKERY_INCLUDED
-            if (typeof(BakeryVolume).GetField("_rotateAroundXYZ") != null) return volume.transform.rotation;
-            if (typeof(BakeryVolume).GetField("rotateAroundY") != null) return Quaternion.Euler(0f, volume.transform.rotation.eulerAngles.y, 0f);
-#endif
+            if (manager == null || !manager.EditorIsBakeryMode || Application.isPlaying || !volume.Bake) return volume.transform.rotation;
+            if (BakeryEditorBridge.SupportsFullRotation) return volume.transform.rotation;
+            if (BakeryEditorBridge.SupportsYRotation) return Quaternion.Euler(0f, volume.transform.rotation.eulerAngles.y, 0f);
             return Quaternion.identity;
         }
 
@@ -54,7 +50,6 @@ namespace VRCLightVolumes {
             long height = (long)resolution.y + padding * 2L;
             long depth = (long)resolution.z + padding * 2L;
             if (width <= 0L || height <= 0L || depth <= 0L || width > int.MaxValue / height) return -1;
-
             long sliceSize = width * height;
             return sliceSize > int.MaxValue / depth ? -1 : (int)(sliceSize * depth);
         }
@@ -62,13 +57,11 @@ namespace VRCLightVolumes {
         // Updates a Light Volume's resolution from its world size and voxel density.
         public static bool RecalculateAdaptiveResolution(LightVolumeInstance volume) {
             if (volume == null) return false;
-
             Vector3 scale = GetScale(volume);
             scale = new Vector3(Mathf.Abs(scale.x), Mathf.Abs(scale.y), Mathf.Abs(scale.z));
             Vector3 count = scale * Mathf.Max(volume.VoxelsPerUnit, 0f);
             Vector3Int resolution = new Vector3Int(Mathf.Max(Mathf.RoundToInt(count.x), 1), Mathf.Max(Mathf.RoundToInt(count.y), 1), Mathf.Max(Mathf.RoundToInt(count.z), 1));
             if (volume.Resolution == resolution) return false;
-
             volume.Resolution = resolution;
             return true;
         }
@@ -89,7 +82,7 @@ namespace VRCLightVolumes {
             Quaternion transformRotation = volume.transform.rotation;
             Matrix4x4 inverseWorld = Matrix4x4.TRS(volume.transform.position, transformRotation, scale).inverse;
             Quaternion relativeRotation = transformRotation * volume.InvBakedRotation;
-            bool isRotated = Quaternion.Dot(relativeRotation, Quaternion.identity) < 0.999999f;
+            bool isRotated = Mathf.Abs(Quaternion.Dot(relativeRotation, Quaternion.identity)) < 0.999999f;
             Matrix4x4 rotationMatrix = Matrix4x4.Rotate(relativeRotation);
             Vector3 rotationRow0 = rotationMatrix.GetRow(0);
             Vector3 rotationRow1 = rotationMatrix.GetRow(1);
@@ -114,7 +107,6 @@ namespace VRCLightVolumes {
                 volume.IsRotated = isRotated;
                 changed = true;
             }
-
             bool isActive = volume.isActiveAndEnabled && volume.Intensity != 0f && volume.Color != Color.black;
             if (volume.IsActive != isActive) {
                 volume.IsActive = isActive;
@@ -130,7 +122,7 @@ namespace VRCLightVolumes {
             int voxelCount = GetVoxelCount(resolution);
             if (volume == null || voxelCount < 0) {
                 positions = new Vector3[0];
-                if (volume != null) Debug.LogError($"[LightVolume] Can't calculate probes for light volume {volume.gameObject.name}. Resolution is invalid or the voxel count is too large!", volume);
+                if (volume != null) Debug.LogError($"[LightVolumes] Can't calculate probes for light volume {volume.gameObject.name}. Resolution is invalid or the voxel count is too large!", volume);
                 return false;
             }
 
@@ -161,88 +153,12 @@ namespace VRCLightVolumes {
 
         // Creates, removes or synchronizes the hidden Bakery Volume owned by a Light Volume.
         public static void SetupBakeryDependencies(LightVolumeInstance volume, bool createIfMissing = true) {
-#if BAKERY_INCLUDED
-            if (volume == null || volume.LightVolumeManager == null) return;
-
-            LightVolumeManager manager = volume.LightVolumeManager;
-            if (!TryFindOwnedBakeryVolume(volume, out BakeryVolume bakeryVolume)) return;
-            if (manager.IsBakeryMode && volume.Bake && bakeryVolume == null) {
-                if (!createIfMissing) return;
-                GameObject helper = new GameObject($"Bakery Volume - {volume.gameObject.name}") { tag = "EditorOnly" };
-                Undo.RegisterCreatedObjectUndo(helper, "Create Bakery Volume");
-                helper.transform.SetParent(volume.transform, false);
-                bakeryVolume = helper.AddComponent<BakeryVolume>();
-            } else if ((!manager.IsBakeryMode || !volume.Bake) && bakeryVolume != null) {
-                Object target = PrefabUtility.IsPartOfPrefabInstance(bakeryVolume.gameObject) ? bakeryVolume : bakeryVolume.gameObject;
-                Undo.DestroyObjectImmediate(target);
-                return;
-            }
-
-            if (!manager.IsBakeryMode || bakeryVolume == null) return;
-
-            bakeryVolume.gameObject.name = $"Bakery Volume - {volume.gameObject.name}";
-            bakeryVolume.gameObject.tag = "EditorOnly";
-            if ((bakeryVolume.gameObject.hideFlags & HideFlags.HideInHierarchy) == 0) bakeryVolume.gameObject.hideFlags |= HideFlags.HideInHierarchy;
-            if ((bakeryVolume.hideFlags & HideFlags.HideInInspector) == 0) bakeryVolume.hideFlags |= HideFlags.HideInInspector;
-            if (bakeryVolume.transform.parent != volume.transform) Undo.SetTransformParent(bakeryVolume.transform, volume.transform, "Parent Bakery Volume");
-            bakeryVolume.transform.SetLocalPositionAndRotation(Vector3.zero, Quaternion.identity);
-            bakeryVolume.transform.localScale = Vector3.one;
-            bakeryVolume.bounds = new Bounds(GetPosition(volume), GetScale(volume));
-            bakeryVolume.enableBaking = true;
-            bakeryVolume.denoise = manager.Denoise;
-            bakeryVolume.adaptiveRes = false;
-            bakeryVolume.resolutionX = volume.Resolution.x;
-            bakeryVolume.resolutionY = volume.Resolution.y;
-            bakeryVolume.resolutionZ = volume.Resolution.z;
-            bakeryVolume.encoding = BakeryVolume.Encoding.Half4;
-
-            System.Reflection.FieldInfo fullRotation = typeof(BakeryVolume).GetField("_rotateAroundXYZ");
-            if (fullRotation != null) {
-                fullRotation.SetValue(bakeryVolume, true);
-                typeof(BakeryVolume).GetField("rotateAroundY")?.SetValue(bakeryVolume, false);
-            } else {
-                typeof(BakeryVolume).GetField("rotateAroundY")?.SetValue(bakeryVolume, true);
-            }
-            LVUtils.MarkDirty(bakeryVolume);
-#endif
+            BakeryEditorBridge.SetupVolume(volume, createIfMissing);
         }
 
         // Imports newly baked Bakery SH textures into their owning Light Volume.
         public static bool TryImportBakeryTextures(LightVolumeInstance volume) {
-#if BAKERY_INCLUDED
-            if (volume == null || !volume.Bake || !TryFindOwnedBakeryVolume(volume, out BakeryVolume bakeryVolume)) return false;
-            if (bakeryVolume == null || bakeryVolume.bakedTexture0 == null) return false;
-            if (volume.Texture0 == bakeryVolume.bakedTexture0 && volume.Texture1 == bakeryVolume.bakedTexture1 && volume.Texture2 == bakeryVolume.bakedTexture2) return false;
-
-            volume.Texture0 = bakeryVolume.bakedTexture0;
-            volume.Texture1 = bakeryVolume.bakedTexture1;
-            volume.Texture2 = bakeryVolume.bakedTexture2;
-            LVUtils.MarkDirty(volume);
-            return true;
-#else
-            return false;
-#endif
+            return BakeryEditorBridge.TryImportTextures(volume);
         }
-
-#if BAKERY_INCLUDED
-        // Finds the single direct Bakery Volume helper owned by a Light Volume and rejects duplicates.
-        private static bool TryFindOwnedBakeryVolume(LightVolumeInstance volume, out BakeryVolume bakeryVolume) {
-            bakeryVolume = null;
-            BakeryVolume[] candidates = volume.GetComponentsInChildren<BakeryVolume>(true);
-            for (int i = 0; i < candidates.Length; i++) {
-                BakeryVolume candidate = candidates[i];
-                if (candidate == null || candidate.transform.parent != volume.transform) continue;
-                if (bakeryVolume == null) {
-                    bakeryVolume = candidate;
-                    continue;
-                }
-
-                Debug.LogWarning($"[LightVolume] Multiple direct Bakery Volume helpers found on {volume.gameObject.name}. Automatic Bakery setup was skipped.", volume);
-                bakeryVolume = null;
-                return false;
-            }
-            return true;
-        }
-#endif
     }
 }

@@ -1,3 +1,4 @@
+using System.IO;
 using System.Reflection;
 using NUnit.Framework;
 using UnityEditor;
@@ -6,7 +7,22 @@ using UnityEngine;
 namespace VRCLightVolumes.Tests {
     [Category("Editor")]
     public class LightVolumeEditorPipelineTests {
+
         private const float Epsilon = 0.0001f;
+        private const string TargetSwitchUdonSharpGuard = "#if !UDONSHARP && (UNITY_EDITOR || COMPILER_UDONSHARP)\n#define UDONSHARP\n#endif";
+
+        private static readonly string[] UdonSharpSourcePaths = {
+            "Packages/red.sim.lightvolumes/UScripts/LightVolumeManager.cs",
+            "Packages/red.sim.lightvolumes/UScripts/LightVolumeManager.Buffers.cs",
+            "Packages/red.sim.lightvolumes/UScripts/LightVolumeManager.Clustering.cs",
+            "Packages/red.sim.lightvolumes/UScripts/LightVolumeManager.Core.cs",
+            "Packages/red.sim.lightvolumes/UScripts/LightVolumeManager.Textures.cs",
+            "Packages/red.sim.lightvolumes/UScripts/LightVolumeInstance.cs",
+            "Packages/red.sim.lightvolumes/UScripts/PointLightVolumeInstance.cs",
+            "Packages/red.sim.lightvolumes/Extra/Audio Link/LightVolumeAudioLink.cs",
+            "Packages/red.sim.lightvolumes/Extra/TV Global Illumination/LightVolumeTVGI.cs",
+            "Packages/red.sim.lightvolumes/Extra/Shadow Runtime Baker/PointLightShadowRuntimeBaker.cs"
+        };
 
         private GameObject _legacyObject;
         private GameObject _unifiedObject;
@@ -80,6 +96,64 @@ namespace VRCLightVolumes.Tests {
             Assert.That(volume?.componentMenu, Is.EqualTo("VRC Light Volumes/Light Volume (U# Script)"));
             Assert.That(point?.componentMenu, Is.EqualTo("VRC Light Volumes/Point Light Volume (U# Script)"));
             Assert.That(manager?.componentMenu, Is.EqualTo("VRC Light Volumes/Light Volume Manager (U# Script)"));
+        }
+
+        // UdonSharp adds its project define after a new build-target group has already reloaded once.
+        // Every U# source must keep the U# branch active during that Editor reload and direct U# compilation.
+        [Test]
+        public void UdonSharpSourcesKeepStableProxyTypesDuringTargetDefineInitialization() {
+            for (int i = 0; i < UdonSharpSourcePaths.Length; i++) {
+                string path = UdonSharpSourcePaths[i];
+                string source = File.ReadAllText(path).Replace("\r\n", "\n");
+                Assert.That(source, Does.StartWith(TargetSwitchUdonSharpGuard),
+                    path + " can temporarily change its serialized proxy layout during a build-target switch.");
+            }
+        }
+
+        // Optional plugins must never become hard dependencies of the VRCLV core or stale global-define gates.
+        [Test]
+        public void OptionalPluginAssembliesRemainConditionalAndCoreIndependent() {
+            const string audioLinkGuid = "58281da7f948e9644aceb5d0178bf06b";
+            const string bakeryRuntimeGuid = "a1653399f63795746b1857281d1e400d";
+            const string bakeryEditorGuid = "290dd5870d0ead646bcb6ea5c6a60af5";
+            string[] coreAsmdefs = {
+                "Packages/red.sim.lightvolumes/UScripts/red.sim.LightVolumesUdon.asmdef",
+                "Packages/red.sim.lightvolumes/Scripts/red.sim.LightVolumes.asmdef",
+                "Packages/red.sim.lightvolumes/Scripts/Editor/red.sim.LightVolumesEditor.asmdef"
+            };
+            for (int i = 0; i < coreAsmdefs.Length; i++) {
+                string asmdef = File.ReadAllText(coreAsmdefs[i]);
+                Assert.That(asmdef, Does.Not.Contain(audioLinkGuid), coreAsmdefs[i]);
+                Assert.That(asmdef, Does.Not.Contain(bakeryRuntimeGuid), coreAsmdefs[i]);
+                Assert.That(asmdef, Does.Not.Contain(bakeryEditorGuid), coreAsmdefs[i]);
+            }
+
+            const string optionalAsmdefPath = "Packages/red.sim.lightvolumes/Extra/Audio Link/red.sim.LightVolumes.AudioLinkUdon.asmdef";
+            const string optionalAssemblyAssetPath = "Packages/red.sim.lightvolumes/Extra/Audio Link/red.sim.LightVolumes.AudioLinkUdon.asset";
+            string optionalAsmdef = File.ReadAllText(optionalAsmdefPath);
+            Assert.That(optionalAsmdef, Does.Contain("com.llealloo.audiolink"));
+            Assert.That(optionalAsmdef, Does.Contain("VRCLV_AUDIOLINK"));
+            Assert.That(optionalAsmdef, Does.Contain("\"defineConstraints\""));
+            Assert.That(optionalAsmdef, Does.Contain("\"versionDefines\""));
+            Assert.That(optionalAsmdef, Does.Contain(audioLinkGuid));
+            Assert.That(File.Exists(optionalAssemblyAssetPath), Is.True);
+            Assert.That(File.ReadAllText(optionalAssemblyAssetPath), Does.Contain(AssetDatabase.AssetPathToGUID(optionalAsmdefPath)));
+            Assert.That(File.Exists("Packages/red.sim.lightvolumes/Extra/Audio Link/UdonLightVolumesRef.asmref"), Is.False);
+
+            string[] productionRoots = {
+                "Packages/red.sim.lightvolumes/UScripts",
+                "Packages/red.sim.lightvolumes/Scripts",
+                "Packages/red.sim.lightvolumes/Extra"
+            };
+            for (int rootIndex = 0; rootIndex < productionRoots.Length; rootIndex++) {
+                string[] sources = Directory.GetFiles(productionRoots[rootIndex], "*.cs", SearchOption.AllDirectories);
+                for (int i = 0; i < sources.Length; i++) {
+                    string source = File.ReadAllText(sources[i]);
+                    Assert.That(source, Does.Not.Contain("BAKERY_INCLUDED"), sources[i]);
+                    Assert.That(source, Does.Not.Contain("#if AUDIOLINK"), sources[i]);
+                    Assert.That(source, Does.Not.Contain("#elif AUDIOLINK"), sources[i]);
+                }
+            }
         }
 
         // A unique co-located Udon component is authoritative even when an obsolete serialized link points elsewhere.

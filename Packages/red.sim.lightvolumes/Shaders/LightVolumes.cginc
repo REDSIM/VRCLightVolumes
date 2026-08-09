@@ -24,6 +24,14 @@
 #endif
 
 #ifndef SHADER_TARGET_SURFACE_ANALYSIS
+// GLES3 and baseline Vulkan guarantee only 16 KiB per uniform block and 12 blocks per stage.
+// Three frequency groups preserve two blocks of headroom in the heaviest known integrations:
+//   cold regular-volume, scalar, shadow and layout data: 9,856 bytes
+//   per-camera clustering transform data:                  48 bytes
+//   runtime Point Light position and attributes:        10,240 bytes
+// Regular volumes and shadow reprojection are deliberately co-located: both are normally
+// immutable after a world loads. Point arrays stay together because another binding would
+// leave arbitrary third-party GLES3/Vulkan shaders too close to the 12-block floor.
 cbuffer LightVolumeUniforms {
 #endif
 
@@ -48,6 +56,44 @@ uniform float _UdonLightVolumeProbesBlend;
 // Should volumes be with sharp edges when not blending with each other
 uniform float _UdonLightVolumeSharpBounds;
 
+// Optional screen-camera Froxel Clustering. This flag fills the remaining scalar slot.
+#if VRCLV_CLUSTERING_SUPPORTED
+uniform float _UdonClusteringEnabled;
+#endif
+
+// Point Lights count
+uniform float _UdonPointLightVolumeCount;
+
+// Cubemaps count in the custom textures array
+uniform float _UdonPointLightVolumeCubeCount;
+
+// Shadow cubemaps count in the shadow texture array
+uniform float _UdonPointLightVolumeShadowCubeCount;
+
+// Total shadow maps count in the shadow texture array
+uniform float _UdonPointLightVolumeShadowCount;
+
+// Precomputed v3 EVSM receiver constants. XW = variance bias * positive/negative exponent,
+// Y = -edge / (1 - edge), Z = 1 / (1 - edge). V2 managers never enter the EVSM path.
+uniform float4 _UdonPointLightVolumeShadowReceiverParams;
+
+// If we are far enough from a light that the irradiance
+// is guaranteed lower than the threshold defined by this value,
+// we cull the light.
+uniform float _UdonLightBrightnessCutoff;
+
+// Texel count and max mip for Area Light with cookie
+uniform float _UdonPointLightVolumeTextureTexelCount;
+uniform float _UdonPointLightVolumeTextureMaxMip;
+
+// Clustering layout/projection values change only when camera projection or grid settings change.
+// Keep them away from the three transform vectors updated for normal HMD motion.
+#if VRCLV_CLUSTERING_SUPPORTED
+uniform float4 _UdonFroxelGrid;       // x: columns, y: depth slices, z: rows, w: atlas tile-column shift
+uniform float4 _UdonFroxelDepth;      // x: near, y: far, z: reciprocal near, w: depth slices / log2(far/near)
+uniform float4 _UdonFroxelProjection; // xy: tan half FOV, zw: stereo/frustum padding
+#endif
+
 // World to Local (-0.5, 0.5) UVW Matrix 4x4
 uniform float4x4 _UdonLightVolumeInvWorldMatrix[VRCLV_MAX_VOLUMES_COUNT];
 
@@ -63,32 +109,31 @@ uniform float4 _UdonLightVolumeUvwScale[VRCLV_MAX_VOLUMES_COUNT * 3];
 // Color multiplier (RGB) | If we actually need to rotate L1 components at all (A)
 uniform float4 _UdonLightVolumeColor[VRCLV_MAX_VOLUMES_COUNT];
 
-// Point Lights count
-uniform float _UdonPointLightVolumeCount;
+// For World Space Shadows:
+//   XYZ = shadow bake position in world space.
+//   W = shadow projection tangent half-angle for single texture shadows, or negative inverse depth range fallback for cubemaps.
+uniform float4 _UdonPointLightVolumeShadowReprojectionData[VRCLV_MAX_LIGHTS_COUNT];
 
-// Optional screen-camera Froxel Clustering. The flag is published only after a complete build.
+//   XYZW = Rotation from current world space to baked shadow space.
+uniform float4 _UdonPointLightVolumeShadowRotationData[VRCLV_MAX_LIGHTS_COUNT];
+
+#ifndef SHADER_TARGET_SURFACE_ANALYSIS
+}
+#endif
+
+// Only the camera basis and position change during normal HMD motion. The enable flag and
+// projection/layout values stay in the cold block because their transitions are infrequent.
 #if VRCLV_CLUSTERING_SUPPORTED
-uniform float _UdonClusteringEnabled;
-uniform float4 _UdonFroxelGrid;       // x: columns, y: depth slices, z: rows, w: atlas tile-column shift
-uniform float4 _UdonFroxelDepth;      // x: near, y: far, z: reciprocal near, w: depth slices / log2(far/near)
-uniform float4 _UdonFroxelProjection; // xy: tan half FOV, zw: stereo/frustum padding
+cbuffer LightVolumeClusteringUniforms {
 uniform float4 _UdonFroxelRight;      // xyz: axis, w: camera position x
 uniform float4 _UdonFroxelUp;         // xyz: axis, w: camera position y
 uniform float4 _UdonFroxelForward;    // xyz: axis, w: camera position z
+}
 #endif
 
-// Cubemaps count in the custom textures array
-uniform float _UdonPointLightVolumeCubeCount;
-
-// Shadow cubemaps count in the shadow texture array
-uniform float _UdonPointLightVolumeShadowCubeCount;
-
-// Total shadow maps count in the shadow texture array
-uniform float _UdonPointLightVolumeShadowCount;
-
-// Precomputed v3 EVSM receiver constants. XW = variance bias * positive/negative exponent,
-// Y = -edge / (1 - edge), Z = 1 / (1 - edge). V2 managers never enter the EVSM path.
-uniform float4 _UdonPointLightVolumeShadowReceiverParams;
+#ifndef SHADER_TARGET_SURFACE_ANALYSIS
+cbuffer PointLightVolumeUniforms {
+#endif
 
 // For point light: XYZ = Position, W = Inverse squared range
 // For spot light: XYZ = Position, W = Inverse squared range, negated
@@ -117,26 +162,9 @@ uniform float4 _UdonPointLightVolumeDirection[VRCLV_MAX_LIGHTS_COUNT];
 // Area Cookie keeps its tag/mirror enum here: 0 none/legacy, +1 none, -1 X, +2 Y, -2 XY. Near clip is stored in ExtraData.W.
 uniform float4 _UdonPointLightVolumeCustomID[VRCLV_MAX_LIGHTS_COUNT];
 
-// For World Space Shadows:
-//   XYZ = shadow bake position in world space.
-//   W = shadow projection tangent half-angle for single texture shadows, or negative inverse depth range fallback for cubemaps.
-uniform float4 _UdonPointLightVolumeShadowReprojectionData[VRCLV_MAX_LIGHTS_COUNT];
-
-//   XYZW = Rotation from current world space to baked shadow space.
-uniform float4 _UdonPointLightVolumeShadowRotationData[VRCLV_MAX_LIGHTS_COUNT];
-
-// If we are far enough from a light that the irradiance
-// is guaranteed lower than the threshold defined by this value,
-// we cull the light.
-uniform float _UdonLightBrightnessCutoff;
-
 #ifndef SHADER_TARGET_SURFACE_ANALYSIS
 }
 #endif
-
-// Texel count and max mip for Area Light with cookie
-uniform float _UdonPointLightVolumeTextureTexelCount;
-uniform float _UdonPointLightVolumeTextureMaxMip;
 
 #ifndef SHADER_TARGET_SURFACE_ANALYSIS
 

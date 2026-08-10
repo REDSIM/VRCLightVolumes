@@ -140,8 +140,9 @@ namespace VRCLightVolumes {
                 EditorGUILayout.HelpBox("This component is part of a prefab asset.\nEdit the instance placed in a scene.", MessageType.Warning);
             if (_multipleManagers) {
                 string primaryName = _primaryManager != null ? _primaryManager.name : "none";
-                string selection = _manager == _primaryManager ? "This is the primary Manager; all other Managers are ignored." : $"This Manager is ignored; '{primaryName}' is the primary Manager.";
+                string selection = _manager == _primaryManager ? "This is the primary Manager. All other Managers are ignored." : $"This Manager is ignored.";
                 EditorGUILayout.HelpBox($"Multiple Light Volume Managers were found in loaded scenes. {selection}\nRemove the extra Managers before building.", MessageType.Error);
+                GUILayout.Space(8f);
                 if (_manager != _primaryManager) return;
             }
 
@@ -428,29 +429,29 @@ namespace VRCLightVolumes {
             DrawProperty("FroxelSlices", "Slices Count");
             DrawIntPopup("Coarse Reduction", "FroxelCoarse", CoarseLabels, CoarseValues);
 
-            Camera camera = SceneView.lastActiveSceneView != null ? SceneView.lastActiveSceneView.camera : Camera.main;
-            float verticalFov = camera != null && !camera.orthographic ? Mathf.Clamp(camera.fieldOfView, 1f, 179f) : 90f;
-            float aspect = camera != null && camera.aspect > 0.001f ? camera.aspect : 1.7777778f;
-            float horizontalFov = Mathf.Atan(Mathf.Tan(verticalFov * 0.5f * Mathf.Deg2Rad) * aspect) * (2f * Mathf.Rad2Deg);
-            float density = Mathf.Clamp(serializedObject.FindProperty("FroxelDensity").floatValue, 0.05f, 3f);
-            int columns = Mathf.Clamp(Mathf.CeilToInt(horizontalFov * density), 1, 256);
-            int rows = Mathf.Clamp(Mathf.CeilToInt(verticalFov * density), 1, 256);
-            int slices = Mathf.Clamp(serializedObject.FindProperty("FroxelSlices").intValue, 8, 256);
-            int coarse = LightVolumeManagerEditorBackend.ResolveCoarseFactor(serializedObject.FindProperty("FroxelCoarse").intValue);
-            int shift = coarse == 2 ? 1 : coarse == 4 ? 2 : 3;
-            int coarseColumns = (columns + coarse - 1) >> shift;
-            int coarseRows = (rows + coarse - 1) >> shift;
-            int coarseSlices = (slices + coarse - 1) >> shift;
-            GUILayout.Space(3f);
+            GUILayout.Space(8f);
+            if (!_manager.FroxelLayoutValidPreview) {
+                GUILayout.Label(new GUIContent("Froxel Layout: <b>waiting for a camera render</b>", "The grid and its packed mask textures are shown after clustering has been calculated for a camera."), RichLabelStyle);
+                return;
+            }
+
+            Vector4 fineGrid = _manager.FineFroxelGridParamsPreview;
+            Vector4 coarseGrid = _manager.CoarseFroxelGridParamsPreview;
+            int columns = Mathf.RoundToInt(fineGrid.x);
+            int slices = Mathf.RoundToInt(fineGrid.y);
+            int rows = Mathf.RoundToInt(fineGrid.z);
+            int coarseColumns = Mathf.RoundToInt(coarseGrid.x);
+            int coarseSlices = Mathf.RoundToInt(coarseGrid.y);
+            int coarseRows = Mathf.RoundToInt(coarseGrid.z);
             GUILayout.Label(
                 new GUIContent(
                     $"Fine Froxels: <b>{columns} x {rows} x {slices} ({(long)columns * rows * slices:N0} froxels)</b>",
-                    "The detailed camera grid used by shaders to find which Point Light Volumes affect each pixel. The shown size is an editor estimate; in-game it changes with the player's FOV."),
+                    "The detailed camera grid currently used by shaders. The texture resolution is the actual packed Fine mask atlas written by the clustering blit."),
                 RichLabelStyle);
             GUILayout.Label(
                 new GUIContent(
                     $"Coarse Froxels: <b>{coarseColumns} x {coarseRows} x {coarseSlices} ({(long)coarseColumns * coarseRows * coarseSlices:N0} froxels)</b>",
-                    "A simpler helper grid that quickly removes unrelated lights before the detailed Fine grid is built. The shown size is an editor estimate; in-game it changes with the player's FOV."),
+                    "The helper grid currently used to reject unrelated lights. The texture resolution is the actual packed Coarse mask atlas written by the clustering blit."),
                 RichLabelStyle);
         }
 
@@ -537,7 +538,9 @@ namespace VRCLightVolumes {
 
                 LightVolumeDebugGUI.DrawGroupHeader("Froxel Clustering", true, "Live clustering textures and the current clustering state.");
                 LightVolumeDebugGUI.DrawObject("Fine Cluster Mask", _manager.FineClusterMaskPreview, typeof(RenderTexture), "The detailed clustered-light mask currently sampled by shaders.");
+                LightVolumeDebugGUI.DrawText("Fine Resolution", GetTextureResolution(_manager.FineClusterMaskPreview), "Actual resolution of the packed Fine mask atlas written by the clustering blit.");
                 LightVolumeDebugGUI.DrawObject("Coarse Cluster Mask", _manager.CoarseClusterMaskPreview, typeof(RenderTexture), "The lower-resolution mask used to reject unrelated lights before building the Fine mask.");
+                LightVolumeDebugGUI.DrawText("Coarse Resolution", GetTextureResolution(_manager.CoarseClusterMaskPreview), "Actual resolution of the packed Coarse mask atlas written by the clustering blit.");
                 LightVolumeDebugGUI.DrawText("Clustering Status", GetClusteringStatus(), "Current runtime state of froxel clustering.");
 
                 LightVolumeDebugGUI.DrawGroupHeader("Runtime State", true, "Live initialization state and the counts currently uploaded by the Manager.");
@@ -567,6 +570,11 @@ namespace VRCLightVolumes {
         // Returns the allocated slice count of a runtime texture array.
         private static int GetTextureDepth(RenderTexture texture) {
             return texture != null ? Mathf.Max(texture.volumeDepth, 1) : 0;
+        }
+
+        // Formats the live two-dimensional allocation size of a runtime texture.
+        private static string GetTextureResolution(RenderTexture texture) {
+            return texture != null ? $"{texture.width} x {texture.height}" : "Unavailable";
         }
 
         // Draws a bold inspector section title with optional leading spacing.

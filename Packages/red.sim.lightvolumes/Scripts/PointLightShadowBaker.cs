@@ -22,7 +22,7 @@ namespace VRCLightVolumes {
             PointLightVolumeInstance pointLightInstance = pointLightVolume;
             LightVolumeManager manager = pointLightVolume.LightVolumeManager;
             if (manager == null) {
-                Debug.LogError("[PointLightShadowBaker] Point Light Volume has no Light Volume Manager.", pointLightVolume);
+                Debug.LogError("[LightVolumes] Point Light Volume has no Light Volume Manager.", pointLightVolume);
                 return false;
             }
 
@@ -74,15 +74,17 @@ namespace VRCLightVolumes {
                 runtimeShadowTexture = pointLightInstance.ShadowMapTexture as RenderTexture;
                 int sliceCount = cubemapShadows ? 6 : 1;
                 if (!IsRuntimeShadowTextureValid(runtimeShadowTexture, resolution, sliceCount)) {
-                    Debug.LogError($"[PointLightShadowBaker] PointLightVolumeInstance did not produce a valid editor shadow output {infoString}.", pointLightVolume);
+                    Debug.LogError($"[LightVolumes] PointLightVolumeInstance did not produce a valid editor shadow output {infoString}.", pointLightVolume);
                     return false;
                 }
 
                 UnityEngine.Object shadowAsset = cubemapShadows ? CreateCubemapShadowAsset(runtimeShadowTexture, safeTextureFormat) : CreateSingleShadowAsset(runtimeShadowTexture, safeTextureFormat);
                 if (shadowAsset == null) return false;
 
-                SaveShadowAsset(pointLightVolume, shadowAsset);
-                pointLightVolume.ShadowMap = shadowAsset;
+                UnityEngine.Object savedShadowAsset = SaveShadowAsset(pointLightVolume, shadowAsset);
+                if (savedShadowAsset == null) return false;
+
+                pointLightVolume.ShadowMap = savedShadowAsset;
                 LVUtils.MarkDirty(pointLightVolume);
                 baked = true;
                 return true;
@@ -105,7 +107,7 @@ namespace VRCLightVolumes {
         private static bool EnsureRuntimeShadowBakeDependencies(LightVolumeManager manager, PointLightVolumeInstance pointLightVolume) {
             Shader shadowDepthEncodeShader = Shader.Find(ShadowDepthEncodeShaderName);
             if (shadowDepthEncodeShader == null) {
-                Debug.LogError($"[PointLightShadowBaker] Failed to find shadow depth encode shader '{ShadowDepthEncodeShaderName}'.", pointLightVolume);
+                Debug.LogError($"[LightVolumes] Failed to find shadow depth encode shader '{ShadowDepthEncodeShaderName}'.", pointLightVolume);
                 return false;
             }
 
@@ -114,7 +116,7 @@ namespace VRCLightVolumes {
 
             Shader shadowBlurShader = Shader.Find(ShadowBlurShaderName);
             if (shadowBlurShader == null) {
-                if (pointLightVolume.Blur > 0.0001f) Debug.LogWarning($"[PointLightShadowBaker] Failed to find shadow blur shader '{ShadowBlurShaderName}'. Baking without blur.", pointLightVolume);
+                if (pointLightVolume.Blur > 0.0001f) Debug.LogWarning($"[LightVolumes] Failed to find shadow blur shader '{ShadowBlurShaderName}'. Baking without blur.", pointLightVolume);
                 manager.RuntimeShadowBlurMaterial = null;
             } else if (manager.RuntimeShadowBlurMaterial == null || manager.RuntimeShadowBlurMaterial.shader != shadowBlurShader) {
                 manager.RuntimeShadowBlurMaterial = new Material(shadowBlurShader) { hideFlags = HideFlags.HideAndDontSave };
@@ -161,18 +163,38 @@ namespace VRCLightVolumes {
         }
 
         // Saves the baked shadow asset into the scene-local VRCLightVolumes temp folder.
-        private static void SaveShadowAsset(PointLightVolumeInstance pointLightVolume, UnityEngine.Object shadowAsset) {
+        private static UnityEngine.Object SaveShadowAsset(PointLightVolumeInstance pointLightVolume, UnityEngine.Object shadowAsset) {
             UnityEngine.SceneManagement.Scene scene = pointLightVolume.gameObject.scene;
-            string scenePath = scene.path;
-            string escapedName = LVUtils.EscapeFileName(pointLightVolume.gameObject.name);
-            string defaultPath = $"{System.IO.Path.GetDirectoryName(scenePath)}/{scene.name}/VRCLightVolumes/Temp/{escapedName}_shadows.asset";
-            string path = ResolveShadowAssetPath(pointLightVolume, defaultPath);
-            if (AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(path) != null) AssetDatabase.DeleteAsset(path);
-            LVUtils.SaveAsAsset(shadowAsset, path);
+            if (!scene.IsValid() || string.IsNullOrEmpty(scene.path)) {
+                Debug.LogError("[LightVolumes] Save the scene before baking a persistent shadow asset.", pointLightVolume);
+                DestroyTransientShadowAsset(shadowAsset);
+                return null;
+            }
+
+            try {
+                string scenePath = scene.path;
+                string escapedName = LVUtils.EscapeFileName(pointLightVolume.gameObject.name);
+                string defaultPath = $"{System.IO.Path.GetDirectoryName(scenePath)}/{scene.name}/VRCLightVolumes/Temp/{escapedName}_shadows.asset";
+                string path = ResolveShadowAssetPath(pointLightVolume, defaultPath);
+                UnityEngine.Object existingAsset = AssetDatabase.LoadMainAssetAtPath(path);
+
+                // A light can change between a single-slice and cubemap shadow layout. Those assets have
+                // different Unity types/local file IDs, so keep the old shared asset intact and allocate a
+                // new path instead of breaking any other references to it.
+                if (existingAsset != null && (existingAsset != pointLightVolume.ShadowMap || existingAsset.GetType() != shadowAsset.GetType())) {
+                    path = AssetDatabase.GenerateUniqueAssetPath(defaultPath);
+                }
+
+                return SaveShadowAssetAtPath(shadowAsset, path);
+            } catch (System.Exception exception) {
+                Debug.LogError($"[LightVolumes] Failed to save the shadow asset: {exception.Message}", pointLightVolume);
+                DestroyTransientShadowAsset(shadowAsset);
+                return null;
+            }
         }
 
-        // Keeps a light's existing bake path stable while preventing identically named lights from
-        // deleting each other's shadow assets.
+        // Keeps a light's existing generated bake path stable while preventing identically named
+        // lights from overwriting each other's shadow assets.
         private static string ResolveShadowAssetPath(PointLightVolumeInstance pointLightVolume, string defaultPath) {
             UnityEngine.Object currentShadow = pointLightVolume.ShadowMap;
             if (currentShadow != null) {
@@ -180,10 +202,54 @@ namespace VRCLightVolumes {
                 string currentDirectory = System.IO.Path.GetDirectoryName(currentPath)?.Replace('\\', '/');
                 string targetDirectory = System.IO.Path.GetDirectoryName(defaultPath)?.Replace('\\', '/');
                 if (!string.IsNullOrEmpty(currentPath)
+                    && AssetDatabase.IsMainAsset(currentShadow)
+                    && string.Equals(System.IO.Path.GetExtension(currentPath), ".asset", System.StringComparison.OrdinalIgnoreCase)
+                    && AssetDatabase.IsOpenForEdit(currentShadow)
                     && string.Equals(currentDirectory, targetDirectory, System.StringComparison.OrdinalIgnoreCase))
                     return currentPath;
             }
             return AssetDatabase.GenerateUniqueAssetPath(defaultPath);
+        }
+
+        // Replaces serialized shadow data on an existing compatible asset so its GUID/local file ID
+        // and every reference to it remain stable. New paths still create an ordinary native asset.
+        private static UnityEngine.Object SaveShadowAssetAtPath(UnityEngine.Object shadowAsset, string path) {
+            if (shadowAsset == null) return null;
+            if (string.IsNullOrEmpty(path)) {
+                DestroyTransientShadowAsset(shadowAsset);
+                return null;
+            }
+
+            UnityEngine.Object existingAsset = AssetDatabase.LoadMainAssetAtPath(path);
+            if (existingAsset == null) {
+                LVUtils.SaveAsAsset(shadowAsset, path);
+                UnityEngine.Object savedAsset = AssetDatabase.LoadMainAssetAtPath(path);
+                if (savedAsset == null) DestroyTransientShadowAsset(shadowAsset);
+                return savedAsset;
+            }
+            if (existingAsset.GetType() != shadowAsset.GetType()) {
+                DestroyTransientShadowAsset(shadowAsset);
+                return null;
+            }
+
+            string existingName = existingAsset.name;
+            try {
+                EditorUtility.CopySerialized(shadowAsset, existingAsset);
+                existingAsset.name = existingName;
+                EditorUtility.SetDirty(existingAsset);
+                AssetDatabase.SaveAssetIfDirty(existingAsset);
+                return existingAsset;
+            } catch (System.Exception exception) {
+                Debug.LogError($"[LightVolumes] Failed to update shadow asset '{path}' in place: {exception.Message}");
+                return null;
+            } finally {
+                DestroyTransientShadowAsset(shadowAsset);
+            }
+        }
+
+        // Releases failed or copied bake outputs without touching persistent source assets.
+        private static void DestroyTransientShadowAsset(UnityEngine.Object shadowAsset) {
+            if (shadowAsset != null && !AssetDatabase.Contains(shadowAsset)) UnityEngine.Object.DestroyImmediate(shadowAsset);
         }
 
         // Copies the runtime texture-array shadow output into a serializable cubemap asset.

@@ -117,7 +117,7 @@ namespace VRCLightVolumes {
                     Debug.Log($"[LightVolumes] Added Progressive probes for \"{volume.gameObject.name}\" (group {additionalProbeId}).", volume);
                 } catch (Exception exception) {
                     RemoveAdditionalProbes(additionalProbeId);
-                    Debug.LogException(exception, volume);
+                    Debug.LogError($"[LightVolumes] {exception}", volume);
                 }
             }
         }
@@ -141,7 +141,7 @@ namespace VRCLightVolumes {
                     LVUtils.MarkDirty(volume);
                     LightVolumeManagerEditorBackend.CopyProxyToUdon(volume);
                 } catch (Exception exception) {
-                    Debug.LogException(exception, volume);
+                    Debug.LogError($"[LightVolumes] {exception}", volume);
                 } finally {
                     RemoveAdditionalProbes(additionalProbeId);
                 }
@@ -188,7 +188,7 @@ namespace VRCLightVolumes {
                 try {
                     RemoveAdditionalProbes(GetAdditionalProbeId(i));
                 } catch (Exception exception) {
-                    Debug.LogException(exception);
+                    Debug.LogError($"[LightVolumes] {exception}");
                 }
             }
             _progressiveVolumes.Clear();
@@ -212,7 +212,7 @@ namespace VRCLightVolumes {
             try {
                 PostProcessLightProbes(_unityManager, false);
             } catch (Exception exception) {
-                Debug.LogException(exception, _unityManager);
+                Debug.LogError($"[LightVolumes] {exception}", _unityManager);
             }
         }
 
@@ -458,7 +458,7 @@ namespace VRCLightVolumes {
                             LVUtils.MarkDirty(volume);
                             LightVolumeManagerEditorBackend.CopyProxyToUdon(volume);
                         } catch (Exception exception) {
-                            Debug.LogException(exception, volume);
+                            Debug.LogError($"[LightVolumes] {exception}", volume);
                         }
                     }
                 }
@@ -466,7 +466,7 @@ namespace VRCLightVolumes {
                 try {
                     PostProcessLightProbes(manager, manager.FixLightProbesL1);
                 } catch (Exception exception) {
-                    Debug.LogException(exception, manager);
+                    Debug.LogError($"[LightVolumes] {exception}", manager);
                 }
                 FinalizeManager(manager);
                 Debug.Log("[LightVolumes] Bakery Light Volume atlas generation queued.");
@@ -559,7 +559,7 @@ namespace VRCLightVolumes {
                 try {
                     bakedPointLightCount = BakePointLightsIntoProbes(manager, sh, positions, MaxProbeBakedPointLightCount);
                 } catch (Exception exception) {
-                    Debug.LogException(exception, manager);
+                    Debug.LogError($"[LightVolumes] {exception}", manager);
                 }
             }
             if (!didDering && bakedPointLightCount == 0) return;

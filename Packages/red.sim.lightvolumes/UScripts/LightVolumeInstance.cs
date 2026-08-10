@@ -8,7 +8,7 @@ using UdonSharp;
 #endif
 
 namespace VRCLightVolumes {
-    [AddComponentMenu("VRC Light Volumes/Light Volume (U# Script)")]
+    [AddComponentMenu("VRC Light Volumes/Light Volume")]
     [DisallowMultipleComponent]
 #if UDONSHARP
     [UdonBehaviourSyncMode(BehaviourSyncMode.None)]

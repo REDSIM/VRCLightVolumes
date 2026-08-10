@@ -198,15 +198,10 @@ namespace VRCLightVolumes {
                 int columns = Mathf.Clamp(Mathf.CeilToInt(horizontalFov * density), 1, MaxFroxelSize);
                 int rows = Mathf.Clamp(Mathf.CeilToInt(verticalFov * density), 1, MaxFroxelSize);
 
-                // Tile rows only enough to fit the portable 4096 texture limit. Depth changes storage packing, but never the camera's logical angular grid.
-                int atlasTileShift = 0;
-                int atlasTileColumns = 1;
-                int atlasTileRows = rows;
-                while (depthSlices * atlasTileRows > MaxFroxelAtlasSize && atlasTileShift < MaxFroxelTileShift) {
-                    atlasTileShift++;
-                    atlasTileColumns <<= 1;
-                    atlasTileRows = (rows + atlasTileColumns - 1) >> atlasTileShift;
-                }
+                // Use the first layout that fits: power-of-two rounding can only add padding as the shift grows.
+                int atlasTileShift = ResolveFroxelAtlasTileShift(rows, depthSlices);
+                int atlasTileColumns = 1 << atlasTileShift;
+                int atlasTileRows = (rows + atlasTileColumns - 1) >> atlasTileShift;
                 _fineAtlasWidth = columns * atlasTileColumns;
                 _fineAtlasHeight = depthSlices * atlasTileRows;
 
@@ -214,14 +209,9 @@ namespace VRCLightVolumes {
                 int coarseColumns = (columns + coarseFactor - 1) >> coarseShift;
                 int coarseRows = (rows + coarseFactor - 1) >> coarseShift;
                 int coarseDepthSlices = (depthSlices + coarseFactor - 1) >> coarseShift;
-                int coarseAtlasTileShift = 0;
-                int coarseAtlasTileColumns = 1;
-                int coarseAtlasTileRows = coarseRows;
-                while (coarseDepthSlices * coarseAtlasTileRows > MaxFroxelAtlasSize && coarseAtlasTileShift < MaxFroxelTileShift) {
-                    coarseAtlasTileShift++;
-                    coarseAtlasTileColumns <<= 1;
-                    coarseAtlasTileRows = (coarseRows + coarseAtlasTileColumns - 1) >> coarseAtlasTileShift;
-                }
+                int coarseAtlasTileShift = ResolveFroxelAtlasTileShift(coarseRows, coarseDepthSlices);
+                int coarseAtlasTileColumns = 1 << coarseAtlasTileShift;
+                int coarseAtlasTileRows = (coarseRows + coarseAtlasTileColumns - 1) >> coarseAtlasTileShift;
                 _coarseAtlasWidth = coarseColumns * coarseAtlasTileColumns;
                 _coarseAtlasHeight = coarseDepthSlices * coarseAtlasTileRows;
 
@@ -343,6 +333,15 @@ namespace VRCLightVolumes {
 #endif
             if (!_clusteringActive || publishForEditorCamera) VRCShader.SetGlobalFloat(_clusteringEnabledID, 1f);
             _clusteringActive = true;
+        }
+
+        // Returns the first packing that fits vertically. Inputs are capped at 256, so shift four also guarantees a <= 4096 width.
+        private static int ResolveFroxelAtlasTileShift(int rows, int depthSlices) {
+            if (depthSlices * rows <= MaxFroxelAtlasSize) return 0;
+            if (depthSlices * ((rows + 1) >> 1) <= MaxFroxelAtlasSize) return 1;
+            if (depthSlices * ((rows + 3) >> 2) <= MaxFroxelAtlasSize) return 2;
+            if (depthSlices * ((rows + 7) >> 3) <= MaxFroxelAtlasSize) return 3;
+            return MaxFroxelTileShift;
         }
 
         // Ensures the hidden build material, both packed integer targets and one-pixel blit source all exist.

@@ -96,7 +96,7 @@ namespace VRCLightVolumes {
                 remaining[write++] = processors[i];
             }
             EditorSetAtlasPostProcessors(remaining);
-            Debug.Log($"[LightVolumeManager] Unregistered post processor: {(removedTarget != null ? removedTarget.name : "")}");
+            Debug.Log($"[LightVolumes] Unregistered post processor: {(removedTarget != null ? removedTarget.name : "")}");
             EditorRefreshAtlasPostProcessors();
         }
 
@@ -111,7 +111,7 @@ namespace VRCLightVolumes {
                 Array.Resize(ref processors, processors.Length + 1);
                 processors[processors.Length - 1] = processor;
                 EditorSetAtlasPostProcessors(processors);
-                Debug.Log($"[LightVolumeManager] Registered post processor: {processor.Target.name}");
+                Debug.Log($"[LightVolumes] Registered post processor: {processor.Target.name}");
                 EditorRefreshAtlasPostProcessors();
                 return;
             }
@@ -132,7 +132,7 @@ namespace VRCLightVolumes {
                 processors = unique;
             }
             EditorSetAtlasPostProcessors(processors);
-            Debug.Log($"[LightVolumeManager] Updated post processor: {processor.Target.name}");
+            Debug.Log($"[LightVolumes] Updated post processor: {processor.Target.name}");
             EditorRefreshAtlasPostProcessors();
         }
 
@@ -459,6 +459,9 @@ namespace VRCLightVolumes {
         // Editor-only getters for the custom inspector. They add no serialized fields, asset references, or variables to either the Udon program or a player build.
         internal RenderTexture FineClusterMaskPreview => _clusterMask;
         internal RenderTexture CoarseClusterMaskPreview => _coarseClusterMask;
+        internal bool FroxelLayoutValidPreview => _froxelLayoutValid;
+        internal Vector4 FineFroxelGridParamsPreview => _fineGridParams;
+        internal Vector4 CoarseFroxelGridParamsPreview => _coarseGridParams;
         internal Material ClusteringMaterialPreview => GetClusteringMaterial();
         internal bool RuntimeInitializedPreview => _isInitialized;
         internal int ActivePointLightCountPreview => _pointLightCount;

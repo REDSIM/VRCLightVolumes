@@ -49,7 +49,7 @@ namespace VRCLightVolumes {
             try {
 
                 if (volumes == null || volumes.Length == 0) {
-                    Debug.LogError("[LightVolume] No light volumes were provided for atlas generation!");
+                    Debug.LogError("[LightVolumes] No light volumes were provided for atlas generation!");
                     yield break;
                 }
 
@@ -67,7 +67,7 @@ namespace VRCLightVolumes {
 
                     LightVolumeInstance volume = volumes[i];
                     if (volume == null) {
-                        Debug.LogError("[LightVolume] One of the light volumes is not setuped!");
+                        Debug.LogError("[LightVolumes] One of the light volumes is not setuped!");
                         yield break;
                     }
 
@@ -79,7 +79,7 @@ namespace VRCLightVolumes {
                         int h = GetReservedTextureSize(volume.Resolution.y, downscaleCount);
                         int d = GetReservedTextureSize(volume.Resolution.z, downscaleCount);
                         if (IsTextureSizeTooLargeForAtlas(w, h, d, padding) || GetReservedVoxelCount(w, h, d) < 0) {
-                            Debug.LogError($"[LightVolume] Reserved UV space for light volume \"{volume.gameObject.name}\" is too large!");
+                            Debug.LogError($"[LightVolumes] Reserved UV space for light volume \"{volume.gameObject.name}\" is too large!");
                             yield break;
                         }
 
@@ -93,7 +93,7 @@ namespace VRCLightVolumes {
                     }
 
                     if (volume.Texture0 == null || volume.Texture1 == null || volume.Texture2 == null) {
-                        Debug.LogError($"[LightVolume] Light volume \"{volume.gameObject.name}\" is not baked!");
+                        Debug.LogError($"[LightVolumes] Light volume \"{volume.gameObject.name}\" is not baked!");
                         yield break;
                     }
 
@@ -134,7 +134,7 @@ namespace VRCLightVolumes {
                     }
 
                     if (IsTextureSizeTooLargeForAtlas(tex0.width, tex0.height, tex0.depth, padding)) {
-                        Debug.LogError($"[LightVolume] Light volume \"{volume.gameObject.name}\" texture dimensions are too large for the atlas.");
+                        Debug.LogError($"[LightVolumes] Light volume \"{volume.gameObject.name}\" texture dimensions are too large for the atlas.");
                         yield break;
                     }
 
@@ -226,7 +226,7 @@ namespace VRCLightVolumes {
 
                 PackingResult packingResult = packingTask.Result;
                 if (!packingResult.Success) {
-                    Debug.LogError("[LightVolume] Light Volume atlas is too large to fit in the maximum texture size!");
+                    Debug.LogError("[LightVolumes] Light Volume atlas is too large to fit in the maximum texture size!");
                     yield break;
                 }
 
@@ -236,7 +236,7 @@ namespace VRCLightVolumes {
 
                 ulong vCount = (ulong)atlasW * (ulong)atlasH * (ulong)atlasD;
                 if (vCount > int.MaxValue) {
-                    Debug.LogError($"[LightVolume] Light Volume voxel count is too large and can't be saved!");
+                    Debug.LogError($"[LightVolumes] Light Volume voxel count is too large and can't be saved!");
                     yield break;
                 }
 
@@ -325,12 +325,12 @@ namespace VRCLightVolumes {
         // Validates baked texture bundle dimensions and channel format before worker threads read pixel data.
         private static bool ValidateTextureBundle(LightVolumeInstance volume, Texture3D tex0, Texture3D tex1, Texture3D tex2) {
             if (!IsSupportedSourceFormat(tex0.format) || !IsSupportedSourceFormat(tex1.format) || !IsSupportedSourceFormat(tex2.format)) {
-                Debug.LogError($"[LightVolume] Light volume \"{volume.gameObject.name}\" has unsupported texture format. Light Volume textures must use RGBAHalf, RGBAFloat, RGBA32 or ARGB32.");
+                Debug.LogError($"[LightVolumes] Light volume \"{volume.gameObject.name}\" has unsupported texture format. Light Volume textures must use RGBAHalf, RGBAFloat, RGBA32 or ARGB32.");
                 return false;
             }
 
             if (tex0.width != tex1.width || tex0.width != tex2.width || tex0.height != tex1.height || tex0.height != tex2.height || tex0.depth != tex1.depth || tex0.depth != tex2.depth) {
-                Debug.LogError($"[LightVolume] Light volume \"{volume.gameObject.name}\" has mismatched Texture3D dimensions.");
+                Debug.LogError($"[LightVolumes] Light volume \"{volume.gameObject.name}\" has mismatched Texture3D dimensions.");
                 return false;
             }
 

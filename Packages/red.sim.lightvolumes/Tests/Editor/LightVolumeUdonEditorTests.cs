@@ -278,6 +278,9 @@ namespace VRCLightVolumes.Tests {
                 "ReleaseClusteringPreviewForAssemblyReload",
                 "FineClusterMaskPreview",
                 "CoarseClusterMaskPreview",
+                "FroxelLayoutValidPreview",
+                "FineFroxelGridParamsPreview",
+                "CoarseFroxelGridParamsPreview",
                 "ClusteringMaterialPreview",
                 "RuntimeInitializedPreview",
                 "ActivePointLightCountPreview",
@@ -559,6 +562,52 @@ namespace VRCLightVolumes.Tests {
             Assert.That(deepGrid.x, Is.EqualTo(expectedColumns));
             Assert.That(deepGrid.z, Is.EqualTo(expectedRows));
             Assert.That(deepGrid.y, Is.EqualTo(200));
+        }
+
+        // The first fitting shift minimizes padding and avoids extra runtime work for equal-area alternatives.
+        [Test]
+        public void FroxelAtlasPackingUsesFirstMinimumAreaLayout() {
+            int tileShift = ResolveFroxelAtlasTileShift(96, 100);
+            int tileColumns = 1 << tileShift;
+            int width = 180 * tileColumns;
+            int height = 100 * ((96 + tileColumns - 1) >> tileShift);
+
+            Assert.That(tileShift, Is.EqualTo(2));
+            Assert.That(width, Is.EqualTo(720));
+            Assert.That(height, Is.EqualTo(2400));
+            Assert.That(width * height, Is.EqualTo(180 * 96 * 100));
+        }
+
+        // A squarer candidate must never win when it introduces even one incomplete tile row.
+        [Test]
+        public void FroxelAtlasPackingNeverTradesAreaForAspectRatio() {
+            int tileShift = ResolveFroxelAtlasTileShift(33, 29);
+            int tileColumns = 1 << tileShift;
+            int selectedArea = 30 * tileColumns * 29 * ((33 + tileColumns - 1) >> tileShift);
+            int minimumArea = 30 * 33 * 29;
+
+            Assert.That(tileShift, Is.Zero);
+            Assert.That(selectedArea, Is.EqualTo(minimumArea));
+        }
+
+        // The largest logical grid must still resolve to a portable 4096-by-4096 atlas.
+        [Test]
+        public void FroxelAtlasPackingKeepsTextureDimensionsPortable() {
+            int tileShift = ResolveFroxelAtlasTileShift(256, 256);
+            int tileColumns = 1 << tileShift;
+            int width = 256 * tileColumns;
+            int height = 256 * ((256 + tileColumns - 1) >> tileShift);
+
+            Assert.That(tileShift, Is.EqualTo(4));
+            Assert.That(width, Is.LessThanOrEqualTo(4096));
+            Assert.That(height, Is.LessThanOrEqualTo(4096));
+        }
+
+        // Invokes the runtime packing selector without allocating clustering render textures.
+        private static int ResolveFroxelAtlasTileShift(int rows, int depthSlices) {
+            MethodInfo method = typeof(LightVolumeManager).GetMethod("ResolveFroxelAtlasTileShift", BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.That(method, Is.Not.Null);
+            return (int)method.Invoke(null, new object[] { rows, depthSlices });
         }
 
         // The builder and both Scene View clustering previews must compile on the active editor graphics API.

@@ -22,7 +22,7 @@ namespace VRCLightVolumes {
     // - ~.LegacyEditor.cs: temporary source-compatible editor API retained for existing integrations.
     // - ~.EditorHandle.cs: supporting manager.Editor handle and public post-processor descriptor; this file does not add another Manager partial.
 
-    [AddComponentMenu("VRC Light Volumes/Light Volume Manager (U# Script)")]
+    [AddComponentMenu("VRC Light Volumes/Light Volume Manager")]
     [DisallowMultipleComponent]
 #if UDONSHARP
     [UdonBehaviourSyncMode(BehaviourSyncMode.None)]
@@ -140,9 +140,9 @@ namespace VRCLightVolumes {
         [Tooltip("Downscales each Light Volume before atlas packing. Useful for lower-resolution mobile atlases or reducing aliasing.")]
         [HideInInspector] public int DownscaleVolumes = 0; // 0 = None, 1 = x2, 2 = x4, 3 = x8
         // The mobile slider is authoring-only. ShadowMinVariance remains the resolved raw runtime value.
-        [Tooltip("Logarithmic EVSM variance bias slider used for PC builds. The receiver shader scales this by warped depth, matching the EVSM derivative. Higher values reduce edge noise, but can detach contact shadows.")]
+        //Logarithmic EVSM variance bias slider used for PC builds. The receiver shader scales this by warped depth, matching the EVSM derivative. Higher values reduce edge noise, but can detach contact shadows.
         [HideInInspector] public float ShadowMinVarianceDesktop = 0f;
-        [Tooltip("Logarithmic EVSM variance bias slider used for Android and iOS builds. Higher values reduce Half precision edge noise on Quest and Mobile, but can detach contact shadows.")]
+        //Logarithmic EVSM variance bias slider used for Android and iOS builds. Higher values reduce Half precision edge noise on Quest and Mobile, but can detach contact shadows.
         [HideInInspector] public float ShadowMinVarianceMobile = 1f;
         // Serializable RT/material/name projection for editor atlas processors. Delegate callbacks remain in transient editor state and must re-register after reload.
         [HideInInspector] public RenderTexture[] AtlasPostProcessorTargets = new RenderTexture[0];

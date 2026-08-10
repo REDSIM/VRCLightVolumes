@@ -88,7 +88,7 @@ namespace VRCLightVolumes {
                 texture.Apply(updateMipmaps: false);
                 return true;
             } catch (UnityException ex) {
-                Debug.LogError($"[LightVolumeUtils] Failed to SetPixels in the Texture3D. Error: {ex.Message}");
+                Debug.LogError($"[LightVolumes] Failed to SetPixels in the Texture3D. Error: {ex.Message}");
                 return false;
             }
         }
@@ -107,7 +107,7 @@ namespace VRCLightVolumes {
         public static void SaveAsAssetDelayed(Object asset, string assetPath, System.Action<bool> callback = null) {
 #if UNITY_EDITOR
             if (asset == null || string.IsNullOrEmpty(assetPath)) {
-                Debug.LogError("[LightVolumeUtils] Invalid input for saving asset.");
+                Debug.LogError("[LightVolumes] Invalid input for saving asset.");
                 callback?.Invoke(false);
                 return;
             }
@@ -122,13 +122,13 @@ namespace VRCLightVolumes {
                     EditorUtility.SetDirty(asset);
                     callback?.Invoke(true);
                 } catch (System.Exception e) {
-                    Debug.LogError($"[LightVolumeUtils] Save failed: {e.Message}");
+                    Debug.LogError($"[LightVolumes] Save failed: {e.Message}");
                     callback?.Invoke(false);
                 }
             }
             EditorApplication.update += DelayedSave;
 #else
-            Debug.LogError($"[LightVolumeUtils] You can only save assets in the editor!");
+            Debug.LogError($"[LightVolumes] You can only save assets in the editor!");
 #endif
         }
 
@@ -185,7 +185,7 @@ namespace VRCLightVolumes {
         public static void SaveAsAsset(Object asset, string assetPath) {
 #if UNITY_EDITOR
             if (asset == null || string.IsNullOrEmpty(assetPath)) {
-                Debug.LogError("[LightVolumeUtils] Invalid input for saving asset.");
+                Debug.LogError("[LightVolumes] Invalid input for saving asset.");
                 return;
             }
             try {
@@ -195,10 +195,10 @@ namespace VRCLightVolumes {
                 AssetDatabase.CreateAsset(asset, assetPath);
                 EditorUtility.SetDirty(asset);
             } catch (System.Exception e) {
-                Debug.LogError($"[LightVolumeUtils] Save failed: {e.Message}");
+                Debug.LogError($"[LightVolumes] Save failed: {e.Message}");
             }
 #else
-            Debug.LogError($"[LightVolumeUtils] You can only save assets in the editor!");
+            Debug.LogError($"[LightVolumes] You can only save assets in the editor!");
 #endif
         }
 

@@ -624,7 +624,7 @@ namespace VRCLightVolumes {
                 try {
                     UdonSharpUndo.DestroyImmediate(proxies[i]);
                 } catch (Exception exception) {
-                    Debug.LogException(exception, proxies[i]);
+                    Debug.LogError($"[LightVolumes] {exception}", proxies[i]);
                 }
             }
         }

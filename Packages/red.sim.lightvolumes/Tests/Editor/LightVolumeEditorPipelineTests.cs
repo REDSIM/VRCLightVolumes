@@ -398,6 +398,88 @@ namespace VRCLightVolumes.Tests {
             }
         }
 
+        // Re-baking copies the new pixels into the already assigned native asset so its complete
+        // Unity identity and references held by other lights remain valid.
+        [TestCase(false)]
+        [TestCase(true)]
+        public void ShadowRebakePreservesAssetIdentityAndSharedReferences(bool cubemap) {
+            MethodInfo saveAtPath = typeof(PointLightShadowBaker).GetMethod(
+                "SaveShadowAssetAtPath",
+                BindingFlags.Static | BindingFlags.NonPublic);
+            string assetKind = cubemap ? "Cubemap" : "Texture";
+            string path = AssetDatabase.GenerateUniqueAssetPath($"Assets/VRCLightVolumesShadow{assetKind}IdentityTest.asset");
+            GameObject ownerObject = new GameObject("Shadow Owner");
+            GameObject observerObject = new GameObject("Shadow Observer");
+            Texture existingShadow = cubemap
+                ? (Texture)new Cubemap(2, TextureFormat.RGBAHalf, false)
+                : new Texture2D(2, 2, TextureFormat.RGBAHalf, false, true);
+            existingShadow.name = "Stable Shadow";
+            existingShadow.filterMode = FilterMode.Bilinear;
+            Texture replacementShadow = null;
+
+            try {
+                Assert.That(saveAtPath, Is.Not.Null);
+                SetShadowPixels(existingShadow, Color.black);
+                AssetDatabase.CreateAsset(existingShadow, path);
+                string assetNameBefore = existingShadow.name;
+
+                PointLightVolumeInstance owner = ownerObject.AddComponent<PointLightVolumeInstance>();
+                PointLightVolumeInstance observer = observerObject.AddComponent<PointLightVolumeInstance>();
+                owner.ShadowMap = existingShadow;
+                observer.ShadowMap = existingShadow;
+
+                Assert.That(AssetDatabase.TryGetGUIDAndLocalFileIdentifier(existingShadow, out string guidBefore, out long localIdBefore), Is.True);
+
+                replacementShadow = cubemap
+                    ? (Texture)new Cubemap(4, TextureFormat.RGBAHalf, false)
+                    : new Texture2D(4, 4, TextureFormat.RGBAHalf, false, true);
+                replacementShadow.name = "Temporary Replacement";
+                replacementShadow.filterMode = FilterMode.Point;
+                SetShadowPixels(replacementShadow, Color.white);
+
+                UnityEngine.Object savedShadow = saveAtPath.Invoke(null, new object[] { replacementShadow, path }) as UnityEngine.Object;
+                owner.ShadowMap = savedShadow;
+
+                AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceUpdate);
+                Texture reloadedShadow = AssetDatabase.LoadAssetAtPath<Texture>(path);
+                Assert.That(reloadedShadow, Is.Not.Null);
+                Assert.That(reloadedShadow.GetType(), Is.EqualTo(existingShadow.GetType()));
+                Assert.That(AssetDatabase.TryGetGUIDAndLocalFileIdentifier(reloadedShadow, out string guidAfter, out long localIdAfter), Is.True);
+                Assert.That(guidAfter, Is.EqualTo(guidBefore));
+                Assert.That(localIdAfter, Is.EqualTo(localIdBefore));
+                Assert.That(owner.ShadowMap, Is.EqualTo(reloadedShadow));
+                Assert.That(observer.ShadowMap, Is.EqualTo(reloadedShadow));
+                Assert.That(reloadedShadow.name, Is.EqualTo(assetNameBefore));
+                Assert.That(reloadedShadow.width, Is.EqualTo(4));
+                Assert.That(reloadedShadow.height, Is.EqualTo(4));
+                Assert.That(reloadedShadow.filterMode, Is.EqualTo(FilterMode.Point));
+                Color firstPixel = reloadedShadow is Cubemap reloadedCubemap
+                    ? reloadedCubemap.GetPixel(CubemapFace.PositiveX, 0, 0)
+                    : ((Texture2D)reloadedShadow).GetPixel(0, 0);
+                Assert.That(firstPixel.r, Is.EqualTo(1f).Within(1f / 255f));
+            } finally {
+                UnityEngine.Object.DestroyImmediate(ownerObject);
+                UnityEngine.Object.DestroyImmediate(observerObject);
+                if (replacementShadow != null) UnityEngine.Object.DestroyImmediate(replacementShadow);
+                AssetDatabase.DeleteAsset(path);
+            }
+        }
+
+        private static void SetShadowPixels(Texture texture, Color color) {
+            Color[] pixels = new Color[texture.width * texture.height];
+            for (int i = 0; i < pixels.Length; i++) pixels[i] = color;
+
+            if (texture is Cubemap cubemap) {
+                for (int i = 0; i < 6; i++) cubemap.SetPixels(pixels, (CubemapFace)i);
+                cubemap.Apply(false);
+                return;
+            }
+
+            Texture2D texture2D = (Texture2D)texture;
+            texture2D.SetPixels(pixels);
+            texture2D.Apply(false);
+        }
+
         private static void AssertProjectionCopy(MethodInfo copy, PointLightVolume.LightType lightType, PointLightVolume.LightProjection projection, UnityEngine.Object sourceObject, int expectedMode) {
             GameObject legacyObject = new GameObject($"Legacy {lightType} {projection}");
             GameObject unifiedObject = new GameObject($"Unified {lightType} {projection}");

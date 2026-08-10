@@ -126,10 +126,10 @@ namespace VRCLightVolumes.Tests {
         // Verifies null or empty inputs fail without invoking the completion callback.
         [Test]
         public void CreateAtlasRejectsNullAndEmptyVolumeLists() {
-            LogAssert.Expect(LogType.Error, "[LightVolume] No light volumes were provided for atlas generation!");
+            LogAssert.Expect(LogType.Error, "[LightVolumes] No light volumes were provided for atlas generation!");
             Assert.That(RunAtlasExpectingNoResult(null), Is.False);
 
-            LogAssert.Expect(LogType.Error, "[LightVolume] No light volumes were provided for atlas generation!");
+            LogAssert.Expect(LogType.Error, "[LightVolumes] No light volumes were provided for atlas generation!");
             Assert.That(RunAtlasExpectingNoResult(new LightVolumeInstance[0]), Is.False);
         }
 
@@ -138,7 +138,7 @@ namespace VRCLightVolumes.Tests {
         public void CreateAtlasRejectsMissingBakedTextures() {
             LightVolumeInstance volume = CreateSceneLightVolume("Missing Baked Textures");
             volume.Bake = true;
-            LogAssert.Expect(LogType.Error, $"[LightVolume] Light volume \"{volume.gameObject.name}\" is not baked!");
+            LogAssert.Expect(LogType.Error, $"[LightVolumes] Light volume \"{volume.gameObject.name}\" is not baked!");
 
             Assert.That(RunAtlasExpectingNoResult(new[] { volume }), Is.False);
         }
@@ -147,7 +147,7 @@ namespace VRCLightVolumes.Tests {
         [Test]
         public void CreateAtlasRejectsMismatchedTextureDimensions() {
             LightVolumeInstance volume = CreateBakedLightVolume("Mismatched Dimensions", CreateSolidTexture3D("Mismatch Tex0", 2, 2, 2, TextureFormat.RGBAHalf, Color.white), CreateSolidTexture3D("Mismatch Tex1", 1, 2, 2, TextureFormat.RGBAHalf, Color.clear), CreateSolidTexture3D("Mismatch Tex2", 2, 2, 2, TextureFormat.RGBAHalf, Color.clear));
-            LogAssert.Expect(LogType.Error, $"[LightVolume] Light volume \"{volume.gameObject.name}\" has mismatched Texture3D dimensions.");
+            LogAssert.Expect(LogType.Error, $"[LightVolumes] Light volume \"{volume.gameObject.name}\" has mismatched Texture3D dimensions.");
 
             Assert.That(RunAtlasExpectingNoResult(new[] { volume }), Is.False);
         }
@@ -156,7 +156,7 @@ namespace VRCLightVolumes.Tests {
         [Test]
         public void CreateAtlasRejectsUnsupportedTextureFormats() {
             LightVolumeInstance volume = CreateBakedLightVolume("Unsupported Format", CreateEmptyTexture3D("Unsupported RGB24 Tex0", 2, 2, 2, TextureFormat.RGB24), CreateSolidTexture3D("Unsupported Tex1", 2, 2, 2, TextureFormat.RGBAHalf, Color.clear), CreateSolidTexture3D("Unsupported Tex2", 2, 2, 2, TextureFormat.RGBAHalf, Color.clear));
-            LogAssert.Expect(LogType.Error, $"[LightVolume] Light volume \"{volume.gameObject.name}\" has unsupported texture format. Light Volume textures must use RGBAHalf, RGBAFloat, RGBA32 or ARGB32.");
+            LogAssert.Expect(LogType.Error, $"[LightVolumes] Light volume \"{volume.gameObject.name}\" has unsupported texture format. Light Volume textures must use RGBAHalf, RGBAFloat, RGBA32 or ARGB32.");
 
             Assert.That(RunAtlasExpectingNoResult(new[] { volume }), Is.False);
         }
@@ -165,7 +165,7 @@ namespace VRCLightVolumes.Tests {
         [Test]
         public void CreateAtlasRejectsTooLargeBakedTextureDimensions() {
             LightVolumeInstance volume = CreateBakedLightVolume("Too Large Baked Texture", CreateSolidTexture3D("Too Large Tex0", MaxAtlasSize - 1, 1, 1, TextureFormat.RGBAHalf, Color.clear), CreateSolidTexture3D("Too Large Tex1", MaxAtlasSize - 1, 1, 1, TextureFormat.RGBAHalf, Color.clear), CreateSolidTexture3D("Too Large Tex2", MaxAtlasSize - 1, 1, 1, TextureFormat.RGBAHalf, Color.clear));
-            LogAssert.Expect(LogType.Error, $"[LightVolume] Light volume \"{volume.gameObject.name}\" texture dimensions are too large for the atlas.");
+            LogAssert.Expect(LogType.Error, $"[LightVolumes] Light volume \"{volume.gameObject.name}\" texture dimensions are too large for the atlas.");
 
             Assert.That(RunAtlasExpectingNoResult(new[] { volume }), Is.False);
         }
@@ -174,7 +174,7 @@ namespace VRCLightVolumes.Tests {
         [Test]
         public void CreateAtlasRejectsTooLargeReservedVolumeDimensions() {
             LightVolumeInstance volume = CreateReservedLightVolume("Too Large Reserved Volume", new Vector3Int(MaxAtlasSize - 1, 1, 1));
-            LogAssert.Expect(LogType.Error, $"[LightVolume] Reserved UV space for light volume \"{volume.gameObject.name}\" is too large!");
+            LogAssert.Expect(LogType.Error, $"[LightVolumes] Reserved UV space for light volume \"{volume.gameObject.name}\" is too large!");
 
             Assert.That(RunAtlasExpectingNoResult(new[] { volume }), Is.False);
         }

@@ -18,7 +18,7 @@ using VRCShader = UnityEngine.Shader;
 #endif
 
 namespace VRCLightVolumes {
-    [AddComponentMenu("VRC Light Volumes/Point Light Volume (U# Script)")]
+    [AddComponentMenu("VRC Light Volumes/Point Light Volume")]
     [DisallowMultipleComponent]
 #if UDONSHARP
     [UdonBehaviourSyncMode(BehaviourSyncMode.None)]

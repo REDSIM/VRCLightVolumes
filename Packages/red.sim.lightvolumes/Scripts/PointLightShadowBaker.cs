@@ -32,12 +32,16 @@ namespace VRCLightVolumes {
             if (!EnsureRuntimeShadowBakeDependencies(manager, pointLightVolume)) return false;
 
             bool cubemapShadows = pointLightVolume.ShouldBakeCubemapShadows();
-            int resolution = Mathf.Max(manager.ShadowTexturesWidth, 16);
+            int resolution = ResolveShadowBakeResolution(pointLightVolume, manager);
             TextureFormat textureFormat = GetManagerShadowMapBakeFormat(manager);
             TextureFormat safeTextureFormat = GetSafeShadowMomentFormat(textureFormat);
 
             int oldShadowTextureFormat = manager.ShadowTextureFormat;
             bool oldPointLightInstanceEnabled = pointLightInstance.enabled;
+            int oldRuntimeShadowResolution = pointLightInstance.RuntimeShadowResolution;
+            int oldRuntimeShadowBlurSamplePreset = pointLightInstance.RuntimeShadowBlurSamplePreset;
+            int oldRuntimeShadowFacesPerFrame = pointLightInstance.RuntimeShadowFacesPerFrame;
+            bool oldRuntimeShadowDirectOutput = pointLightInstance.RuntimeShadowDirectOutput;
             RenderTexture oldActive = RenderTexture.active;
             RenderTexture runtimeShadowTexture = null;
             bool baked = false;
@@ -53,7 +57,6 @@ namespace VRCLightVolumes {
                 pointLightInstance.RuntimeShadowBlurMaterial = manager.RuntimeShadowBlurMaterial;
                 pointLightInstance.RuntimeShadowResolution = resolution;
                 pointLightInstance.RuntimeShadowBlurSamplePreset = EditorShadowBlurSamplePreset;
-                pointLightInstance.RuntimeShadowSphericalBlur = true;
                 pointLightInstance.RuntimeShadowFacesPerFrame = 6;
                 pointLightInstance.RuntimeShadowDirectOutput = false;
                 pointLightInstance.ShadowMapTexture = null;
@@ -93,6 +96,10 @@ namespace VRCLightVolumes {
                 manager.ShadowTextureFormat = oldShadowTextureFormat;
                 ResetManagerRuntimeShadowBlurState(manager);
                 pointLightVolume.EditorApplyAuthoringData(false, true, false);
+                pointLightInstance.RuntimeShadowResolution = oldRuntimeShadowResolution;
+                pointLightInstance.RuntimeShadowBlurSamplePreset = oldRuntimeShadowBlurSamplePreset;
+                pointLightInstance.RuntimeShadowFacesPerFrame = oldRuntimeShadowFacesPerFrame;
+                pointLightInstance.RuntimeShadowDirectOutput = oldRuntimeShadowDirectOutput;
                 pointLightInstance.enabled = oldPointLightInstanceEnabled;
                 if (regenerateArray) {
                     if (baked) manager.ReinitializeShadowTextures();
@@ -191,6 +198,14 @@ namespace VRCLightVolumes {
                 DestroyTransientShadowAsset(shadowAsset);
                 return null;
             }
+        }
+
+        // Resolves the authoring override shared by editor and in-game shadow bakes.
+        public static int ResolveShadowBakeResolution(PointLightVolumeInstance pointLightVolume, LightVolumeManager manager) {
+            int authoredResolution = pointLightVolume != null ? pointLightVolume.ShadowBakeResolution : 0;
+            if (authoredResolution > 0) return Mathf.Clamp(authoredResolution, 16, 2048);
+            if (manager != null) return Mathf.Clamp(manager.ShadowTexturesWidth, 16, 2048);
+            return pointLightVolume != null ? Mathf.Clamp(pointLightVolume.RuntimeShadowResolution, 16, 2048) : 16;
         }
 
         // Keeps a light's existing generated bake path stable while preventing identically named

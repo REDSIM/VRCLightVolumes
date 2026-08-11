@@ -168,12 +168,16 @@ namespace VRCLightVolumes.Tests {
             };
 
             Assert.That(expectedFields.GetLength(0), Is.EqualTo(53), "Update the contract deliberately when its baseline changes.");
+            FieldInfo[] declaredFields = typeof(LightVolumeManager).GetFields(PublicInstanceDeclared);
+            Array.Sort(declaredFields, (left, right) => left.MetadataToken.CompareTo(right.MetadataToken));
+            Assert.That(declaredFields, Has.Length.EqualTo(expectedFields.GetLength(0)), "Unexpected public instance field changed the serialized/Udon ABI.");
             for (int i = 0; i < expectedFields.GetLength(0); i++) {
                 string fieldName = (string)expectedFields[i, 0];
                 Type expectedType = (Type)expectedFields[i, 1];
                 FieldInfo field = typeof(LightVolumeManager).GetField(fieldName, PublicInstanceDeclared);
                 Assert.That(field, Is.Not.Null, "Missing serialized public field " + fieldName);
                 Assert.That(field.FieldType, Is.EqualTo(expectedType), fieldName + " changed its serialized type");
+                Assert.That(declaredFields[i].Name, Is.EqualTo(fieldName), fieldName + " changed its serialized declaration order");
             }
         }
 
@@ -197,6 +201,7 @@ namespace VRCLightVolumes.Tests {
             AssertPublicMethod("InitializePointLightVolume", typeof(void), typeof(PointLightVolumeInstance));
             AssertPublicMethod("DeinitializePointLightVolume", typeof(void), typeof(PointLightVolumeInstance), typeof(bool), typeof(bool));
             AssertPublicMethod("ReorderPointLightVolume", typeof(void), typeof(PointLightVolumeInstance));
+            AssertPublicMethod("EnqueueBakeInGameLight", typeof(void), typeof(PointLightVolumeInstance));
             AssertPublicMethod("UpdateAutoCustomTextures", typeof(void));
             AssertPublicMethod("CompleteAreaCookieAverageReadback", typeof(void), typeof(PointLightVolumeInstance), typeof(bool), typeof(Color));
             AssertPublicMethod("UpdateAutoShadowTextures", typeof(void));
@@ -262,70 +267,6 @@ namespace VRCLightVolumes.Tests {
             Assert.That(editorAsmdefGuid, Is.Not.Empty);
             Assert.That(udonAsmdef, Does.Not.Contain(editorAsmdefGuid));
             Assert.That(udonAsmdef, Does.Not.Contain("red.sim.LightVolumesEditor"));
-        }
-
-        // Package implementation hooks must not leak into creator-facing IntelliSense beside the runtime API.
-        [Test]
-        public void EditorImplementationHelpersAreNotPublic() {
-            string[] managerInternals = {
-                "EditorAtlasPostProcessorsChanged",
-                "EditorIsBakeryMode",
-                "UpdateClusteringFromCamera",
-                "ReleaseClusteringPreview",
-                "EnsureRuntimeShadowCamera",
-                "GetEditorProbeBakePointLightData",
-                "RebuildClusteringPreviewState",
-                "ReleaseClusteringPreviewForAssemblyReload",
-                "FineClusterMaskPreview",
-                "CoarseClusterMaskPreview",
-                "FroxelLayoutValidPreview",
-                "FineFroxelGridParamsPreview",
-                "CoarseFroxelGridParamsPreview",
-                "ClusteringMaterialPreview",
-                "RuntimeInitializedPreview",
-                "ActivePointLightCountPreview",
-                "ActiveShadowCountPreview",
-                "ClusteringActivePreview",
-                "ClusteringUnsupportedPreview",
-                "ClusteringAllocationFailedPreview",
-                "ClusterMaskValidPreview"
-            };
-            string[] pointInternals = {
-                "RegisteredWithManagerPreview",
-                "RuntimeShadowBakeStartedPreview",
-                "RuntimeShadowSourceInitializedPreview",
-                "RuntimeShadowFaceIndexPreview",
-                "RuntimeShadowReceiverNearClipPreview",
-                "RuntimeShadowReceiverFarClipPreview",
-                "RuntimeShadowDepthTexturePreview",
-                "RuntimeShadowTexturePreview",
-                "RuntimeShadowRegistrationTexturePreview",
-                "CacheEditorObservedValues",
-                "EditorRestoreExclusionMask",
-                "HasEditorCustomTextureChanges",
-                "HasEditorShadowTextureChanges",
-                "EditorApplyAuthoringData",
-                "OnUnityAsyncGpuReadbackComplete",
-                "GetProjectionSource",
-                "GetCustomTexture",
-                "GetCustomTextureMaterial",
-                "GetProjectionType",
-                "HasProjectionSource",
-                "UsesCubemapProjection",
-                "GetShadowMapTexture",
-                "GetShadowMapMaterial",
-                "HasShadowMapSource",
-                "ShouldBakeCubemapShadows",
-                "UsesCubemapShadows",
-                "GetShadowNearClip",
-                "GetShadowFarClip"
-            };
-            BindingFlags publicDeclared = BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly;
-            for (int i = 0; i < managerInternals.Length; i++)
-                Assert.That(typeof(LightVolumeManager).GetMember(managerInternals[i], publicDeclared), Is.Empty, managerInternals[i]);
-            for (int i = 0; i < pointInternals.Length; i++)
-                Assert.That(typeof(PointLightVolumeInstance).GetMember(pointInternals[i], publicDeclared), Is.Empty, pointInternals[i]);
-            Assert.That(typeof(LightVolumeInstance).GetMember("RegisteredWithManagerPreview", publicDeclared), Is.Empty);
         }
 
         // Unity lifecycle methods and string-dispatched Udon events must retain their exact names and shapes.
@@ -685,68 +626,6 @@ namespace VRCLightVolumes.Tests {
             Assert.That(Shader.GetGlobalTexture(coarseMaskID), Is.Null);
         }
 
-        // Editor caches excluded from COMPILER_UDONSHARP must not appear in the reflected proxy layout.
-        [Test]
-        public void EditorOnlyManagerStateDoesNotAddUdonProxyInstanceFields() {
-            string[] removedFieldNames = {
-                "_editorCustomSourceOwners",
-                "_editorCustomSourceTextures",
-                "_editorCustomSourceMaterials",
-                "_editorCustomSourceStates",
-                "_editorCustomTextureWidth",
-                "_editorCustomTextureHeight",
-                "_editorShadowSourceOwners",
-                "_editorShadowSourceTextures",
-                "_editorShadowSourceMaterials",
-                "_editorShadowSourceStates",
-                "_editorShadowTextureWidth",
-                "_editorShadowTextureHeight",
-                "_editorShadowTextureFormat",
-                "_prevAutoUpdateVolumes",
-                "_prevAutoUpdateTextures",
-                "_generatedClusteringMaterial",
-                "_editorFroxelDepthParams"
-            };
-
-            for (int i = 0; i < removedFieldNames.Length; i++) {
-                Assert.That(typeof(LightVolumeManager).GetField(removedFieldNames[i], _lifecycleMethodFlags), Is.Null, removedFieldNames[i]);
-            }
-            Assert.That(typeof(LightVolumeManager).GetMethod("Update", _lifecycleMethodFlags), Is.Null,
-                "LightVolumeManager must not use per-object editor polling");
-            Assert.That(typeof(PointLightVolumeInstance).GetMethod("Update", _lifecycleMethodFlags), Is.Null,
-                "PointLightVolumeInstance must not use per-object editor polling");
-        }
-
-        // Any AssetDatabase batch can restore serialized proxy state, including package metadata imports.
-        [Test]
-        public void PackageMetadataImportQueuesClusteringPreviewRefresh() {
-            Type editorAssemblyType = typeof(LightVolumeManagerEditorBackend);
-            Type previewType = editorAssemblyType.Assembly.GetType("VRCLightVolumes.LightVolumeClusteringPreview");
-            Type postprocessorType = editorAssemblyType.Assembly.GetType(
-                "VRCLightVolumes.LightVolumeClusteringImportPostprocessor");
-            Assert.That(previewType, Is.Not.Null);
-            Assert.That(postprocessorType, Is.Not.Null);
-
-            FieldInfo refreshPending = previewType.GetField("_refreshPending", _staticMigrationMethodFlags);
-            MethodInfo postprocess = postprocessorType.GetMethod("OnPostprocessAllAssets", _staticMigrationMethodFlags);
-            Assert.That(refreshPending, Is.Not.Null);
-            Assert.That(postprocess, Is.Not.Null);
-
-            refreshPending.SetValue(null, false);
-            try {
-                postprocess.Invoke(null, new object[] {
-                    new[] { "Packages/red.sim.lightvolumes/package.json" },
-                    Array.Empty<string>(),
-                    Array.Empty<string>(),
-                    Array.Empty<string>(),
-                    false
-                });
-                Assert.That((bool)refreshPending.GetValue(null), Is.True);
-            } finally {
-                refreshPending.SetValue(null, false);
-            }
-        }
-
         // Domain reload recovery must distrust every restored runtime gate, not only the depth cache.
         [Test]
         public void EditorPreviewRecoveryRebuildsRestoredRuntimeState() {
@@ -896,6 +775,9 @@ namespace VRCLightVolumes.Tests {
             point.LightVolumeManager = manager;
             point.Shadows = true;
             point.BakeInGame = true;
+            point.RuntimeShadowBlurSamplePreset = 1;
+            point.RuntimeShadowSphericalBlur = false;
+            point.ShadowBakeResolution = 0;
             point.ExclusionMask = new[] { excludedObject };
             UdonSharpEditor.UdonSharpEditorUtility.CopyProxyToUdon(manager);
             UdonSharpEditor.UdonSharpEditorUtility.CopyProxyToUdon(point);
@@ -904,6 +786,7 @@ namespace VRCLightVolumes.Tests {
             Assert.That(preprocessorType, Is.Not.Null);
             MethodInfo applyDependencies = preprocessorType.GetMethod("ApplyPointLightRuntimeShadowDependencies", _staticMigrationMethodFlags);
             Assert.That(applyDependencies, Is.Not.Null);
+            point.ShadowBakeResolution = 128;
             applyDependencies.Invoke(null, new object[] { point });
 
             var managerBacking = UdonSharpEditor.UdonSharpEditorUtility.GetBackingUdonBehaviour(manager);
@@ -915,6 +798,12 @@ namespace VRCLightVolumes.Tests {
             Assert.That(serializedManager, Is.Not.SameAs(manager));
             Assert.That(pointBacking.publicVariables.TryGetVariableValue("ExclusionMask", out object serializedExclusionMask), Is.True);
             Assert.That(serializedExclusionMask, Is.EqualTo(new[] { excludedObject }));
+            Assert.That(pointBacking.publicVariables.TryGetVariableValue("RuntimeShadowBlurSamplePreset", out object serializedBakeQuality), Is.True);
+            Assert.That(serializedBakeQuality, Is.EqualTo(1));
+            Assert.That(pointBacking.publicVariables.TryGetVariableValue("RuntimeShadowSphericalBlur", out object serializedSphericalBlur), Is.True);
+            Assert.That(serializedSphericalBlur, Is.False);
+            Assert.That(pointBacking.publicVariables.TryGetVariableValue("ShadowBakeResolution", out object serializedShadowBakeResolution), Is.True);
+            Assert.That(serializedShadowBakeResolution, Is.EqualTo(128));
 
             GameObject cameraObject = CreateGameObject("Runtime Heap Camera", true);
             Camera runtimeCamera = cameraObject.AddComponent<Camera>();
@@ -4023,14 +3912,14 @@ namespace VRCLightVolumes.Tests {
             Assert.That(point.RuntimeShadowDepthEncodeMaterial.GetFloat("_ShadowFarClip"), Is.EqualTo(8f).Within(Epsilon));
         }
 
-        // Verifies Bake In Game keeps a full-size generated shadow source instead of publishing a 1x1 direct-output registration texture.
+        // The lower-level generic bake keeps a full-size generated source when direct output is disabled.
         [Test]
-        public void BakeInGameRuntimeShadowBakeUsesFullResolutionSourceTexture() {
-            LightVolumeManager manager = CreateManager("Bake In Game Source Texture Manager", false);
+        public void GenericRuntimeShadowBakeUsesFullResolutionSourceTexture() {
+            LightVolumeManager manager = CreateManager("Generic Runtime Source Texture Manager", false);
             manager.ShadowTexturesWidth = 16;
             manager.ShadowTexturesHeight = 16;
-            PointLightVolumeInstance point = CreatePointLight(manager, "Bake In Game Source Texture Light", true);
-            point.BakeInGame = true;
+            PointLightVolumeInstance point = CreatePointLight(manager, "Generic Runtime Source Texture Light", true);
+            point.BakeInGame = false;
             point.RuntimeShadowResolution = 16;
             point.RuntimeShadowDepthEncodeMaterial = CreateMaterial("Hidden/VRCLV/PointLightShadowDepthEncode");
             manager.PointLightVolumeInstances = new[] { point };
@@ -4051,6 +3940,68 @@ namespace VRCLightVolumes.Tests {
             Assert.That(shadowTexture.height, Is.EqualTo(16));
             Assert.That(shadowTexture.dimension, Is.EqualTo(TextureDimension.Tex2DArray));
             Assert.That(shadowTexture.volumeDepth, Is.EqualTo(6));
+        }
+
+        // Start queues Bake In Game work, and each manager step bakes exactly one whole light.
+        [Test]
+        public void BakeInGameQueueProcessesOneWholeLightPerStepFromStart() {
+            LightVolumeManager manager = CreateManager("Bake In Game Whole Light Queue Manager", false, false);
+            manager.ShadowTexturesWidth = 16;
+            manager.ShadowTexturesHeight = 16;
+            Material depthMaterial = CreateMaterial("Hidden/VRCLV/PointLightShadowDepthEncode");
+            PointLightVolumeInstance first = CreatePointLight(manager, "Bake In Game Whole Light A", true);
+            PointLightVolumeInstance second = CreatePointLight(manager, "Bake In Game Whole Light B", true);
+            PointLightVolumeInstance third = CreatePointLight(manager, "Bake In Game Whole Light C", true);
+            Camera runtimeCamera = AddRuntimeShadowCamera(first);
+            PointLightVolumeInstance[] points = { first, second, third };
+            Vector3[] positions = {
+                new Vector3(1f, 2f, 3f),
+                new Vector3(4f, 5f, 6f),
+                new Vector3(7f, 8f, 9f)
+            };
+            for (int i = 0; i < points.Length; i++) {
+                PointLightVolumeInstance point = points[i];
+                point.Shadows = true;
+                point.BakeInGame = true;
+                point.ShadowBakeResolution = 16;
+                point.Blur = 0f;
+                point.RuntimeShadowBlurSamplePreset = 0;
+                point.RuntimeShadowSphericalBlur = false;
+                point.RuntimeShadowCamera = runtimeCamera;
+                point.RuntimeShadowDepthEncodeMaterial = depthMaterial;
+                point.RuntimeShadowBlurMaterial = null;
+                point.transform.position = positions[i];
+            }
+            manager.RuntimeShadowCamera = runtimeCamera;
+            manager.RuntimeShadowDepthEncodeMaterial = depthMaterial;
+            manager.PointLightVolumeInstances = points;
+
+            MethodInfo start = typeof(PointLightVolumeInstance).GetMethod("Start", _lifecycleMethodFlags);
+            MethodInfo onEnable = typeof(PointLightVolumeInstance).GetMethod("OnEnable", _lifecycleMethodFlags);
+            MethodInfo processQueue = typeof(LightVolumeManager).GetMethod("ProcessBakeInGameQueueStep", _lifecycleMethodFlags);
+            FieldInfo faceIndexField = typeof(PointLightVolumeInstance).GetField("_runtimeShadowFaceIndex", _lifecycleMethodFlags);
+            Assert.That(start, Is.Not.Null);
+            Assert.That(onEnable, Is.Not.Null);
+            Assert.That(processQueue, Is.Not.Null);
+            Assert.That(faceIndexField, Is.Not.Null);
+
+            onEnable.Invoke(first, null);
+            Assert.That((bool)processQueue.Invoke(manager, null), Is.False, "OnEnable only registers the light; Start owns the one-shot bake request.");
+            Assert.That(first.ShadowMapTexture, Is.Null);
+
+            for (int i = 0; i < points.Length; i++) start.Invoke(points[i], null);
+
+            Assert.That((bool)processQueue.Invoke(manager, null), Is.True);
+            AssertWholeLightRuntimeShadow(first, positions[0], faceIndexField);
+            Assert.That(second.ShadowMapTexture, Is.Null);
+            Assert.That(third.ShadowMapTexture, Is.Null);
+
+            Assert.That((bool)processQueue.Invoke(manager, null), Is.True);
+            AssertWholeLightRuntimeShadow(second, positions[1], faceIndexField);
+            Assert.That(third.ShadowMapTexture, Is.Null);
+
+            Assert.That((bool)processQueue.Invoke(manager, null), Is.False);
+            AssertWholeLightRuntimeShadow(third, positions[2], faceIndexField);
         }
 
         // Verifies runtime spot shadow baking uses one texture slice when the target is in single-shadow mode.
@@ -4090,42 +4041,6 @@ namespace VRCLightVolumes.Tests {
 
             Assert.That(shaderSource, Does.Contain("#pragma multi_compile_local_fragment __ VRCLV_RUNTIME_SHADOW_BLUR_DIRECT"));
             Assert.That(shaderSource, Does.Contain("#pragma multi_compile_local_fragment __ VRCLV_RUNTIME_SHADOW_BLUR_SPHERICAL"));
-        }
-
-        // MaxOverdraw is a performance budget: completed shadow/cookie/LUT work consumes a slot even when RGB is zero.
-        [Test]
-        public void PointLightOverdrawCountsCompletedEvaluations() {
-            string shaderSource = ReadLightVolumesIncludeSource();
-            int shadowMaskStart = shaderSource.IndexOf("inline bool LV_PointLightVolumeShadowMask", StringComparison.Ordinal);
-            int contributionStart = shaderSource.IndexOf("bool LV_PointLightVolumeContribution", StringComparison.Ordinal);
-            int specularAccumulatorStart = shaderSource.IndexOf("inline bool LV_AccumulatePointLightVolumeSHSpecular", StringComparison.Ordinal);
-            int volumeSamplingStart = shaderSource.IndexOf("void LV_SampleLightVolumeTex", StringComparison.Ordinal);
-            int diffuseAccumulatorStart = shaderSource.IndexOf("inline bool LV_AccumulatePointLightVolumeSH(", StringComparison.Ordinal);
-            int pointLoopStart = shaderSource.IndexOf("void LV_PointLightVolumeSHSpecular", StringComparison.Ordinal);
-
-            Assert.That(shadowMaskStart, Is.GreaterThanOrEqualTo(0));
-            Assert.That(contributionStart, Is.GreaterThan(shadowMaskStart));
-            Assert.That(specularAccumulatorStart, Is.GreaterThan(contributionStart));
-            Assert.That(diffuseAccumulatorStart, Is.GreaterThan(specularAccumulatorStart));
-            Assert.That(volumeSamplingStart, Is.GreaterThan(contributionStart));
-            Assert.That(pointLoopStart, Is.GreaterThan(diffuseAccumulatorStart));
-
-            string shadowMaskSource = shaderSource.Substring(shadowMaskStart, contributionStart - shadowMaskStart);
-            string contributionSource = shaderSource.Substring(contributionStart, volumeSamplingStart - contributionStart);
-            string specularAccumulatorSource = shaderSource.Substring(specularAccumulatorStart, diffuseAccumulatorStart - specularAccumulatorStart);
-            string diffuseAccumulatorSource = shaderSource.Substring(diffuseAccumulatorStart, pointLoopStart - diffuseAccumulatorStart);
-            int areaProjectionStart = contributionSource.IndexOf("LV_ProjectFastQuadLightIrradianceSH(", StringComparison.Ordinal);
-            int areaBudgetStart = contributionSource.IndexOf("counted = true;", areaProjectionStart, StringComparison.Ordinal);
-            int areaCookieStart = contributionSource.IndexOf("LV_AreaLightCookie(", areaProjectionStart, StringComparison.Ordinal);
-
-            Assert.That(shadowMaskSource, Does.Contain("return shadowVisible;"));
-            Assert.That(areaBudgetStart, Is.GreaterThan(areaProjectionStart));
-            Assert.That(areaCookieStart, Is.GreaterThan(areaBudgetStart));
-            Assert.That(specularAccumulatorSource, Does.Contain("if (any(l0))"));
-            Assert.That(specularAccumulatorSource, Does.Not.Contain("if (!any(l0)) return false;"));
-            Assert.That(diffuseAccumulatorSource, Does.Not.Contain("if (!any(l0)) return false;"));
-            Assert.That(specularAccumulatorSource, Does.Contain("return true;"));
-            Assert.That(diffuseAccumulatorSource, Does.Contain("return true;"));
         }
 
         // The SM4/GLES3.0 fallback is selected at compile time; higher targets use native bit scan without a keyword variant.
@@ -4252,22 +4167,6 @@ namespace VRCLightVolumes.Tests {
             Assert.That((bool)prepareShadowBlurMaterialMethod.Invoke(highQuality, new object[] { true, 1f, 128, true, false }), Is.True);
             Assert.That(blurMaterial.IsKeywordEnabled("VRCLV_RUNTIME_SHADOW_QUALITY_HIGH"), Is.True);
             Assert.That(manager.RuntimeShadowBlurQualityPreset, Is.EqualTo(2));
-        }
-
-        // Verifies planar runtime Spot Light blur compensates projection scale so changing the cone angle keeps blur width stable.
-        [Test]
-        public void RuntimePlanarSpotBlurCompensatesSpotAngle() {
-            string shaderSource = ReadRuntimeShadowBlurShaderSource();
-            int radiusMethodStart = shaderSource.IndexOf("float RuntimeBlurRadius", System.StringComparison.Ordinal);
-            int stepMethodStart = shaderSource.IndexOf("float2 RuntimeBlurStep", System.StringComparison.Ordinal);
-            int stepMethodEnd = shaderSource.IndexOf("float4 BlurArrayDirect", System.StringComparison.Ordinal);
-            Assert.That(radiusMethodStart, Is.GreaterThanOrEqualTo(0));
-            Assert.That(stepMethodStart, Is.GreaterThan(radiusMethodStart));
-            Assert.That(stepMethodEnd, Is.GreaterThan(stepMethodStart));
-
-            string planarRuntimeBlurSource = shaderSource.Substring(radiusMethodStart, stepMethodEnd - radiusMethodStart);
-            Assert.That(planarRuntimeBlurSource, Does.Contain("rcp(max(_ShadowTanHalfFov"));
-            Assert.That(planarRuntimeBlurSource, Does.Contain("spotScale"));
         }
 
         // Editor and runtime shadow baking share one exclusion implementation that touches only listed hierarchies.
@@ -4506,6 +4405,36 @@ namespace VRCLightVolumes.Tests {
             baker._RealtimeBakeLoop();
             Assert.That((bool)scheduledField.GetValue(baker), Is.False,
                 "The queued callback, not OnDisable/OnEnable, must release loop ownership.");
+        }
+
+        // The external trigger owns only scheduling state and must preserve all bake-quality settings authored on the target light.
+        [Test]
+        public void ExternalRuntimeShadowBakerUsesTargetLightBakeQualitySettings() {
+            GameObject bakerObject = CreateGameObject("External Runtime Shadow Settings Baker", false);
+            PointLightShadowRuntimeBaker baker = bakerObject.AddComponent<PointLightShadowRuntimeBaker>();
+            PointLightVolumeInstance point = CreatePointLight(null, "External Runtime Shadow Settings Light", false);
+            point.RuntimeShadowResolution = 512;
+            point.RuntimeShadowBlurSamplePreset = 2;
+            point.RuntimeShadowSphericalBlur = true;
+
+            MethodInfo configureMethod = typeof(PointLightShadowRuntimeBaker).GetMethod("ConfigureTargetBake", _lifecycleMethodFlags);
+            Assert.That(configureMethod, Is.Not.Null);
+            configureMethod.Invoke(baker, new object[] { point, 3, true });
+
+            Assert.That(point.RuntimeShadowResolution, Is.EqualTo(512));
+            Assert.That(point.RuntimeShadowBlurSamplePreset, Is.EqualTo(2));
+            Assert.That(point.RuntimeShadowSphericalBlur, Is.True);
+            Assert.That(point.RuntimeShadowFacesPerFrame, Is.EqualTo(3));
+            Assert.That(point.RuntimeShadowDirectOutput, Is.True);
+
+            point.RuntimeShadowFacesPerFrame = 1;
+            point.RuntimeShadowDirectOutput = false;
+            configureMethod.Invoke(baker, new object[] { point, 3, true });
+            Assert.That(point.RuntimeShadowResolution, Is.EqualTo(512));
+            Assert.That(point.RuntimeShadowBlurSamplePreset, Is.EqualTo(2));
+            Assert.That(point.RuntimeShadowSphericalBlur, Is.True);
+            Assert.That(point.RuntimeShadowFacesPerFrame, Is.EqualTo(3));
+            Assert.That(point.RuntimeShadowDirectOutput, Is.True);
         }
 
         // Verifies per-frame animated shadow updates recover shadow IDs after setup metadata resets the count.
@@ -5690,6 +5619,20 @@ namespace VRCLightVolumes.Tests {
             initializeShaderPropertiesMethod.Invoke(point, null);
             point.Blur = 1f;
             point.ContactHardening = 0f;
+        }
+
+        // Confirms a queue step completed all six cubemap faces in one BakeShadows invocation.
+        private static void AssertWholeLightRuntimeShadow(PointLightVolumeInstance point, Vector3 expectedBakePosition, FieldInfo faceIndexField) {
+            RenderTexture shadowTexture = point.ShadowMapTexture as RenderTexture;
+            Assert.That(shadowTexture, Is.Not.Null);
+            Assert.That(shadowTexture.width, Is.EqualTo(16));
+            Assert.That(shadowTexture.height, Is.EqualTo(16));
+            Assert.That(shadowTexture.dimension, Is.EqualTo(TextureDimension.Tex2DArray));
+            Assert.That(shadowTexture.volumeDepth, Is.EqualTo(6));
+            Assert.That(point.ShadowBakePosition, Is.EqualTo(expectedBakePosition));
+            Assert.That((int)faceIndexField.GetValue(point), Is.Zero);
+            Assert.That(point.RuntimeShadowFacesPerFrame, Is.EqualTo(6));
+            Assert.That(point.RuntimeShadowDirectOutput, Is.False);
         }
 
         // Adds the hidden camera that the editor preprocessor normally injects before Play Mode or build

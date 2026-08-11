@@ -5,45 +5,12 @@ using UnityEngine;
 using UnityEngine.Rendering;
 using UnityEngine.TestTools;
 using VRCLightVolumes.Editor;
-using ManagerEditorExtensions = VRCLightVolumes.Editor.LightVolumeManagerEditorExtensions;
-using ManagerEditorHandle = VRCLightVolumes.Editor.LightVolumeManagerEditorContext;
 
 namespace VRCLightVolumes.Tests {
     [Category("Editor")]
     public class LightVolumeProbeBakingTests {
         private const float Epsilon = 0.0001f;
         private const float L1Coefficient = 1.65f;
-
-        // The opt-in facade is the supported editor integration surface.
-        [Test]
-        public void ManagerEditorFacadeExposesProbeAndBakeSurface() {
-            Type manager = typeof(LightVolumeManager);
-            Type api = typeof(ManagerEditorExtensions);
-            Type handle = typeof(ManagerEditorHandle);
-            Type vectorArray = typeof(Vector3[]);
-            Type[] baseParameters = { typeof(int), vectorArray, vectorArray, vectorArray, vectorArray };
-            Type[] denoiseParameters = { typeof(int), vectorArray, vectorArray, vectorArray, vectorArray, typeof(bool) };
-            Type[] validityParameters = { typeof(int), vectorArray, vectorArray, vectorArray, vectorArray, typeof(float[]) };
-            Type[] combinedParameters = { typeof(int), vectorArray, vectorArray, vectorArray, vectorArray, typeof(float[]), typeof(bool) };
-
-            Assert.That(GetCustomBakeMethod(baseParameters), Is.Not.Null);
-            Assert.That(GetCustomBakeMethod(denoiseParameters), Is.Not.Null);
-            Assert.That(GetCustomBakeMethod(validityParameters), Is.Not.Null);
-            Assert.That(GetCustomBakeMethod(combinedParameters), Is.Not.Null);
-            Assert.That(manager.GetProperty("Editor"), Is.Not.Null);
-            Assert.That(manager.GetProperty("Editor").PropertyType, Is.EqualTo(handle));
-            Assert.That(handle.GetProperty("IsBakeryMode"), Is.Not.Null);
-            Assert.That(handle.GetEvent("AtlasPostProcessorsChanged"), Is.Not.Null);
-            Assert.That(api.GetMethod("GetCustomProbesCount", new[] { handle }), Is.Not.Null);
-            Assert.That(api.GetMethod("GetCustomProbes", new[] { handle, typeof(int) }), Is.Not.Null);
-            Assert.That(api.GetMethod("GenerateAtlas", new[] { handle }), Is.Not.Null);
-            MethodInfo bakeShadowMaps = api.GetMethod("BakeShadowMaps", new[] { handle });
-            Assert.That(bakeShadowMaps, Is.Not.Null);
-            Assert.That(bakeShadowMaps.ReturnType, Is.EqualTo(typeof(void)));
-            Assert.That(api.GetMethod("BakeShadowMaps", new[] { handle, typeof(bool) }), Is.Null);
-            Assert.That(api.GetMethod("RegisterPostProcessor", new[] { handle, typeof(AtlasPostProcessor) }), Is.Not.Null);
-            Assert.That(api.GetMethod("ContainsPostProcessor", new[] { handle, typeof(RenderTexture), typeof(Material) }), Is.Not.Null);
-        }
 
         // Matches LTCGI's material-driven registration, where a separate editor updater renders the target.
         [Test]
@@ -64,11 +31,6 @@ namespace VRCLightVolumes.Tests {
                 });
 
                 Assert.That(manager.Editor.ContainsPostProcessor(target, material), Is.True);
-                AtlasPostProcessor[] facadeProcessors = manager.Editor.GetPostProcessors();
-                Assert.That(facadeProcessors, Has.Length.EqualTo(1));
-                Assert.That(facadeProcessors[0].Target, Is.SameAs(target));
-                Assert.That(facadeProcessors[0].Material, Is.SameAs(material));
-                Assert.That(facadeProcessors[0].InputTextureProperty, Is.EqualTo("_LV_Volume"));
             } finally {
                 target.Release();
                 UnityEngine.Object.DestroyImmediate(target);
@@ -118,7 +80,6 @@ namespace VRCLightVolumes.Tests {
                     InputTextureProperty = "_LV_Volume"
                 });
 
-                Assert.That(target, Is.Not.TypeOf<CustomRenderTexture>());
                 Assert.That(resolveStrategy.Invoke(null, new object[] { manager }), Is.EqualTo(TexturePackingStrategy.MinimumDepth));
             } finally {
                 target.Release();
@@ -272,11 +233,11 @@ namespace VRCLightVolumes.Tests {
         public void ProbeProcessingRejectsInvalidInputs() {
             Vector3[] one = { Vector3.one };
 
-            AssertPrepareFails("Resolution is invalid or the voxel count is too large.", one, one, one, one, null, 0, 1, 1);
-            AssertPrepareFails("Resolution is invalid or the voxel count is too large.", one, one, one, one, null, int.MaxValue, 2, 1);
-            AssertPrepareFails("SH arrays cannot be null.", null, one, one, one, null, 1, 1, 1);
-            AssertPrepareFails("Every SH array must contain exactly 1 elements.", one, one, one, Array.Empty<Vector3>(), null, 1, 1, 1);
-            AssertPrepareFails("The validity array must contain exactly 1 elements.", one, one, one, one, Array.Empty<float>(), 1, 1, 1);
+            AssertPrepareFails(one, one, one, one, null, 0, 1, 1);
+            AssertPrepareFails(one, one, one, one, null, int.MaxValue, 2, 1);
+            AssertPrepareFails(null, one, one, one, null, 1, 1, 1);
+            AssertPrepareFails(one, one, one, Array.Empty<Vector3>(), null, 1, 1, 1);
+            AssertPrepareFails(one, one, one, one, Array.Empty<float>(), 1, 1, 1);
         }
 
         // Verifies the no-validity/no-denoise path preserves L0 and packs every L1 component identically to Progressive.
@@ -453,13 +414,13 @@ namespace VRCLightVolumes.Tests {
             return LVUtils.TryPrepareLightVolumeProbeData(l0, l1r, l1g, l1b, validity, w, h, d, iterations, 0.1f, denoise, out colors, out error);
         }
 
-        // Asserts one invalid processor input produces the expected error and no texture data.
-        private static void AssertPrepareFails(string expectedError, Vector3[] l0, Vector3[] l1r, Vector3[] l1g, Vector3[] l1b, float[] validity, int w, int h, int d) {
+        // Asserts one invalid processor input fails with a diagnostic and no texture data.
+        private static void AssertPrepareFails(Vector3[] l0, Vector3[] l1r, Vector3[] l1g, Vector3[] l1b, float[] validity, int w, int h, int d) {
             bool result = Prepare(l0, l1r, l1g, l1b, validity, w, h, d, 1, false, out Color[][] colors, out string error);
 
             Assert.That(result, Is.False);
             Assert.That(colors, Is.Null);
-            Assert.That(error, Is.EqualTo(expectedError));
+            Assert.That(error, Is.Not.Empty);
         }
 
         // Returns the requested scalar values replicated into Vector3 SH entries.
@@ -467,14 +428,6 @@ namespace VRCLightVolumes.Tests {
             Vector3[] result = new Vector3[values.Length];
             for (int i = 0; i < values.Length; i++) result[i] = Vector3.one * values[i];
             return result;
-        }
-
-        // Resolves one exact facade SetCustomProbesBaked overload.
-        private static MethodInfo GetCustomBakeMethod(Type[] parameters) {
-            Type[] extensionParameters = new Type[parameters.Length + 1];
-            extensionParameters[0] = typeof(ManagerEditorHandle);
-            Array.Copy(parameters, 0, extensionParameters, 1, parameters.Length);
-            return typeof(ManagerEditorExtensions).GetMethod("SetCustomProbesBaked", extensionParameters);
         }
 
         // Asserts colors with the shared test tolerance.

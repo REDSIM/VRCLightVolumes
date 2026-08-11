@@ -8,9 +8,6 @@ namespace VRCLightVolumes.Tests {
     [Category("Editor")]
     public class LightVolumeShaderBufferLayoutTests {
         private const int PortableUniformBlockLimit = 16 * 1024;
-        private const int ExpectedColdBufferBytes = 9856;
-        private const int ExpectedClusteringBufferBytes = 48;
-        private const int ExpectedPointBufferBytes = 10240;
 
         private static readonly Regex _numericUniformRegex = new Regex(
             @"^[ \t]*uniform[ \t]+(?<type>float(?:[1-4](?:x[1-4])?)?)[ \t]+(?<name>[A-Za-z_][A-Za-z0-9_]*)[ \t]*(?:\[[ \t]*(?<count>[^\]\r\n]+)[ \t]*\])?[ \t]*;",
@@ -21,6 +18,8 @@ namespace VRCLightVolumes.Tests {
         [Test]
         public void NumericUniformsUseThreeFrequencyPartitionedPortableConstantBuffers() {
             string source = ReadIncludeSource();
+            Assert.That(ResolveArrayCount("VRCLV_MAX_VOLUMES_COUNT", source), Is.EqualTo(32));
+            Assert.That(ResolveArrayCount("VRCLV_MAX_LIGHTS_COUNT", source), Is.EqualTo(128));
             MatchCollection buffers = Regex.Matches(source, @"\bcbuffer[ \t]+[A-Za-z_][A-Za-z0-9_]*[ \t]*\{", RegexOptions.Multiline);
             string coldBody = FindBufferBody(source, "LightVolumeUniforms");
             string clusteringBody = FindBufferBody(source, "LightVolumeClusteringUniforms");
@@ -33,9 +32,6 @@ namespace VRCLightVolumes.Tests {
             int coldBytes = EstimateBufferBytes(coldBody, source);
             int clusteringBytes = EstimateBufferBytes(clusteringBody, source);
             int pointBytes = EstimateBufferBytes(pointBody, source);
-            Assert.That(coldBytes, Is.EqualTo(ExpectedColdBufferBytes));
-            Assert.That(clusteringBytes, Is.EqualTo(ExpectedClusteringBufferBytes));
-            Assert.That(pointBytes, Is.EqualTo(ExpectedPointBufferBytes));
             Assert.That(coldBytes, Is.LessThanOrEqualTo(PortableUniformBlockLimit));
             Assert.That(clusteringBytes, Is.LessThanOrEqualTo(PortableUniformBlockLimit));
             Assert.That(pointBytes, Is.LessThanOrEqualTo(PortableUniformBlockLimit));

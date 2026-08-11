@@ -206,10 +206,9 @@ namespace VRCLightVolumes {
             if (pointLight == null || pointLight.LightVolumeManager != manager) return;
             bool bakeInGame = pointLight.Shadows && pointLight.BakeInGame;
             if (!editorTemporary && pointLight.BakeInGame != bakeInGame) pointLight.BakeInGame = bakeInGame;
+            pointLight.RuntimeShadowResolution = PointLightShadowBaker.ResolveShadowBakeResolution(pointLight, manager);
+            pointLight.RuntimeShadowBlurSamplePreset = Mathf.Clamp(pointLight.RuntimeShadowBlurSamplePreset, 0, 2);
             if (bakeInGame) {
-                pointLight.RuntimeShadowResolution = Mathf.Max(manager.ShadowTexturesWidth, 16);
-                pointLight.RuntimeShadowBlurSamplePreset = 2;
-                pointLight.RuntimeShadowSphericalBlur = true;
                 pointLight.RuntimeShadowFacesPerFrame = 6;
                 pointLight.RuntimeShadowDirectOutput = false;
                 PreparePointLightRuntimeShadowDependencies(pointLight, manager);
@@ -371,6 +370,7 @@ namespace VRCLightVolumes {
             SetUdonProgramVariable(udonBehaviour, "RuntimeShadowSphericalBlur", pointLight.RuntimeShadowSphericalBlur);
             SetUdonProgramVariable(udonBehaviour, "RuntimeShadowFacesPerFrame", pointLight.RuntimeShadowFacesPerFrame);
             SetUdonProgramVariable(udonBehaviour, "RuntimeShadowDirectOutput", pointLight.RuntimeShadowDirectOutput);
+            SetUdonProgramVariable(udonBehaviour, "ShadowBakeResolution", pointLight.ShadowBakeResolution);
         }
 #endif
 

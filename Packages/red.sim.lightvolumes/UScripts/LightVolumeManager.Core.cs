@@ -628,7 +628,9 @@ namespace VRCLightVolumes {
         private void OnDisable() {
             TryInitialize();
 #if UDONSHARP
-            _isUpdateProcessRunning = false;
+            // Delayed Udon events cannot be cancelled. Keep the latch until the queued
+            // callback observes the disabled Manager, otherwise a quick re-enable can
+            // schedule a second consumer for the same frame.
 #else
             if (_updateCoroutine != null) {
                 StopCoroutine(_updateCoroutine);

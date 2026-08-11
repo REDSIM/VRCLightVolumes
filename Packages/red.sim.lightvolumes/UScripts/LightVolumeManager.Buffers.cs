@@ -141,6 +141,26 @@ namespace VRCLightVolumes {
 #endif
         }
 
+        // Consumes at most one whole-light request per update frame.
+        private bool ProcessBakeInGameQueueStep() {
+            if (_bakeInGameQueueCount <= 0) return false;
+
+            PointLightVolumeInstance pointLightVolume = _bakeInGameQueue[_bakeInGameQueueHead];
+            _bakeInGameQueue[_bakeInGameQueueHead] = null;
+            _bakeInGameQueueHead++;
+            if (_bakeInGameQueueHead >= MaxPointLightCount) _bakeInGameQueueHead = 0;
+            _bakeInGameQueueCount--;
+
+            if (pointLightVolume != null) {
+                pointLightVolume.RuntimeShadowResolution = pointLightVolume.ShadowBakeResolution > 0 ? Mathf.Clamp(pointLightVolume.ShadowBakeResolution, 16, 2048) : Mathf.Clamp(ShadowTexturesWidth, 16, 2048);
+                pointLightVolume.RuntimeShadowBlurSamplePreset = Mathf.Clamp(pointLightVolume.RuntimeShadowBlurSamplePreset, 0, 2);
+                pointLightVolume.RuntimeShadowFacesPerFrame = 6;
+                pointLightVolume.RuntimeShadowDirectOutput = false;
+                pointLightVolume.BakeShadows();
+            }
+            return _bakeInGameQueueCount > 0;
+        }
+
         // Flushes direct parameter changes and polls cached Dynamic entries in the transform-safe frame phase shared with clustering. Point data must reach the shader before clustering
         // consumes the corresponding geometry; otherwise continuous Color/Intensity animation can leave _clusterGeometryUploadPending set and force the sequential-light fallback every frame.
         private void UpdateDynamicVolumeTransforms() {
@@ -338,8 +358,8 @@ namespace VRCLightVolumes {
                 if (!rebuiltShadowTextures && !_shadowTextureAllocationFailed && HasAutoShadowTextureUpdates) UpdateAutoShadowTextures();
             }
 
-            keepUpdating = AutoUpdateTextures && (HasAutoCustomTextureUpdates
-                || (HasAutoShadowTextureUpdates && !_shadowTextureAllocationFailed));
+            bool bakeInGameQueueActive = ProcessBakeInGameQueueStep();
+            keepUpdating = _volumeDataUpdateRequested || bakeInGameQueueActive || AutoUpdateTextures && (HasAutoCustomTextureUpdates || (HasAutoShadowTextureUpdates && !_shadowTextureAllocationFailed));
 
             // Keep the delayed loop alive only for continuous monitoring; one-shot requests schedule their own tick.
 #if UDONSHARP

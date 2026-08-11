@@ -23,20 +23,11 @@ namespace VRCLightVolumes {
         public bool BakeOnEnable = true;
         [Tooltip("Continuously asks the target Point Light Volume to update shadow faces through a delayed Udon event loop.")]
         public bool Realtime = false;
-        [Tooltip("Resolution used by the target Point Light Volume runtime shadow bake.")]
-        [Min(16)] public int Resolution = 128;
         [Tooltip("How many cubemap faces the target Point Light Volume renders per realtime bake tick.")]
         [Range(1, 6)] public int RealtimeFacesPerFrame = 1;
-        [Tooltip("Shadow blur and contact hardening sample preset. Planar Blur uses 30/62/126 two-pass blur taps. Spherical Blur uses 33/65/129 one-pass blur taps.")]
-        [Range(0, 2)] public int ShadowBlurSamplePreset = 1;
-        [Tooltip("Samples runtime blur and contact hardening in spherical shadow space to reduce visible cubemap and single-slice spot projection seams. More correct, but more expensive than Planar Blur.")]
-        public bool SphericalBlur = false;
 
         private PointLightVolumeInstance _configuredTargetPointLightVolume;
-        private int _configuredResolution = -1;
-        private int _configuredShadowBlurSamplePreset = -1;
         private int _configuredFacesPerFrame = -1;
-        private bool _configuredSphericalBlur = false;
         private bool _configuredDirectOutput = false;
 #if UDONSHARP
         private bool _realtimeLoopScheduled = false;
@@ -116,19 +107,13 @@ namespace VRCLightVolumes {
 #endif
         }
 
-        // Applies target bake settings only when they changed, avoiding repeated cross-behaviour writes in realtime mode.
+        // Applies only external scheduling settings; resolution and blur quality remain owned by the target light.
         private void ConfigureTargetBake(PointLightVolumeInstance target, int facesPerFrame, bool directOutput) {
-            if (_configuredTargetPointLightVolume == target && _configuredResolution == Resolution && _configuredShadowBlurSamplePreset == ShadowBlurSamplePreset && _configuredFacesPerFrame == facesPerFrame && _configuredSphericalBlur == SphericalBlur && _configuredDirectOutput == directOutput) return;
-            target.RuntimeShadowResolution = Resolution;
-            target.RuntimeShadowBlurSamplePreset = ShadowBlurSamplePreset;
-            target.RuntimeShadowSphericalBlur = SphericalBlur;
+            if (_configuredTargetPointLightVolume == target && _configuredFacesPerFrame == facesPerFrame && _configuredDirectOutput == directOutput && target.RuntimeShadowFacesPerFrame == facesPerFrame && target.RuntimeShadowDirectOutput == directOutput) return;
             target.RuntimeShadowFacesPerFrame = facesPerFrame;
             target.RuntimeShadowDirectOutput = directOutput;
             _configuredTargetPointLightVolume = target;
-            _configuredResolution = Resolution;
-            _configuredShadowBlurSamplePreset = ShadowBlurSamplePreset;
             _configuredFacesPerFrame = facesPerFrame;
-            _configuredSphericalBlur = SphericalBlur;
             _configuredDirectOutput = directOutput;
         }
     }

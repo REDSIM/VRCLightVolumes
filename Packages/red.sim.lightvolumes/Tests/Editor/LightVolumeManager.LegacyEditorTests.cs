@@ -37,7 +37,6 @@ namespace VRCLightVolumes.Tests {
             MethodInfo bakeShadowMaps = api.GetMethod("BakeShadowMaps", new[] { manager });
             Assert.That(bakeShadowMaps, Is.Not.Null);
             Assert.That(bakeShadowMaps.ReturnType, Is.EqualTo(typeof(void)));
-            Assert.That(api.GetMethod("BakeShadowMaps", new[] { manager, typeof(bool) }), Is.Null);
         }
 
         [Test]

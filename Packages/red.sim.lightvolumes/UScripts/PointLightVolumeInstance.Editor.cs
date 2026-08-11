@@ -248,11 +248,14 @@ namespace VRCLightVolumes {
                 }
             }
 
-            RuntimeShadowResolution = LightVolumeManager != null ? Mathf.Max(LightVolumeManager.ShadowTexturesWidth, 16) : Mathf.Max(RuntimeShadowResolution, 16);
-            RuntimeShadowBlurSamplePreset = 2;
-            RuntimeShadowSphericalBlur = true;
-            RuntimeShadowFacesPerFrame = 6;
-            RuntimeShadowDirectOutput = false;
+            if (ShadowBakeResolution < 0) ShadowBakeResolution = 0;
+            else if (ShadowBakeResolution > 0) ShadowBakeResolution = Mathf.Clamp(ShadowBakeResolution, 16, 2048);
+            RuntimeShadowResolution = ShadowBakeResolution > 0 ? ShadowBakeResolution : LightVolumeManager != null ? Mathf.Clamp(LightVolumeManager.ShadowTexturesWidth, 16, 2048) : Mathf.Clamp(RuntimeShadowResolution, 16, 2048);
+            RuntimeShadowBlurSamplePreset = Mathf.Clamp(RuntimeShadowBlurSamplePreset, 0, 2);
+            if (BakeInGame) {
+                RuntimeShadowFacesPerFrame = 6;
+                RuntimeShadowDirectOutput = false;
+            }
 
             Position = transformPosition;
             float averageScale = (Mathf.Abs(lossyScale.x) + Mathf.Abs(lossyScale.y) + Mathf.Abs(lossyScale.z)) / 3f;

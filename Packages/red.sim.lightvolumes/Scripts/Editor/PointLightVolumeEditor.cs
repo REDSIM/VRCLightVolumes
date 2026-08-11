@@ -17,6 +17,9 @@ namespace VRCLightVolumes {
         private static readonly string _projectionSourceObjectPickerFilter = "t:Texture t:Material";
         private static readonly string[] _lightTypeNames = { "Point Light", "Spot Light", "Area Light" };
         private static readonly string[] _projectionNames = { "Parametric", "LUT", "Custom" };
+        private static readonly string[] _shadowBakeResolutionNames = { "Default (Manager)", "16 x 16", "32 x 32", "64 x 64", "128 x 128", "256 x 256", "512 x 512", "1024 x 1024", "2048 x 2048" };
+        private static readonly int[] _shadowBakeResolutionValues = { 0, 16, 32, 64, 128, 256, 512, 1024, 2048 };
+        private static readonly string[] _bakeInGameQualityNames = { "Low", "Medium", "High" };
         private const float ObjectSelectorButtonWidth = 19f;
         private const float InspectorSectionSpacing = 10f;
         private const float ShadowGroupSpacing = 6f;
@@ -47,30 +50,30 @@ namespace VRCLightVolumes {
             int lightType = Mathf.Clamp(lightTypeProperty.intValue, 0, 2);
             int projection = Mathf.Clamp(projectionProperty.intValue, 0, 2);
             DrawSectionHeader("Light", false);
-            DrawPopup(lightTypeProperty, new GUIContent("Type", lightTypeProperty.tooltip), _lightTypeNames);
+            DrawPopup(lightTypeProperty, "Type", _lightTypeNames);
             lightType = Mathf.Clamp(lightTypeProperty.intValue, 0, 2);
             DrawProperty("IsDynamic", "Dynamic");
             DrawProperty("Color");
             DrawProperty("Intensity");
-            DrawProperty("ShadingStrength", "Shading Strength");
-            DrawProperty("BakeIntoProbes", "Bake Into Probes");
-            DrawProperty("DebugRange", "Debug Range");
+            DrawProperty("ShadingStrength");
+            DrawProperty("BakeIntoProbes");
+            DrawProperty("DebugRange");
 
             DrawSectionHeader("Projection", true);
             if (lightType != 2) {
-                DrawPopup(projectionProperty, new GUIContent("Projection", projectionProperty.tooltip), _projectionNames);
+                DrawPopup(projectionProperty, null, _projectionNames);
                 projection = Mathf.Clamp(projectionProperty.intValue, 0, 2);
                 if (projection == 1) DrawProperty("Range");
-                else DrawProperty("LightSourceSize", "Light Source Size");
+                else DrawProperty("LightSourceSize");
             }
             if (lightType == 1) DrawAngleDegrees();
             if (lightType == 1 && projection == 0) DrawProperty("Falloff");
-            if (lightType == 1 && projection == 2) DrawProperty("SpotCookieAspect", "Spot Cookie Aspect");
+            if (lightType == 1 && projection == 2) DrawProperty("SpotCookieAspect");
             DrawActiveProjectionSourceField(lightType, projection);
 
             DrawSectionHeader("Shadows", true);
             SerializedProperty shadowsProperty = serializedObject.FindProperty("Shadows");
-            EditorGUILayout.PropertyField(shadowsProperty, new GUIContent("Enabled", shadowsProperty.tooltip));
+            EditorGUILayout.PropertyField(shadowsProperty, GetPropertyContent(shadowsProperty, "Enabled"));
             bool drawShadowFields = shadowsProperty.hasMultipleDifferentValues || shadowsProperty.boolValue;
             bool propertiesChanged = serializedObject.ApplyModifiedProperties();
 
@@ -78,25 +81,29 @@ namespace VRCLightVolumes {
                 DrawProperty("WorldSpaceShadows", "Use World Space");
                 GUILayout.Space(ShadowGroupSpacing);
                 DrawLayerMask();
-                DrawProperty("ExclusionMask", "Exclusion Mask");
-
-                GUILayout.Space(ShadowGroupSpacing);
-                DrawProperty("NearClip", "Near Plane");
-                DrawProperty("FarClip", "Far Plane");
-                if (lightType == 1) DrawProperty("ForceCubemapShadows", "Force Cubemap Shadows");
-                DrawProperty("DebugClipPlanes", "Debug Clip Planes");
+                DrawProperty("ExclusionMask");
+                if (lightType == 1) DrawProperty("ForceCubemapShadows");
 
                 GUILayout.Space(ShadowGroupSpacing);
                 DrawProperty("Bias");
+                DrawProperty("NearClip", "Near Plane");
+                DrawProperty("FarClip", "Far Plane");
+                DrawProperty("DebugClipPlanes");
+
+                GUILayout.Space(ShadowGroupSpacing);
                 DrawProperty("Blur");
-                DrawProperty("ContactHardening", "Contact Hardening");
+                DrawProperty("ContactHardening");
+                DrawProperty("RuntimeShadowSphericalBlur", "Spherical Blur");
+
+                GUILayout.Space(ShadowGroupSpacing);
+                DrawProperty("BakeInGame");
+                SerializedProperty qualityProperty = serializedObject.FindProperty("RuntimeShadowBlurSamplePreset");
+                DrawPopup(qualityProperty, "Quality", _bakeInGameQualityNames);
 
                 GUILayout.Space(ShadowGroupSpacing);
                 DrawTextureMaterialField("ShadowMap", _cubemapMaterialHint, true);
-
-                DrawSectionHeader("Shadow Baking", true);
-                DrawProperty("BakeInGame", "Bake In Game");
-                DrawProperty("RebakeShadows", "Rebake Shadows");
+                DrawIntPopup("ShadowBakeResolution", "Resolution", _shadowBakeResolutionNames, _shadowBakeResolutionValues);
+                DrawProperty("RebakeShadows");
 
                 SerializedProperty shadowMapProperty = serializedObject.FindProperty("ShadowMap");
                 GUILayout.Space(ShadowButtonSpacing);
@@ -220,14 +227,33 @@ namespace VRCLightVolumes {
         private void DrawProperty(string propertyName, string label = null) {
             SerializedProperty property = serializedObject.FindProperty(propertyName);
             if (label == null) EditorGUILayout.PropertyField(property, true);
-            else EditorGUILayout.PropertyField(property, new GUIContent(label, property.tooltip), true);
+            else EditorGUILayout.PropertyField(property, GetPropertyContent(property, label), true);
+        }
+
+        // Builds custom labels while keeping the serialized field's TooltipAttribute as the single tooltip source.
+        private static GUIContent GetPropertyContent(SerializedProperty property, string label = null) {
+            return EditorGUIUtility.TrTextContent(label ?? property.displayName, property.tooltip);
         }
 
         // Draws an integer-backed popup with correct mixed-selection handling.
-        private static void DrawPopup(SerializedProperty property, GUIContent label, string[] names) {
+        private static void DrawPopup(SerializedProperty property, string label, string[] names) {
+            int value = Mathf.Clamp(property.intValue, 0, names.Length - 1);
+            if (!property.hasMultipleDifferentValues && property.intValue != value) property.intValue = value;
             EditorGUI.showMixedValue = property.hasMultipleDifferentValues;
             EditorGUI.BeginChangeCheck();
-            int value = EditorGUILayout.Popup(label, Mathf.Clamp(property.intValue, 0, names.Length - 1), names);
+            value = EditorGUILayout.Popup(GetPropertyContent(property, label), value, names);
+            if (EditorGUI.EndChangeCheck()) property.intValue = value;
+            EditorGUI.showMixedValue = false;
+        }
+
+        // Draws an integer popup whose serialized values are not zero-based indices.
+        private void DrawIntPopup(string propertyName, string label, string[] names, int[] values) {
+            SerializedProperty property = serializedObject.FindProperty(propertyName);
+            Rect rect = EditorGUILayout.GetControlRect();
+            Rect popupRect = EditorGUI.PrefixLabel(rect, GetPropertyContent(property, label));
+            EditorGUI.showMixedValue = property.hasMultipleDifferentValues;
+            EditorGUI.BeginChangeCheck();
+            int value = EditorGUI.IntPopup(popupRect, property.intValue, names, values);
             if (EditorGUI.EndChangeCheck()) property.intValue = value;
             EditorGUI.showMixedValue = false;
         }
@@ -238,7 +264,7 @@ namespace VRCLightVolumes {
             float angleDegrees = angleProperty.floatValue * Mathf.Rad2Deg * 2f;
             EditorGUI.showMixedValue = angleProperty.hasMultipleDifferentValues;
             EditorGUI.BeginChangeCheck();
-            angleDegrees = EditorGUILayout.Slider(new GUIContent("Angle", "Angle of a spotlight cone in degrees."), angleDegrees, 0.1f, 360f);
+            angleDegrees = EditorGUILayout.Slider(GetPropertyContent(angleProperty), angleDegrees, 0.1f, 360f);
             if (EditorGUI.EndChangeCheck()) angleProperty.floatValue = angleDegrees * Mathf.Deg2Rad * 0.5f;
             EditorGUI.showMixedValue = false;
         }
@@ -248,7 +274,7 @@ namespace VRCLightVolumes {
             SerializedProperty layerMaskProperty = serializedObject.FindProperty("LayerMask");
             EditorGUI.showMixedValue = layerMaskProperty.hasMultipleDifferentValues;
             EditorGUI.BeginChangeCheck();
-            int value = EditorGUILayout.MaskField(new GUIContent("Layer Mask", layerMaskProperty.tooltip), layerMaskProperty.intValue, InternalEditorUtility.layers);
+            int value = EditorGUILayout.MaskField(GetPropertyContent(layerMaskProperty), layerMaskProperty.intValue, InternalEditorUtility.layers);
             if (EditorGUI.EndChangeCheck()) layerMaskProperty.intValue = value;
             EditorGUI.showMixedValue = false;
         }
@@ -316,7 +342,7 @@ namespace VRCLightVolumes {
         // Resolves and draws a named texture-or-material serialized property.
         private void DrawTextureMaterialField(string propertyName, string acceptedTypesHint, bool isShadowSource) {
             SerializedProperty property = serializedObject.FindProperty(propertyName);
-            DrawTextureMaterialField(property, EditorGUIUtility.TrTextContent(property.displayName, property.tooltip), acceptedTypesHint, isShadowSource);
+            DrawTextureMaterialField(property, GetPropertyContent(property), acceptedTypesHint, isShadowSource);
         }
 
         // Draws a filtered object field with mixed values, picker support and an empty-state hint.
@@ -511,38 +537,74 @@ namespace VRCLightVolumes {
             Handles.DrawWireArc(center, Vector3.forward, Vector3.right, 360, radius);
         }
 
-        // Draws the manually controlled shadow bake near-far space.
+        // Draws the actual perspective-camera near and far planes used by shadow baking.
         private void DrawShadowClipGUI(PointLightVolumeInstance pointLightVolume, Vector3 origin, Transform transform) {
             if (!pointLightVolume.Shadows || !pointLightVolume.DebugClipPlanes) return;
 
             Handles.color = Handles.zTest == UnityEngine.Rendering.CompareFunction.LessEqual ? _shadowClipVisibleColor : _shadowClipHiddenColor;
             float nearClip = pointLightVolume.GetShadowNearClip();
             float farClip = pointLightVolume.GetShadowFarClip();
-            bool drawSpotFrustum = pointLightVolume.LightType == 1 && !pointLightVolume.ShouldBakeCubemapShadows();
-            if (!drawSpotFrustum) {
-                DrawPointLight(origin, nearClip);
-                DrawPointLight(origin, farClip);
+            if (pointLightVolume.ShouldBakeCubemapShadows()) {
+                DrawCubemapShadowClip(origin, transform.rotation, nearClip, farClip);
                 return;
             }
 
             float halfAngleRad = Mathf.Clamp(pointLightVolume.Angle, 0.05f * Mathf.Deg2Rad, 89.95f * Mathf.Deg2Rad);
-            DrawSpotShadowClip(origin, transform.forward, transform.right, transform.up, halfAngleRad, nearClip, farClip);
+            DrawPerspectiveShadowClip(origin, transform.rotation, halfAngleRad, nearClip, farClip);
         }
 
-        // Draws a truncated spotlight shadow frustum between the near and far clip planes.
-        private void DrawSpotShadowClip(Vector3 origin, Vector3 forward, Vector3 right, Vector3 up, float halfAngleRad, float nearClip, float farClip) {
-            float tanHalfAngle = Mathf.Tan(halfAngleRad);
-            Vector3 nearCenter = origin + forward * nearClip;
-            Vector3 farCenter = origin + forward * farClip;
-            float nearRadius = nearClip * tanHalfAngle;
-            float farRadius = farClip * tanHalfAngle;
+        // Draws all six 90-degree cubemap camera frusta as their shared inner and outer cubes.
+        private void DrawCubemapShadowClip(Vector3 origin, Quaternion rotation, float nearClip, float farClip) {
+            Matrix4x4 previousMatrix = Handles.matrix;
+            Handles.matrix = Matrix4x4.TRS(origin, rotation, Vector3.one);
 
-            Handles.DrawWireDisc(nearCenter, forward, nearRadius);
-            Handles.DrawWireDisc(farCenter, forward, farRadius);
-            Handles.DrawLine(nearCenter + right * nearRadius, farCenter + right * farRadius);
-            Handles.DrawLine(nearCenter - right * nearRadius, farCenter - right * farRadius);
-            Handles.DrawLine(nearCenter + up * nearRadius, farCenter + up * farRadius);
-            Handles.DrawLine(nearCenter - up * nearRadius, farCenter - up * farRadius);
+            Handles.DrawWireCube(Vector3.zero, Vector3.one * (nearClip * 2f));
+            Handles.DrawWireCube(Vector3.zero, Vector3.one * (farClip * 2f));
+            DrawShadowClipLine(new Vector3(-nearClip, -nearClip, -nearClip), new Vector3(-farClip, -farClip, -farClip));
+            DrawShadowClipLine(new Vector3(-nearClip, -nearClip, nearClip), new Vector3(-farClip, -farClip, farClip));
+            DrawShadowClipLine(new Vector3(-nearClip, nearClip, -nearClip), new Vector3(-farClip, farClip, -farClip));
+            DrawShadowClipLine(new Vector3(-nearClip, nearClip, nearClip), new Vector3(-farClip, farClip, farClip));
+            DrawShadowClipLine(new Vector3(nearClip, -nearClip, -nearClip), new Vector3(farClip, -farClip, -farClip));
+            DrawShadowClipLine(new Vector3(nearClip, -nearClip, nearClip), new Vector3(farClip, -farClip, farClip));
+            DrawShadowClipLine(new Vector3(nearClip, nearClip, -nearClip), new Vector3(farClip, farClip, -farClip));
+            DrawShadowClipLine(new Vector3(nearClip, nearClip, nearClip), new Vector3(farClip, farClip, farClip));
+
+            Handles.matrix = previousMatrix;
+        }
+
+        // Draws the square frustum of the single shadow camera used by a Spot Light.
+        private void DrawPerspectiveShadowClip(Vector3 origin, Quaternion rotation, float halfAngleRad, float nearClip, float farClip) {
+            float tanHalfAngle = Mathf.Tan(halfAngleRad);
+            float nearHalfExtent = nearClip * tanHalfAngle;
+            float farHalfExtent = farClip * tanHalfAngle;
+            Matrix4x4 previousMatrix = Handles.matrix;
+            Handles.matrix = Matrix4x4.TRS(origin, rotation, Vector3.one);
+
+            DrawShadowClipPlane(nearClip, nearHalfExtent);
+            DrawShadowClipPlane(farClip, farHalfExtent);
+            DrawShadowClipLine(new Vector3(-nearHalfExtent, -nearHalfExtent, nearClip), new Vector3(-farHalfExtent, -farHalfExtent, farClip));
+            DrawShadowClipLine(new Vector3(-nearHalfExtent, nearHalfExtent, nearClip), new Vector3(-farHalfExtent, farHalfExtent, farClip));
+            DrawShadowClipLine(new Vector3(nearHalfExtent, -nearHalfExtent, nearClip), new Vector3(farHalfExtent, -farHalfExtent, farClip));
+            DrawShadowClipLine(new Vector3(nearHalfExtent, nearHalfExtent, nearClip), new Vector3(farHalfExtent, farHalfExtent, farClip));
+
+            Handles.matrix = previousMatrix;
+        }
+
+        // Draws one square clip plane in shadow-camera local space.
+        private void DrawShadowClipPlane(float distance, float halfExtent) {
+            Vector3 bottomLeft = new Vector3(-halfExtent, -halfExtent, distance);
+            Vector3 topLeft = new Vector3(-halfExtent, halfExtent, distance);
+            Vector3 topRight = new Vector3(halfExtent, halfExtent, distance);
+            Vector3 bottomRight = new Vector3(halfExtent, -halfExtent, distance);
+            DrawShadowClipLine(bottomLeft, topLeft);
+            DrawShadowClipLine(topLeft, topRight);
+            DrawShadowClipLine(topRight, bottomRight);
+            DrawShadowClipLine(bottomRight, bottomLeft);
+        }
+
+        // Keeps shadow clip wire drawing in one place for both projection layouts.
+        private void DrawShadowClipLine(Vector3 start, Vector3 end) {
+            Handles.DrawLine(start, end);
         }
 
         // Draws an Area Light emitter rectangle and its forward direction.

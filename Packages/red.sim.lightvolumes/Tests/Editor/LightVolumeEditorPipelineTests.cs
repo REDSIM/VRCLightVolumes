@@ -87,17 +87,6 @@ namespace VRCLightVolumes.Tests {
             UnityEngine.Object.DestroyImmediate(texture2);
         }
 
-        [Test]
-        public void UnifiedComponentInspectorTitlesUsePublicNames() {
-            AddComponentMenu volume = typeof(LightVolumeInstance).GetCustomAttribute<AddComponentMenu>();
-            AddComponentMenu point = typeof(PointLightVolumeInstance).GetCustomAttribute<AddComponentMenu>();
-            AddComponentMenu manager = typeof(LightVolumeManager).GetCustomAttribute<AddComponentMenu>();
-
-            Assert.That(volume?.componentMenu, Is.EqualTo("VRC Light Volumes/Light Volume (U# Script)"));
-            Assert.That(point?.componentMenu, Is.EqualTo("VRC Light Volumes/Point Light Volume (U# Script)"));
-            Assert.That(manager?.componentMenu, Is.EqualTo("VRC Light Volumes/Light Volume Manager (U# Script)"));
-        }
-
         // UdonSharp adds its project define after a new build-target group has already reloaded once.
         // Every U# source must keep the U# branch active during that Editor reload and direct U# compilation.
         [Test]

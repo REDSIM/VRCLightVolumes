@@ -57,7 +57,7 @@ namespace VRCLightVolumes {
         public float ConeFalloff = 1f;
 
         [Header("Angle Data")]
-        [Tooltip("Half-angle of the spotlight cone, in radians.")]
+        [Tooltip("Spotlight cone angle shown in degrees in the inspector. Stored internally as a half-angle in radians.")]
         public float Angle = 0.5235988f;
         [Tooltip("Cosine of the spotlight outer angle used by parametric and LUT spot lights.")]
         public float OuterAngleCos = 1f;
@@ -119,19 +119,18 @@ namespace VRCLightVolumes {
         [HideInInspector] public float BakedFarClip = 0f;
         [Tooltip("World-space bias in meters applied while baking this light's shadow map. Larger values reduce self-shadow artifacts, but can detach contact edges. Requires rebaking.")]
         [Min(0)] public float Bias = 0.01f;
-        [Tooltip("Shadow blur radius applied after baking, normalized to 128x128 shadow resolution. Editor baking uses spherical shadow-space blur to reduce visible cubemap and Spot Light projection seams. " +
-                 "Runtime baking uses Planar Blur unless Spherical Blur is enabled on the runtime baker. 0 keeps the baked shadow map unblurred. Requires rebaking.")]
+        [Tooltip("Shadow blur radius applied after baking, normalized to 128x128 shadow resolution. Editor and runtime baking use the Spherical Blur setting below. 0 keeps the baked shadow map unblurred. Requires rebaking.")]
         [Min(0)] public float Blur = 1f;
-        [Tooltip("Hardens shadows near the contact areas. Can produce artefacts, so use with caution. Requires rebaking. More performant when set to 0 in realtime mode. Runtime baker Spherical Blur also applies to contact hardening samples.")]
+        [Tooltip("Hardens shadows near the contact areas. Can produce artefacts, so use with caution. Requires rebaking. More performant when set to 0 in realtime mode. Spherical Blur also applies to contact hardening samples.")]
         [Range(0, 1)] public float ContactHardening = 0f;
 
-        [Tooltip("Bakes this light's shadow map once when the runtime instance starts. If enabled, the editor-baked shadow texture is used only in the editor and is not included in the build or asset bundle.")]
+        [Tooltip("Queues this light for a one-shot in-game shadow bake when its runtime instance starts. The Manager completes one queued light per frame. The editor-baked shadow texture is not included in the build or asset bundle.")]
         public bool BakeInGame = false;
         [Tooltip("Resolution used by runtime shadow baking.")]
         [Min(16)] public int RuntimeShadowResolution = 128;
-        [Tooltip("Runtime blur and contact hardening sample preset. 0 = low, 1 = medium, 2 = high, 3 = editor.")]
-        [Range(0, 3)] public int RuntimeShadowBlurSamplePreset = 2;
-        [Tooltip("Samples runtime blur in spherical shadow space. This is slower but reduces cubemap and single-slice spot projection seams.")]
+        [Tooltip("Runtime blur and contact hardening sample preset. 0 = low, 1 = medium, 2 = high.")]
+        [Range(0, 2)] public int RuntimeShadowBlurSamplePreset = 2;
+        [Tooltip("Uses spherical shadow-space blur for editor and in-game shadow bakes, reducing cubemap and single-slice spot projection seams. Disable it to use faster planar blur.")]
         public bool RuntimeShadowSphericalBlur = true;
         [Tooltip("How many shadow faces or slices are rendered each time runtime shadow baking is triggered. Valid values are 1, 2, 3 and 6. 6 bakes a full point shadow in one trigger.")]
         [Range(1, 6)] public int RuntimeShadowFacesPerFrame = 6;
@@ -206,6 +205,9 @@ namespace VRCLightVolumes {
         [NonSerialized] public int AreaCookieAverageCustomId = -1;
         [NonSerialized] public bool AreaCookieAverageReadbackPending = false;
         [NonSerialized] public bool AreaCookieAverageReadbackDirty = false;
+        // Append-only authoring field. 0 inherits the Manager's Shadow Resolution.
+        [Tooltip("Resolution used to render this light's shadow bake in both the editor and Bake In Game. 0 inherits Shadow Resolution from the Light Volume Manager.")]
+        [Min(0)] public int ShadowBakeResolution = 0;
 #if COMPILER_UDONSHARP
         private Color32[] _areaCookieAveragePixels = new Color32[1];
 #endif
@@ -324,7 +326,7 @@ namespace VRCLightVolumes {
             LightVolumeManager.InitializePointLightVolume(this);
         }
 
-        // Registers the light and starts its optional one-shot runtime shadow bake.
+        // Registers the light and queues its optional one-shot runtime shadow bake.
         private void Start() {
 #if !UDONSHARP
             if (LightVolumeManager == null) {
@@ -332,14 +334,9 @@ namespace VRCLightVolumes {
             }
 #endif
             RegisterWithManager();
-            if (BakeInGame && !_inGameBakeStarted) {
-                _inGameBakeStarted = true;
-                RuntimeShadowBlurSamplePreset = 2;
-                RuntimeShadowSphericalBlur = true;
-                RuntimeShadowFacesPerFrame = 6;
-                RuntimeShadowDirectOutput = false;
-                BakeShadows();
-            }
+            if (!BakeInGame || _inGameBakeStarted || LightVolumeManager == null) return;
+            _inGameBakeStarted = true;
+            LightVolumeManager.EnqueueBakeInGameLight(this);
         }
 
         // Registers the light when its component or GameObject becomes active.

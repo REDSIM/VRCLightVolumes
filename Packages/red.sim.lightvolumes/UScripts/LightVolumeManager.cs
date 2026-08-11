@@ -367,6 +367,10 @@ namespace VRCLightVolumes {
         // Unified delayed update process state
         private bool _volumeDataUpdateRequested = false;
         private bool _isUpdatingVolumes = false;
+        // Empty runtime-only ring buffer. Bake In Game lights append themselves from Start. No light references are collected into this queue during build preparation.
+        private PointLightVolumeInstance[] _bakeInGameQueue = new PointLightVolumeInstance[MaxPointLightCount];
+        private int _bakeInGameQueueHead = 0;
+        private int _bakeInGameQueueCount = 0;
 #if UDONSHARP
         private bool _isUpdateProcessRunning = false; // True while the single delayed update process is scheduled or running
 #else

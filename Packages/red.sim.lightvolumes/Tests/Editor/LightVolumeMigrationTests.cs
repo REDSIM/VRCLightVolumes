@@ -297,6 +297,8 @@ namespace VRCLightVolumes.Tests {
             Assert.That(blocked, Is.Zero);
             Assert.That(orphanBacking == null, Is.False);
             Assert.That(managerObject.GetComponents<UdonBehaviour>(), Has.Length.EqualTo(2));
+            Assert.That(orphanBacking.publicVariables.TryGetVariableValue("CustomPayload", out object customPayload), Is.True);
+            Assert.That(customPayload, Is.EqualTo(42));
             Assert.That(_scene.isDirty, Is.False);
 
             bool valid = LightVolumeMigration.ValidateLoadedSceneUdonPairs(out int issueCount, out string issueSummary);

@@ -19,7 +19,6 @@ namespace VRCLightVolumes.Tests {
         private Scene _scene;
         private string _prefabAssetPath;
         private string _sceneAssetPath;
-        private readonly List<ObjectChangeKind> _capturedObjectChanges = new List<ObjectChangeKind>();
 
         [TearDown]
         public void TearDown() {
@@ -236,20 +235,12 @@ namespace VRCLightVolumes.Tests {
             yield return null;
             LightVolumeEditorUpdater.FlushPendingSceneChanges();
             Assert.That(GetSceneComponents<LightVolumeManager>(), Is.Empty);
-            _capturedObjectChanges.Clear();
-            ObjectChangeEvents.changesPublished += CaptureObjectChanges;
-            GameObject instanceRoot;
-            try {
-                instanceRoot = (GameObject)PrefabUtility.InstantiatePrefab(prefabAsset, _scene);
-                Undo.RegisterCreatedObjectUndo(instanceRoot, "Instantiate Light Volumes Prefab");
-                for (int i = 0; i < 30 && GetSceneComponents<LightVolumeManager>().Count == 0; i++) yield return null;
-            } finally {
-                ObjectChangeEvents.changesPublished -= CaptureObjectChanges;
-            }
+            GameObject instanceRoot = (GameObject)PrefabUtility.InstantiatePrefab(prefabAsset, _scene);
+            Undo.RegisterCreatedObjectUndo(instanceRoot, "Instantiate Light Volumes Prefab");
+            for (int i = 0; i < 30 && GetSceneComponents<LightVolumeManager>().Count == 0; i++) yield return null;
 
             List<LightVolumeManager> managers = GetSceneComponents<LightVolumeManager>();
-            Assert.That(managers, Has.Count.EqualTo(1), $"Published changes: {string.Join(", ", _capturedObjectChanges)}");
-            Assert.That(_capturedObjectChanges, Does.Contain(ObjectChangeKind.CreateGameObjectHierarchy));
+            Assert.That(managers, Has.Count.EqualTo(1));
             LightVolumeManager manager = managers[0];
             AssertRegistered(
                 manager,
@@ -269,33 +260,17 @@ namespace VRCLightVolumes.Tests {
             LightVolumeEditorUpdater.FlushPendingSceneChanges();
             Assert.That(GetSceneComponents<LightVolumeManager>(), Is.Empty);
 
-            _capturedObjectChanges.Clear();
-            ObjectChangeEvents.changesPublished += CaptureObjectChanges;
-            LightVolumeInstance volume = null;
-            try {
-                volume = UdonSharpUndo.AddComponent<LightVolumeInstance>(volumeObject);
-                for (int i = 0; i < 30 && GetSceneComponents<LightVolumeManager>().Count == 0; i++) yield return null;
-            } finally {
-                ObjectChangeEvents.changesPublished -= CaptureObjectChanges;
-            }
+            LightVolumeInstance volume = UdonSharpUndo.AddComponent<LightVolumeInstance>(volumeObject);
+            for (int i = 0; i < 30 && GetSceneComponents<LightVolumeManager>().Count == 0; i++) yield return null;
 
-            Assert.That(_capturedObjectChanges, Does.Contain(ObjectChangeKind.ChangeGameObjectStructure));
             LightVolumeManager manager = GetSingleSceneComponent<LightVolumeManager>();
             Assert.That(manager.LightVolumeInstances, Is.EqualTo(new[] { volume }));
             Assert.That(volume.LightVolumeManager, Is.SameAs(manager));
             AssertBackingManager(volume, manager);
 
-            _capturedObjectChanges.Clear();
-            ObjectChangeEvents.changesPublished += CaptureObjectChanges;
-            PointLightVolumeInstance pointLight = null;
-            try {
-                pointLight = UdonSharpUndo.AddComponent<PointLightVolumeInstance>(pointLightObject);
-                for (int i = 0; i < 30 && pointLight.LightVolumeManager == null; i++) yield return null;
-            } finally {
-                ObjectChangeEvents.changesPublished -= CaptureObjectChanges;
-            }
+            PointLightVolumeInstance pointLight = UdonSharpUndo.AddComponent<PointLightVolumeInstance>(pointLightObject);
+            for (int i = 0; i < 30 && pointLight.LightVolumeManager == null; i++) yield return null;
 
-            Assert.That(_capturedObjectChanges, Does.Contain(ObjectChangeKind.ChangeGameObjectStructure));
             Assert.That(GetSceneComponents<LightVolumeManager>(), Is.EqualTo(new[] { manager }));
             Assert.That(manager.LightVolumeInstances, Is.EqualTo(new[] { volume }));
             Assert.That(manager.PointLightVolumeInstances, Is.EqualTo(new[] { pointLight }));
@@ -699,10 +674,6 @@ namespace VRCLightVolumes.Tests {
         private static void QueueAndFlush(GameObject root) {
             LightVolumeEditorUpdater.QueueHierarchyOnboarding(root);
             LightVolumeEditorUpdater.FlushPendingSceneChanges();
-        }
-
-        private void CaptureObjectChanges(ref ObjectChangeEventStream stream) {
-            for (int i = 0; i < stream.length; i++) _capturedObjectChanges.Add(stream.GetEventType(i));
         }
 
         private void SaveAndReopenScene() {

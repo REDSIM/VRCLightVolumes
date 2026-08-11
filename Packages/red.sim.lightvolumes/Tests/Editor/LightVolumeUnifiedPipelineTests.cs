@@ -300,6 +300,9 @@ namespace VRCLightVolumes.Tests {
             point.ShadowMapID = 0f;
             point.ShadowMapTextureIsCubemap = true;
             point.ShadowMapTextureHasDepthSlices = true;
+            point.ShadowBakeResolution = 256;
+            point.RuntimeShadowBlurSamplePreset = 1;
+            point.RuntimeShadowSphericalBlur = false;
 
             InvokePreprocessor("ClearManagerBuildOnlySerializedReferences", manager);
             InvokePreprocessor("ClearBuildOnlySerializedReferences", manager.gameObject);
@@ -330,6 +333,9 @@ namespace VRCLightVolumes.Tests {
             Assert.That(point.ShadowMapID, Is.EqualTo(0f).Within(Epsilon));
             Assert.That(point.ShadowMapTextureIsCubemap, Is.True);
             Assert.That(point.ShadowMapTextureHasDepthSlices, Is.True);
+            Assert.That(point.ShadowBakeResolution, Is.EqualTo(256));
+            Assert.That(point.RuntimeShadowBlurSamplePreset, Is.EqualTo(1));
+            Assert.That(point.RuntimeShadowSphericalBlur, Is.False);
         }
 
         // Bake In Game keeps its editor source before build stripping but starts with an empty runtime shadow source.
@@ -343,6 +349,9 @@ namespace VRCLightVolumes.Tests {
             point.LightVolumeManager = manager;
             point.Shadows = true;
             point.BakeInGame = true;
+            point.RuntimeShadowBlurSamplePreset = 1;
+            point.RuntimeShadowSphericalBlur = false;
+            point.ShadowBakeResolution = 128;
             point.ShadowMap = shadow;
             point.ShadowMapTexture = shadow;
             point.AutoUpdateShadowMap = true;
@@ -356,7 +365,9 @@ namespace VRCLightVolumes.Tests {
 
             Assert.That(point.ShadowMap, Is.SameAs(shadow));
             Assert.That(point.BakeInGame, Is.True);
-            Assert.That(point.RuntimeShadowResolution, Is.EqualTo(512));
+            Assert.That(point.RuntimeShadowResolution, Is.EqualTo(128));
+            Assert.That(point.RuntimeShadowBlurSamplePreset, Is.EqualTo(1));
+            Assert.That(point.RuntimeShadowSphericalBlur, Is.False);
             Assert.That(point.RuntimeShadowFacesPerFrame, Is.EqualTo(6));
             Assert.That(point.RuntimeShadowDirectOutput, Is.False);
             Assert.That(point.RuntimeShadowCamera, Is.SameAs(manager.RuntimeShadowCamera));
@@ -371,6 +382,34 @@ namespace VRCLightVolumes.Tests {
             Assert.That(strip, Is.Not.Null);
             strip.Invoke(null, new object[] { point });
             Assert.That(point.ShadowMap, Is.Null);
+        }
+
+        // The shared authoring selector inherits the Manager size at Default and overrides both editor and runtime bake resolution explicitly.
+        [Test]
+        public void ShadowBakeResolutionResolverUsesManagerDefaultAndPerLightOverride() {
+            LightVolumeManager manager = CreateComponent<LightVolumeManager>("Shadow Resolution Resolver Manager");
+            PointLightVolumeInstance point = CreateComponent<PointLightVolumeInstance>("Shadow Resolution Resolver Point");
+            manager.ShadowTexturesWidth = 512;
+
+            point.ShadowBakeResolution = 0;
+            Assert.That(PointLightShadowBaker.ResolveShadowBakeResolution(point, manager), Is.EqualTo(512));
+
+            point.ShadowBakeResolution = 128;
+            Assert.That(PointLightShadowBaker.ResolveShadowBakeResolution(point, manager), Is.EqualTo(128));
+
+            point.ShadowBakeResolution = -1;
+            Assert.That(PointLightShadowBaker.ResolveShadowBakeResolution(point, manager), Is.EqualTo(512));
+
+            point.ShadowBakeResolution = 1;
+            Assert.That(PointLightShadowBaker.ResolveShadowBakeResolution(point, manager), Is.EqualTo(16));
+
+            point.ShadowBakeResolution = 4096;
+            Assert.That(PointLightShadowBaker.ResolveShadowBakeResolution(point, manager), Is.EqualTo(2048));
+
+            point.ShadowBakeResolution = 0;
+            point.RuntimeShadowResolution = 4096;
+            Assert.That(PointLightShadowBaker.ResolveShadowBakeResolution(point, null), Is.EqualTo(2048));
+            Assert.That(PointLightShadowBaker.ResolveShadowBakeResolution(null, null), Is.EqualTo(16));
         }
 
         // Manager-created texture arrays must never become serialized scene or asset payload.

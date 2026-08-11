@@ -80,6 +80,21 @@ namespace VRCLightVolumes {
             return Array.IndexOf((Array)PointLightVolumeInstances, pointLightVolume, 0, count);
         }
 
+        // Appends one Start-time Bake In Game request to the runtime queue.
+        public void EnqueueBakeInGameLight(PointLightVolumeInstance pointLightVolume) {
+            if (pointLightVolume == null) return;
+            if (_bakeInGameQueueCount >= MaxPointLightCount) {
+                Debug.LogWarning("[LightVolumes] Bake In Game queue is full. The light will not be baked.");
+                return;
+            }
+
+            int tail = _bakeInGameQueueHead + _bakeInGameQueueCount;
+            if (tail >= MaxPointLightCount) tail -= MaxPointLightCount;
+            _bakeInGameQueue[tail] = pointLightVolume;
+            _bakeInGameQueueCount++;
+            ScheduleUpdateProcess();
+        }
+
         // Initializes a Light Volume by adding it to the light volume registry. Called automatically at runtime when the object spawns
         public void InitializeLightVolume(LightVolumeInstance lightVolume) {
             if (lightVolume == null) return;

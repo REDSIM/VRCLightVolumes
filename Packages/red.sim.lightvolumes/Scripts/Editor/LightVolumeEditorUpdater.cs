@@ -126,7 +126,7 @@ namespace VRCLightVolumes {
                     case ObjectChangeKind.UpdatePrefabInstances:
                         stream.GetUpdatePrefabInstancesEvent(i, out UpdatePrefabInstancesEventArgs prefabData);
                         for (int instanceIndex = 0; instanceIndex < prefabData.instanceIds.Length; instanceIndex++)
-                            QueueHierarchy(GetGameObject(prefabData.instanceIds[instanceIndex]));
+                            QueueHierarchyForSetup(GetGameObject(prefabData.instanceIds[instanceIndex]));
                         QueueManagerRefresh();
                         break;
                 }

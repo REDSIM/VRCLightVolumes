@@ -249,6 +249,50 @@ namespace VRCLightVolumes.Tests {
         }
 
         [UnityTest]
+        public IEnumerator PrefabAssetUpdateOnboardsEveryOpenSceneInstance() {
+            _scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+            GameObject managerObject = new GameObject("Existing Light Volume Manager");
+            SceneManager.MoveGameObjectToScene(managerObject, _scene);
+            LightVolumeManager manager = UdonSharpUndo.AddComponent<LightVolumeManager>(managerObject);
+            GameObject prefabAsset = CreatePrefab(
+                includeLegacyHelpers: false,
+                includeUnifiedComponents: false,
+                includeVolume: false,
+                includePointLight: false);
+            GameObject firstInstance = (GameObject)PrefabUtility.InstantiatePrefab(prefabAsset, _scene);
+            GameObject secondInstance = (GameObject)PrefabUtility.InstantiatePrefab(prefabAsset, _scene);
+            yield return null;
+            LightVolumeEditorUpdater.FlushPendingSceneChanges();
+
+            GameObject contentsRoot = PrefabUtility.LoadPrefabContents(_prefabAssetPath);
+            try {
+                GameObject volumeObject = new GameObject("Volume");
+                volumeObject.transform.SetParent(contentsRoot.transform, false);
+                UdonSharpUndo.AddComponent<LightVolumeInstance>(volumeObject);
+                GameObject pointObject = new GameObject("Point Light");
+                pointObject.transform.SetParent(contentsRoot.transform, false);
+                UdonSharpUndo.AddComponent<PointLightVolumeInstance>(pointObject);
+                PrefabUtility.SaveAsPrefabAsset(contentsRoot, _prefabAssetPath);
+            } finally {
+                PrefabUtility.UnloadPrefabContents(contentsRoot);
+            }
+
+            for (int i = 0; i < 30 && manager.LightVolumeInstances.Length < 2; i++) yield return null;
+            LightVolumeEditorUpdater.FlushPendingSceneChanges();
+
+            LightVolumeInstance firstVolume = firstInstance.GetComponentInChildren<LightVolumeInstance>(true);
+            LightVolumeInstance secondVolume = secondInstance.GetComponentInChildren<LightVolumeInstance>(true);
+            PointLightVolumeInstance firstPoint = firstInstance.GetComponentInChildren<PointLightVolumeInstance>(true);
+            PointLightVolumeInstance secondPoint = secondInstance.GetComponentInChildren<PointLightVolumeInstance>(true);
+            Assert.That(manager.LightVolumeInstances, Is.EquivalentTo(new[] { firstVolume, secondVolume }));
+            Assert.That(manager.PointLightVolumeInstances, Is.EquivalentTo(new[] { firstPoint, secondPoint }));
+            Assert.That(firstVolume.LightVolumeManager, Is.SameAs(manager));
+            Assert.That(secondVolume.LightVolumeManager, Is.SameAs(manager));
+            Assert.That(firstPoint.LightVolumeManager, Is.SameAs(manager));
+            Assert.That(secondPoint.LightVolumeManager, Is.SameAs(manager));
+        }
+
+        [UnityTest]
         public IEnumerator AddingComponentsRunsAutomaticOnboarding() {
             _scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
             GameObject volumeObject = new GameObject("Volume Target");

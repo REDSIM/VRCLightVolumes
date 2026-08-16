@@ -431,10 +431,10 @@ namespace VRCLightVolumes {
 
 #endregion
 
-#region Editor Clustering Preview And Inspector
+#region Editor Runtime Recovery And Inspector
 
-        // Rebuilds all derived edit-mode data after script reloads and late UdonSharp asset imports. Runtime flags can be restored independently from managed resources, so no cached gate is trusted.
-        internal void RebuildClusteringPreviewState() {
+        // Rebuilds all derived edit-mode data after scene saves, script reloads and late UdonSharp asset imports. Runtime flags can be restored independently from managed resources, so no cached gate is trusted.
+        internal void RebuildEditorRuntimeState() {
             if (Application.isPlaying) return;
             _isUpdatingVolumes = false;
             _volumeDataUpdateRequested = false;

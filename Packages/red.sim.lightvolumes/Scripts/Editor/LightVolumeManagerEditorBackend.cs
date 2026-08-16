@@ -100,7 +100,7 @@ namespace VRCLightVolumes {
             }
             if (copyProxyToUdon) CopyProxyToUdon(manager);
             if (markDirty) LVUtils.MarkDirtyIfSerializedStateChanged(manager, previousState);
-            if (updateVolumes && !runtimeRefreshQueued) manager.UpdateVolumes();
+            if (updateVolumes && !runtimeRefreshQueued && !reinitializeShadowTextures) manager.UpdateVolumes();
         }
 
         // Bakery helpers are created or removed only as a direct result of an explicit mode edit.
@@ -290,7 +290,7 @@ namespace VRCLightVolumes {
             if (customTextures) manager.ReinitializeCustomTextures();
             if (shadowTextures) manager.ReinitializeShadowTextures();
             CopyProxyToUdon(manager);
-            manager.UpdateVolumes();
+            if (!shadowTextures) manager.UpdateVolumes();
         }
 
         // Coalesces a burst of Inspector edits into one atlas pack without adding Update polling.
@@ -548,7 +548,7 @@ namespace VRCLightVolumes {
             UdonSharpEditorUtility.CopyProxyToUdon(manager, ProxySerializationPolicy.All);
             if (reinitializeCustomTextures) backingBehaviour.SendCustomEvent(nameof(LightVolumeManager.ReinitializeCustomTextures));
             if (reinitializeShadowTextures) backingBehaviour.SendCustomEvent(nameof(LightVolumeManager.ReinitializeShadowTextures));
-            backingBehaviour.SendCustomEvent(nameof(LightVolumeManager.UpdateVolumes));
+            if (!reinitializeShadowTextures) backingBehaviour.SendCustomEvent(nameof(LightVolumeManager.UpdateVolumes));
             UdonSharpEditorUtility.CopyUdonToProxy(manager, ProxySerializationPolicy.All);
             return true;
 #else
@@ -601,7 +601,7 @@ namespace VRCLightVolumes {
             if (backingBehaviour == null) return;
             if (reinitializeCustomTextures) backingBehaviour.SendCustomEvent(nameof(LightVolumeManager.ReinitializeCustomTextures));
             if (reinitializeShadowTextures) backingBehaviour.SendCustomEvent(nameof(LightVolumeManager.ReinitializeShadowTextures));
-            backingBehaviour.SendCustomEvent(nameof(LightVolumeManager.UpdateVolumes));
+            if (!reinitializeShadowTextures) backingBehaviour.SendCustomEvent(nameof(LightVolumeManager.UpdateVolumes));
         }
 #endif
     }

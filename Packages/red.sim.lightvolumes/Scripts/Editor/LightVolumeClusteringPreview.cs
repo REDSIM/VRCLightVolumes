@@ -27,7 +27,6 @@ namespace VRCLightVolumes {
             EditorApplication.hierarchyChanged += RefreshManager;
             UnityEditor.SceneManagement.EditorSceneManager.sceneOpened += OnSceneOpened;
             UnityEditor.SceneManagement.EditorSceneManager.sceneSaving += OnSceneSaving;
-            UnityEditor.SceneManagement.EditorSceneManager.sceneSaved += OnSceneSaved;
             EditorApplication.playModeStateChanged += OnPlayModeStateChanged;
             AssemblyReloadEvents.beforeAssemblyReload += Shutdown;
             EditorApplication.quitting += Shutdown;
@@ -41,7 +40,6 @@ namespace VRCLightVolumes {
             EditorApplication.hierarchyChanged -= RefreshManager;
             UnityEditor.SceneManagement.EditorSceneManager.sceneOpened -= OnSceneOpened;
             UnityEditor.SceneManagement.EditorSceneManager.sceneSaving -= OnSceneSaving;
-            UnityEditor.SceneManagement.EditorSceneManager.sceneSaved -= OnSceneSaved;
             EditorApplication.playModeStateChanged -= OnPlayModeStateChanged;
             AssemblyReloadEvents.beforeAssemblyReload -= Shutdown;
             EditorApplication.quitting -= Shutdown;
@@ -65,14 +63,8 @@ namespace VRCLightVolumes {
 
         // Releases transient preview resources before Unity serializes a scene.
         private static void OnSceneSaving(UnityEngine.SceneManagement.Scene scene, string path) {
-            _refreshPending = true;
             RefreshManager();
             ReleasePreviewResources();
-        }
-
-        // Requests fresh preview resources after scene serialization completes.
-        private static void OnSceneSaved(UnityEngine.SceneManagement.Scene scene) {
-            RequestPreviewRefresh();
         }
 
         // Builds clustering for Scene View cameras and disables it for unrelated editor cameras.
@@ -149,24 +141,26 @@ namespace VRCLightVolumes {
             SceneView.RepaintAll();
         }
 
-        // Consumes one coalesced preview refresh immediately before Scene View rendering.
-        private static void ApplyPendingPreviewRefresh() {
-            if (!_refreshPending) return;
+        // Consumes one coalesced preview refresh. Scene-save recovery also calls this so an already
+        // pending asset refresh and the camera-independent save rebuild share one full pass.
+        internal static bool ApplyPendingPreviewRefresh() {
+            if (!_refreshPending) return false;
             _refreshPending = false;
             RefreshManager();
-            RecoverManager();
+            return RecoverManager();
         }
 
         // Rebuilds one stable Manager snapshot without serializing or dirtying scene objects.
-        private static void RecoverManager() {
+        private static bool RecoverManager() {
             ClusteringEnabledStack.Clear();
             Shader.SetGlobalFloat(ClusteringEnabledID, 0f);
             if (_manager == null || !_manager.isActiveAndEnabled) {
                 if (_manager != null) _manager.ReleaseClusteringPreview();
                 SetDisabledShaderState();
-                return;
+                return false;
             }
-            _manager.RebuildClusteringPreviewState();
+            _manager.RebuildEditorRuntimeState();
+            return true;
         }
 
         // Clears every Light Volumes shader count when no active Manager can populate preview data.

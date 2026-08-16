@@ -140,9 +140,9 @@ namespace VRCLightVolumes {
         [Tooltip("Downscales each Light Volume before atlas packing. Useful for lower-resolution mobile atlases or reducing aliasing.")]
         [HideInInspector] public int DownscaleVolumes = 0; // 0 = None, 1 = x2, 2 = x4, 3 = x8
         // The mobile slider is authoring-only. ShadowMinVariance remains the resolved raw runtime value.
-        //Logarithmic EVSM variance bias slider used for PC builds. The receiver shader scales this by warped depth, matching the EVSM derivative. Higher values reduce edge noise, but can detach contact shadows.
+        [Tooltip("Reduces shadow noise and flickering. Higher values make shadows more stable, but can make them look less attached to objects. This value is configured separately for PC and Mobile.")]
         [HideInInspector] public float ShadowMinVarianceDesktop = 0f;
-        //Logarithmic EVSM variance bias slider used for Android and iOS builds. Higher values reduce Half precision edge noise on Quest and Mobile, but can detach contact shadows.
+        [Tooltip("Reduces shadow noise and flickering. Higher values make shadows more stable, but can make them look less attached to objects. This value is configured separately for PC and Mobile.")]
         [HideInInspector] public float ShadowMinVarianceMobile = 1f;
         // Serializable RT/material/name projection for editor atlas processors. Delegate callbacks remain in transient editor state and must re-register after reload.
         [HideInInspector] public RenderTexture[] AtlasPostProcessorTargets = new RenderTexture[0];
@@ -178,7 +178,7 @@ namespace VRCLightVolumes {
         [HideInInspector] public int RuntimeShadowBlurQualityPreset = -1;
         // Cached uniform-radius keyword state for the shared runtime shadow blur material
         [HideInInspector] public int RuntimeShadowBlurUniformKeyword = -1;
-        // Cached direct-output keyword state for the shared runtime shadow blur material
+        // Cached single-slice direct-projection keyword state for the shared runtime shadow blur material
         [HideInInspector] public int RuntimeShadowBlurDirectKeyword = -1;
         // Cached spherical blur keyword state for the shared runtime shadow blur material
         [HideInInspector] public int RuntimeShadowBlurSphericalKeyword = -1;
@@ -241,7 +241,7 @@ namespace VRCLightVolumes {
         private bool[] _shadowSingleTextureAutoUpdates = new bool[0];
         private bool[] _shadowSingleMaterialAutoUpdates = new bool[0];
         private int[] _pointLightShadowIDs = new int[0];
-        private int[] _shadowSourceTypes = new int[0]; // Source types per point light: 0 = none, 1 = cubemap texture, 2 = cubemap material, 3 = single texture, 4 = single material
+        private int[] _shadowSourceTypes = new int[0]; // Source types per point light: 0 = none, 1/2 = cubemap texture/material, 3/4 = single texture/material, 5/6 = source-less direct cubemap/single
         [HideInInspector] public bool HasAutoShadowTextureUpdates = false;
 #if !UNITY_EDITOR && !COMPILER_UDONSHARP
         // Standalone non-Udon execution still owns these runtime values directly.

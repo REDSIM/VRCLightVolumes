@@ -29,7 +29,6 @@ namespace VRCLightVolumes {
         public bool BakeInGame = false;
         public bool RebakeShadows = true;
         public LayerMask LayerMask = 270849;
-        public GameObject[] ExclusionMask = new GameObject[0];
         [Min(0f)] public float Bias = 0.01f;
         [Min(0.0001f)] public float NearPlane = 0.01f;
         [FormerlySerializedAs("ShadowFarClip")]

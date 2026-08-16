@@ -27,6 +27,7 @@ namespace VRCLightVolumes {
             LightVolumeManager.EditorAtlasPostProcessorsChanged += OnAtlasPostProcessorsChanged;
             EditorApplication.hierarchyChanged += RefreshPrimaryManager;
             EditorApplication.update += UpdateAnimatedCookies;
+            EditorSceneManager.sceneSaved += OnSceneSaved;
 #if !UDONSHARP
             EditorSceneManager.sceneOpened += OnSceneOpened;
             QueueLoadedSceneOnboarding();
@@ -41,12 +42,14 @@ namespace VRCLightVolumes {
             LightVolumeManager.EditorAtlasPostProcessorsChanged -= OnAtlasPostProcessorsChanged;
             EditorApplication.hierarchyChanged -= RefreshPrimaryManager;
             EditorApplication.update -= UpdateAnimatedCookies;
+            EditorSceneManager.sceneSaved -= OnSceneSaved;
 #if !UDONSHARP
             EditorSceneManager.sceneOpened -= OnSceneOpened;
 #endif
             AssemblyReloadEvents.beforeAssemblyReload -= Shutdown;
             EditorApplication.quitting -= Shutdown;
             EditorApplication.delayCall -= Flush;
+            EditorApplication.delayCall -= RecoverAfterSceneSave;
             _flushQueued = false;
             _isFlushing = false;
             _primaryManager = null;
@@ -59,6 +62,36 @@ namespace VRCLightVolumes {
             QueueSceneOnboarding(scene);
         }
 #endif
+
+        // Queues a camera-independent Manager rebuild after scene serialization completes.
+        private static void OnSceneSaved(Scene scene) {
+            QueueSceneSaveRecovery();
+        }
+
+        // Coalesces repeated scene saves into one editor-safe recovery callback.
+        private static void QueueSceneSaveRecovery() {
+            EditorApplication.delayCall -= RecoverAfterSceneSave;
+            EditorApplication.delayCall += RecoverAfterSceneSave;
+        }
+
+        // Republishes all Manager shader state after Unity and UdonSharp finish saving the scene proxy.
+        private static void RecoverAfterSceneSave() {
+            EditorApplication.delayCall -= RecoverAfterSceneSave;
+            if (Application.isPlaying || EditorApplication.isPlayingOrWillChangePlaymode) return;
+            if (EditorApplication.isCompiling || EditorApplication.isUpdating || Undo.isProcessing) {
+                QueueSceneSaveRecovery();
+                return;
+            }
+
+            // Apply queued authoring/proxy synchronization first, but let the recovery below own
+            // the single Manager publication for this batch.
+            if (_flushQueued && !_isFlushing) Flush(true);
+            RefreshPrimaryManager();
+            bool recoveredByPreview = LightVolumeClusteringPreview.ApplyPendingPreviewRefresh();
+            if (!recoveredByPreview && IsEditableSceneObject(_primaryManager)) _primaryManager.RebuildEditorRuntimeState();
+            EditorApplication.QueuePlayerLoopUpdate();
+            SceneView.RepaintAll();
+        }
 
         // Refreshes the only loaded Manager allowed to own global runtime data.
         private static void RefreshPrimaryManager() {
@@ -244,6 +277,11 @@ namespace VRCLightVolumes {
 
         // Applies onboarding, authoring synchronization and Manager rebuilds for the queued batch.
         private static void Flush() {
+            Flush(false);
+        }
+
+        // Optionally leaves the Manager publication to an immediately following scene recovery.
+        private static void Flush(bool managerRecoveryFollows) {
             EditorApplication.delayCall -= Flush;
             _flushQueued = false;
             if (EditorApplication.isPlayingOrWillChangePlaymode) {
@@ -276,7 +314,7 @@ namespace VRCLightVolumes {
                     pointLight.IsActive = pointLight.isActiveAndEnabled && pointLight.Intensity != 0f && pointLight.Color != Color.black;
                     LightVolumeManagerEditorBackend.CopyProxyToUdon(pointLight);
                 }
-                if (_managerUpdateQueued && IsEditableSceneObject(_primaryManager)) _primaryManager.UpdateVolumes();
+                if (!managerRecoveryFollows && _managerUpdateQueued && IsEditableSceneObject(_primaryManager)) _primaryManager.UpdateVolumes();
             } finally {
                 Clear();
                 _isFlushing = false;

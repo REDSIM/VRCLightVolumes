@@ -19,6 +19,7 @@ namespace VRCLightVolumes.Tests {
             "Packages/red.sim.lightvolumes/UScripts/LightVolumeManager.Textures.cs",
             "Packages/red.sim.lightvolumes/UScripts/LightVolumeInstance.cs",
             "Packages/red.sim.lightvolumes/UScripts/PointLightVolumeInstance.cs",
+            "Packages/red.sim.lightvolumes/UScripts/PointLightVolumeInstance.ShadowBaking.cs",
             "Packages/red.sim.lightvolumes/Extra/Audio Link/LightVolumeAudioLink.cs",
             "Packages/red.sim.lightvolumes/Extra/TV Global Illumination/LightVolumeTVGI.cs",
             "Packages/red.sim.lightvolumes/Extra/Shadow Runtime Baker/PointLightShadowRuntimeBaker.cs"
@@ -275,23 +276,6 @@ namespace VRCLightVolumes.Tests {
             Assert.That(destination.GetProjectionSource(), Is.Null);
             Assert.That(destination.CustomTexture, Is.Null);
             UnityEngine.Object.DestroyImmediate(staleCookie);
-        }
-
-        [Test]
-        public void LegacyObjectMaskIsNotAliasedToExclusionMask() {
-            FieldInfo field = typeof(PointLightVolume).GetField(nameof(PointLightVolume.ExclusionMask));
-            object[] aliases = field?.GetCustomAttributes(typeof(UnityEngine.Serialization.FormerlySerializedAsAttribute), false);
-            bool aliasesObjectMask = false;
-            if (aliases != null) {
-                for (int i = 0; i < aliases.Length; i++) {
-                    UnityEngine.Serialization.FormerlySerializedAsAttribute alias =
-                        (UnityEngine.Serialization.FormerlySerializedAsAttribute)aliases[i];
-                    if (alias.oldName == "ObjectMask") aliasesObjectMask = true;
-                }
-            }
-
-            Assert.That(field, Is.Not.Null);
-            Assert.That(aliasesObjectMask, Is.False);
         }
 
         [Test]

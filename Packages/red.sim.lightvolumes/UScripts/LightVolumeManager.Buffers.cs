@@ -154,7 +154,6 @@ namespace VRCLightVolumes {
             if (pointLightVolume != null) {
                 pointLightVolume.RuntimeShadowResolution = pointLightVolume.ShadowBakeResolution > 0 ? Mathf.Clamp(pointLightVolume.ShadowBakeResolution, 16, 2048) : Mathf.Clamp(ShadowTexturesWidth, 16, 2048);
                 pointLightVolume.RuntimeShadowBlurSamplePreset = Mathf.Clamp(pointLightVolume.RuntimeShadowBlurSamplePreset, 0, 2);
-                pointLightVolume.RuntimeShadowFacesPerFrame = 6;
                 pointLightVolume.RuntimeShadowDirectOutput = false;
                 pointLightVolume.BakeShadows();
             }
@@ -545,7 +544,7 @@ namespace VRCLightVolumes {
             int resolvedShadowId = sourceIndex < _pointLightShadowIDs.Length ? _pointLightShadowIDs[sourceIndex] : -1;
             float shadingStrength = Mathf.Clamp01(instance.ShadingStrength);
             bool hasShading = shadingStrength > 0f;
-            bool hasShadow = hasShading && ShadowMapsCount > 0 && resolvedShadowId >= 0 && resolvedShadowId < ShadowMapsCount;
+            bool hasShadow = hasShading && ShadowTextures != null && !_shadowTextureAllocationFailed && ShadowMapsCount > 0 && resolvedShadowId >= 0 && resolvedShadowId < ShadowMapsCount;
             if (countActiveShadow && hasShadow) _activeShadowCount++;
             float shadowNearClip = 0f;
             float shadowInvDepthRange = 0f;
@@ -603,6 +602,31 @@ namespace VRCLightVolumes {
 
         }
 
+        // Reconciles serialized activity once when the Manager is enabled. Objects below an inactive parent do not receive an initial OnDisable callback.
+        private void ReconcileRegistryActiveStates() {
+            int lightVolumeCount = LightVolumeInstances.Length;
+            for (int i = 0; i < lightVolumeCount; i++) {
+                LightVolumeInstance instance = LightVolumeInstances[i];
+                if (instance == null) continue;
+                instance.IsActive = instance.enabled && instance.gameObject.activeInHierarchy && instance.Intensity != 0f && instance.Color != Color.black;
+            }
+
+            bool customTexturesChanged = false;
+            bool shadowTexturesChanged = false;
+            int pointLightCount = PointLightVolumeInstances.Length;
+            for (int i = 0; i < pointLightCount; i++) {
+                PointLightVolumeInstance instance = PointLightVolumeInstances[i];
+                if (instance == null) continue;
+                bool isActive = instance.enabled && instance.gameObject.activeInHierarchy && instance.Intensity != 0f && instance.Color != Color.black;
+                if (instance.IsActive == isActive) continue;
+
+                instance.IsActive = isActive;
+                if (instance.CustomTexture != null || instance.CustomTextureMaterial != null) customTexturesChanged = true;
+                if (instance.ShadowMapID >= 0f || instance.ShadowMapTexture != null || instance.ShadowMapMaterial != null) shadowTexturesChanged = true;
+            }
+            InvalidateTextureCaches(customTexturesChanged, shadowTexturesChanged);
+        }
+
         // Recalculates all volume data immediately. Automatic runtime paths should call RequestUpdateVolumes instead
         public void UpdateVolumes() {
 
@@ -637,22 +661,10 @@ namespace VRCLightVolumes {
             }
 
             bool isAtlas = LightVolumeAtlas != null;
-
 #if UNITY_EDITOR && !COMPILER_UDONSHARP
             // Editor tests and inspector edits can change fields directly without going through instance notify methods.
             if (!Application.isPlaying) {
-                int editorLightVolumeCount = LightVolumeInstances.Length;
-                for (int i = 0; i < editorLightVolumeCount; i++) {
-                    LightVolumeInstance instance = LightVolumeInstances[i];
-                    if (instance == null) continue;
-                    instance.IsActive = instance.isActiveAndEnabled && instance.Intensity != 0 && instance.Color != Color.black;
-                }
-                int editorPointLightCount = PointLightVolumeInstances.Length;
-                for (int i = 0; i < editorPointLightCount; i++) {
-                    PointLightVolumeInstance instance = PointLightVolumeInstances[i];
-                    if (instance == null) continue;
-                    instance.IsActive = instance.isActiveAndEnabled && instance.Intensity != 0 && instance.Color != Color.black;
-                }
+                ReconcileRegistryActiveStates();
                 bool customTexturesChanged = CaptureEditorCustomSourceState();
                 bool shadowTexturesChanged = CaptureEditorShadowSourceState();
                 InvalidateTextureCaches(customTexturesChanged, shadowTexturesChanged);
@@ -661,7 +673,7 @@ namespace VRCLightVolumes {
 
             // Rebuild runtime texture caches before point light shader IDs are written
             if (!_customTexturesInitialized) ReinitializeCustomTextures();
-            if (!_shadowTexturesInitialized && !_shadowTextureAllocationFailed) ReinitializeShadowTextures();
+            if (!_shadowTexturesInitialized && !_shadowTextureAllocationFailed) RebuildShadowTextures();
 
             // Rebuild regular Light Volume shader buffers and dynamic transform cache
             _enabledCount = 0;

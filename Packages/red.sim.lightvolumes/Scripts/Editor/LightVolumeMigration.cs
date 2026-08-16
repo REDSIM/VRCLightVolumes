@@ -860,7 +860,6 @@ namespace VRCLightVolumes {
             destination.BakeInGame = source.BakeInGame;
             destination.RebakeShadows = source.RebakeShadows;
             destination.LayerMask = source.LayerMask.value;
-            destination.ExclusionMask = source.ExclusionMask != null ? (GameObject[])source.ExclusionMask.Clone() : Array.Empty<GameObject>();
             destination.Bias = source.Bias;
             destination.NearClip = source.NearPlane;
             destination.FarClip = source.FarPlane;

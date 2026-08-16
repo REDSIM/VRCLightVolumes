@@ -37,10 +37,8 @@ namespace VRCLightVolumes {
             TextureFormat safeTextureFormat = GetSafeShadowMomentFormat(textureFormat);
 
             int oldShadowTextureFormat = manager.ShadowTextureFormat;
-            bool oldPointLightInstanceEnabled = pointLightInstance.enabled;
             int oldRuntimeShadowResolution = pointLightInstance.RuntimeShadowResolution;
             int oldRuntimeShadowBlurSamplePreset = pointLightInstance.RuntimeShadowBlurSamplePreset;
-            int oldRuntimeShadowFacesPerFrame = pointLightInstance.RuntimeShadowFacesPerFrame;
             bool oldRuntimeShadowDirectOutput = pointLightInstance.RuntimeShadowDirectOutput;
             RenderTexture oldActive = RenderTexture.active;
             RenderTexture runtimeShadowTexture = null;
@@ -50,14 +48,12 @@ namespace VRCLightVolumes {
                 manager.ShadowTextureFormat = GetShadowTextureFormatValue(textureFormat);
                 ResetManagerRuntimeShadowBlurState(manager);
 
-                pointLightInstance.enabled = true;
                 pointLightInstance.LightVolumeManager = manager;
                 pointLightInstance.RuntimeShadowCamera = manager.RuntimeShadowCamera;
                 pointLightInstance.RuntimeShadowDepthEncodeMaterial = manager.RuntimeShadowDepthEncodeMaterial;
                 pointLightInstance.RuntimeShadowBlurMaterial = manager.RuntimeShadowBlurMaterial;
                 pointLightInstance.RuntimeShadowResolution = resolution;
                 pointLightInstance.RuntimeShadowBlurSamplePreset = EditorShadowBlurSamplePreset;
-                pointLightInstance.RuntimeShadowFacesPerFrame = 6;
                 pointLightInstance.RuntimeShadowDirectOutput = false;
                 pointLightInstance.ShadowMapTexture = null;
                 pointLightInstance.ShadowMapMaterial = null;
@@ -70,8 +66,6 @@ namespace VRCLightVolumes {
                 pointLightInstance.Bias = pointLightVolume.Bias;
                 pointLightInstance.Blur = pointLightVolume.Blur;
                 pointLightInstance.ContactHardening = pointLightVolume.ContactHardening;
-                if (pointLightInstance.Intensity == 0f) pointLightInstance.Intensity = 1f;
-                if (pointLightInstance.Color == Color.black) pointLightInstance.Color = Color.white;
 
                 pointLightInstance.BakeShadows();
                 runtimeShadowTexture = pointLightInstance.ShadowMapTexture as RenderTexture;
@@ -98,9 +92,7 @@ namespace VRCLightVolumes {
                 pointLightVolume.EditorApplyAuthoringData(false, true, false);
                 pointLightInstance.RuntimeShadowResolution = oldRuntimeShadowResolution;
                 pointLightInstance.RuntimeShadowBlurSamplePreset = oldRuntimeShadowBlurSamplePreset;
-                pointLightInstance.RuntimeShadowFacesPerFrame = oldRuntimeShadowFacesPerFrame;
                 pointLightInstance.RuntimeShadowDirectOutput = oldRuntimeShadowDirectOutput;
-                pointLightInstance.enabled = oldPointLightInstanceEnabled;
                 if (regenerateArray) {
                     if (baked) manager.ReinitializeShadowTextures();
                     else manager.UpdateVolumes();
@@ -123,7 +115,10 @@ namespace VRCLightVolumes {
 
             Shader shadowBlurShader = Shader.Find(ShadowBlurShaderName);
             if (shadowBlurShader == null) {
-                if (pointLightVolume.Blur > 0.0001f) Debug.LogWarning($"[LightVolumes] Failed to find shadow blur shader '{ShadowBlurShaderName}'. Baking without blur.", pointLightVolume);
+                if (pointLightVolume.Blur > 0.0001f) {
+                    Debug.LogError($"[LightVolumes] Failed to find required shadow blur shader '{ShadowBlurShaderName}'. The previous shadow is preserved.", pointLightVolume);
+                    return false;
+                }
                 manager.RuntimeShadowBlurMaterial = null;
             } else if (manager.RuntimeShadowBlurMaterial == null || manager.RuntimeShadowBlurMaterial.shader != shadowBlurShader) {
                 manager.RuntimeShadowBlurMaterial = new Material(shadowBlurShader) { hideFlags = HideFlags.HideAndDontSave };

@@ -21,13 +21,10 @@ namespace VRCLightVolumes {
         public PointLightVolumeInstance TargetPointLightVolume;
         [Tooltip("Bake one full shadow cubemap when this behaviour is enabled.")]
         public bool BakeOnEnable = true;
-        [Tooltip("Continuously asks the target Point Light Volume to update shadow faces through a delayed Udon event loop.")]
+        [Tooltip("Continuously bakes the target's complete shadow directly into the Manager atlas through a delayed Udon event loop.")]
         public bool Realtime = false;
-        [Tooltip("How many cubemap faces the target Point Light Volume renders per realtime bake tick.")]
-        [Range(1, 6)] public int RealtimeFacesPerFrame = 1;
 
         private PointLightVolumeInstance _configuredTargetPointLightVolume;
-        private int _configuredFacesPerFrame = -1;
         private bool _configuredDirectOutput = false;
 #if UDONSHARP
         private bool _realtimeLoopScheduled = false;
@@ -56,26 +53,33 @@ namespace VRCLightVolumes {
 #endif
         }
 
-        // Clears cached target configuration. A queued Udon event owns the scheduled flag until it runs. Keeping the flag prevents a quick disable-enable cycle from creating a second loop.
+        // Releases retained scratch resources. A queued Udon event owns the scheduled flag until it
+        // runs; keeping the flag prevents a quick disable-enable cycle from creating a second loop.
         private void OnDisable() {
-            _configuredTargetPointLightVolume = null;
+            ReleaseConfiguredTarget();
         }
 
 #if !UDONSHARP
         // Drives the target point light once per frame in regular Unity runtime.
         private void Update() {
-            if (!Realtime || TargetPointLightVolume == null) return;
+            if (!Realtime || TargetPointLightVolume == null) {
+                ReleaseConfiguredTarget();
+                return;
+            }
             PointLightVolumeInstance target = TargetPointLightVolume;
-            ConfigureTargetBake(target, RealtimeFacesPerFrame, true);
-            target.BakeShadows();
+            ConfigureTargetBake(target, true);
+            if (target.IsActive) target.BakeShadows();
         }
 #endif
 
         // Writes one-shot bake fields to the target point light instance and triggers its native runtime bake.
         public void BakeShadows() {
-            if (TargetPointLightVolume == null) return;
+            if (TargetPointLightVolume == null) {
+                ReleaseConfiguredTarget();
+                return;
+            }
             PointLightVolumeInstance target = TargetPointLightVolume;
-            ConfigureTargetBake(target, 6, false);
+            ConfigureTargetBake(target, false);
             target.BakeShadows();
         }
 
@@ -84,12 +88,15 @@ namespace VRCLightVolumes {
 #if UDONSHARP
             _realtimeLoopScheduled = false;
 #endif
-            if (!enabled || !gameObject.activeInHierarchy || !Realtime) return;
+            if (!enabled || !gameObject.activeInHierarchy || !Realtime) {
+                ReleaseConfiguredTarget();
+                return;
+            }
             if (TargetPointLightVolume != null) {
                 PointLightVolumeInstance target = TargetPointLightVolume;
-                ConfigureTargetBake(target, RealtimeFacesPerFrame, true);
-                target.BakeShadows();
-            }
+                ConfigureTargetBake(target, true);
+                if (target.IsActive) target.BakeShadows();
+            } else ReleaseConfiguredTarget();
 #if UDONSHARP
             _realtimeLoopScheduled = true;
             SendCustomEventDelayedFrames(nameof(_RealtimeBakeLoop), 1);
@@ -98,8 +105,11 @@ namespace VRCLightVolumes {
 
         // Writes realtime bake fields to the target and starts the external trigger loop.
         private void StartTargetRealtimeBakeLoop() {
-            if (TargetPointLightVolume == null) return;
-            ConfigureTargetBake(TargetPointLightVolume, RealtimeFacesPerFrame, true);
+            if (TargetPointLightVolume == null) {
+                ReleaseConfiguredTarget();
+                return;
+            }
+            ConfigureTargetBake(TargetPointLightVolume, true);
 #if UDONSHARP
             if (_realtimeLoopScheduled) return;
             _realtimeLoopScheduled = true;
@@ -107,14 +117,21 @@ namespace VRCLightVolumes {
 #endif
         }
 
-        // Applies only external scheduling settings; resolution and blur quality remain owned by the target light.
-        private void ConfigureTargetBake(PointLightVolumeInstance target, int facesPerFrame, bool directOutput) {
-            if (_configuredTargetPointLightVolume == target && _configuredFacesPerFrame == facesPerFrame && _configuredDirectOutput == directOutput && target.RuntimeShadowFacesPerFrame == facesPerFrame && target.RuntimeShadowDirectOutput == directOutput) return;
-            target.RuntimeShadowFacesPerFrame = facesPerFrame;
+        // Selects only the output path; resolution and blur settings remain owned by the target light.
+        private void ConfigureTargetBake(PointLightVolumeInstance target, bool directOutput) {
+            if (_configuredTargetPointLightVolume != target) ReleaseConfiguredTarget();
+            if (_configuredTargetPointLightVolume == target && _configuredDirectOutput == directOutput) return;
             target.RuntimeShadowDirectOutput = directOutput;
             _configuredTargetPointLightVolume = target;
-            _configuredFacesPerFrame = facesPerFrame;
             _configuredDirectOutput = directOutput;
+        }
+
+        // Gives retained camera and blur scratch back when realtime baking stops or changes targets.
+        private void ReleaseConfiguredTarget() {
+            PointLightVolumeInstance target = _configuredTargetPointLightVolume;
+            if (target != null) target._ReleaseRuntimeShadowBakeResources();
+            _configuredTargetPointLightVolume = null;
+            _configuredDirectOutput = false;
         }
     }
 }

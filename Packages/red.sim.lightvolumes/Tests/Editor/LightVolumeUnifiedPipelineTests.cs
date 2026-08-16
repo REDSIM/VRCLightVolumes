@@ -257,6 +257,7 @@ namespace VRCLightVolumes.Tests {
             LightVolumeInstance volume = CreateChildComponent<LightVolumeInstance>(manager.transform, "Build Cleanup Volume");
             PointLightVolumeInstance point = CreateChildComponent<PointLightVolumeInstance>(manager.transform, "Build Cleanup Point");
             GameObject excludedObject = CreateGameObject("Build Cleanup Shadow Exclusion");
+            MeshRenderer excludedRenderer = excludedObject.AddComponent<MeshRenderer>();
             Texture3D atlasBase = CreateTexture3D("Build Cleanup Base Atlas");
             Texture3D finalAtlas = CreateTexture3D("Build Cleanup Final Atlas");
             Texture3D volumeTexture0 = CreateTexture3D("Build Cleanup Volume 0");
@@ -288,7 +289,7 @@ namespace VRCLightVolumes.Tests {
             point.Cookie = cookie;
             point.Cubemap = cubemap;
             point.ShadowMap = shadow;
-            point.ExclusionMask = new[] { excludedObject };
+            point.ExclusionMask = new Renderer[] { excludedRenderer };
             point.CustomTexture = cookie;
             point.CustomTextureMaterial = null;
             point.ProjectionType = 1;
@@ -323,7 +324,7 @@ namespace VRCLightVolumes.Tests {
             Assert.That(point.Cookie, Is.Null);
             Assert.That(point.Cubemap, Is.Null);
             Assert.That(point.ShadowMap, Is.Null);
-            Assert.That(point.ExclusionMask, Is.EqualTo(new[] { excludedObject }));
+            Assert.That(point.ExclusionMask, Is.EqualTo(new Renderer[] { excludedRenderer }));
             Assert.That(point.CustomTexture, Is.SameAs(cookie));
             Assert.That(point.ProjectionType, Is.EqualTo(1));
             Assert.That(point.ProjectionMode, Is.EqualTo(2));
@@ -368,7 +369,6 @@ namespace VRCLightVolumes.Tests {
             Assert.That(point.RuntimeShadowResolution, Is.EqualTo(128));
             Assert.That(point.RuntimeShadowBlurSamplePreset, Is.EqualTo(1));
             Assert.That(point.RuntimeShadowSphericalBlur, Is.False);
-            Assert.That(point.RuntimeShadowFacesPerFrame, Is.EqualTo(6));
             Assert.That(point.RuntimeShadowDirectOutput, Is.False);
             Assert.That(point.RuntimeShadowCamera, Is.SameAs(manager.RuntimeShadowCamera));
             Assert.That(point.ShadowMapTexture, Is.Null);

@@ -209,7 +209,6 @@ namespace VRCLightVolumes {
             pointLight.RuntimeShadowResolution = PointLightShadowBaker.ResolveShadowBakeResolution(pointLight, manager);
             pointLight.RuntimeShadowBlurSamplePreset = Mathf.Clamp(pointLight.RuntimeShadowBlurSamplePreset, 0, 2);
             if (bakeInGame) {
-                pointLight.RuntimeShadowFacesPerFrame = 6;
                 pointLight.RuntimeShadowDirectOutput = false;
                 PreparePointLightRuntimeShadowDependencies(pointLight, manager);
             } else {
@@ -360,16 +359,15 @@ namespace VRCLightVolumes {
             SetUdonProgramVariable(udonBehaviour, "ShadowMapUsesCubemap", pointLight.ShadowMapUsesCubemap);
         }
 
-        // Publishes runtime shadow bake settings and exclusion roots to a Point Light Volume's Udon heap.
+        // Publishes runtime shadow bake settings and excluded renderers to a Point Light Volume's Udon heap.
         private static void ApplyPointLightRuntimeShadowBakeSettings(PointLightVolumeInstance pointLight, UdonBehaviour udonBehaviour) {
             if (pointLight == null || udonBehaviour == null) return;
             SetUdonProgramVariable(udonBehaviour, "BakeInGame", pointLight.BakeInGame);
-            SetUdonProgramVariable(udonBehaviour, "ExclusionMask", pointLight.ExclusionMask ?? Array.Empty<GameObject>());
+            SetUdonProgramVariable(udonBehaviour, "ExclusionMask", pointLight.ExclusionMask ?? Array.Empty<Renderer>());
             SetUdonProgramVariable(udonBehaviour, "RuntimeShadowResolution", pointLight.RuntimeShadowResolution);
             SetUdonProgramVariable(udonBehaviour, "RuntimeShadowBlurSamplePreset", pointLight.RuntimeShadowBlurSamplePreset);
             SetUdonProgramVariable(udonBehaviour, "RuntimeShadowSphericalBlur", pointLight.RuntimeShadowSphericalBlur);
-            SetUdonProgramVariable(udonBehaviour, "RuntimeShadowFacesPerFrame", pointLight.RuntimeShadowFacesPerFrame);
-            SetUdonProgramVariable(udonBehaviour, "RuntimeShadowDirectOutput", pointLight.RuntimeShadowDirectOutput);
+            SetUdonProgramVariable(udonBehaviour, "RuntimeShadowDirectOutput", false);
             SetUdonProgramVariable(udonBehaviour, "ShadowBakeResolution", pointLight.ShadowBakeResolution);
         }
 #endif

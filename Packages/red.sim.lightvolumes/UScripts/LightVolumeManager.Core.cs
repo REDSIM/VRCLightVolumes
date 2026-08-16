@@ -423,7 +423,8 @@ namespace VRCLightVolumes {
                 // A registered source can exist before selection/compact buffers are rebuilt. Its basic-Point callback may already have calculated an exact local range, but the
                 // historical structural contract keeps that value dirty until the full rebuild commits source membership and canonical data together.
                 pointLightVolume.IsRangeDirty = true;
-                InvalidateTextureCaches(pointLightVolume.CustomTexture != null || pointLightVolume.CustomTextureMaterial != null, pointLightVolume.ShadowMapID >= 0);
+                InvalidateTextureCaches(pointLightVolume.CustomTexture != null || pointLightVolume.CustomTextureMaterial != null,
+                    pointLightVolume.ShadowMapID >= 0 || pointLightVolume.ShadowMapTexture != null || pointLightVolume.ShadowMapMaterial != null);
                 RequestUpdateVolumes();
                 return;
             }
@@ -621,6 +622,7 @@ namespace VRCLightVolumes {
             _froxelProjectionValid = false;
             _clusterMaskDirty = true;
             _clusterMaskValid = false;
+            ReconcileRegistryActiveStates();
             RequestUpdateVolumes();
         }
 

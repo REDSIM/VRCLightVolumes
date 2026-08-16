@@ -9,14 +9,11 @@ namespace VRCLightVolumes {
 
         // Editor-only views of existing runtime state; no backing fields are added.
         internal bool RegisteredWithManagerPreview => _isRegisteredWithManager;
-        internal bool RuntimeShadowBakeStartedPreview => _inGameBakeStarted;
         internal bool RuntimeShadowSourceInitializedPreview => _runtimeShadowSourceInitialized;
-        internal int RuntimeShadowFaceIndexPreview => _runtimeShadowFaceIndex;
         internal float RuntimeShadowReceiverNearClipPreview => _runtimeShadowReceiverNearClip;
         internal float RuntimeShadowReceiverFarClipPreview => _runtimeShadowReceiverFarClip;
         internal RenderTexture RuntimeShadowDepthTexturePreview => _runtimeShadowDepthTexture;
         internal RenderTexture RuntimeShadowTexturePreview => _runtimeShadowTexture;
-        internal RenderTexture RuntimeShadowRegistrationTexturePreview => _runtimeShadowRegistrationTexture;
 
         // Caches editor-observed scalar values after the editor coordinator mirrors them without proxy polling.
         internal void CacheEditorObservedValues() {
@@ -172,6 +169,7 @@ namespace VRCLightVolumes {
         // Prevents editor synchronization from replacing a live runtime-generated shadow source.
         private bool PreserveRuntimeShadowSourceInEditor() {
             if (!Application.isPlaying || !Shadows) return false;
+            if (RuntimeShadowDirectOutput && _runtimeShadowSourceInitialized) return true;
             Texture sourceTexture = GetShadowMapTexture();
             if (BakeInGame) return ShadowMapTexture != sourceTexture;
             return ShadowMapTexture != null && ShadowMapTexture != sourceTexture;
@@ -252,10 +250,6 @@ namespace VRCLightVolumes {
             else if (ShadowBakeResolution > 0) ShadowBakeResolution = Mathf.Clamp(ShadowBakeResolution, 16, 2048);
             RuntimeShadowResolution = ShadowBakeResolution > 0 ? ShadowBakeResolution : LightVolumeManager != null ? Mathf.Clamp(LightVolumeManager.ShadowTexturesWidth, 16, 2048) : Mathf.Clamp(RuntimeShadowResolution, 16, 2048);
             RuntimeShadowBlurSamplePreset = Mathf.Clamp(RuntimeShadowBlurSamplePreset, 0, 2);
-            if (BakeInGame) {
-                RuntimeShadowFacesPerFrame = 6;
-                RuntimeShadowDirectOutput = false;
-            }
 
             Position = transformPosition;
             float averageScale = (Mathf.Abs(lossyScale.x) + Mathf.Abs(lossyScale.y) + Mathf.Abs(lossyScale.z)) / 3f;
@@ -286,6 +280,10 @@ namespace VRCLightVolumes {
             _old_ShadingStrength = ShadingStrength;
             IsRangeDirty = true;
             if (notifyManager) NotifyManager(true, customTexturesChanged, shadowTexturesChanged);
+            // NotifyManager owns transition detection when requested. The explicit assignment also
+            // canonicalizes build/editor paths that intentionally suppress the manager callback
+            // before copying this proxy to its backing UdonBehaviour.
+            IsActive = isActiveAndEnabled && Intensity != 0f && Color != Color.black;
         }
 
 #endregion

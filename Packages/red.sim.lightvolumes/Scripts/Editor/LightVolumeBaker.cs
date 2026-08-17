@@ -316,34 +316,78 @@ namespace VRCLightVolumes {
                 return false;
             }
 
-            Texture3D texture0 = CreateTexture(width, height, depth);
-            Texture3D texture1 = CreateTexture(width, height, depth);
-            Texture3D texture2 = CreateTexture(width, height, depth);
-            if (!LVUtils.Apply3DTextureData(texture0, textureColors[0]) || !LVUtils.Apply3DTextureData(texture1, textureColors[1]) || !LVUtils.Apply3DTextureData(texture2, textureColors[2])) {
-                UnityEngine.Object.DestroyImmediate(texture0);
-                UnityEngine.Object.DestroyImmediate(texture1);
-                UnityEngine.Object.DestroyImmediate(texture2);
-                return false;
-            }
+            Texture3D texture0 = null;
+            Texture3D texture1 = null;
+            Texture3D texture2 = null;
+            try {
+                texture0 = CreateTexture(width, height, depth);
+                texture1 = CreateTexture(width, height, depth);
+                texture2 = CreateTexture(width, height, depth);
+                if (!LVUtils.Apply3DTextureData(texture0, textureColors[0]) || !LVUtils.Apply3DTextureData(texture1, textureColors[1]) || !LVUtils.Apply3DTextureData(texture2, textureColors[2])) return false;
 
-            string path = $"{Path.GetDirectoryName(scene.path)}/{scene.name}/VRCLightVolumes/Temp";
-            string escapedName = LVUtils.EscapeFileName(volume.gameObject.name);
-            LVUtils.SaveAsAsset(texture0, $"{path}/{escapedName}_0.asset");
-            LVUtils.SaveAsAsset(texture1, $"{path}/{escapedName}_1.asset");
-            LVUtils.SaveAsAsset(texture2, $"{path}/{escapedName}_2.asset");
-            volume.Texture0 = texture0;
-            volume.Texture1 = texture1;
-            volume.Texture2 = texture2;
-            LVUtils.MarkDirty(volume);
-            return true;
+                string path = $"{Path.GetDirectoryName(scene.path)}/{scene.name}/VRCLightVolumes/Temp";
+                string escapedName = LVUtils.EscapeFileName(volume.gameObject.name);
+                bool saved0 = TrySaveTextureAsset(texture0, $"{path}/{escapedName}_0.asset");
+                bool saved1 = TrySaveTextureAsset(texture1, $"{path}/{escapedName}_1.asset");
+                bool saved2 = TrySaveTextureAsset(texture2, $"{path}/{escapedName}_2.asset");
+
+                Texture3D previous0 = volume.Texture0;
+                Texture3D previous1 = volume.Texture1;
+                Texture3D previous2 = volume.Texture2;
+                if (saved0) volume.Texture0 = texture0;
+                if (saved1) volume.Texture1 = texture1;
+                if (saved2) volume.Texture2 = texture2;
+                DestroyReplacedTransientTexture(previous0, volume);
+                DestroyReplacedTransientTexture(previous1, volume);
+                DestroyReplacedTransientTexture(previous2, volume);
+
+                if (!saved0 || !saved1 || !saved2) {
+                    if (saved0 || saved1 || saved2) {
+                        LVUtils.MarkDirty(volume);
+                        LightVolumeManagerEditorBackend.CopyProxyToUdon(volume);
+                    }
+                    Debug.LogError($"[LightVolumes] Failed to persist every baked texture for light volume {volume.gameObject.name}. Transient texture objects were released.", volume);
+                    return false;
+                }
+
+                LVUtils.MarkDirty(volume);
+                return true;
+            } finally {
+                DestroyTransientTexture(texture0);
+                DestroyTransientTexture(texture1);
+                DestroyTransientTexture(texture2);
+            }
+        }
+
+        // Confirms that the helper actually transferred ownership to the AssetDatabase; its public API logs and swallows CreateAsset failures, so returning from it is not sufficient.
+        private static bool TrySaveTextureAsset(Texture3D texture, string path) {
+            LVUtils.SaveAsAsset(texture, path);
+            return texture != null && AssetDatabase.Contains(texture);
+        }
+
+        // Releases an overwritten in-memory bake while preserving imported assets and any texture still referenced by another SH channel.
+        private static void DestroyReplacedTransientTexture(Texture3D texture, LightVolumeInstance volume) {
+            if (texture == null || volume.Texture0 == texture || volume.Texture1 == texture || volume.Texture2 == texture) return;
+            DestroyTransientTexture(texture);
+        }
+
+        // Destroys only textures that were not adopted by the AssetDatabase.
+        private static void DestroyTransientTexture(Texture3D texture) {
+            if (texture == null || AssetDatabase.Contains(texture)) return;
+            UnityEngine.Object.DestroyImmediate(texture);
         }
 
         // Creates a clamp-wrapped half-float 3D texture suitable for baked SH coefficients.
         private static Texture3D CreateTexture(int width, int height, int depth) {
-            return new Texture3D(width, height, depth, TextureFormat.RGBAHalf, false) {
-                wrapMode = TextureWrapMode.Clamp,
-                filterMode = FilterMode.Bilinear
-            };
+            Texture3D texture = new Texture3D(width, height, depth, TextureFormat.RGBAHalf, false);
+            try {
+                texture.wrapMode = TextureWrapMode.Clamp;
+                texture.filterMode = FilterMode.Bilinear;
+                return texture;
+            } catch {
+                DestroyTransientTexture(texture);
+                throw;
+            }
         }
 
         // Coalesces hierarchy and scene changes into one Bakery watcher refresh.
@@ -661,17 +705,31 @@ namespace VRCLightVolumes {
         // Lazily creates the dummy 3D texture required by the shared lighting compute shader.
         private static Texture3D GetProbeBakeDummyVolumeTexture() {
             if (_probeBakeDummyVolumeTexture != null) return _probeBakeDummyVolumeTexture;
-            _probeBakeDummyVolumeTexture = new Texture3D(1, 1, 1, TextureFormat.RGBA32, false) { hideFlags = HideFlags.HideAndDontSave };
-            _probeBakeDummyVolumeTexture.Apply(false, true);
-            return _probeBakeDummyVolumeTexture;
+            Texture3D texture = new Texture3D(1, 1, 1, TextureFormat.RGBA32, false);
+            try {
+                texture.hideFlags = HideFlags.HideAndDontSave;
+                texture.Apply(false, true);
+                _probeBakeDummyVolumeTexture = texture;
+                return texture;
+            } catch {
+                UnityEngine.Object.DestroyImmediate(texture);
+                throw;
+            }
         }
 
         // Lazily creates the dummy texture array required for unused projection and shadow inputs.
         private static Texture2DArray GetProbeBakeDummyTextureArray() {
             if (_probeBakeDummyTextureArray != null) return _probeBakeDummyTextureArray;
-            _probeBakeDummyTextureArray = new Texture2DArray(1, 1, 1, TextureFormat.RGBA32, false) { hideFlags = HideFlags.HideAndDontSave };
-            _probeBakeDummyTextureArray.Apply(false, true);
-            return _probeBakeDummyTextureArray;
+            Texture2DArray texture = new Texture2DArray(1, 1, 1, TextureFormat.RGBA32, false);
+            try {
+                texture.hideFlags = HideFlags.HideAndDontSave;
+                texture.Apply(false, true);
+                _probeBakeDummyTextureArray = texture;
+                return texture;
+            } catch {
+                UnityEngine.Object.DestroyImmediate(texture);
+                throw;
+            }
         }
 
         // Packs L0/L1 probe coefficients into the compute shader's three-vector layout.

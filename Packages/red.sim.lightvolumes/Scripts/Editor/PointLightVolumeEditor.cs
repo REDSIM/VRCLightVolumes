@@ -43,6 +43,7 @@ namespace VRCLightVolumes {
 
         // Draws type-specific authoring controls and synchronizes explicit changes.
         public override void OnInspectorGUI() {
+            LightVolumeManagerEditorBackend.SynchronizeRuntimeInspectorGraphsFromUdon(targets);
             serializedObject.Update();
             int undoGroup = Undo.GetCurrentGroup();
             SerializedProperty lightTypeProperty = serializedObject.FindProperty("LightType");
@@ -124,7 +125,7 @@ namespace VRCLightVolumes {
             propertiesChanged |= serializedObject.ApplyModifiedProperties();
             if (!propertiesChanged) return;
 
-            SyncTargets(true);
+            SyncTargets(true, false, false);
             Undo.CollapseUndoOperations(undoGroup);
         }
 
@@ -287,12 +288,18 @@ namespace VRCLightVolumes {
                 if (pointLightVolume == null || !pointLightVolume.Shadows) continue;
                 PointLightVolumeEditorUtility.Sync(pointLightVolume, false, false);
                 if (manager != null && pointLightVolume.LightVolumeManager == manager) synchronized = true;
+                if (Application.isPlaying) {
+                    LightVolumeManagerEditorBackend.QueueRuntimeShadowBake(pointLightVolume);
+                    continue;
+                }
                 if (!PointLightShadowBaker.BakeShadowMap(pointLightVolume, $"| {pointLightVolume.gameObject.name} ({i + 1}/{targets.Length})", false)) continue;
                 PointLightVolumeEditorUtility.Sync(pointLightVolume, false, false);
                 if (manager != null && pointLightVolume.LightVolumeManager == manager) rebuildShadowTextures = true;
             }
+            if (Application.isPlaying) return;
             if (rebuildShadowTextures) LightVolumeManagerEditorBackend.ReinitializeShadowTextures(manager);
             else if (synchronized) LightVolumeManagerEditorBackend.RefreshManagerOnce(manager, true);
+            if (synchronized) LightVolumeEditorUpdater.QueueManagerRecovery();
         }
 
         // Applies all selected proxies first, then rebuilds each shared array at most once.

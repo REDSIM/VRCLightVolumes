@@ -1,11 +1,18 @@
 using System;
+using System.Collections;
+using System.Collections.Generic;
 using System.IO;
+using System.Reflection;
 using Unity.EditorCoroutines.Editor;
 using UnityEditor;
+using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 #if UDONSHARP
+using UdonSharp;
+using UdonSharp.Serialization;
 using UdonSharpEditor;
+using VRC.Udon;
 #endif
 
 namespace VRCLightVolumes {
@@ -16,13 +23,68 @@ namespace VRCLightVolumes {
         private const float ShadowMinVarianceValueMax = 1f;
 
         private static EditorCoroutine _atlasCoroutine;
+        private static IEnumerator _atlasRoutine;
+        private static LightVolumeManager _atlasCoroutineOwner;
+        private static int _atlasGenerationVersion;
+        private static Texture3D _ownedTransientAtlas;
+        private static LightVolumeManager _ownedTransientAtlasOwner;
         private static bool _customProbeFinalizeQueued;
         private static bool _atlasGenerationQueued;
 #if UDONSHARP
         private static bool _queuedRuntimeCustomTextureReinitialization;
         private static bool _queuedRuntimeShadowTextureReinitialization;
-        private static bool _runtimeManagerRefreshQueued;
+        private static bool _queuedRuntimeManagerUpdate;
+        private static bool _queuedRuntimeSettingsApply;
+        private static readonly List<int> _queuedRuntimeShadowBakeInstanceIds = new List<int>();
+        private static bool _runtimeInspectorFlushScheduled;
 #endif
+
+        // Owns deferred atlas work and transient textures across editor lifecycle boundaries.
+        static LightVolumeManagerEditorBackend() {
+            EditorApplication.playModeStateChanged += OnPlayModeStateChanged;
+            EditorApplication.hierarchyChanged += CleanupDestroyedOwners;
+            EditorSceneManager.sceneClosing += OnSceneClosing;
+            AssemblyReloadEvents.beforeAssemblyReload += Shutdown;
+            EditorApplication.quitting += Shutdown;
+        }
+
+        // Cancels work that cannot safely cross into Play Mode when domain reload is disabled.
+        private static void OnPlayModeStateChanged(PlayModeStateChange state) {
+            if (state == PlayModeStateChange.ExitingEditMode) {
+                CancelPendingAtlasWork();
+                ReleaseOwnedTransientAtlas();
+            }
+#if UDONSHARP
+            if (state == PlayModeStateChange.ExitingPlayMode) CancelRuntimeInspectorCommands();
+#endif
+        }
+
+        // Deleting a Manager does not close its scene. Release generator state and a completed
+        // unsaved atlas as soon as Unity publishes the corresponding hierarchy change.
+        private static void CleanupDestroyedOwners() {
+            if (_atlasCoroutine != null && _atlasCoroutineOwner == null) StopActiveAtlasCoroutine();
+            if (!ReferenceEquals(_ownedTransientAtlas, null) && (_ownedTransientAtlas == null || _ownedTransientAtlasOwner == null)) ReleaseOwnedTransientAtlas();
+        }
+
+        // Stops work and releases a non-persistent atlas owned by the scene being unloaded.
+        private static void OnSceneClosing(Scene scene, bool removingScene) {
+            if (_atlasCoroutine != null && (_atlasCoroutineOwner == null || _atlasCoroutineOwner.gameObject.scene == scene)) StopActiveAtlasCoroutine();
+            if (!ReferenceEquals(_ownedTransientAtlas, null) && (_ownedTransientAtlasOwner == null || _ownedTransientAtlasOwner.gameObject.scene == scene)) ReleaseOwnedTransientAtlas();
+        }
+
+        // Removes every deferred callback and native object owned by this editor domain.
+        private static void Shutdown() {
+            EditorApplication.playModeStateChanged -= OnPlayModeStateChanged;
+            EditorApplication.hierarchyChanged -= CleanupDestroyedOwners;
+            EditorSceneManager.sceneClosing -= OnSceneClosing;
+            AssemblyReloadEvents.beforeAssemblyReload -= Shutdown;
+            EditorApplication.quitting -= Shutdown;
+            CancelPendingAtlasWork();
+#if UDONSHARP
+            CancelRuntimeInspectorCommands();
+#endif
+            ReleaseOwnedTransientAtlas();
+        }
 
         // Returns the single Manager allowed to own global Light Volumes state. Invalid duplicate setups consistently use the first scene/hierarchy entry until the extras are removed.
         internal static LightVolumeManager GetPrimaryManager() {
@@ -31,6 +93,7 @@ namespace VRCLightVolumes {
 
         // Returns the primary Manager and the total number of eligible Managers in loaded scenes.
         internal static LightVolumeManager GetPrimaryManager(out int managerCount) {
+            ReleaseUnreferencedTransientAtlas();
             LightVolumeManager[] managers = UnityEngine.Object.FindObjectsByType<LightVolumeManager>(FindObjectsInactive.Include, FindObjectsSortMode.None);
             LightVolumeManager primary = null;
             string primaryKey = null;
@@ -98,7 +161,10 @@ namespace VRCLightVolumes {
                 if (reinitializeCustomTextures) manager.ReinitializeCustomTextures();
                 if (reinitializeShadowTextures) manager.ReinitializeShadowTextures();
             }
-            if (copyProxyToUdon) CopyProxyToUdon(manager);
+            // In Play Mode UdonSharp's wrapper can still target a storage adapter cached before
+            // the live heap existed. Publish canonicalized Manager fields explicitly even when the
+            // caller normally leaves the final copy to that wrapper.
+            if (copyProxyToUdon || Application.isPlaying) CopyProxyToUdon(manager);
             if (markDirty) LVUtils.MarkDirtyIfSerializedStateChanged(manager, previousState);
             if (updateVolumes && !runtimeRefreshQueued && !reinitializeShadowTextures) manager.UpdateVolumes();
         }
@@ -319,11 +385,104 @@ namespace VRCLightVolumes {
             LightVolumeInstance[] volumes = GetAtlasVolumes(manager);
             if (volumes.Length == 0) return;
 
-            if (_atlasCoroutine != null) EditorCoroutineUtility.StopCoroutine(_atlasCoroutine);
+            StopActiveAtlasCoroutine();
 
             // Post-processed atlases are commonly updated slice by slice, so minimizing depth reduces per-frame draw calls even when that costs a little more VRAM.
             TexturePackingStrategy strategy = ResolveAtlasPackingStrategy(manager);
-            _atlasCoroutine = EditorCoroutineUtility.StartCoroutine(Texture3DAtlasGenerator.CreateAtlas(volumes, atlas => CompleteAtlas(manager, volumes, atlas), manager.DownscaleVolumes, strategy), manager);
+            int generationVersion = ++_atlasGenerationVersion;
+            _atlasCoroutineOwner = manager;
+            IEnumerator routine = RunAtlasGeneration(manager, volumes, strategy, generationVersion);
+            _atlasRoutine = routine;
+            EditorCoroutine coroutine = EditorCoroutineUtility.StartCoroutine(routine, manager);
+            // Editor Coroutines 1.0.0 starts on the next update, but keep the assignment correct if a future implementation advances and completes the iterator inside StartCoroutine.
+            if (ReferenceEquals(_atlasRoutine, routine)) _atlasCoroutine = coroutine;
+        }
+
+        // Wraps the generator so success, validation failure, exceptions and explicit cancellation all clear the static coroutine handle and dispose its iterator-owned resources.
+        private static IEnumerator RunAtlasGeneration(LightVolumeManager manager, LightVolumeInstance[] volumes, TexturePackingStrategy strategy, int generationVersion) {
+            IEnumerator generator = Texture3DAtlasGenerator.CreateAtlas(volumes, atlas => CompleteAtlas(manager, volumes, atlas), manager.DownscaleVolumes, strategy);
+            try {
+                while (generator.MoveNext()) yield return generator.Current;
+            } finally {
+                try {
+                    (generator as IDisposable)?.Dispose();
+                } finally {
+                    if (_atlasGenerationVersion == generationVersion) {
+                        _atlasCoroutine = null;
+                        _atlasRoutine = null;
+                        _atlasCoroutineOwner = null;
+                    }
+                }
+            }
+        }
+
+        // Cancels queued finalization and the active generator without leaving static handles behind.
+        private static void CancelPendingAtlasWork() {
+            EditorApplication.delayCall -= GenerateQueuedAtlases;
+            EditorApplication.delayCall -= FinalizeCustomProbeAtlases;
+            _atlasGenerationQueued = false;
+            _customProbeFinalizeQueued = false;
+            StopActiveAtlasCoroutine();
+        }
+
+        // Invalidates the current generation before stopping it so its finally block cannot clear a subsequently-started coroutine handle.
+        private static void StopActiveAtlasCoroutine() {
+            _atlasGenerationVersion++;
+            EditorCoroutine coroutine = _atlasCoroutine;
+            IEnumerator routine = _atlasRoutine;
+            _atlasCoroutine = null;
+            _atlasRoutine = null;
+            _atlasCoroutineOwner = null;
+            try {
+                if (coroutine != null) EditorCoroutineUtility.StopCoroutine(coroutine);
+            } finally {
+                // Editor Coroutines 1.0.0 does not dispose the stopped IEnumerator itself.
+                (routine as IDisposable)?.Dispose();
+            }
+        }
+
+        // Tracks an atlas that has no AssetDatabase owner so scene/domain teardown can destroy it.
+        private static void TrackTransientAtlas(LightVolumeManager manager, Texture3D texture) {
+            if (texture == null || AssetDatabase.Contains(texture)) return;
+            if (manager == null) {
+                DestroyTransientTexture(texture);
+                return;
+            }
+            if (!ReferenceEquals(_ownedTransientAtlas, null) && !ReferenceEquals(_ownedTransientAtlas, texture)) ReleaseOwnedTransientAtlas();
+            _ownedTransientAtlas = texture;
+            _ownedTransientAtlasOwner = manager;
+        }
+
+        // Drops tracking once external editor code replaces both Manager references to an unsaved atlas; the backend is then the only remaining native-object owner.
+        private static void ReleaseUnreferencedTransientAtlas() {
+            if (ReferenceEquals(_ownedTransientAtlas, null)) return;
+            if (_ownedTransientAtlas == null) {
+                ReleaseOwnedTransientAtlas();
+                return;
+            }
+            LightVolumeManager owner = _ownedTransientAtlasOwner;
+            if (owner != null && (owner.LightVolumeAtlasBase == _ownedTransientAtlas || owner.LightVolumeAtlas == _ownedTransientAtlas)) return;
+            ReleaseOwnedTransientAtlas();
+        }
+
+        // Relinquishes the one completed non-persistent atlas currently owned by the backend.
+        private static void ReleaseOwnedTransientAtlas() {
+            Texture3D texture = _ownedTransientAtlas;
+            LightVolumeManager owner = _ownedTransientAtlasOwner;
+            _ownedTransientAtlas = null;
+            _ownedTransientAtlasOwner = null;
+            if (texture == null || AssetDatabase.Contains(texture)) return;
+            if (owner != null) {
+                if (owner.LightVolumeAtlasBase == texture) owner.LightVolumeAtlasBase = null;
+                if (owner.LightVolumeAtlas == texture) owner.LightVolumeAtlas = null;
+            }
+            UnityEngine.Object.DestroyImmediate(texture);
+        }
+
+        // Destroys only generated objects that were never adopted by the AssetDatabase.
+        private static void DestroyTransientTexture(Texture3D texture) {
+            if (texture == null || AssetDatabase.Contains(texture)) return;
+            UnityEngine.Object.DestroyImmediate(texture);
         }
 
         // Post-processing is commonly slice-driven, so prefer minimum depth whenever a processor is present.
@@ -346,34 +505,98 @@ namespace VRCLightVolumes {
 
         // Assigns a completed atlas, writes per-volume UVW bounds and schedules asset persistence.
         private static void CompleteAtlas(LightVolumeManager manager, LightVolumeInstance[] volumes, Atlas3D atlas) {
-            _atlasCoroutine = null;
-            if (manager == null) return;
             if (atlas.Texture == null) return;
-
-            manager.LightVolumeAtlasBase = atlas.Texture;
-            int count = Mathf.Min(volumes.Length, Mathf.Min(atlas.BoundsUvwMin.Length / 3, atlas.BoundsUvwMax.Length / 3));
-            for (int i = 0; i < count; i++) {
-                LightVolumeInstance volume = volumes[i];
-                if (volume == null) continue;
-                int atlasIndex = i * 3;
-                Vector3 scale = atlas.BoundsUvwMax[atlasIndex] - atlas.BoundsUvwMin[atlasIndex];
-                Vector3 uvw0 = atlas.BoundsUvwMin[atlasIndex];
-                Vector3 uvw1 = atlas.BoundsUvwMin[atlasIndex + 1];
-                Vector3 uvw2 = atlas.BoundsUvwMin[atlasIndex + 2];
-                volume.BoundsUvwMin0 = new Vector4(uvw0.x, uvw0.y, uvw0.z, scale.x);
-                volume.BoundsUvwMin1 = new Vector4(uvw1.x, uvw1.y, uvw1.z, scale.y);
-                volume.BoundsUvwMin2 = new Vector4(uvw2.x, uvw2.y, uvw2.z, scale.z);
-                if (!volume.Bake && volume.ReserveUVSpace) volume.InvBakedRotation = Quaternion.Inverse(LightVolumeTools.GetRotation(volume));
-                LVUtils.MarkDirty(volume);
-                CopyProxyToUdon(volume);
+            Texture3D texture = atlas.Texture;
+            if (manager == null || Application.isPlaying || manager != GetPrimaryManager() || volumes == null || atlas.BoundsUvwMin == null || atlas.BoundsUvwMax == null) {
+                DestroyTransientTexture(texture);
+                return;
             }
 
-            manager.EditorRefreshAtlasPostProcessors();
-            Scene scene = manager.gameObject.scene;
-            string scenePath = scene.path;
-            if (!string.IsNullOrEmpty(scenePath)) {
-                string directory = Path.GetDirectoryName(scenePath);
-                LVUtils.SaveAsAssetDelayed(atlas.Texture, $"{directory}/{scene.name}/VRCLightVolumes/LightVolumeAtlas.asset");
+            Texture3D previousAtlas = manager.LightVolumeAtlasBase;
+            bool ownedPreviousAtlas = ReferenceEquals(_ownedTransientAtlas, previousAtlas);
+            if (!ReferenceEquals(_ownedTransientAtlas, null) && !ownedPreviousAtlas && !ReferenceEquals(_ownedTransientAtlas, texture)) ReleaseOwnedTransientAtlas();
+            manager.LightVolumeAtlasBase = texture;
+            _ownedTransientAtlas = texture;
+            _ownedTransientAtlasOwner = manager;
+            bool completionAccepted = false;
+            try {
+                int count = Mathf.Min(volumes.Length, Mathf.Min(atlas.BoundsUvwMin.Length / 3, atlas.BoundsUvwMax.Length / 3));
+                for (int i = 0; i < count; i++) {
+                    LightVolumeInstance volume = volumes[i];
+                    if (volume == null) continue;
+                    int atlasIndex = i * 3;
+                    Vector3 scale = atlas.BoundsUvwMax[atlasIndex] - atlas.BoundsUvwMin[atlasIndex];
+                    Vector3 uvw0 = atlas.BoundsUvwMin[atlasIndex];
+                    Vector3 uvw1 = atlas.BoundsUvwMin[atlasIndex + 1];
+                    Vector3 uvw2 = atlas.BoundsUvwMin[atlasIndex + 2];
+                    volume.BoundsUvwMin0 = new Vector4(uvw0.x, uvw0.y, uvw0.z, scale.x);
+                    volume.BoundsUvwMin1 = new Vector4(uvw1.x, uvw1.y, uvw1.z, scale.y);
+                    volume.BoundsUvwMin2 = new Vector4(uvw2.x, uvw2.y, uvw2.z, scale.z);
+                    if (!volume.Bake && volume.ReserveUVSpace) volume.InvBakedRotation = Quaternion.Inverse(LightVolumeTools.GetRotation(volume));
+                    LVUtils.MarkDirty(volume);
+                    CopyProxyToUdon(volume);
+                }
+
+                manager.EditorRefreshAtlasPostProcessors();
+                Scene scene = manager.gameObject.scene;
+                string scenePath = scene.path;
+                if (!string.IsNullOrEmpty(scenePath)) {
+                    string directory = Path.GetDirectoryName(scenePath);
+                    LVUtils.SaveAsAssetDelayed(texture, $"{directory}/{scene.name}/VRCLightVolumes/LightVolumeAtlas.asset",
+                        saved => OnAtlasPersistenceCompleted(manager, texture, previousAtlas, saved));
+                }
+                completionAccepted = true;
+            } finally {
+                if (completionAccepted) {
+                    if (ownedPreviousAtlas && previousAtlas != texture) DestroyTransientTexture(previousAtlas);
+                } else {
+                    // Immediate callback failures roll back to the prior atlas and relinquish the
+                    // newly-created native texture before the exception leaves the coroutine.
+                    try {
+                        if (manager != null) {
+                            manager.LightVolumeAtlasBase = previousAtlas;
+                            if (manager.LightVolumeAtlas == texture) manager.LightVolumeAtlas = previousAtlas;
+                        }
+                    } finally {
+                        try {
+                            if (ReferenceEquals(_ownedTransientAtlas, texture)) {
+                                _ownedTransientAtlas = null;
+                                _ownedTransientAtlasOwner = null;
+                            }
+                            DestroyTransientTexture(texture);
+                        } finally {
+                            if (ownedPreviousAtlas) TrackTransientAtlas(manager, previousAtlas);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Finalizes delayed persistence. A failed CreateAsset operation must not leave the generated
+        // native texture rooted by the Manager; a still-valid persistent previous atlas is restored.
+        private static void OnAtlasPersistenceCompleted(LightVolumeManager manager, Texture3D texture, Texture3D previousAtlas, bool saved) {
+            bool persisted = saved && texture != null && AssetDatabase.Contains(texture);
+            if (persisted) {
+                if (ReferenceEquals(_ownedTransientAtlas, texture)) {
+                    _ownedTransientAtlas = null;
+                    _ownedTransientAtlasOwner = null;
+                }
+                return;
+            }
+
+            Texture3D fallback = previousAtlas;
+            try {
+                if (manager != null && manager.LightVolumeAtlasBase == texture) {
+                    manager.LightVolumeAtlasBase = fallback;
+                    manager.EditorRefreshAtlasPostProcessors();
+                }
+            } finally {
+                if (manager != null && manager.LightVolumeAtlas == texture) manager.LightVolumeAtlas = fallback;
+                if (ReferenceEquals(_ownedTransientAtlas, texture)) {
+                    _ownedTransientAtlas = null;
+                    _ownedTransientAtlasOwner = null;
+                }
+                DestroyTransientTexture(texture);
             }
         }
 
@@ -469,8 +692,26 @@ namespace VRCLightVolumes {
 
         // Batch-bakes shadows marked for rebaking on the requested Manager.
         internal static void BakeShadowMaps(LightVolumeManager manager) {
-            if (manager == null || Application.isPlaying || manager != GetPrimaryManager()) return;
+            if (manager == null || manager != GetPrimaryManager()) return;
+            if (Application.isPlaying) {
+                BakeRuntimeShadowMaps(manager);
+                return;
+            }
             BakeShadowMapsCore(manager);
+        }
+
+        // Re-bakes eligible lights on their live UdonBehaviours. Play Mode must not run the
+        // persistent editor baker on managed proxies because its temporary textures and private
+        // bake state would be recursively serialized back over the running Udon graph.
+        private static void BakeRuntimeShadowMaps(LightVolumeManager manager) {
+            PointLightVolumeInstance[] pointLights = manager.PointLightVolumeInstances;
+            if (pointLights == null) return;
+            for (int i = 0; i < pointLights.Length; i++) {
+                PointLightVolumeInstance pointLight = pointLights[i];
+                if (pointLight == null || !pointLight.Shadows || !pointLight.RebakeShadows) continue;
+                PointLightVolumeEditorUtility.Sync(pointLight, false, false);
+                QueueRuntimeShadowBake(pointLight);
+            }
         }
 
         // Bakes dirty shadows for the accepted primary Manager.
@@ -487,6 +728,7 @@ namespace VRCLightVolumes {
             }
             if (rebaked) ReinitializeShadowTextures(manager);
             else if (synchronized) RefreshManagerOnce(manager, true);
+            if (synchronized) LightVolumeEditorUpdater.QueueManagerRecovery();
         }
 
         // Converts the normalized inspector slider to a logarithmic EVSM variance value.
@@ -508,9 +750,255 @@ namespace VRCLightVolumes {
         // Serializes explicit authoring edits into the existing backing UdonBehaviour.
         internal static void CopyProxyToUdon(Component proxy) {
 #if UDONSHARP
-            UdonSharp.UdonSharpBehaviour behaviour = proxy as UdonSharp.UdonSharpBehaviour;
-            if (behaviour != null && UdonSharpEditorUtility.GetBackingUdonBehaviour(behaviour) != null)
-                UdonSharpEditorUtility.CopyProxyToUdon(behaviour);
+            UdonSharpBehaviour behaviour = proxy as UdonSharpBehaviour;
+            if (behaviour == null || UdonSharpEditorUtility.GetBackingUdonBehaviour(behaviour) == null) return;
+            if (Application.isPlaying && CopyProxyToLiveUdon(behaviour)) return;
+            UdonSharpEditorUtility.CopyProxyToUdon(behaviour);
+#endif
+
+        }
+
+        // Refreshes one live proxy after an Udon event changed runtime state without consulting
+        // UdonSharp's cached storage adapter.
+        internal static void CopyUdonToProxy(Component proxy) {
+#if UDONSHARP
+            UdonSharpBehaviour behaviour = proxy as UdonSharpBehaviour;
+            if (behaviour == null || UdonSharpEditorUtility.GetBackingUdonBehaviour(behaviour) == null) return;
+            if (Application.isPlaying && CopyLiveUdonToProxy(behaviour)) return;
+            UdonSharpEditorUtility.CopyUdonToProxy(behaviour, ProxySerializationPolicy.All);
+#endif
+        }
+
+#if UDONSHARP
+        // UdonSharp caches its normal Inspector storage adapter per behaviour. If that adapter is
+        // first built before the live program exists, a component selected later in Play Mode can
+        // keep addressing serialized publicVariables. A fresh official heap adapter avoids that
+        // cache while keeping UdonSharp responsible for resolving the running program.
+        private static bool TryGetLiveUdonStorage(UdonSharpBehaviour proxy, out UdonBehaviour backingBehaviour, out IDictionary fieldDefinitions, out UdonHeapStorageInterface storage) {
+            backingBehaviour = proxy != null ? UdonSharpEditorUtility.GetBackingUdonBehaviour(proxy) : null;
+            object programAsset = backingBehaviour != null ? (object)backingBehaviour.programSource : null;
+            FieldInfo fieldDefinitionsField = programAsset != null ? programAsset.GetType().GetField("fieldDefinitions", BindingFlags.Instance | BindingFlags.Public) : null;
+            fieldDefinitions = fieldDefinitionsField != null ? fieldDefinitionsField.GetValue(programAsset) as IDictionary : null;
+            storage = Application.isPlaying && backingBehaviour != null ? new UdonHeapStorageInterface(backingBehaviour) : null;
+            return fieldDefinitions != null && storage != null && storage.IsValid;
+        }
+
+        // Reads every compiled field from the initialized heap into one managed proxy without using
+        // UdonSharp's potentially stale storage cache.
+        private static bool CopyLiveUdonToProxy(UdonSharpBehaviour proxy) {
+            if (!TryGetLiveUdonStorage(proxy, out _, out IDictionary fieldDefinitions, out UdonHeapStorageInterface storage)) return false;
+            Type proxyType = proxy.GetType();
+            foreach (DictionaryEntry entry in fieldDefinitions) {
+                string fieldName = entry.Key as string;
+                if (string.IsNullOrEmpty(fieldName)) continue;
+                FieldInfo field = FindInstanceField(proxyType, fieldName);
+                if (field == null || field.IsStatic || field.IsInitOnly) continue;
+                object heapValue = storage.GetElementValueWeak(fieldName);
+                if (!TryConvertRuntimeFieldValue(heapValue, field.FieldType, true, out object proxyValue)) continue;
+                field.SetValue(proxy, proxyValue);
+            }
+            return true;
+        }
+
+        // Writes every compiled field from one managed proxy into the initialized heap using the
+        // compiler-declared system type. This also normalizes a Texture slot that currently holds a
+        // concrete RenderTexture, preventing the next proxy read from resolving it as null.
+        private static bool CopyProxyToLiveUdon(UdonSharpBehaviour proxy) {
+            if (!TryGetLiveUdonStorage(proxy, out UdonBehaviour backingBehaviour, out IDictionary fieldDefinitions, out UdonHeapStorageInterface storage)) return false;
+            Type proxyType = proxy.GetType();
+            foreach (DictionaryEntry entry in fieldDefinitions) {
+                string fieldName = entry.Key as string;
+                if (string.IsNullOrEmpty(fieldName)) continue;
+                FieldInfo field = FindInstanceField(proxyType, fieldName);
+                if (field == null || field.IsStatic || field.IsInitOnly || ContainsUdonSharpBehaviourType(field.FieldType)) continue;
+                PropertyInfo systemTypeProperty = entry.Value != null ? entry.Value.GetType().GetProperty("SystemType", BindingFlags.Instance | BindingFlags.Public) : null;
+                Type storageType = systemTypeProperty != null ? systemTypeProperty.GetValue(entry.Value) as Type : null;
+                if (storageType == null) continue;
+                if (!TryConvertRuntimeFieldValue(field.GetValue(proxy), storageType, false, out object heapValue)) continue;
+                // UdonHeapStorageInterface's weak setter deliberately rejects null because
+                // Type.IsInstanceOfType(null) is false. Use UdonBehaviour's typed heap bridge for
+                // clears; non-null writes stay on the raw storage path and cannot invoke callbacks.
+                if (heapValue == null) backingBehaviour.SetProgramVariable(fieldName, null);
+                else storage.SetElementValueWeak(fieldName, heapValue);
+            }
+            return true;
+        }
+
+        // Referenced behaviour fields are graph links, not Inspector-authored values. Leaving them
+        // to UdonSharp avoids changing the concrete heap array type beneath its recursive wrapper.
+        private static bool ContainsUdonSharpBehaviourType(Type type) {
+            while (type != null && type.IsArray) type = type.GetElementType();
+            return type != null && typeof(UdonSharpBehaviour).IsAssignableFrom(type);
+        }
+
+        // Resolves private fields declared anywhere in the user's UdonSharp inheritance chain.
+        private static FieldInfo FindInstanceField(Type type, string fieldName) {
+            while (type != null && type != typeof(UdonSharpBehaviour)) {
+                FieldInfo field = type.GetField(fieldName, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly);
+                if (field != null) return field;
+                type = type.BaseType;
+            }
+            return null;
+        }
+
+        // Converts UdonBehaviour references and their arrays in the same direction as the UdonSharp
+        // serializer; primitives and ordinary UnityEngine.Object references pass through unchanged.
+        private static bool TryConvertRuntimeFieldValue(object source, Type targetType, bool toProxy, out object converted) {
+            if (source == null) {
+                converted = targetType.IsValueType ? Activator.CreateInstance(targetType) : null;
+                return true;
+            }
+            Type sourceType = source.GetType();
+            if (targetType.IsAssignableFrom(sourceType)) {
+                converted = source;
+                return true;
+            }
+            if (targetType.IsArray && source is Array sourceArray) {
+                Type targetElementType = targetType.GetElementType();
+                Array targetArray = Array.CreateInstance(targetElementType, sourceArray.Length);
+                for (int i = 0; i < sourceArray.Length; i++) {
+                    if (!TryConvertRuntimeFieldValue(sourceArray.GetValue(i), targetElementType, toProxy, out object element)) {
+                        converted = null;
+                        return false;
+                    }
+                    targetArray.SetValue(element, i);
+                }
+                converted = targetArray;
+                return true;
+            }
+            if (toProxy && typeof(UdonSharpBehaviour).IsAssignableFrom(targetType) && source is UdonBehaviour sourceBacking) {
+                UdonSharpBehaviour sourceProxy = UdonSharpEditorUtility.GetProxyBehaviour(sourceBacking);
+                if (sourceProxy == null || !targetType.IsInstanceOfType(sourceProxy)) {
+                    converted = null;
+                    return sourceProxy == null;
+                }
+                converted = sourceProxy;
+                return true;
+            }
+            if (!toProxy && typeof(UdonBehaviour).IsAssignableFrom(targetType) && source is UdonSharpBehaviour sourceProxyBehaviour) {
+                converted = UdonSharpEditorUtility.GetBackingUdonBehaviour(sourceProxyBehaviour);
+                return converted == null || targetType.IsInstanceOfType(converted);
+            }
+            if (targetType.IsEnum) {
+                try {
+                    converted = Enum.ToObject(targetType, source);
+                    return true;
+                } catch {
+                    converted = null;
+                    return false;
+                }
+            }
+            converted = null;
+            return false;
+        }
+#endif
+
+        // Hydrates a late-opened Point Light Inspector and its complete referenced Manager graph
+        // from live heaps before any SerializedProperty is drawn.
+        internal static void SynchronizeRuntimeInspectorGraphFromUdon(PointLightVolumeInstance pointLight) {
+#if UDONSHARP
+            if (!Application.isPlaying || pointLight == null) return;
+            CopyLiveUdonToProxy(pointLight);
+            LightVolumeManager manager = pointLight.LightVolumeManager;
+            if (manager != null) SynchronizeRuntimeInspectorGraphFromUdon(manager);
+#endif
+        }
+
+        // Hydrates a late-opened Light Volume Inspector and its complete referenced Manager graph.
+        internal static void SynchronizeRuntimeInspectorGraphFromUdon(LightVolumeInstance volume) {
+#if UDONSHARP
+            if (!Application.isPlaying || volume == null) return;
+            CopyLiveUdonToProxy(volume);
+            LightVolumeManager manager = volume.LightVolumeManager;
+            if (manager != null) SynchronizeRuntimeInspectorGraphFromUdon(manager);
+#endif
+        }
+
+        // Hydrates the Manager plus all registry members without recursive cached serialization.
+        internal static void SynchronizeRuntimeInspectorGraphFromUdon(LightVolumeManager manager) {
+#if UDONSHARP
+            if (!Application.isPlaying || manager == null) return;
+            CopyLiveUdonToProxy(manager);
+            LightVolumeInstance[] volumes = manager.LightVolumeInstances;
+            if (volumes != null) {
+                for (int i = 0; i < volumes.Length; i++) if (volumes[i] != null) CopyLiveUdonToProxy(volumes[i]);
+            }
+            PointLightVolumeInstance[] pointLights = manager.PointLightVolumeInstances;
+            if (pointLights != null) {
+                for (int i = 0; i < pointLights.Length; i++) if (pointLights[i] != null) CopyLiveUdonToProxy(pointLights[i]);
+            }
+            RestoreRuntimeShadowSourcesForInspector(manager);
+#endif
+        }
+
+        // Hydrates every selected root, then each shared Manager graph once. Multi-object
+        // Inspectors otherwise repeat the same registry-sized heap copy for every selected child.
+        internal static void SynchronizeRuntimeInspectorGraphsFromUdon(UnityEngine.Object[] inspectedTargets) {
+#if UDONSHARP
+            if (!Application.isPlaying || inspectedTargets == null) return;
+            HashSet<LightVolumeManager> managers = new HashSet<LightVolumeManager>();
+            for (int i = 0; i < inspectedTargets.Length; i++) {
+                if (inspectedTargets[i] is PointLightVolumeInstance pointLight) {
+                    CopyLiveUdonToProxy(pointLight);
+                    if (pointLight.LightVolumeManager != null) managers.Add(pointLight.LightVolumeManager);
+                } else if (inspectedTargets[i] is LightVolumeInstance volume) {
+                    CopyLiveUdonToProxy(volume);
+                    if (volume.LightVolumeManager != null) managers.Add(volume.LightVolumeManager);
+                }
+            }
+            foreach (LightVolumeManager manager in managers) SynchronizeRuntimeInspectorGraphFromUdon(manager);
+#endif
+        }
+
+        // Repairs Texture-typed runtime shadow bridges after UdonSharp's recursive Play Mode
+        // Udon-to-proxy pass. The exact RenderTexture owner survives that pass, while the base
+        // Texture field is otherwise cleared and written back as null at the end of Inspector GUI.
+        internal static void RestoreRuntimeShadowSourcesForInspector(LightVolumeManager manager) {
+            if (!Application.isPlaying || manager == null) return;
+            PointLightVolumeInstance[] pointLights = manager.PointLightVolumeInstances;
+            if (pointLights == null) return;
+            for (int i = 0; i < pointLights.Length; i++) {
+                PointLightVolumeInstance pointLight = pointLights[i];
+                if (pointLight != null) pointLight.RestoreRuntimeShadowSourceForInspector();
+            }
+        }
+
+        // Runs an explicit Play Mode bake on the live point-light UdonBehaviour. The build
+        // preprocessor already owns the shared camera/material lifetime; this only mirrors those
+        // dependencies to the requested light and invokes the same path used by Bake In Game.
+        private static void BakeRuntimeShadow(PointLightVolumeInstance pointLight) {
+#if UDONSHARP
+            if (!Application.isPlaying || pointLight == null || !pointLight.Shadows) return;
+            LightVolumeManager manager = pointLight.LightVolumeManager;
+            if (manager == null || manager != GetPrimaryManager()) return;
+            var pointBacking = UdonSharpEditorUtility.GetBackingUdonBehaviour(pointLight);
+            if (pointBacking == null) return;
+
+            // The selected point may have pending Inspector-authored fields while its referenced
+            // Manager proxy has not otherwise been inspected this frame.
+            CopyUdonToProxy(manager);
+            LightVolumePreprocessor.EnsureRuntimeDependencies(manager);
+
+            // Publish the selected proxy before installing bake-only runtime dependencies. The
+            // latter intentionally forces normal output on the live backing for this one-shot
+            // Inspector bake and must therefore be the final write before the event.
+            CopyProxyToUdon(pointLight);
+            object previousDirectOutputValue = pointBacking.GetProgramVariable(nameof(PointLightVolumeInstance.RuntimeShadowDirectOutput));
+            bool previousDirectOutput = previousDirectOutputValue is bool && (bool)previousDirectOutputValue;
+            try {
+                // An explicit re-bake keeps the previous live source valid until BakeShadows
+                // publishes its replacement; one-shot build preparation is the only path that
+                // clears it early.
+                LightVolumePreprocessor.PreparePointLightRuntimeShadowDependencies(pointLight, manager, false);
+                pointBacking.SendCustomEvent(nameof(PointLightVolumeInstance.BakeShadows));
+            } finally {
+                pointBacking.SetProgramVariable(nameof(PointLightVolumeInstance.RuntimeShadowDirectOutput), previousDirectOutput);
+            }
+
+            // BakeShadows mutates both behaviours (source textures, IDs, receiver data and atlas
+            // caches). Pull the complete graph back so subsequent Inspector repaints preserve the
+            // live result instead of restoring a pre-bake snapshot.
+            SynchronizeRuntimeInspectorGraphFromUdon(manager);
 #endif
         }
 
@@ -521,7 +1009,8 @@ namespace VRCLightVolumes {
             if (!handledByUdon) manager.UpdateVolumes();
         }
 
-        // The volume and manager are separate Udon behaviours, so UdonSharp's final volume proxy copy cannot overwrite this synchronous manager refresh.
+        // Applies a synchronous Manager refresh and mirrors its complete Udon graph back to the
+        // proxies before UdonSharp recursively serializes the inspected volume at the end of OnGUI.
         internal static bool RefreshRuntimeManagerImmediately(LightVolumeManager manager) {
 #if UDONSHARP
             if (!Application.isPlaying || manager == null) return false;
@@ -529,6 +1018,7 @@ namespace VRCLightVolumes {
             var backingBehaviour = UdonSharpEditorUtility.GetBackingUdonBehaviour(manager);
             if (backingBehaviour == null) return false;
             backingBehaviour.SendCustomEvent(nameof(LightVolumeManager.UpdateVolumes));
+            SynchronizeRuntimeInspectorGraphFromUdon(manager);
             return true;
 #else
             return false;
@@ -545,11 +1035,11 @@ namespace VRCLightVolumes {
             if (manager != GetPrimaryManager()) return true;
             var backingBehaviour = UdonSharpEditorUtility.GetBackingUdonBehaviour(manager);
             if (backingBehaviour == null) return false;
-            UdonSharpEditorUtility.CopyProxyToUdon(manager, ProxySerializationPolicy.All);
+            CopyProxyToUdon(manager);
             if (reinitializeCustomTextures) backingBehaviour.SendCustomEvent(nameof(LightVolumeManager.ReinitializeCustomTextures));
             if (reinitializeShadowTextures) backingBehaviour.SendCustomEvent(nameof(LightVolumeManager.ReinitializeShadowTextures));
             if (!reinitializeShadowTextures) backingBehaviour.SendCustomEvent(nameof(LightVolumeManager.UpdateVolumes));
-            UdonSharpEditorUtility.CopyUdonToProxy(manager, ProxySerializationPolicy.All);
+            SynchronizeRuntimeInspectorGraphFromUdon(manager);
             return true;
 #else
             return false;
@@ -569,11 +1059,25 @@ namespace VRCLightVolumes {
 
             _queuedRuntimeCustomTextureReinitialization |= reinitializeCustomTextures;
             _queuedRuntimeShadowTextureReinitialization |= reinitializeShadowTextures;
-            if (!_runtimeManagerRefreshQueued) {
-                _runtimeManagerRefreshQueued = true;
-                EditorApplication.delayCall += FlushRuntimeManagerRefreshes;
-            }
-            EditorApplication.QueuePlayerLoopUpdate();
+            _queuedRuntimeManagerUpdate = true;
+            ScheduleRuntimeInspectorFlush();
+            return true;
+#else
+            return false;
+#endif
+        }
+
+        // Inspector buttons must execute after UdonSharp's wrapper has completed its final
+        // recursive proxy-to-Udon copy for the current GUI event.
+        internal static bool QueueRuntimeShadowBake(PointLightVolumeInstance pointLight) {
+#if UDONSHARP
+            if (!Application.isPlaying || pointLight == null || !pointLight.Shadows) return false;
+            LightVolumeManager manager = pointLight.LightVolumeManager;
+            if (manager == null || manager != GetPrimaryManager()) return false;
+            if (UdonSharpEditorUtility.GetBackingUdonBehaviour(pointLight) == null) return false;
+            int instanceId = pointLight.GetInstanceID();
+            if (!_queuedRuntimeShadowBakeInstanceIds.Contains(instanceId)) _queuedRuntimeShadowBakeInstanceIds.Add(instanceId);
+            ScheduleRuntimeInspectorFlush();
             return true;
 #else
             return false;
@@ -583,25 +1087,87 @@ namespace VRCLightVolumes {
         // Applies lightweight Manager settings without rebuilding registries or texture arrays.
         internal static void ApplyRuntimeManagerSettings(LightVolumeManager manager) {
             if (manager == null) return;
+#if UDONSHARP
+            if (Application.isPlaying) {
+                if (manager != GetPrimaryManager()) return;
+                var backingBehaviour = UdonSharpEditorUtility.GetBackingUdonBehaviour(manager);
+                if (backingBehaviour != null) {
+                    // ApplySettings has already published the canonicalized Inspector values. Only
+                    // the runtime event itself must wait for UdonSharp's final wrapper copy.
+                    _queuedRuntimeSettingsApply = true;
+                    ScheduleRuntimeInspectorFlush();
+                    return;
+                }
+            }
+#endif
             manager._ApplyEditorSettings();
         }
 
 #if UDONSHARP
-        // Applies coalesced runtime cache rebuilds directly to Manager backing behaviours.
-        private static void FlushRuntimeManagerRefreshes() {
-            EditorApplication.delayCall -= FlushRuntimeManagerRefreshes;
-            _runtimeManagerRefreshQueued = false;
-            bool reinitializeCustomTextures = _queuedRuntimeCustomTextureReinitialization;
-            bool reinitializeShadowTextures = _queuedRuntimeShadowTextureReinitialization;
+        // Coalesces all runtime work requested from custom inspectors into the first editor turn
+        // after UdonSharp has serialized the current IMGUI event.
+        private static void ScheduleRuntimeInspectorFlush() {
+            if (!_runtimeInspectorFlushScheduled) {
+                _runtimeInspectorFlushScheduled = true;
+                EditorApplication.delayCall += FlushRuntimeInspectorCommands;
+            }
+            EditorApplication.QueuePlayerLoopUpdate();
+        }
+
+        // Drops delayed Inspector commands at Play Mode and editor-domain boundaries.
+        private static void CancelRuntimeInspectorCommands() {
+            EditorApplication.delayCall -= FlushRuntimeInspectorCommands;
+            _runtimeInspectorFlushScheduled = false;
             _queuedRuntimeCustomTextureReinitialization = false;
             _queuedRuntimeShadowTextureReinitialization = false;
+            _queuedRuntimeManagerUpdate = false;
+            _queuedRuntimeSettingsApply = false;
+            _queuedRuntimeShadowBakeInstanceIds.Clear();
+        }
+
+        // Applies coalesced runtime commands directly to the live backing behaviours.
+        private static void FlushRuntimeInspectorCommands() {
+            EditorApplication.delayCall -= FlushRuntimeInspectorCommands;
+            _runtimeInspectorFlushScheduled = false;
+            bool reinitializeCustomTextures = _queuedRuntimeCustomTextureReinitialization;
+            bool reinitializeShadowTextures = _queuedRuntimeShadowTextureReinitialization;
+            bool updateManager = _queuedRuntimeManagerUpdate;
+            bool applySettings = _queuedRuntimeSettingsApply;
+            int[] shadowBakeInstanceIds = _queuedRuntimeShadowBakeInstanceIds.ToArray();
+            _queuedRuntimeCustomTextureReinitialization = false;
+            _queuedRuntimeShadowTextureReinitialization = false;
+            _queuedRuntimeManagerUpdate = false;
+            _queuedRuntimeSettingsApply = false;
+            _queuedRuntimeShadowBakeInstanceIds.Clear();
             LightVolumeManager manager = GetPrimaryManager();
             if (!Application.isPlaying || manager == null) return;
             var backingBehaviour = UdonSharpEditorUtility.GetBackingUdonBehaviour(manager);
             if (backingBehaviour == null) return;
+            if (applySettings) backingBehaviour.SendCustomEvent(nameof(LightVolumeManager._ApplyEditorSettings));
             if (reinitializeCustomTextures) backingBehaviour.SendCustomEvent(nameof(LightVolumeManager.ReinitializeCustomTextures));
             if (reinitializeShadowTextures) backingBehaviour.SendCustomEvent(nameof(LightVolumeManager.ReinitializeShadowTextures));
-            if (!reinitializeShadowTextures) backingBehaviour.SendCustomEvent(nameof(LightVolumeManager.UpdateVolumes));
+            else if (updateManager) backingBehaviour.SendCustomEvent(nameof(LightVolumeManager.UpdateVolumes));
+
+            for (int i = 0; i < shadowBakeInstanceIds.Length; i++) {
+                PointLightVolumeInstance pointLight = EditorUtility.InstanceIDToObject(shadowBakeInstanceIds[i]) as PointLightVolumeInstance;
+                if (pointLight == null || pointLight.LightVolumeManager != manager) continue;
+                BakeRuntimeShadow(pointLight);
+            }
+
+            if (shadowBakeInstanceIds.Length > 0) {
+                // BakeRuntimeShadow pulls the recursive graph once per light. Publish every normal
+                // source bridge afterwards while no Inspector wrapper can overwrite it.
+                RestoreRuntimeShadowSourcesForInspector(manager);
+                PointLightVolumeInstance[] pointLights = manager.PointLightVolumeInstances;
+                if (pointLights != null) {
+                    for (int i = 0; i < pointLights.Length; i++) {
+                        PointLightVolumeInstance pointLight = pointLights[i];
+                        if (pointLight == null || pointLight.RuntimeShadowTexturePreview == null || !pointLight.RuntimeShadowSourceInitializedPreview) continue;
+                        CopyProxyToUdon(pointLight);
+                    }
+                }
+            }
+            UnityEditorInternal.InternalEditorUtility.RepaintAllViews();
         }
 #endif
     }

@@ -40,6 +40,7 @@ namespace VRCLightVolumes {
 
             List<Texture3D> temporaryTextures = new List<Texture3D>();
             CancellationTokenSource cancellationSource = new CancellationTokenSource();
+            Texture3D pendingAtlasTexture = null;
             const int padding = 1;
 
 #if UNITY_EDITOR
@@ -50,6 +51,10 @@ namespace VRCLightVolumes {
 
                 if (volumes == null || volumes.Length == 0) {
                     Debug.LogError("[LightVolumes] No light volumes were provided for atlas generation!");
+                    yield break;
+                }
+                if (onComplete == null) {
+                    Debug.LogError("[LightVolumes] Atlas generation requires a completion callback to receive ownership of the generated texture.");
                     yield break;
                 }
 
@@ -123,12 +128,9 @@ namespace VRCLightVolumes {
                         while (waitForDownscaleTask.MoveNext()) yield return waitForDownscaleTask.Current;
                         if (downscaleTask.IsCanceled) yield break;
 
-                        tex0 = CreateDownscaledTexture3D(tex0, downscaleTask0.Result);
-                        tex1 = CreateDownscaledTexture3D(tex1, downscaleTask1.Result);
-                        tex2 = CreateDownscaledTexture3D(tex2, downscaleTask2.Result);
-                        temporaryTextures.Add(tex0);
-                        temporaryTextures.Add(tex1);
-                        temporaryTextures.Add(tex2);
+                        tex0 = CreateAndTrackDownscaledTexture3D(tex0, downscaleTask0.Result, temporaryTextures);
+                        tex1 = CreateAndTrackDownscaledTexture3D(tex1, downscaleTask1.Result, temporaryTextures);
+                        tex2 = CreateAndTrackDownscaledTexture3D(tex2, downscaleTask2.Result, temporaryTextures);
 
                         yield return null;
                     }
@@ -275,23 +277,40 @@ namespace VRCLightVolumes {
                 ReportProgress(progressId, savingProgressStep, 1f, "Saving light volumes");
 #endif
 
-                Texture3D atlasTexture = new Texture3D(atlasW, atlasH, atlasD, TextureFormat.RGBAHalf, false) { wrapMode = TextureWrapMode.Clamp, filterMode = FilterMode.Trilinear };
-                if (!LVUtils.Apply3DTextureData(atlasTexture, atlasPixels)) {
-                    UnityEngine.Object.DestroyImmediate(atlasTexture);
+                pendingAtlasTexture = new Texture3D(atlasW, atlasH, atlasD, TextureFormat.RGBAHalf, false);
+                pendingAtlasTexture.wrapMode = TextureWrapMode.Clamp;
+                pendingAtlasTexture.filterMode = FilterMode.Trilinear;
+                if (!LVUtils.Apply3DTextureData(pendingAtlasTexture, atlasPixels)) {
+                    DestroyTransientTexture(pendingAtlasTexture);
+                    pendingAtlasTexture = null;
                     yield break;
                 }
 
                 yield return null;
 
-                onComplete?.Invoke(new Atlas3D { Texture = atlasTexture, BoundsUvwMin = boundsMin, BoundsUvwMax = boundsMax });
+                onComplete.Invoke(new Atlas3D { Texture = pendingAtlasTexture, BoundsUvwMin = boundsMin, BoundsUvwMax = boundsMax });
+                pendingAtlasTexture = null;
 
             } finally {
-                cancellationSource.Cancel();
+                try {
+                    DestroyGeneratedTextures(pendingAtlasTexture, temporaryTextures);
+                } finally {
+                    try {
+                        cancellationSource.Cancel();
+                    } finally {
+                        try {
+                            cancellationSource.Dispose();
+                        } finally {
 #if UNITY_EDITOR
-                Progress.Finish(progressId);
-                Progress.Remove(progressId);
-                DestroyTemporaryTextures(temporaryTextures);
+                            try {
+                                Progress.Finish(progressId);
+                            } finally {
+                                Progress.Remove(progressId);
+                            }
 #endif
+                        }
+                    }
+                }
             }
 
         }
@@ -348,19 +367,50 @@ namespace VRCLightVolumes {
             return format == TextureFormat.RGBAHalf || format == TextureFormat.RGBAFloat || format == TextureFormat.RGBA32 || format == TextureFormat.ARGB32;
         }
 
-#if UNITY_EDITOR
         // Destroys non-persistent temporary 3D textures created during atlas generation.
         private static void DestroyTemporaryTextures(List<Texture3D> textures) {
             if (textures == null) return;
+            Exception firstException = null;
             for (int i = 0; i < textures.Count; i++) {
                 Texture3D texture = textures[i];
-                if (texture != null && !EditorUtility.IsPersistent(texture)) {
-                    UnityEngine.Object.DestroyImmediate(texture);
+                if (texture == null) continue;
+                try {
+                    DestroyTransientTexture(texture);
+                } catch (Exception exception) {
+                    if (firstException == null) firstException = exception;
+                } finally {
                     textures[i] = null;
                 }
             }
+            if (firstException != null) throw firstException;
         }
 
+        // Releases both the pending output and every downscale temporary even if one cleanup path fails.
+        private static void DestroyGeneratedTextures(Texture3D pendingAtlasTexture, List<Texture3D> temporaryTextures) {
+            try {
+                DestroyTransientTexture(pendingAtlasTexture);
+            } finally {
+                DestroyTemporaryTextures(temporaryTextures);
+            }
+        }
+
+        // Releases a generated texture according to the current Unity lifecycle without touching project assets.
+        private static void DestroyTransientTexture(Texture3D texture) {
+            if (texture == null || IsPersistentTexture(texture)) return;
+            if (Application.isPlaying) UnityEngine.Object.Destroy(texture);
+            else UnityEngine.Object.DestroyImmediate(texture);
+        }
+
+        // Prevents atlas cleanup from destroying source assets while keeping the runtime build free of UnityEditor calls.
+        private static bool IsPersistentTexture(Texture3D texture) {
+#if UNITY_EDITOR
+            return EditorUtility.IsPersistent(texture);
+#else
+            return false;
+#endif
+        }
+
+#if UNITY_EDITOR
         // Reports progress for a single atlas generation stage.
         private static void ReportProgress(int progressId, int step, float progress, string message) {
             if (progress < 0f) progress = 0f;
@@ -381,12 +431,29 @@ namespace VRCLightVolumes {
         // Creates a Unity Texture3D from threaded downscale output on the main thread.
         private static Texture3D CreateDownscaledTexture3D(Texture3D source, DownscaleTextureResult result) {
             Texture3D texture = new Texture3D(result.Width, result.Height, result.Depth, source.format, source.mipmapCount > 1);
-            texture.wrapMode = source.wrapMode;
-            texture.filterMode = FilterMode.Trilinear;
-            texture.anisoLevel = source.anisoLevel;
-            texture.SetPixels(result.Pixels);
-            texture.Apply();
-            return texture;
+            try {
+                texture.wrapMode = source.wrapMode;
+                texture.filterMode = FilterMode.Trilinear;
+                texture.anisoLevel = source.anisoLevel;
+                texture.SetPixels(result.Pixels);
+                texture.Apply();
+                return texture;
+            } catch {
+                DestroyTransientTexture(texture);
+                throw;
+            }
+        }
+
+        // Registers native ownership atomically so a failed List growth cannot orphan the new texture.
+        private static Texture3D CreateAndTrackDownscaledTexture3D(Texture3D source, DownscaleTextureResult result, List<Texture3D> temporaryTextures) {
+            Texture3D texture = CreateDownscaledTexture3D(source, result);
+            try {
+                temporaryTextures.Add(texture);
+                return texture;
+            } catch {
+                DestroyTransientTexture(texture);
+                throw;
+            }
         }
 
         // Downscales texture pixels with the same 8-sample box filter as the previous implementation.

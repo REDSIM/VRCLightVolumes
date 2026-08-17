@@ -133,6 +133,64 @@ namespace VRCLightVolumes.Tests {
             Assert.That(RunAtlasExpectingNoResult(new LightVolumeInstance[0]), Is.False);
         }
 
+        // Verifies an abandoned coroutine releases the completed native atlas before ownership reaches the callback.
+        [Test]
+        public void CreateAtlasCancellationDestroysPendingAtlasTexture() {
+            LightVolumeInstance volume = CreateBakedLightVolume("Cancelled Atlas Volume", Color.white, Color.clear, Color.clear, 1, 1, 1);
+            HashSet<int> existingTextureIds = CaptureTexture3DInstanceIds();
+            bool completed = false;
+            Texture3D pendingAtlas = null;
+            IEnumerator routine = Texture3DAtlasGenerator.CreateAtlas(new[] { volume }, atlas => {
+                completed = true;
+                pendingAtlas = atlas.Texture;
+            });
+
+            try {
+                int guard = 20000;
+                while (routine.MoveNext()) {
+                    pendingAtlas = FindNewTexture3D(existingTextureIds);
+                    if (pendingAtlas != null) break;
+                    guard--;
+                    if (guard < 0) Assert.Fail("Atlas generation coroutine did not reach its final ownership-transfer yield.");
+                }
+
+                Assert.That(pendingAtlas, Is.Not.Null, "The generator completed without exposing its pending atlas allocation.");
+                Assert.That(completed, Is.False, "The callback ran before the cancellation point.");
+            } finally {
+                IDisposable disposable = routine as IDisposable;
+                Assert.That(disposable, Is.Not.Null, "The atlas iterator must support deterministic cancellation cleanup.");
+                disposable.Dispose();
+            }
+
+            Assert.That(pendingAtlas == null, Is.True, "Cancelling the generator must destroy its untransferred native Texture3D.");
+            Assert.That(completed, Is.False);
+        }
+
+        // Verifies a callback failure does not strand the generated native texture in the editor process.
+        [Test]
+        public void CreateAtlasCallbackFailureDestroysGeneratedTexture() {
+            LightVolumeInstance volume = CreateBakedLightVolume("Throwing Atlas Callback Volume", Color.white, Color.clear, Color.clear, 1, 1, 1);
+            Texture3D deliveredTexture = null;
+            IEnumerator routine = Texture3DAtlasGenerator.CreateAtlas(new[] { volume }, atlas => {
+                deliveredTexture = atlas.Texture;
+                throw new InvalidOperationException("Expected atlas callback failure.");
+            });
+
+            InvalidOperationException exception = Assert.Throws<InvalidOperationException>(() => RunEnumerator(routine));
+
+            Assert.That(exception.Message, Is.EqualTo("Expected atlas callback failure."));
+            Assert.That(deliveredTexture == null, Is.True, "A failed ownership callback must not leak its generated Texture3D.");
+        }
+
+        // Verifies callers cannot generate an unowned atlas by omitting the ownership callback.
+        [Test]
+        public void CreateAtlasRejectsMissingCompletionCallback() {
+            LightVolumeInstance volume = CreateBakedLightVolume("Missing Atlas Callback Volume", Color.white, Color.clear, Color.clear, 1, 1, 1);
+            LogAssert.Expect(LogType.Error, "[LightVolumes] Atlas generation requires a completion callback to receive ownership of the generated texture.");
+
+            RunEnumerator(Texture3DAtlasGenerator.CreateAtlas(new[] { volume }, null));
+        }
+
         // Verifies missing baked textures fail cleanly before worker tasks are started.
         [Test]
         public void CreateAtlasRejectsMissingBakedTextures() {
@@ -228,6 +286,26 @@ namespace VRCLightVolumes.Tests {
                 guard--;
                 if (guard < 0) Assert.Fail("Atlas generation coroutine did not finish.");
             }
+        }
+
+        // Captures all loaded Texture3D instance IDs so a later native allocation can be identified without retaining it.
+        private static HashSet<int> CaptureTexture3DInstanceIds() {
+            Texture3D[] textures = Resources.FindObjectsOfTypeAll<Texture3D>();
+            HashSet<int> instanceIds = new HashSet<int>();
+            for (int i = 0; i < textures.Length; i++) {
+                if (textures[i] != null) instanceIds.Add(textures[i].GetInstanceID());
+            }
+            return instanceIds;
+        }
+
+        // Finds a Texture3D allocated since the supplied instance-ID snapshot.
+        private static Texture3D FindNewTexture3D(HashSet<int> existingTextureIds) {
+            Texture3D[] textures = Resources.FindObjectsOfTypeAll<Texture3D>();
+            for (int i = 0; i < textures.Length; i++) {
+                Texture3D texture = textures[i];
+                if (texture != null && !existingTextureIds.Contains(texture.GetInstanceID())) return texture;
+            }
+            return null;
         }
 
         // Creates a baked volume from three solid textures.

@@ -30,12 +30,15 @@ namespace VRCLightVolumes {
             CoarseMode = SceneView.AddCameraMode("VRCLV Coarse Clustering", Section);
 
             SceneView.beforeSceneGui += SetupSceneView;
+            EditorApplication.update += PruneClosedSceneViews;
             AssemblyReloadEvents.beforeAssemblyReload += Shutdown;
             EditorApplication.quitting += Shutdown;
         }
 
         // Installs one camera-mode callback for a newly encountered Scene View.
         static void SetupSceneView(SceneView view) {
+            PruneClosedSceneViews();
+            if (view == null) return;
             if (ModeHandlers.ContainsKey(view)) return;
             Action<SceneView.CameraMode> handler = mode => ApplyMode(view, mode);
             ModeHandlers.Add(view, handler);
@@ -43,9 +46,22 @@ namespace VRCLightVolumes {
             ApplyMode(view, view.cameraMode);
         }
 
+        // Drops destroyed editor windows so their managed wrappers and captured callbacks are not retained until the next domain reload. Closed SceneViews compare equal to null while the dictionary still holds their original wrapper as a key.
+        static void PruneClosedSceneViews() {
+            List<SceneView> closedViews = null;
+            foreach (KeyValuePair<SceneView, Action<SceneView.CameraMode>> pair in ModeHandlers) {
+                if (pair.Key != null) continue;
+                if (closedViews == null) closedViews = new List<SceneView>();
+                closedViews.Add(pair.Key);
+            }
+            if (closedViews == null) return;
+            for (int i = 0; i < closedViews.Count; i++) ModeHandlers.Remove(closedViews[i]);
+        }
+
         // Removes the global hook and every per-view callback before this editor domain ends.
         static void Shutdown() {
             SceneView.beforeSceneGui -= SetupSceneView;
+            EditorApplication.update -= PruneClosedSceneViews;
             AssemblyReloadEvents.beforeAssemblyReload -= Shutdown;
             EditorApplication.quitting -= Shutdown;
             foreach (KeyValuePair<SceneView, Action<SceneView.CameraMode>> pair in ModeHandlers) {

@@ -338,10 +338,9 @@ namespace VRCLightVolumes {
             int sphericalKeyword = useSphericalBlur ? 1 : 0;
             LightVolumeManager sharedMaterialManager = LightVolumeManager;
             bool useSharedBlurState = sharedMaterialManager != null && blurMaterial == sharedMaterialManager.RuntimeShadowBlurMaterial;
-            bool keywordStateChanged = !useSharedBlurState || sharedMaterialManager.RuntimeShadowBlurQualityPreset != qualityPreset || sharedMaterialManager.RuntimeShadowBlurUniformKeyword != uniformKeyword
-                || sharedMaterialManager.RuntimeShadowBlurDirectKeyword != singleSliceKeyword || sharedMaterialManager.RuntimeShadowBlurSphericalKeyword != sphericalKeyword;
+            bool keywordStateChanged = !useSharedBlurState || sharedMaterialManager.RuntimeShadowBlurQualityPreset != qualityPreset || sharedMaterialManager.RuntimeShadowBlurUniformKeyword != uniformKeyword || sharedMaterialManager.RuntimeShadowBlurDirectKeyword != singleSliceKeyword;
             if (keywordStateChanged) {
-                // Shared manager material tracks keyword state globally; local material always reapplies it
+                // Shared manager material tracks the stable quality, radius and projection variants
                 blurMaterial.DisableKeyword(ShadowQualityKeywordLow);
                 blurMaterial.DisableKeyword(ShadowQualityKeywordMedium);
                 blurMaterial.DisableKeyword(ShadowQualityKeywordHigh);
@@ -360,16 +359,17 @@ namespace VRCLightVolumes {
                 if (!useCubemapShadow) blurMaterial.EnableKeyword(ShadowBlurKeywordDirect);
                 else blurMaterial.DisableKeyword(ShadowBlurKeywordDirect);
 
-                if (useSphericalBlur) blurMaterial.EnableKeyword(ShadowBlurKeywordSpherical);
-                else blurMaterial.DisableKeyword(ShadowBlurKeywordSpherical);
-
                 if (useSharedBlurState) {
                     sharedMaterialManager.RuntimeShadowBlurQualityPreset = qualityPreset;
                     sharedMaterialManager.RuntimeShadowBlurUniformKeyword = uniformKeyword;
                     sharedMaterialManager.RuntimeShadowBlurDirectKeyword = singleSliceKeyword;
-                    sharedMaterialManager.RuntimeShadowBlurSphericalKeyword = sphericalKeyword;
                 }
             }
+
+            // Spherical mode also changes the CPU-side pass count. Apply it for every bake instead of trusting serialized Manager cache state that may outlive or be restored separately from the material.
+            if (useSphericalBlur) blurMaterial.EnableKeyword(ShadowBlurKeywordSpherical);
+            else blurMaterial.DisableKeyword(ShadowBlurKeywordSpherical);
+            if (useSharedBlurState) sharedMaterialManager.RuntimeShadowBlurSphericalKeyword = sphericalKeyword;
 
             // Upload blur constants after keywords select planar, spherical and single-slice projection code
             blurMaterial.SetFloat(_runtimeShadowBlurRadiusID, Mathf.Max(Blur, 0f) * (bakeResolution / ShadowBlurBaseResolution));

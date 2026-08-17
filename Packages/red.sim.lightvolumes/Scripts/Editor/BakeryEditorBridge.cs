@@ -73,9 +73,15 @@ namespace VRCLightVolumes {
             if (manager.EditorIsBakeryMode && volume.Bake && bakeryVolume == null) {
                 if (!createIfMissing) return;
                 GameObject helper = new GameObject($"Bakery Volume - {volume.gameObject.name}") { tag = "EditorOnly" };
-                Undo.RegisterCreatedObjectUndo(helper, "Create Bakery Volume");
-                helper.transform.SetParent(volume.transform, false);
-                bakeryVolume = helper.AddComponent(BakeryVolumeType);
+                try {
+                    Undo.RegisterCreatedObjectUndo(helper, "Create Bakery Volume");
+                    helper.transform.SetParent(volume.transform, false);
+                    bakeryVolume = helper.AddComponent(BakeryVolumeType);
+                    if (bakeryVolume == null) throw new InvalidOperationException("Bakery Volume component creation returned null.");
+                } catch {
+                    if (helper != null) UnityEngine.Object.DestroyImmediate(helper);
+                    throw;
+                }
             } else if ((!manager.EditorIsBakeryMode || !volume.Bake) && bakeryVolume != null) {
                 GameObject helper = bakeryVolume.gameObject;
                 bool inheritedPrefabObject = PrefabUtility.IsPartOfPrefabInstance(helper) && PrefabUtility.GetCorrespondingObjectFromSource(helper) != null;
@@ -94,22 +100,23 @@ namespace VRCLightVolumes {
             bakeryVolume.transform.SetLocalPositionAndRotation(Vector3.zero, Quaternion.identity);
             bakeryVolume.transform.localScale = Vector3.one;
 
-            SerializedObject serialized = new SerializedObject(bakeryVolume);
-            SetBounds(serialized, "bounds", new Bounds(LightVolumeTools.GetPosition(volume), LightVolumeTools.GetScale(volume)));
-            SetBool(serialized, "enableBaking", true);
-            SetBool(serialized, "denoise", manager.Denoise);
-            SetBool(serialized, "adaptiveRes", false);
-            SetInt(serialized, "resolutionX", volume.Resolution.x);
-            SetInt(serialized, "resolutionY", volume.Resolution.y);
-            SetInt(serialized, "resolutionZ", volume.Resolution.z);
-            SetEnum(serialized, "encoding", 0);
-            if (SupportsFullRotation) {
-                SetBool(serialized, "_rotateAroundXYZ", true);
-                SetBool(serialized, "rotateAroundY", false);
-            } else if (SupportsYRotation) {
-                SetBool(serialized, "rotateAroundY", true);
+            using (SerializedObject serialized = new SerializedObject(bakeryVolume)) {
+                SetBounds(serialized, "bounds", new Bounds(LightVolumeTools.GetPosition(volume), LightVolumeTools.GetScale(volume)));
+                SetBool(serialized, "enableBaking", true);
+                SetBool(serialized, "denoise", manager.Denoise);
+                SetBool(serialized, "adaptiveRes", false);
+                SetInt(serialized, "resolutionX", volume.Resolution.x);
+                SetInt(serialized, "resolutionY", volume.Resolution.y);
+                SetInt(serialized, "resolutionZ", volume.Resolution.z);
+                SetEnum(serialized, "encoding", 0);
+                if (SupportsFullRotation) {
+                    SetBool(serialized, "_rotateAroundXYZ", true);
+                    SetBool(serialized, "rotateAroundY", false);
+                } else if (SupportsYRotation) {
+                    SetBool(serialized, "rotateAroundY", true);
+                }
+                serialized.ApplyModifiedPropertiesWithoutUndo();
             }
-            serialized.ApplyModifiedPropertiesWithoutUndo();
             LVUtils.MarkDirty(bakeryVolume);
         }
 

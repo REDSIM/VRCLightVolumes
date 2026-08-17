@@ -786,6 +786,7 @@ namespace VRCLightVolumes {
                 VRCShader.SetGlobalFloat(_pointLightShadowCubeCountID, _activeShadowCount > 0 ? ShadowCubemapsCount : 0);
                 VRCShader.SetGlobalFloat(_pointLightShadowCountID, shadowCount);
                 VRCShader.SetGlobalVector(_pointLightShadowReceiverParamsID, GetPointLightShadowReceiverParams());
+                VRCShader.SetGlobalVector(_pointLightShadowTextureSizeID, GetPointLightShadowTextureSize());
                 if (_pointLightCount != 0) {
                     VRCShader.SetGlobalVectorArray(_pointLightColorID, _pointLightColor);
                     VRCShader.SetGlobalVectorArray(_pointLightExtraDataID, _pointLightExtraData);

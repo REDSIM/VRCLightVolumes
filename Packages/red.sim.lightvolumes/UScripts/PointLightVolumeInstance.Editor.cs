@@ -15,6 +15,43 @@ namespace VRCLightVolumes {
         internal RenderTexture RuntimeShadowDepthTexturePreview => _runtimeShadowDepthTexture;
         internal RenderTexture RuntimeShadowTexturePreview => _runtimeShadowTexture;
 
+        // UdonSharp's Play Mode inspector serializer reads fields by their declared heap type.
+        // A runtime-created RenderTexture stored in the Texture-typed ShadowMapTexture field is
+        // therefore read as null, even though the exact RenderTexture-typed owner below survives.
+        // Restore both the runtime bridge and the ordinary Shadow Map proxy field between the
+        // wrapper's Udon-to-proxy and proxy-to-Udon passes. This keeps the standard ObjectField
+        // interactive in Play Mode without adding a second read-only Inspector control.
+        internal void RestoreRuntimeShadowSourceForInspector() {
+            if (!Application.isPlaying) return;
+            Texture runtimeSource = GetRuntimeShadowSourceForInspector();
+            if (runtimeSource == null) return;
+            ShadowMap = runtimeSource;
+            if (!RuntimeShadowDirectOutput && _runtimeShadowTexture != null) {
+                ShadowMapTexture = _runtimeShadowTexture;
+                ShadowMapMaterial = null;
+            }
+        }
+
+        // Returns the source represented by the normal Shadow Map field in Play Mode.
+        private Texture GetRuntimeShadowSourceForInspector() {
+            if (!_runtimeShadowSourceInitialized) return null;
+            if (RuntimeShadowDirectOutput && LightVolumeManager != null && LightVolumeManager.ShadowTextures != null)
+                return LightVolumeManager.ShadowTextures;
+            return _runtimeShadowTexture != null ? _runtimeShadowTexture : ShadowMapTexture;
+        }
+
+        // Drops an effective runtime source when the user clears or replaces Shadow Map in Play Mode.
+        private void DiscardRuntimeShadowSourceFromInspector() {
+            Texture runtimeSource = GetRuntimeShadowSourceForInspector();
+            if (ShadowMap == runtimeSource) ShadowMap = null;
+            if (_runtimeShadowTexture != null) {
+                if (ShadowMapTexture == _runtimeShadowTexture) ShadowMapTexture = null;
+                ReleaseRuntimeShadowRenderTexture(_runtimeShadowTexture);
+                _runtimeShadowTexture = null;
+            }
+            _runtimeShadowSourceInitialized = false;
+        }
+
         // Caches editor-observed scalar values after the editor coordinator mirrors them without proxy polling.
         internal void CacheEditorObservedValues() {
             _old_Color = Color;
@@ -169,7 +206,8 @@ namespace VRCLightVolumes {
         // Prevents editor synchronization from replacing a live runtime-generated shadow source.
         private bool PreserveRuntimeShadowSourceInEditor() {
             if (!Application.isPlaying || !Shadows) return false;
-            if (RuntimeShadowDirectOutput && _runtimeShadowSourceInitialized) return true;
+            Texture runtimeSource = GetRuntimeShadowSourceForInspector();
+            if (runtimeSource != null) return ShadowMap == runtimeSource;
             Texture sourceTexture = GetShadowMapTexture();
             if (BakeInGame) return ShadowMapTexture != sourceTexture;
             return ShadowMapTexture != null && ShadowMapTexture != sourceTexture;
@@ -188,6 +226,7 @@ namespace VRCLightVolumes {
         // Compares authoring shadow state with the runtime fields mirrored to this instance.
         internal bool HasEditorShadowTextureChanges() {
             if (PreserveRuntimeShadowSourceInEditor()) return ShadowMapUsesCubemap != ShouldBakeCubemapShadows();
+            if (Application.isPlaying && _runtimeShadowSourceInitialized) return true;
 
             Texture texture = Shadows ? GetShadowMapTexture() : null;
             Material material = Shadows ? GetShadowMapMaterial() : null;
@@ -229,6 +268,8 @@ namespace VRCLightVolumes {
             CustomTextureHasDepthSlices = EditorTextureHasDepthSlices(customTexture);
 
             bool preserveRuntimeShadow = PreserveRuntimeShadowSourceInEditor();
+            if (!preserveRuntimeShadow && Application.isPlaying && _runtimeShadowSourceInitialized)
+                DiscardRuntimeShadowSourceFromInspector();
             if (!preserveRuntimeShadow) {
                 Texture shadowTexture = Shadows ? GetShadowMapTexture() : null;
                 Material shadowMaterial = Shadows ? GetShadowMapMaterial() : null;

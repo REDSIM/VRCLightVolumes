@@ -414,6 +414,7 @@ namespace VRCLightVolumes {
         private int _pointLightShadowCubeCountID;
         private int _pointLightShadowTextureID;
         private int _pointLightShadowReceiverParamsID;
+        private int _pointLightShadowTextureSizeID;
         private int _clusteringLightsID;
         private int _lightBrightnessCutoffID;
         // Froxel Clustering
@@ -436,6 +437,9 @@ namespace VRCLightVolumes {
         private int _cubemapMainTexID;
         private int _cubemapSourceTexID;
         private int _cubemapFaceIndexID;
+        private int _cubemapArraySourceTexID;
+        private int _cubemapArraySourceBaseSliceID;
+        private int _cubemapArraySourceResolutionID;
 
 #endregion
     }

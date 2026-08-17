@@ -1,8 +1,13 @@
 using System;
+using System.IO;
 using System.Reflection;
+using System.Text.RegularExpressions;
 using NUnit.Framework;
+using UnityEditor;
+using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.Rendering;
+using UnityEngine.SceneManagement;
 using UnityEngine.TestTools;
 using VRCLightVolumes.Editor;
 
@@ -34,6 +39,37 @@ namespace VRCLightVolumes.Tests {
             } finally {
                 target.Release();
                 UnityEngine.Object.DestroyImmediate(target);
+                UnityEngine.Object.DestroyImmediate(material);
+                UnityEngine.Object.DestroyImmediate(gameObject);
+            }
+        }
+
+        // Destroyed integration targets must not leave their material and callback rooted by the
+        // manager's serialized projection and transient post-processor cache.
+        [Test]
+        public void ManagerEditorFacadeCompactsDestroyedPostProcessorTargets() {
+            GameObject gameObject = new GameObject("Destroyed Post Processor Manager");
+            RenderTexture target = new RenderTexture(4, 4, 0);
+            Material material = null;
+            try {
+                Shader shader = Shader.Find("Hidden/InternalErrorShader");
+                Assert.That(shader, Is.Not.Null);
+                material = new Material(shader);
+                LightVolumeManager manager = gameObject.AddComponent<LightVolumeManager>();
+                manager.Editor.RegisterPostProcessor(new AtlasPostProcessor {
+                    Target = target,
+                    Material = material,
+                    InputTextureProperty = "_MainTex"
+                });
+
+                UnityEngine.Object.DestroyImmediate(target);
+
+                Assert.That(manager.Editor.GetPostProcessors(), Is.Empty);
+                Assert.That(manager.AtlasPostProcessorTargets, Is.Empty);
+                Assert.That(manager.AtlasPostProcessorMaterials, Is.Empty);
+                Assert.That(manager.AtlasPostProcessorTextureNames, Is.Empty);
+            } finally {
+                if (target != null) UnityEngine.Object.DestroyImmediate(target);
                 UnityEngine.Object.DestroyImmediate(material);
                 UnityEngine.Object.DestroyImmediate(gameObject);
             }
@@ -361,6 +397,73 @@ namespace VRCLightVolumes.Tests {
             for (int i = 0; i < expected.Length; i++) AssertColorClose(new Color(expected[i].x, expected[i].y, expected[i].z, 0f), colors[0][i]);
         }
 
+        // A partial AssetDatabase failure must release every unadopted native texture and preserve
+        // the previous channel whose destination could not be saved.
+        [Test]
+        public void CustomProbeBakeFailureDoesNotLeakTransientTextures() {
+            string scenePath = AssetDatabase.GenerateUniqueAssetPath("Assets/VRCLightVolumesCustomBakeLeakTest.unity");
+            Scene scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+            string sceneDataRootPath = null;
+            string sceneDataPath = null;
+            Texture3D previous0 = null;
+            Texture3D previous1 = null;
+            Texture3D previous2 = null;
+            try {
+                Assert.That(EditorSceneManager.SaveScene(scene, scenePath), Is.True);
+                GameObject managerObject = new GameObject("Custom Bake Failure Manager");
+                GameObject volumeObject = new GameObject("Custom Bake Failure Volume");
+                SceneManager.MoveGameObjectToScene(managerObject, scene);
+                SceneManager.MoveGameObjectToScene(volumeObject, scene);
+                LightVolumeManager manager = managerObject.AddComponent<LightVolumeManager>();
+                LightVolumeInstance volume = volumeObject.AddComponent<LightVolumeInstance>();
+                volume.LightVolumeManager = manager;
+                volume.Resolution = Vector3Int.one;
+                manager.DilationIterations = 0;
+
+                previous0 = CreateTransientProbeTexture("Previous Probe Texture 0");
+                previous1 = CreateTransientProbeTexture("Previous Probe Texture 1");
+                previous2 = CreateTransientProbeTexture("Previous Probe Texture 2");
+                volume.Texture0 = previous0;
+                volume.Texture1 = previous1;
+                volume.Texture2 = previous2;
+
+                sceneDataRootPath = Path.ChangeExtension(scenePath, null).Replace('\\', '/');
+                sceneDataPath = $"{sceneDataRootPath}/VRCLightVolumes/Temp";
+                string blockedAssetPath = $"{sceneDataPath}/{LVUtils.EscapeFileName(volumeObject.name)}_0.asset";
+                Directory.CreateDirectory(blockedAssetPath);
+                AssetDatabase.Refresh();
+                int transientCountBefore = CountTransientTexture3D();
+                Vector3[] l0 = { Vector3.one };
+                Vector3[] zero = { Vector3.zero };
+
+                LogAssert.Expect(LogType.Error, new Regex("^Can't create asset at .*Custom Bake Failure Volume_0\\.asset because it's a folder\\.$"));
+                LogAssert.Expect(LogType.Error, new Regex("^\\[LightVolumes\\] Save failed:"));
+                LogAssert.Expect(LogType.Error, $"[LightVolumes] Failed to persist every baked texture for light volume {volumeObject.name}. Transient texture objects were released.");
+                bool saved = LightVolumeBaker.SaveCustomProbesBaked(volume, l0, zero, zero, zero, null, false);
+
+                Assert.That(saved, Is.False);
+                Assert.That(volume.Texture0, Is.SameAs(previous0));
+                Assert.That(previous0 == null, Is.False);
+                Assert.That(previous1 == null, Is.True);
+                Assert.That(previous2 == null, Is.True);
+                Assert.That(volume.Texture1, Is.Not.Null);
+                Assert.That(volume.Texture2, Is.Not.Null);
+                Assert.That(EditorUtility.IsPersistent(volume.Texture1), Is.True);
+                Assert.That(EditorUtility.IsPersistent(volume.Texture2), Is.True);
+                Assert.That(CountTransientTexture3D(), Is.EqualTo(transientCountBefore - 2));
+            } finally {
+                if (scene.IsValid() && scene.isLoaded) EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+                if (previous0 != null) UnityEngine.Object.DestroyImmediate(previous0);
+                if (previous1 != null) UnityEngine.Object.DestroyImmediate(previous1);
+                if (previous2 != null) UnityEngine.Object.DestroyImmediate(previous2);
+                if (!string.IsNullOrEmpty(sceneDataRootPath)
+                    && sceneDataRootPath.StartsWith("Assets/VRCLightVolumesCustomBakeLeakTest", StringComparison.Ordinal)) {
+                    AssetDatabase.DeleteAsset(sceneDataRootPath);
+                }
+                if (!string.IsNullOrEmpty(scenePath)) AssetDatabase.DeleteAsset(scenePath);
+            }
+        }
+
         // Verifies the threaded bilateral implementation matches the former sequential algorithm across depth slices.
         [Test]
         public void BilateralDenoise3DMatchesSequentialReference() {
@@ -407,6 +510,24 @@ namespace VRCLightVolumes.Tests {
                     }
 
             return output;
+        }
+
+        // Creates one non-persistent Texture3D owned by the test until the bake replaces it.
+        private static Texture3D CreateTransientProbeTexture(string name) {
+            Texture3D texture = new Texture3D(1, 1, 1, TextureFormat.RGBAHalf, false) { name = name };
+            texture.SetPixels(new[] { Color.clear });
+            texture.Apply(false);
+            return texture;
+        }
+
+        // Counts live non-asset Texture3D objects to catch native allocations that lose their owner.
+        private static int CountTransientTexture3D() {
+            Texture3D[] textures = Resources.FindObjectsOfTypeAll<Texture3D>();
+            int count = 0;
+            for (int i = 0; i < textures.Length; i++) {
+                if (textures[i] != null && !EditorUtility.IsPersistent(textures[i])) count++;
+            }
+            return count;
         }
 
         // Calls the shared probe processor using the standard dilation threshold.

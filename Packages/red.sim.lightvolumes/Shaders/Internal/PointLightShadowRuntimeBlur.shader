@@ -9,6 +9,7 @@ Shader "Hidden/VRCLV/PointLightShadowRuntimeBlur" {
         _BlurRadius("Blur Radius", Float) = 0
         _BlurDepth("Blur Depth", Float) = 0.1
         _InvResolution("Inv Resolution", Float) = 0.0078125
+        _SourceResolution("Source Resolution", Vector) = (128,128,0.0078125,0.0078125)
         _ShadowTanHalfFov("Shadow Tan Half FOV", Float) = 1
     }
 
@@ -28,6 +29,7 @@ Shader "Hidden/VRCLV/PointLightShadowRuntimeBlur" {
         float2 _BlurDirection;
         float _BlurRadius;
         float _InvResolution;
+        float4 _SourceResolution;
         float _ShadowTanHalfFov;
 
         #if !defined(VRCLV_RUNTIME_SHADOW_BLUR_UNIFORM)
@@ -35,7 +37,6 @@ Shader "Hidden/VRCLV/PointLightShadowRuntimeBlur" {
             float _BlurDepth;
             #define VRCLV_EVSM_NEGATIVE_EXPONENT 5.0f
         #endif
-
         // Exact exponential through exp2. Kept as a helper so blur weights and EVSM tools use the same exp path.
         float VRCLV_Exp(float x) {
             return exp2(x * 1.4426950408889634f);
@@ -49,7 +50,7 @@ Shader "Hidden/VRCLV/PointLightShadowRuntimeBlur" {
             return (exponent - 1.0f + y * (1.3465554f - 0.3465554f * y)) * 0.69314718056f;
         }
 
-        #if defined(VRCLV_EDITOR_SHADOW_BLUR_QUALITY) || defined(VRCLV_RUNTIME_SHADOW_BLUR_SPHERICAL)
+        #if defined(VRCLV_RUNTIME_SHADOW_BLUR_SPHERICAL)
             #define VRCLV_SHADOW_BLUR_SPHERICAL
         #endif
 
@@ -259,6 +260,29 @@ Shader "Hidden/VRCLV/PointLightShadowRuntimeBlur" {
             return UNITY_SAMPLE_TEX2DARRAY(_SourceArrayTex, address);
         }
 
+        // Texture2DArray bilinear filtering clamps inside one slice. During a size conversion,
+        // preserve the source-resolution footprint and reproject taps that cross a cubemap face.
+        // Half a 32px source texel spans eight destination pixels after a 32 -> 512 upscale.
+        float4 SampleSourceCubemapBilinear(float2 uv) {
+            float2 sourceResolution = max(_SourceResolution.xy, 1.0f);
+            float2 sourceInvResolution = _SourceResolution.zw;
+            float2 sourceHalfTexel = sourceInvResolution * 0.5f;
+            float2 edgeDistance = min(uv, 1.0f - uv);
+            if (all(edgeDistance >= sourceHalfTexel))
+                return UNITY_SAMPLE_TEX2DARRAY(_SourceArrayTex, float3(uv, _SourceBaseSlice + _FaceIndex));
+
+            float2 texelPosition = uv * sourceResolution - 0.5f;
+            float2 texelBase = floor(texelPosition);
+            float2 texelBlend = frac(texelPosition);
+            float2 tap00 = (texelBase + float2(0.5f, 0.5f)) * sourceInvResolution;
+            float2 tap10 = (texelBase + float2(1.5f, 0.5f)) * sourceInvResolution;
+            float2 tap01 = (texelBase + float2(0.5f, 1.5f)) * sourceInvResolution;
+            float2 tap11 = (texelBase + float2(1.5f, 1.5f)) * sourceInvResolution;
+            float4 row0 = lerp(SampleSource(tap00), SampleSource(tap10), texelBlend.x);
+            float4 row1 = lerp(SampleSource(tap01), SampleSource(tap11), texelBlend.x);
+            return lerp(row0, row1, texelBlend.y);
+        }
+
         #if defined(VRCLV_SHADOW_BLUR_SPHERICAL)
             #if !defined(VRCLV_RUNTIME_SHADOW_BLUR_DIRECT)
                 float3 SphericalArrayAddress(float2 uv, float2 faceUvOffset) {
@@ -425,6 +449,11 @@ Shader "Hidden/VRCLV/PointLightShadowRuntimeBlur" {
             return BlurArray(i.uv);
 #endif
         }
+
+        float4 fragCubemapResample(v2f i) : SV_Target {
+            return SampleSourceCubemapBilinear(i.uv);
+        }
+
         ENDCG
 
         Pass {
@@ -439,5 +468,15 @@ Shader "Hidden/VRCLV/PointLightShadowRuntimeBlur" {
             #pragma shader_feature_local_fragment __ VRCLV_EDITOR_SHADOW_BLUR_QUALITY
             ENDCG
         }
+
+        Pass {
+            Name "CubemapResample"
+            CGPROGRAM
+            #pragma target 3.5
+            #pragma vertex vert
+            #pragma fragment fragCubemapResample
+            ENDCG
+        }
+
     }
 }

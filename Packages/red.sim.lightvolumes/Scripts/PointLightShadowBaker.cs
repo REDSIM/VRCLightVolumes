@@ -42,6 +42,7 @@ namespace VRCLightVolumes {
             bool oldRuntimeShadowDirectOutput = pointLightInstance.RuntimeShadowDirectOutput;
             RenderTexture oldActive = RenderTexture.active;
             RenderTexture runtimeShadowTexture = null;
+            UnityEngine.Object shadowAsset = null;
             bool baked = false;
 
             try {
@@ -75,7 +76,7 @@ namespace VRCLightVolumes {
                     return false;
                 }
 
-                UnityEngine.Object shadowAsset = cubemapShadows ? CreateCubemapShadowAsset(runtimeShadowTexture, safeTextureFormat) : CreateSingleShadowAsset(runtimeShadowTexture, safeTextureFormat);
+                shadowAsset = cubemapShadows ? CreateCubemapShadowAsset(runtimeShadowTexture, safeTextureFormat) : CreateSingleShadowAsset(runtimeShadowTexture, safeTextureFormat);
                 if (shadowAsset == null) return false;
 
                 UnityEngine.Object savedShadowAsset = SaveShadowAsset(pointLightVolume, shadowAsset);
@@ -86,19 +87,29 @@ namespace VRCLightVolumes {
                 baked = true;
                 return true;
             } finally {
-                pointLightVolume.EditorRestoreExclusionMask();
-                manager.ShadowTextureFormat = oldShadowTextureFormat;
-                ResetManagerRuntimeShadowBlurState(manager);
-                pointLightVolume.EditorApplyAuthoringData(false, true, false);
-                pointLightInstance.RuntimeShadowResolution = oldRuntimeShadowResolution;
-                pointLightInstance.RuntimeShadowBlurSamplePreset = oldRuntimeShadowBlurSamplePreset;
-                pointLightInstance.RuntimeShadowDirectOutput = oldRuntimeShadowDirectOutput;
-                if (regenerateArray) {
-                    if (baked) manager.ReinitializeShadowTextures();
-                    else manager.UpdateVolumes();
+                try {
+                    pointLightVolume.EditorRestoreExclusionMask();
+                    manager.ShadowTextureFormat = oldShadowTextureFormat;
+                    ResetManagerRuntimeShadowBlurState(manager);
+                    pointLightVolume.EditorApplyAuthoringData(false, true, false);
+                    pointLightInstance.RuntimeShadowResolution = oldRuntimeShadowResolution;
+                    pointLightInstance.RuntimeShadowBlurSamplePreset = oldRuntimeShadowBlurSamplePreset;
+                    pointLightInstance.RuntimeShadowDirectOutput = oldRuntimeShadowDirectOutput;
+                    if (regenerateArray) {
+                        if (baked) manager.ReinitializeShadowTextures();
+                        else manager.UpdateVolumes();
+                    }
+                } finally {
+                    try {
+                        DestroyTransientShadowAsset(shadowAsset);
+                    } finally {
+                        try {
+                            ReleaseTemporaryRenderTexture(runtimeShadowTexture);
+                        } finally {
+                            RenderTexture.active = oldActive;
+                        }
+                    }
                 }
-                ReleaseTemporaryRenderTexture(runtimeShadowTexture);
-                RenderTexture.active = oldActive;
             }
         }
 
@@ -111,7 +122,9 @@ namespace VRCLightVolumes {
             }
 
             manager.EnsureRuntimeShadowCamera();
-            if (manager.RuntimeShadowDepthEncodeMaterial == null || manager.RuntimeShadowDepthEncodeMaterial.shader != shadowDepthEncodeShader) manager.RuntimeShadowDepthEncodeMaterial = new Material(shadowDepthEncodeShader) { hideFlags = HideFlags.HideAndDontSave };
+            if (manager.RuntimeShadowDepthEncodeMaterial == null || manager.RuntimeShadowDepthEncodeMaterial.shader != shadowDepthEncodeShader) {
+                ReplaceRuntimeShadowMaterial(ref manager.RuntimeShadowDepthEncodeMaterial, CreateRuntimeShadowMaterial(shadowDepthEncodeShader));
+            }
 
             Shader shadowBlurShader = Shader.Find(ShadowBlurShaderName);
             if (shadowBlurShader == null) {
@@ -119,12 +132,40 @@ namespace VRCLightVolumes {
                     Debug.LogError($"[LightVolumes] Failed to find required shadow blur shader '{ShadowBlurShaderName}'. The previous shadow is preserved.", pointLightVolume);
                     return false;
                 }
-                manager.RuntimeShadowBlurMaterial = null;
+                ReplaceRuntimeShadowMaterial(ref manager.RuntimeShadowBlurMaterial, null);
             } else if (manager.RuntimeShadowBlurMaterial == null || manager.RuntimeShadowBlurMaterial.shader != shadowBlurShader) {
-                manager.RuntimeShadowBlurMaterial = new Material(shadowBlurShader) { hideFlags = HideFlags.HideAndDontSave };
+                ReplaceRuntimeShadowMaterial(ref manager.RuntimeShadowBlurMaterial, CreateRuntimeShadowMaterial(shadowBlurShader));
             }
 
             return manager.RuntimeShadowCamera != null && manager.RuntimeShadowDepthEncodeMaterial != null;
+        }
+
+        // Creates an editor-owned material without losing the native object if configuration fails.
+        private static Material CreateRuntimeShadowMaterial(Shader shader) {
+            Material material = new Material(shader);
+            try {
+                material.hideFlags = HideFlags.HideAndDontSave;
+                return material;
+            } catch {
+                DestroyTransientShadowAsset(material);
+                throw;
+            }
+        }
+
+        // Replaces a manager-owned runtime material and releases only instances created by this baker.
+        // External runtime materials and persistent project assets remain owned by their assigner.
+        private static void ReplaceRuntimeShadowMaterial(ref Material destination, Material replacement) {
+            Material previous = destination;
+            if (previous == replacement) return;
+            if (previous != null && previous.hideFlags == HideFlags.HideAndDontSave && !AssetDatabase.Contains(previous)) {
+                try {
+                    UnityEngine.Object.DestroyImmediate(previous);
+                } catch {
+                    DestroyTransientShadowAsset(replacement);
+                    throw;
+                }
+            }
+            destination = replacement;
         }
 
         // Resets cached blur keyword state so the shared material is configured by the next bake.
@@ -144,24 +185,32 @@ namespace VRCLightVolumes {
 
         // Creates a persistent cubemap asset from the runtime texture-array shadow output.
         private static Cubemap CreateCubemapShadowAsset(RenderTexture source, TextureFormat textureFormat) {
-            Cubemap cubemap = new Cubemap(source.width, textureFormat, false) {
-                wrapMode = TextureWrapMode.Clamp,
-                filterMode = FilterMode.Bilinear,
-                anisoLevel = 0
-            };
-            ReadRenderTextureToCubemap(source, cubemap, source.width, textureFormat);
-            return cubemap;
+            Cubemap cubemap = new Cubemap(source.width, textureFormat, false);
+            try {
+                cubemap.wrapMode = TextureWrapMode.Clamp;
+                cubemap.filterMode = FilterMode.Bilinear;
+                cubemap.anisoLevel = 0;
+                ReadRenderTextureToCubemap(source, cubemap, source.width, textureFormat);
+                return cubemap;
+            } catch {
+                DestroyTransientShadowAsset(cubemap);
+                throw;
+            }
         }
 
         // Creates a persistent single-slice texture asset from the runtime texture-array shadow output.
         private static Texture2D CreateSingleShadowAsset(RenderTexture source, TextureFormat textureFormat) {
-            Texture2D texture = new Texture2D(source.width, source.height, textureFormat, false, true) {
-                wrapMode = TextureWrapMode.Clamp,
-                filterMode = FilterMode.Bilinear,
-                anisoLevel = 0
-            };
-            ReadRenderTextureToTexture2D(source, texture);
-            return texture;
+            Texture2D texture = new Texture2D(source.width, source.height, textureFormat, false, true);
+            try {
+                texture.wrapMode = TextureWrapMode.Clamp;
+                texture.filterMode = FilterMode.Bilinear;
+                texture.anisoLevel = 0;
+                ReadRenderTextureToTexture2D(source, texture);
+                return texture;
+            } catch {
+                DestroyTransientShadowAsset(texture);
+                throw;
+            }
         }
 
         // Saves the baked shadow asset into the scene-local VRCLightVolumes temp folder.
@@ -265,10 +314,13 @@ namespace VRCLightVolumes {
         // Copies the runtime texture-array shadow output into a serializable cubemap asset.
         private static void ReadRenderTextureToCubemap(RenderTexture source, Cubemap destination, int resolution, TextureFormat textureFormat) {
             RenderTexture oldActive = RenderTexture.active;
-            Texture2D temp = new Texture2D(resolution, resolution, textureFormat, false, true);
-            RenderTexture sourceFace = CreateTemporaryFaceTexture(source, resolution);
-            RenderTexture transformedFace = CreateTemporaryFaceTexture(source, resolution);
+            Texture2D temp = null;
+            RenderTexture sourceFace = null;
+            RenderTexture transformedFace = null;
             try {
+                temp = new Texture2D(resolution, resolution, textureFormat, false, true);
+                sourceFace = CreateTemporaryFaceTexture(source, resolution);
+                transformedFace = CreateTemporaryFaceTexture(source, resolution);
                 for (int i = 0; i < 6; i++) {
                     int destinationFaceIndex = _oppositeCubemapFaceIndices[i];
                     bool horizontalFlip = _arrayToCubemapHorizontalFlip[i];
@@ -284,26 +336,39 @@ namespace VRCLightVolumes {
                 }
                 destination.Apply(false);
             } finally {
-                RenderTexture.active = oldActive;
-                ReleaseTemporaryRenderTexture(sourceFace);
-                ReleaseTemporaryRenderTexture(transformedFace);
-                UnityEngine.Object.DestroyImmediate(temp);
+                try {
+                    RenderTexture.active = oldActive;
+                } finally {
+                    try {
+                        ReleaseTemporaryRenderTexture(sourceFace);
+                    } finally {
+                        try {
+                            ReleaseTemporaryRenderTexture(transformedFace);
+                        } finally {
+                            if (temp != null) UnityEngine.Object.DestroyImmediate(temp);
+                        }
+                    }
+                }
             }
         }
 
         // Creates a temporary 2D render target used while converting runtime array slices to cubemap faces.
         private static RenderTexture CreateTemporaryFaceTexture(RenderTexture source, int resolution) {
-            RenderTexture texture = new RenderTexture(resolution, resolution, 0, source.format, RenderTextureReadWrite.Linear) {
-                dimension = TextureDimension.Tex2D,
-                useMipMap = false,
-                autoGenerateMips = false,
-                wrapMode = TextureWrapMode.Clamp,
-                filterMode = FilterMode.Point,
-                anisoLevel = 0,
-                hideFlags = HideFlags.HideAndDontSave
-            };
-            texture.Create();
-            return texture;
+            RenderTexture texture = new RenderTexture(resolution, resolution, 0, source.format, RenderTextureReadWrite.Linear);
+            try {
+                texture.dimension = TextureDimension.Tex2D;
+                texture.useMipMap = false;
+                texture.autoGenerateMips = false;
+                texture.wrapMode = TextureWrapMode.Clamp;
+                texture.filterMode = FilterMode.Point;
+                texture.anisoLevel = 0;
+                texture.hideFlags = HideFlags.HideAndDontSave;
+                if (!texture.Create()) throw new UnityException("Failed to allocate a temporary render texture for cubemap shadow conversion.");
+                return texture;
+            } catch {
+                ReleaseTemporaryRenderTexture(texture);
+                throw;
+            }
         }
 
         // Copies the first runtime texture-array slice into a serializable Texture2D asset.
@@ -321,9 +386,12 @@ namespace VRCLightVolumes {
         // Releases a temporary render texture used by editor shadow baking.
         private static void ReleaseTemporaryRenderTexture(RenderTexture texture) {
             if (texture == null || AssetDatabase.Contains(texture)) return;
-            if (RenderTexture.active == texture) RenderTexture.active = null;
-            texture.Release();
-            UnityEngine.Object.DestroyImmediate(texture);
+            try {
+                if (RenderTexture.active == texture) RenderTexture.active = null;
+                texture.Release();
+            } finally {
+                UnityEngine.Object.DestroyImmediate(texture);
+            }
         }
 
         // Resolves the persistent texture format used to store baked EVSM moments.

@@ -34,6 +34,7 @@ namespace VRCLightVolumes {
 #endif
             AssemblyReloadEvents.beforeAssemblyReload += Shutdown;
             EditorApplication.quitting += Shutdown;
+            QueueManagerRecovery();
         }
 
         // Removes every editor callback and discards queued work before this editor domain ends.
@@ -65,11 +66,12 @@ namespace VRCLightVolumes {
 
         // Queues a camera-independent Manager rebuild after scene serialization completes.
         private static void OnSceneSaved(Scene scene) {
-            QueueSceneSaveRecovery();
+            QueueManagerRecovery();
         }
 
-        // Coalesces repeated scene saves into one editor-safe recovery callback.
-        private static void QueueSceneSaveRecovery() {
+        // Coalesces scene saves, Play Mode restores, asset imports and shadow bakes into one
+        // editor-safe recovery callback.
+        internal static void QueueManagerRecovery() {
             EditorApplication.delayCall -= RecoverAfterSceneSave;
             EditorApplication.delayCall += RecoverAfterSceneSave;
         }
@@ -79,7 +81,7 @@ namespace VRCLightVolumes {
             EditorApplication.delayCall -= RecoverAfterSceneSave;
             if (Application.isPlaying || EditorApplication.isPlayingOrWillChangePlaymode) return;
             if (EditorApplication.isCompiling || EditorApplication.isUpdating || Undo.isProcessing) {
-                QueueSceneSaveRecovery();
+                QueueManagerRecovery();
                 return;
             }
 
@@ -311,7 +313,6 @@ namespace VRCLightVolumes {
                     bool customTexturesChanged = pointLight.HasEditorCustomTextureChanges();
                     bool shadowTexturesChanged = pointLight.HasEditorShadowTextureChanges();
                     pointLight.EditorApplyAuthoringData(customTexturesChanged, shadowTexturesChanged, false);
-                    pointLight.IsActive = pointLight.isActiveAndEnabled && pointLight.Intensity != 0f && pointLight.Color != Color.black;
                     LightVolumeManagerEditorBackend.CopyProxyToUdon(pointLight);
                 }
                 if (!managerRecoveryFollows && _managerUpdateQueued && IsEditableSceneObject(_primaryManager)) _primaryManager.UpdateVolumes();

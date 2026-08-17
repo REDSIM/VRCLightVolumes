@@ -92,6 +92,7 @@ namespace VRCLightVolumes {
         public override void OnInspectorGUI() {
             if (_volume == null) return;
 
+            LightVolumeManagerEditorBackend.SynchronizeRuntimeInspectorGraphsFromUdon(targets);
             serializedObject.UpdateIfRequiredOrScript();
             int undoGroup = Undo.GetCurrentGroup();
             long[] previousBakeryStates = CaptureBakeryDependencyStates();
@@ -107,7 +108,7 @@ namespace VRCLightVolumes {
             if (!serializedObject.ApplyModifiedProperties()) return;
 
             ApplyExplicitBakeryDependencyChanges(previousBakeryStates);
-            SyncTargets(true);
+            SyncTargets(true, false);
             Undo.CollapseUndoOperations(undoGroup);
         }
 

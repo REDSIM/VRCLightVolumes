@@ -37,6 +37,92 @@ namespace VRCLightVolumes.Tests {
                 Is.EqualTo("Assets/Valid Folder/Name%3ABad%3F.asset"));
         }
 
+        // A completed atlas still belongs to the backend until a live Manager accepts it.
+        [Test]
+        public void CompleteAtlasDestroysTextureRejectedWithoutManager() {
+            Texture3D texture = CreateTexture3D("Rejected Atlas Texture");
+            MethodInfo completeAtlas = typeof(LightVolumeManagerEditorBackend).GetMethod("CompleteAtlas", _nonPublicStaticFlags);
+            Assert.That(completeAtlas, Is.Not.Null);
+
+            completeAtlas.Invoke(null, new object[] {
+                null,
+                new LightVolumeInstance[0],
+                new Atlas3D { Texture = texture, BoundsUvwMin = new Vector3[0], BoundsUvwMax = new Vector3[0] }
+            });
+
+            Assert.That(texture == null, Is.True, "A rejected native atlas must be destroyed instead of losing its owner.");
+        }
+
+        // A completed non-persistent atlas can outlive its generator while the scene is unsaved.
+        // Entering Play Mode must release that backend-owned native texture even with domain reload disabled.
+        [Test]
+        public void PlayTransitionReleasesBackendOwnedTransientAtlas() {
+            LightVolumeManager manager = CreateComponent<LightVolumeManager>("Transient Atlas Owner");
+            Texture3D texture = CreateTexture3D("Accepted Unsaved Atlas Texture");
+            manager.LightVolumeAtlasBase = texture;
+            manager.LightVolumeAtlas = texture;
+            MethodInfo trackTransientAtlas = typeof(LightVolumeManagerEditorBackend).GetMethod("TrackTransientAtlas", _nonPublicStaticFlags);
+            MethodInfo onPlayModeStateChanged = typeof(LightVolumeManagerEditorBackend).GetMethod("OnPlayModeStateChanged", _nonPublicStaticFlags);
+            Assert.That(trackTransientAtlas, Is.Not.Null);
+            Assert.That(onPlayModeStateChanged, Is.Not.Null);
+
+            trackTransientAtlas.Invoke(null, new object[] { manager, texture });
+            onPlayModeStateChanged.Invoke(null, new object[] { PlayModeStateChange.ExitingEditMode });
+
+            Assert.That(manager.LightVolumeAtlasBase, Is.Null);
+            Assert.That(manager.LightVolumeAtlas, Is.Null);
+            Assert.That(texture == null, Is.True, "Play transition must destroy an unsaved native atlas owned by the editor backend.");
+        }
+
+        // EnteredPlayMode can precede live Udon heap initialization. Runtime resources must be
+        // published on a delayed editor turn instead of relying on an already-open Inspector to
+        // copy its proxy after Udon becomes ready.
+        [Test]
+        public void EnteredPlayModeDefersRuntimeDependencyPublication() {
+            System.Type preprocessorType = GetLightVolumePreprocessorType();
+            MethodInfo onPlayModeStateChanged = preprocessorType.GetMethod("OnPlayModeStateChanged", _nonPublicStaticFlags);
+            MethodInfo cancelQueued = preprocessorType.GetMethod("CancelQueuedPrimaryRuntimeDependencies", _nonPublicStaticFlags);
+            FieldInfo queuedField = preprocessorType.GetField("_playModeRuntimePrepareQueued", _nonPublicStaticFlags);
+            Assert.That(onPlayModeStateChanged, Is.Not.Null);
+            Assert.That(cancelQueued, Is.Not.Null);
+            Assert.That(queuedField, Is.Not.Null);
+
+            onPlayModeStateChanged.Invoke(null, new object[] { PlayModeStateChange.EnteredPlayMode });
+            Assert.That((bool)queuedField.GetValue(null), Is.True);
+
+            cancelQueued.Invoke(null, null);
+            Assert.That((bool)queuedField.GetValue(null), Is.False);
+        }
+
+        // Replacing an atlas must not make the backend the owner of a transient texture supplied by
+        // external editor code. Only atlases previously tracked by this backend may be destroyed.
+        [Test]
+        public void CompleteAtlasPreservesExternallyOwnedPreviousTexture() {
+            LightVolumeManager manager = CreateComponent<LightVolumeManager>("External Transient Atlas Owner");
+            manager.transform.SetAsFirstSibling();
+            Texture3D previous = CreateTexture3D("External Previous Atlas");
+            Texture3D replacement = CreateTexture3D("Backend Replacement Atlas");
+            manager.LightVolumeAtlasBase = previous;
+            manager.LightVolumeAtlas = previous;
+            MethodInfo completeAtlas = typeof(LightVolumeManagerEditorBackend).GetMethod("CompleteAtlas", _nonPublicStaticFlags);
+            MethodInfo onPlayModeStateChanged = typeof(LightVolumeManagerEditorBackend).GetMethod("OnPlayModeStateChanged", _nonPublicStaticFlags);
+            Assert.That(completeAtlas, Is.Not.Null);
+            Assert.That(onPlayModeStateChanged, Is.Not.Null);
+
+            completeAtlas.Invoke(null, new object[] {
+                manager,
+                new LightVolumeInstance[0],
+                new Atlas3D { Texture = replacement, BoundsUvwMin = new Vector3[0], BoundsUvwMax = new Vector3[0] }
+            });
+
+            Assert.That(manager.LightVolumeAtlasBase, Is.SameAs(replacement));
+            Assert.That(previous == null, Is.False, "The backend must preserve an externally-owned transient atlas.");
+
+            onPlayModeStateChanged.Invoke(null, new object[] { PlayModeStateChange.ExitingEditMode });
+            Assert.That(replacement == null, Is.True, "The backend must still release its own replacement atlas.");
+            Assert.That(previous == null, Is.False);
+        }
+
         [Test]
         public void ShadowDefaultsUseLowBiasAndPlatformSpecificVariance() {
             PointLightVolumeInstance point = CreateComponent<PointLightVolumeInstance>("Default Shadow Point");

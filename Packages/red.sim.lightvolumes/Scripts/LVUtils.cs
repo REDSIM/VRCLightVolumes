@@ -514,11 +514,6 @@ namespace VRCLightVolumes {
             int newHeight = Mathf.Max(1, source.height / 2);
             int newDepth = Mathf.Max(1, source.depth / 2);
 
-            Texture3D result = new Texture3D(newWidth, newHeight, newDepth, source.format, source.mipmapCount > 1);
-            result.wrapMode = source.wrapMode;
-            result.filterMode = FilterMode.Trilinear;
-            result.anisoLevel = source.anisoLevel;
-
             Color[] sourcePixels = source.GetPixels();
             Color[] resultPixels = new Color[newWidth * newHeight * newDepth];
 
@@ -561,10 +556,19 @@ namespace VRCLightVolumes {
                 }
             }
 
-            result.SetPixels(resultPixels);
-            result.Apply();
-
-            return result;
+            Texture3D result = new Texture3D(newWidth, newHeight, newDepth, source.format, source.mipmapCount > 1);
+            try {
+                result.wrapMode = source.wrapMode;
+                result.filterMode = FilterMode.Trilinear;
+                result.anisoLevel = source.anisoLevel;
+                result.SetPixels(resultPixels);
+                result.Apply();
+                return result;
+            } catch {
+                if (Application.isPlaying) Object.Destroy(result);
+                else Object.DestroyImmediate(result);
+                throw;
+            }
 
         }
 

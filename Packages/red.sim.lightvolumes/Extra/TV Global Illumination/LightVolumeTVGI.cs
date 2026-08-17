@@ -41,25 +41,36 @@ namespace VRCLightVolumes {
         private void Start() {
             _timePrev = Time.time;
             _prevColor = Color.black;
-            _downsampledTex = new RenderTexture(64, 32, 0, RenderTextureFormat.ARGB32, RenderTextureReadWrite.Linear);
-            _downsampledTex.useMipMap = true;
-            _downsampledTex.autoGenerateMips = true;
-            _downsampledTex.Create();
+            CreateDownsampledTexture();
 #if UDONSHARP
             _pixels = new Color32[1];
 #endif
         }
 
+        // Creates and validates the owned reduction target. Assign ownership before configuration so every successfully constructed Unity object remains reachable by lifecycle cleanup.
+        private void CreateDownsampledTexture() {
+            if (_downsampledTex != null) return;
+            _downsampledTex = new RenderTexture(64, 32, 0, RenderTextureFormat.ARGB32, RenderTextureReadWrite.Linear);
+            _downsampledTex.useMipMap = true;
+            _downsampledTex.autoGenerateMips = true;
+            if (!_downsampledTex.Create()) ReleaseDownsampledTexture();
+        }
+
         // Releases the runtime reduction texture when this component is destroyed.
         private void OnDestroy() {
             _readbackPending = false;
+            ReleaseDownsampledTexture();
+        }
+
+        // Releases the owned reduction target in both ordinary Unity and UdonSharp builds.
+        private void ReleaseDownsampledTexture() {
             RenderTexture texture = _downsampledTex;
             _downsampledTex = null;
             if (texture == null) return;
 #if COMPILER_UDONSHARP
             Destroy(texture);
 #else
-            RenderTexture.active = null;
+            if (RenderTexture.active == texture) RenderTexture.active = null;
             texture.Release();
             if (Application.isPlaying) Destroy(texture);
             else DestroyImmediate(texture);
@@ -69,7 +80,7 @@ namespace VRCLightVolumes {
 #if UDONSHARP
         // Blits the current video frame and requests its smallest mip through the VRChat readback API.
         void Update() {
-            if (_readbackPending) return;
+            if (_readbackPending || TargetRenderTexture == null || _downsampledTex == null) return;
             VRCGraphics.Blit(TargetRenderTexture, _downsampledTex);
             _readbackPending = true;
             VRCAsyncGPUReadback.Request(_downsampledTex, _downsampledTex.mipmapCount - 1, (IUdonEventReceiver)this);
@@ -78,6 +89,7 @@ namespace VRCLightVolumes {
         // Receives the reduced video color from the VRChat GPU readback request.
         public override void OnAsyncGpuReadbackComplete(VRCAsyncGPUReadbackRequest request) {
             _readbackPending = false;
+            if (_downsampledTex == null) return;
             if (request.TryGetData(_pixels)) {
                 SetColor(_pixels[0]);
             }
@@ -86,7 +98,7 @@ namespace VRCLightVolumes {
 #else
         // Blits the current video frame and requests its smallest mip through Unity's readback API.
         void Update() {
-            if (_readbackPending) return;
+            if (_readbackPending || TargetRenderTexture == null || _downsampledTex == null) return;
             Graphics.Blit(TargetRenderTexture, _downsampledTex);
             _readbackPending = true;
             UnityEngine.Rendering.AsyncGPUReadback.Request(_downsampledTex, _downsampledTex.mipmapCount - 1, OnUnityAsyncGpuReadbackComplete);
@@ -95,7 +107,7 @@ namespace VRCLightVolumes {
         // Receives the reduced video color from Unity's GPU readback request.
         private void OnUnityAsyncGpuReadbackComplete(UnityEngine.Rendering.AsyncGPUReadbackRequest request) {
             _readbackPending = false;
-            if (request.hasError) return;
+            if (_downsampledTex == null || request.hasError) return;
             Unity.Collections.NativeArray<Color32> pixels = request.GetData<Color32>();
             if (pixels.Length > 0) SetColor(pixels[0]);
         }

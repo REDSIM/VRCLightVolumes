@@ -159,7 +159,7 @@ namespace VRCLightVolumes {
                 state.PostProcessorProjectionTargets == AtlasPostProcessorTargets &&
                 state.PostProcessorProjectionMaterials == AtlasPostProcessorMaterials &&
                 state.PostProcessorProjectionTextureNames == AtlasPostProcessorTextureNames)
-                return state.AtlasPostProcessors;
+                return RemoveInvalidPostProcessors(state.AtlasPostProcessors);
 
             RenderTexture[] targets = AtlasPostProcessorTargets ?? Array.Empty<RenderTexture>();
             Material[] materials = AtlasPostProcessorMaterials;
@@ -175,7 +175,26 @@ namespace VRCLightVolumes {
             }
             state.AtlasPostProcessors = processors;
             CapturePostProcessorProjection(state);
-            return processors;
+            return RemoveInvalidPostProcessors(processors);
+        }
+
+        // Destroyed Unity objects compare equal to null while delegates can still retain their managed wrappers. Compacting the chain releases those stale targets, materials and callbacks even when an external integration omitted its explicit unregister call.
+        private AtlasPostProcessor[] RemoveInvalidPostProcessors(AtlasPostProcessor[] processors) {
+            int validCount = 0;
+            for (int i = 0; i < processors.Length; i++) {
+                AtlasPostProcessor processor = processors[i];
+                if (processor.Target != null && (processor.Material != null || processor.Update != null || processor.UpdateWithInput != null)) validCount++;
+            }
+            if (validCount == processors.Length) return processors;
+
+            AtlasPostProcessor[] valid = new AtlasPostProcessor[validCount];
+            for (int i = 0, write = 0; i < processors.Length; i++) {
+                AtlasPostProcessor processor = processors[i];
+                if (processor.Target == null || processor.Material == null && processor.Update == null && processor.UpdateWithInput == null) continue;
+                valid[write++] = processor;
+            }
+            EditorSetAtlasPostProcessors(valid);
+            return valid;
         }
 
         // Stores the transient post-processor chain and its serializable texture/material projection.
@@ -433,7 +452,7 @@ namespace VRCLightVolumes {
 
 #region Editor Runtime Recovery And Inspector
 
-        // Rebuilds all derived edit-mode data after scene saves, script reloads and late UdonSharp asset imports. Runtime flags can be restored independently from managed resources, so no cached gate is trusted.
+        // Rebuilds all derived edit-mode data after scene saves, script reloads and late UdonSharp asset imports. Runtime fields on scene-only UdonSharp proxies can be restored independently from their authoring fields, so every source mirror and cache gate is rebuilt before publishing shader state.
         internal void RebuildEditorRuntimeState() {
             if (Application.isPlaying) return;
             _isUpdatingVolumes = false;
@@ -446,6 +465,20 @@ namespace VRCLightVolumes {
             _clusteringLightsDirty = true;
             _clusterGeometryUploadPending = false;
             ReleaseClusteringPreview();
+
+            PointLightVolumeInstance[] pointLights = PointLightVolumeInstances ?? Array.Empty<PointLightVolumeInstance>();
+            for (int i = 0; i < pointLights.Length; i++) {
+                PointLightVolumeInstance pointLight = pointLights[i];
+                if (pointLight == null || pointLight.LightVolumeManager != this) continue;
+                bool customTexturesChanged = pointLight.HasEditorCustomTextureChanges();
+                bool shadowTexturesChanged = pointLight.HasEditorShadowTextureChanges();
+                pointLight.EditorApplyAuthoringData(customTexturesChanged, shadowTexturesChanged, false);
+            }
+
+            // HideAndDontSave arrays may have been destroyed while their managed initialization
+            // flags survived a no-domain-reload Play Mode transition. Recovery never trusts either
+            // gate, even when source comparison happens to report no change.
+            InvalidateTextureCaches(true, true);
             UpdateVolumes();
         }
 

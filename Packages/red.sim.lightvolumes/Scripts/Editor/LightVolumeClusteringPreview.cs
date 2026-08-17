@@ -59,6 +59,7 @@ namespace VRCLightVolumes {
         // Defers a clustering preview rebuild after a scene is opened.
         private static void OnSceneOpened(UnityEngine.SceneManagement.Scene scene, UnityEditor.SceneManagement.OpenSceneMode mode) {
             RequestPreviewRefresh();
+            LightVolumeEditorUpdater.QueueManagerRecovery();
         }
 
         // Releases transient preview resources before Unity serializes a scene.
@@ -130,6 +131,7 @@ namespace VRCLightVolumes {
                 ReleasePreviewResources();
             } else if (state == PlayModeStateChange.EnteredEditMode) {
                 RequestPreviewRefresh();
+                LightVolumeEditorUpdater.QueueManagerRecovery();
             }
         }
 
@@ -180,6 +182,7 @@ namespace VRCLightVolumes {
         // Requests a deferred preview rebuild after any AssetDatabase refresh.
         private static void OnPostprocessAllAssets(string[] importedAssets, string[] deletedAssets, string[] movedAssets, string[] movedFromAssetPaths, bool didDomainReload) {
             LightVolumeClusteringPreview.RequestPreviewRefresh();
+            LightVolumeEditorUpdater.QueueManagerRecovery();
         }
     }
 }

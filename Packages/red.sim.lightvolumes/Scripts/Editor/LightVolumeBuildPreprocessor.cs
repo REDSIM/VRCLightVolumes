@@ -28,6 +28,7 @@ namespace VRCLightVolumes {
         private static readonly List<LightVolumeInstance> _lightVolumeBuffer = new List<LightVolumeInstance>();
         private static readonly List<PointLightVolumeInstance> _pointLightBuffer = new List<PointLightVolumeInstance>();
         private static readonly List<PointLightShadowRuntimeBaker> _shadowBakerBuffer = new List<PointLightShadowRuntimeBaker>();
+        private static bool _playModeRuntimePrepareQueued;
 
         // Runtime materials cannot be constructed by Udon, so prepare temporary editor copies before play mode.
         static LightVolumePreprocessor() {
@@ -41,6 +42,7 @@ namespace VRCLightVolumes {
             EditorApplication.playModeStateChanged -= OnPlayModeStateChanged;
             AssemblyReloadEvents.beforeAssemblyReload -= Shutdown;
             EditorApplication.quitting -= Shutdown;
+            CancelQueuedPrimaryRuntimeDependencies();
             ClearBuffers();
         }
 
@@ -52,13 +54,40 @@ namespace VRCLightVolumes {
             PrepareRuntimeDependencies(roots, false, FindPrimaryManager(roots));
         }
 
-        // Prepares the same single Manager before Play Mode (serialized Udon variables) and after entry
-        // (the live Udon heap), then removes its temporary copies after exit.
+        // Prepares the same single Manager before Play Mode (serialized Udon variables) and after entry (the live Udon heap), then removes its temporary copies after exit.
         private static void OnPlayModeStateChanged(PlayModeStateChange state) {
-            if (state == PlayModeStateChange.ExitingEditMode || state == PlayModeStateChange.EnteredPlayMode)
+            if (state == PlayModeStateChange.ExitingEditMode) {
+                CancelQueuedPrimaryRuntimeDependencies();
                 PreparePrimaryRuntimeDependencies();
-            else if (state == PlayModeStateChange.EnteredEditMode)
+            } else if (state == PlayModeStateChange.EnteredPlayMode) {
+                QueuePrimaryRuntimeDependencies();
+            } else if (state == PlayModeStateChange.EnteredEditMode) {
+                CancelQueuedPrimaryRuntimeDependencies();
                 ClearPrimaryRuntimeDependencies();
+            }
+        }
+
+        // UdonBehaviour initializes its live heap after the EnteredPlayMode notification on some
+        // editor configurations. Defer the live write so it cannot depend on an already-open
+        // UdonSharp Inspector performing an incidental proxy-to-Udon copy.
+        private static void QueuePrimaryRuntimeDependencies() {
+            if (_playModeRuntimePrepareQueued) return;
+            _playModeRuntimePrepareQueued = true;
+            EditorApplication.delayCall += FlushPrimaryRuntimeDependencies;
+        }
+
+        // Publishes the temporary play-mode resources once the live Udon heap is available.
+        private static void FlushPrimaryRuntimeDependencies() {
+            EditorApplication.delayCall -= FlushPrimaryRuntimeDependencies;
+            _playModeRuntimePrepareQueued = false;
+            if (Application.isPlaying) PreparePrimaryRuntimeDependencies();
+        }
+
+        // Removes a pending post-enter write when play mode is cancelled, exited or the domain ends.
+        private static void CancelQueuedPrimaryRuntimeDependencies() {
+            if (!_playModeRuntimePrepareQueued) return;
+            EditorApplication.delayCall -= FlushPrimaryRuntimeDependencies;
+            _playModeRuntimePrepareQueued = false;
         }
 
         // Prepares runtime-only materials and cameras for the primary Manager's scene.
@@ -84,44 +113,46 @@ namespace VRCLightVolumes {
         // Canonicalizes build data and prepares Manager, projection and shadow runtime dependencies.
         private static void PrepareRuntimeDependencies(GameObject[] roots, bool editorTemporary, LightVolumeManager manager) {
             if (manager == null) return;
-            if (editorTemporary) PrepareProjectionTextureImports(roots);
-            else CanonicalizeBuildScene(roots, manager);
+            try {
+                if (editorTemporary) PrepareProjectionTextureImports(roots);
+                else CanonicalizeBuildScene(roots, manager);
 
-            Shader cubemapFaceShader = Shader.Find(CubemapFaceShaderName);
-            Shader shadowDepthEncodeShader = Shader.Find(ShadowDepthEncodeShaderName);
-            Shader shadowBlurShader = Shader.Find(ShadowBlurShaderName);
-            Shader clusteringShader = Shader.Find(ClusteringShaderName);
-            PrepareManagerRuntimeDependencies(manager, cubemapFaceShader, shadowDepthEncodeShader, shadowBlurShader, clusteringShader, editorTemporary);
+                Shader cubemapFaceShader = Shader.Find(CubemapFaceShaderName);
+                Shader shadowDepthEncodeShader = Shader.Find(ShadowDepthEncodeShaderName);
+                Shader shadowBlurShader = Shader.Find(ShadowBlurShaderName);
+                Shader clusteringShader = Shader.Find(ClusteringShaderName);
+                PrepareManagerRuntimeDependencies(manager, cubemapFaceShader, shadowDepthEncodeShader, shadowBlurShader, clusteringShader, editorTemporary);
 
-            for (int i = 0; i < roots.Length; i++) {
-                GameObject root = roots[i];
-                if (root == null) continue;
+                for (int i = 0; i < roots.Length; i++) {
+                    GameObject root = roots[i];
+                    if (root == null) continue;
 
-                _pointLightBuffer.Clear();
-                root.GetComponentsInChildren(true, _pointLightBuffer);
-                for (int j = 0; j < _pointLightBuffer.Count; j++) {
-                    PreparePointLightForRuntime(_pointLightBuffer[j], manager, editorTemporary);
+                    _pointLightBuffer.Clear();
+                    root.GetComponentsInChildren(true, _pointLightBuffer);
+                    for (int j = 0; j < _pointLightBuffer.Count; j++) {
+                        PreparePointLightForRuntime(_pointLightBuffer[j], manager, editorTemporary);
+                    }
+
+                    // External runtime bakers need the same local point-light dependencies even without Bake In Game.
+                    _shadowBakerBuffer.Clear();
+                    root.GetComponentsInChildren(true, _shadowBakerBuffer);
+                    for (int j = 0; j < _shadowBakerBuffer.Count; j++) {
+                        PointLightShadowRuntimeBaker baker = _shadowBakerBuffer[j];
+                        if (baker != null) PreparePointLightRuntimeShadowDependencies(baker.TargetPointLightVolume, manager);
+                    }
                 }
 
-                // External runtime bakers need the same local point-light dependencies even without Bake In Game.
-                _shadowBakerBuffer.Clear();
-                root.GetComponentsInChildren(true, _shadowBakerBuffer);
-                for (int j = 0; j < _shadowBakerBuffer.Count; j++) {
-                    PointLightShadowRuntimeBaker baker = _shadowBakerBuffer[j];
-                    if (baker != null) PreparePointLightRuntimeShadowDependencies(baker.TargetPointLightVolume, manager);
+                // Manager resources are shared by every runtime shadow light. Publish them once after all dependencies are prepared instead of repeating the same Udon writes per light.
+                ApplyManagerRuntimeDependencies(manager);
+
+                if (!editorTemporary) {
+                    ClearManagerBuildOnlySerializedReferences(manager);
+                    for (int i = 0; i < roots.Length; i++) ClearBuildOnlySerializedReferences(roots[i]);
                 }
+            } finally {
+                // Exceptions in build hooks must not leave scene-object wrappers rooted by static buffers.
+                ClearBuffers();
             }
-
-            // Manager resources are shared by every runtime shadow light. Publish them once after
-            // all dependencies are prepared instead of repeating the same Udon writes per light.
-            ApplyManagerRuntimeDependencies(manager);
-
-            if (!editorTemporary) {
-                ClearManagerBuildOnlySerializedReferences(manager);
-                for (int i = 0; i < roots.Length; i++) ClearBuildOnlySerializedReferences(roots[i]);
-            }
-
-            ClearBuffers();
         }
 
         // Rebuild every runtime field once on Unity's temporary build-scene copy. Editor and play-mode scenes keep the event-driven authoring path and are never changed here.
@@ -158,36 +189,40 @@ namespace VRCLightVolumes {
             // Publish the completed registries once after every child has been canonicalized.
             manager.UpdateVolumes();
             LightVolumeManagerEditorBackend.CopyProxyToUdon(manager);
-
-            ClearBuffers();
         }
 
         // Applies mobile-safe HDR import settings to active projection texture assets.
         private static void PrepareProjectionTextureImports(GameObject[] roots) {
-            for (int i = 0; i < roots.Length; i++) {
-                GameObject root = roots[i];
-                if (root == null) continue;
-                _pointLightBuffer.Clear();
-                root.GetComponentsInChildren(true, _pointLightBuffer);
-                for (int j = 0; j < _pointLightBuffer.Count; j++) {
-                    PointLightVolumeInstance pointLight = _pointLightBuffer[j];
-                    if (pointLight != null) LVUtils.TextureSetLinearHDRAndroidImport(pointLight.GetCustomTexture());
+            try {
+                for (int i = 0; i < roots.Length; i++) {
+                    GameObject root = roots[i];
+                    if (root == null) continue;
+                    _pointLightBuffer.Clear();
+                    root.GetComponentsInChildren(true, _pointLightBuffer);
+                    for (int j = 0; j < _pointLightBuffer.Count; j++) {
+                        PointLightVolumeInstance pointLight = _pointLightBuffer[j];
+                        if (pointLight != null) LVUtils.TextureSetLinearHDRAndroidImport(pointLight.GetCustomTexture());
+                    }
                 }
+            } finally {
+                _pointLightBuffer.Clear();
             }
-            _pointLightBuffer.Clear();
         }
 
         // Destroys temporary materials and clears runtime-shadow references below the supplied roots.
         private static void ClearRuntimeDependencies(GameObject[] roots, LightVolumeManager manager) {
-            if (manager != null) ClearManagerMaterials(manager);
-            for (int i = 0; i < roots.Length; i++) {
-                GameObject root = roots[i];
-                if (root == null) continue;
+            try {
+                if (manager != null) ClearManagerMaterials(manager);
+                for (int i = 0; i < roots.Length; i++) {
+                    GameObject root = roots[i];
+                    if (root == null) continue;
+                    _pointLightBuffer.Clear();
+                    root.GetComponentsInChildren(true, _pointLightBuffer);
+                    for (int j = 0; j < _pointLightBuffer.Count; j++) ClearPointLightRuntimeShadowDependencies(_pointLightBuffer[j]);
+                }
+            } finally {
                 _pointLightBuffer.Clear();
-                root.GetComponentsInChildren(true, _pointLightBuffer);
-                for (int j = 0; j < _pointLightBuffer.Count; j++) ClearPointLightRuntimeShadowDependencies(_pointLightBuffer[j]);
             }
-            _pointLightBuffer.Clear();
         }
 
         // Creates all runtime materials and shadow-camera dependencies owned by one Manager.
@@ -199,6 +234,22 @@ namespace VRCLightVolumes {
             ResetManagerRuntimeShadowBlurState(manager);
             manager.CubemapFaceMaterial = CreateRuntimeMaterialInstance(cubemapFaceShader, manager.CubemapFaceMaterial, manager.name + "_CubemapFaceRuntime", editorTemporary);
             manager.ClusteringMaterial = CreateRuntimeMaterialInstance(clusteringShader, manager.ClusteringMaterial, manager.name + "_ClusteringRuntime", editorTemporary);
+        }
+
+        // Recreates and republishes Manager-owned play-mode resources on demand. This is the
+        // selection-independent fallback for an Inspector opened after Play Mode has already
+        // started, including configurations where the first EnteredPlayMode write preceded live
+        // Udon heap initialization.
+        internal static void EnsureRuntimeDependencies(LightVolumeManager manager) {
+            if (manager == null) return;
+            PrepareManagerRuntimeDependencies(
+                manager,
+                Shader.Find(CubemapFaceShaderName),
+                Shader.Find(ShadowDepthEncodeShaderName),
+                Shader.Find(ShadowBlurShaderName),
+                Shader.Find(ClusteringShaderName),
+                true);
+            ApplyManagerRuntimeDependencies(manager);
         }
 
         // Resolves build-safe projection and optional Bake In Game state for one Point Light Volume.
@@ -222,9 +273,9 @@ namespace VRCLightVolumes {
         }
 
         // Assigns shared Manager shadow resources to a light that can bake shadows at runtime.
-        private static void PreparePointLightRuntimeShadowDependencies(PointLightVolumeInstance pointLight, LightVolumeManager manager) {
+        internal static void PreparePointLightRuntimeShadowDependencies(PointLightVolumeInstance pointLight, LightVolumeManager manager, bool clearBakeInGameSource = true) {
             if (pointLight == null || manager == null || pointLight.LightVolumeManager != manager) return;
-            if (pointLight.Shadows && pointLight.BakeInGame) ClearPointLightRuntimeShadowSource(pointLight);
+            if (clearBakeInGameSource && pointLight.Shadows && pointLight.BakeInGame) ClearPointLightRuntimeShadowSource(pointLight);
             pointLight.RuntimeShadowCamera = manager.RuntimeShadowCamera;
             pointLight.RuntimeShadowDepthEncodeMaterial = manager.RuntimeShadowDepthEncodeMaterial;
             pointLight.RuntimeShadowBlurMaterial = manager.RuntimeShadowBlurMaterial;
@@ -476,11 +527,22 @@ namespace VRCLightVolumes {
                 return null;
             }
             bool canReuse = existing != null && !AssetDatabase.Contains(existing) && existing.shader == shader;
-            Material material = canReuse ? existing : new Material(shader);
-            if (!canReuse) DestroyRuntimeMaterialInstance(existing);
-            material.name = name;
-            material.hideFlags = editorTemporary ? HideFlags.HideAndDontSave : HideFlags.None;
-            return material;
+            if (canReuse) {
+                existing.name = name;
+                existing.hideFlags = editorTemporary ? HideFlags.HideAndDontSave : HideFlags.None;
+                return existing;
+            }
+
+            Material material = new Material(shader);
+            try {
+                material.name = name;
+                material.hideFlags = editorTemporary ? HideFlags.HideAndDontSave : HideFlags.None;
+                DestroyRuntimeMaterialInstance(existing);
+                return material;
+            } catch {
+                DestroyRuntimeMaterialInstance(material);
+                throw;
+            }
         }
 
         // Destroys a generated runtime material while preserving imported material assets.

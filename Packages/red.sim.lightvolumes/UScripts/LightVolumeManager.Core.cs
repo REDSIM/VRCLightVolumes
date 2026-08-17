@@ -23,6 +23,15 @@ namespace VRCLightVolumes {
             return new Vector4(varianceBias * 5.54f, -bleedReduction * bleedScale, bleedScale, varianceBias * 5f);
         }
 
+        // Publishes the physical atlas texel size used by seamless cubemap-array filtering.
+        private Vector4 GetPointLightShadowTextureSize() {
+            int width = ShadowTextures != null ? ShadowTextures.width : ShadowTexturesWidth;
+            int height = ShadowTextures != null ? ShadowTextures.height : ShadowTexturesHeight;
+            width = Mathf.Max(width, 1);
+            height = Mathf.Max(height, 1);
+            return new Vector4(width, height, 1f / width, 1f / height);
+        }
+
         // Octahedrally packs a shape axis and 8-bit shape code into one exactly representable 24-bit float integer.
         private float EncodeClusterShape(Vector3 axis, int shapeCode) {
             float axisLengthSq = axis.sqrMagnitude;
@@ -543,6 +552,7 @@ namespace VRCLightVolumes {
             _pointLightShadowCubeCountID = VRCShader.PropertyToID("_UdonPointLightVolumeShadowCubeCount");
             _pointLightShadowTextureID = VRCShader.PropertyToID("_UdonPointLightVolumeShadowTexture");
             _pointLightShadowReceiverParamsID = VRCShader.PropertyToID("_UdonPointLightVolumeShadowReceiverParams");
+            _pointLightShadowTextureSizeID = VRCShader.PropertyToID("_UdonPointLightVolumeShadowTextureSize");
             _clusteringLightsID = VRCShader.PropertyToID("_UdonClusteringLights");
             _lightBrightnessCutoffID = VRCShader.PropertyToID("_UdonLightBrightnessCutoff");
             // Froxel Clustering
@@ -565,6 +575,9 @@ namespace VRCLightVolumes {
             _cubemapMainTexID = VRCShader.PropertyToID("_MainTex");
             _cubemapSourceTexID = VRCShader.PropertyToID("_CubeTex");
             _cubemapFaceIndexID = VRCShader.PropertyToID("_FaceIndex");
+            _cubemapArraySourceTexID = VRCShader.PropertyToID("_SourceArrayTex");
+            _cubemapArraySourceBaseSliceID = VRCShader.PropertyToID("_SourceBaseSlice");
+            _cubemapArraySourceResolutionID = VRCShader.PropertyToID("_SourceResolution");
 
             // Light Volumes
             VRCShader.SetGlobalVectorArray(_lightVolumeInvLocalEdgeSmoothID, _invLocalEdgeSmooth);
@@ -583,6 +596,7 @@ namespace VRCLightVolumes {
             VRCShader.SetGlobalVectorArray(_pointLightShadowReprojectionDataID, _pointLightShadowReprojectionData);
             VRCShader.SetGlobalVectorArray(_pointLightShadowRotationDataID, _pointLightShadowRotationData);
             VRCShader.SetGlobalVector(_pointLightShadowReceiverParamsID, GetPointLightShadowReceiverParams());
+            VRCShader.SetGlobalVector(_pointLightShadowTextureSizeID, GetPointLightShadowTextureSize());
             _clusteringLightsDirty = true;
             VRCShader.SetGlobalFloat(_clusteringEnabledID, 0f);
             _isInitialized = true;
@@ -597,6 +611,7 @@ namespace VRCLightVolumes {
             VRCShader.SetGlobalFloat(_pointLightShadowCubeCountID, 0);
             VRCShader.SetGlobalFloat(_pointLightShadowCountID, 0);
             VRCShader.SetGlobalVector(_pointLightShadowReceiverParamsID, GetPointLightShadowReceiverParams());
+            VRCShader.SetGlobalVector(_pointLightShadowTextureSizeID, GetPointLightShadowTextureSize());
             VRCShader.SetGlobalFloat(_clusteringEnabledID, 0f);
             _clusteringActive = false;
             VRCShader.SetGlobalFloat(_lightVolumeEnabledID, 0);
@@ -660,9 +675,19 @@ namespace VRCLightVolumes {
         }
 #endif
 
-#if !COMPILER_UDONSHARP && (!UDONSHARP || UNITY_EDITOR)
-        // Releases generated native resources when the manager object is destroyed
+        // Releases generated native resources when the manager object is destroyed. Runtime
+        // Udon owns every generated texture because build preparation clears these fields.
         private void OnDestroy() {
+#if COMPILER_UDONSHARP
+            if (CustomTextures != null) {
+                ReleaseRuntimeRenderTexture(CustomTextures);
+                CustomTextures = null;
+            }
+            if (ShadowTextures != null) {
+                ReleaseRuntimeRenderTexture(ShadowTextures);
+                ShadowTextures = null;
+            }
+#else
             if (CustomTextures != null && CustomTextures.hideFlags == HideFlags.HideAndDontSave) {
                 ReleaseRuntimeRenderTexture(CustomTextures);
                 CustomTextures = null;
@@ -671,6 +696,7 @@ namespace VRCLightVolumes {
                 ReleaseRuntimeRenderTexture(ShadowTextures);
                 ShadowTextures = null;
             }
+#endif
             ReleaseClusteringTextures();
 #if UDONSHARP
             if (_dummyRT != null) {
@@ -678,10 +704,12 @@ namespace VRCLightVolumes {
                 _dummyRT = null;
             }
 #endif
+#if !COMPILER_UDONSHARP && (!UDONSHARP || UNITY_EDITOR)
             DestroyCubemapFaceRuntimeMaterial();
+            DestroyRuntimeShadowMaterials();
             DestroyClusteringMaterial();
-        }
 #endif
+        }
 
 #endregion
     }

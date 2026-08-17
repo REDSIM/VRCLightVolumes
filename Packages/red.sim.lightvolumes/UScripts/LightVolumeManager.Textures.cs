@@ -25,6 +25,8 @@ namespace VRCLightVolumes {
     public partial class LightVolumeManager {
 #region Runtime Texture Caches
 
+        private const int CubemapResampleMaterialPass = 1;
+
         // Rebuilds the runtime cookie texture array and assigns stable shader-side IDs to all point light instances
         public void ReinitializeCustomTextures() {
 #if UNITY_EDITOR && !COMPILER_UDONSHARP
@@ -566,10 +568,13 @@ namespace VRCLightVolumes {
             if (instance == null) return false;
             Texture sourceTexture = instance.ShadowMapTexture;
             if (sourceTexture == null || _shadowTextureAllocationFailed) return false;
+            int sourceTextureMode = GetTextureMode(sourceTexture);
 
             int registryIndex = FindPointLightRegistryIndex(instance);
             if (registryIndex < 0) return false;
             bool usesCubemapShadow = instance.LightType != 1 || instance.ShadowMapUsesCubemap;
+            instance.ShadowMapTextureIsCubemap = sourceTextureMode == 2;
+            instance.ShadowMapTextureHasDepthSlices = sourceTextureMode == 1 && usesCubemapShadow;
             int expectedSourceType = usesCubemapShadow ? 1 : 3;
             bool layoutReady = _shadowTexturesInitialized && ShadowTextures != null && _shadowTextureArrayDepth > 0 && IsPointLightShadowTextureCacheMatch(instance, registryIndex, expectedSourceType, sourceTexture);
             if (!layoutReady) {
@@ -586,19 +591,23 @@ namespace VRCLightVolumes {
             int firstTargetSlice = usesCubemapShadow ? shadowId * 6 : ShadowCubemapsCount * 6 + shadowId - ShadowCubemapsCount;
             if (firstTargetSlice < 0 || firstTargetSlice + sourceSliceCount > _shadowTextureArrayDepth) return false;
 
-            if (instance.ShadowMapTextureIsCubemap) {
+            if (sourceTextureMode == 2) {
                 if (!EnsureCubemapFaceMaterial()) return false;
                 Material cubemapFaceMaterial = CubemapFaceMaterial;
                 cubemapFaceMaterial.SetTexture(_cubemapSourceTexID, sourceTexture);
                 for (int sourceFace = 0; sourceFace < sourceSliceCount; sourceFace++) {
                     cubemapFaceMaterial.SetInt(_cubemapFaceIndexID, sourceFace);
-                    BlitMaterialToSlice(null, cubemapFaceMaterial, destination, firstTargetSlice + sourceFace);
+                    BlitMaterialToSlice(null, cubemapFaceMaterial, destination, firstTargetSlice + sourceFace, 0);
                 }
                 return true;
             }
+            bool resampleCubemapArray = usesCubemapShadow && sourceTextureMode == 1 && CubemapArrayNeedsResampling(sourceTexture, destination);
+            Material resampleMaterial = resampleCubemapArray ? PrepareCubemapArrayResampleMaterial(sourceTexture) : null;
             for (int sourceSlice = 0; sourceSlice < sourceSliceCount; sourceSlice++) {
                 int targetSlice = firstTargetSlice + sourceSlice;
-                VRCGraphics.Blit(sourceTexture, destination, instance.ShadowMapTextureHasDepthSlices ? sourceSlice : 0, targetSlice);
+                if (resampleMaterial != null)
+                    BlitCubemapArraySliceSeamless(resampleMaterial, sourceSlice, destination, targetSlice);
+                else VRCGraphics.Blit(sourceTexture, destination, instance.ShadowMapTextureHasDepthSlices ? sourceSlice : 0, targetSlice);
             }
             return true;
         }
@@ -695,13 +704,16 @@ namespace VRCLightVolumes {
                 } else if (textureSource != null) { // Texture shadows mode
 
                     bool autoUpdate = instance.AutoUpdateShadowMap;
+                    int textureMode = GetTextureMode(textureSource);
+                    instance.ShadowMapTextureIsCubemap = textureMode == 2;
+                    instance.ShadowMapTextureHasDepthSlices = textureMode == 1 && usesCubemapShadow;
                     if (usesCubemapShadow) { // TEXTURE CUBEMAP SHADOW
 
                         int index = Array.IndexOf((Array)_shadowCubemapTextures, textureSource, 0, cubemapTextureCount);
                         if (index < 0) { // First use of this texture: append it and reset this source's auto-update flag for the new cache build
                             index = cubemapTextureCount;
                             _shadowCubemapTextures[cubemapTextureCount] = textureSource;
-                            _shadowCubemapTextureModes[cubemapTextureCount] = instance.ShadowMapTextureIsCubemap ? 2 : (instance.ShadowMapTextureHasDepthSlices ? 1 : 0); // Texture layout: 0 = single 2D texture, 1 = Texture2DArray face slices, 2 = native Cubemap.
+                            _shadowCubemapTextureModes[cubemapTextureCount] = textureMode;
                             _shadowCubemapTextureAutoUpdates[cubemapTextureCount] = autoUpdate;
                             cubemapTextureCount++;
                         } else if (autoUpdate) { // Shared texture source: at least one auto-updated user already makes the shared source auto-updated
@@ -892,7 +904,7 @@ namespace VRCLightVolumes {
 #if COMPILER_UDONSHARP
             Destroy(texture);
 #else
-            RenderTexture.active = null;
+            if (RenderTexture.active == texture) RenderTexture.active = null;
             texture.Release();
             if (Application.isPlaying) Destroy(texture);
             else DestroyImmediate(texture);
@@ -921,21 +933,64 @@ namespace VRCLightVolumes {
         // Writes a six-face cubemap texture source into consecutive destination array slices
         private void BlitCubemapTexture(Texture sourceTexture, int textureMode, int firstSlice, RenderTexture destination) {
             if (sourceTexture == null) return;
+            // Undo can restore the texture reference and its serialized layout flags from different
+            // runtime snapshots. The actual texture dimension is authoritative before touching a
+            // Cube-only material property.
+            textureMode = GetTextureMode(sourceTexture);
             if (textureMode == 2) { // Native Cubemap: unwrap each cubemap face into its destination slice
                 if (!EnsureCubemapFaceMaterial()) return;
                 Material cubemapFaceMaterial = CubemapFaceMaterial;
                 cubemapFaceMaterial.SetTexture(_cubemapSourceTexID, sourceTexture);
                 for (int face = 0; face < 6; face++) {
                     cubemapFaceMaterial.SetInt(_cubemapFaceIndexID, face);
-                    BlitMaterialToSlice(null, cubemapFaceMaterial, destination, firstSlice + face);
+                    BlitMaterialToSlice(null, cubemapFaceMaterial, destination, firstSlice + face, 0);
                 }
                 return;
             }
+            bool resampleCubemapArray = textureMode == 1 && CubemapArrayNeedsResampling(sourceTexture, destination);
+            Material resampleMaterial = resampleCubemapArray ? PrepareCubemapArrayResampleMaterial(sourceTexture) : null;
             for (int i = 0; i < 6; i++) {
                 int targetSlice = firstSlice + i;
                 int sourceSlice = textureMode == 1 ? i : 0; // Texture2DArray: slices 0..5 already contain the cubemap faces
-                VRCGraphics.Blit(sourceTexture, destination, sourceSlice, targetSlice);
+                if (resampleMaterial != null)
+                    BlitCubemapArraySliceSeamless(resampleMaterial, sourceSlice, destination, targetSlice);
+                else VRCGraphics.Blit(sourceTexture, destination, sourceSlice, targetSlice);
             }
+        }
+
+        // A cubemap stored as array slices needs cross-face filtering whenever its resolution
+        // changes; an ordinary array blit clamps every face independently.
+        private bool CubemapArrayNeedsResampling(Texture sourceTexture, RenderTexture destination) {
+            return sourceTexture != null && destination != null && (sourceTexture.width != destination.width || sourceTexture.height != destination.height);
+        }
+
+        // Configures the shared resample material once for all six faces of one cubemap source.
+        private Material PrepareCubemapArrayResampleMaterial(Texture sourceTexture) {
+            Material resampleMaterial = RuntimeShadowBlurMaterial;
+            if (resampleMaterial == null) return null;
+            float sourceWidth = Mathf.Max(sourceTexture.width, 1);
+            float sourceHeight = Mathf.Max(sourceTexture.height, 1);
+            resampleMaterial.SetTexture(_cubemapArraySourceTexID, sourceTexture);
+            resampleMaterial.SetFloat(_cubemapArraySourceBaseSliceID, 0f);
+            resampleMaterial.SetVector(_cubemapArraySourceResolutionID, new Vector4(sourceWidth, sourceHeight, 1f / sourceWidth, 1f / sourceHeight));
+            return resampleMaterial;
+        }
+
+        // Resamples one prepared face using the source texel footprint. This keeps a low-resolution
+        // bake continuous when it is expanded into a much larger Manager atlas.
+        private void BlitCubemapArraySliceSeamless(Material resampleMaterial, int sourceFace, RenderTexture destination, int targetSlice) {
+            resampleMaterial.SetInt(_cubemapFaceIndexID, sourceFace);
+            BlitMaterialToSlice(null, resampleMaterial, destination, targetSlice, CubemapResampleMaterialPass);
+        }
+
+        // Resolves the physical source layout without trusting serialized metadata that Undo may
+        // restore independently from a runtime-generated texture reference.
+        private int GetTextureMode(Texture texture) {
+            if (texture == null) return 0;
+            int textureDimension = (int)texture.dimension;
+            if (textureDimension == 4) return 2; // 4: TextureDimension.Cube
+            if (textureDimension == 5) return 1; // 5: TextureDimension.Tex2DArray
+            return 0;
         }
 
         // Writes a six-face cubemap material source into consecutive destination array slices
@@ -950,7 +1005,7 @@ namespace VRCLightVolumes {
             float height = destination.height;
             for (int face = 0; face < 6; face++) {
                 sourceMaterial.SetVector("_CustomRenderTextureInfo", new Vector4(width, height, 1f, face));
-                BlitMaterialToSlice(blitSource, sourceMaterial, destination, firstSlice + face);
+                BlitMaterialToSlice(blitSource, sourceMaterial, destination, firstSlice + face, 0);
             }
         }
 
@@ -963,11 +1018,11 @@ namespace VRCLightVolumes {
 #else
             Texture blitSource = null;
 #endif
-            BlitMaterialToSlice(blitSource, sourceMaterial, destination, targetSlice);
+            BlitMaterialToSlice(blitSource, sourceMaterial, destination, targetSlice, 0);
         }
 
         // Renders one material pass into a destination texture-array slice using the active runtime API
-        private void BlitMaterialToSlice(Texture sourceTexture, Material material, RenderTexture destination, int targetSlice) {
+        private void BlitMaterialToSlice(Texture sourceTexture, Material material, RenderTexture destination, int targetSlice, int materialPass) {
 #if UDONSHARP
 #if !COMPILER_UDONSHARP
             RenderTexture previousRenderTexture = RenderTexture.active;
@@ -982,7 +1037,7 @@ namespace VRCLightVolumes {
                 _dummyRT = dummyTexture;
             }
             VRCGraphics.Blit(_dummyRT, destination, 0, targetSlice);
-            VRCGraphics.Blit(sourceTexture, material, 0, targetSlice);
+            VRCGraphics.Blit(sourceTexture, material, materialPass, targetSlice);
 #if !COMPILER_UDONSHARP
             RenderTexture.active = previousRenderTexture == destination ? null : previousRenderTexture;
 #endif
@@ -990,7 +1045,7 @@ namespace VRCLightVolumes {
             // Unity Graphics can bind the target slice directly, so the material pass can render in one blit
             RenderTexture previousRenderTexture = RenderTexture.active;
             VRCGraphics.SetRenderTarget(destination, 0, CubemapFace.Unknown, targetSlice);
-            VRCGraphics.Blit(sourceTexture, material, 0);
+            VRCGraphics.Blit(sourceTexture, material, materialPass);
             RenderTexture.active = previousRenderTexture == destination ? null : previousRenderTexture;
 #endif
         }
@@ -1066,6 +1121,20 @@ namespace VRCLightVolumes {
             if (Application.isPlaying) Destroy(CubemapFaceMaterial);
             else DestroyImmediate(CubemapFaceMaterial);
             CubemapFaceMaterial = null;
+        }
+
+        // Destroys only editor-generated shadow materials owned by this Manager. Persistent project assets and build-scene material dependencies are serialized ownership inputs and must never be destroyed by the component lifecycle.
+        private void DestroyRuntimeShadowMaterials() {
+            if (RuntimeShadowDepthEncodeMaterial != null && RuntimeShadowDepthEncodeMaterial.hideFlags == HideFlags.HideAndDontSave) {
+                if (Application.isPlaying) Destroy(RuntimeShadowDepthEncodeMaterial);
+                else DestroyImmediate(RuntimeShadowDepthEncodeMaterial);
+                RuntimeShadowDepthEncodeMaterial = null;
+            }
+            if (RuntimeShadowBlurMaterial != null && RuntimeShadowBlurMaterial.hideFlags == HideFlags.HideAndDontSave) {
+                if (Application.isPlaying) Destroy(RuntimeShadowBlurMaterial);
+                else DestroyImmediate(RuntimeShadowBlurMaterial);
+                RuntimeShadowBlurMaterial = null;
+            }
         }
 
         // Destroys the editor/standalone clustering material created outside the build preprocessor.

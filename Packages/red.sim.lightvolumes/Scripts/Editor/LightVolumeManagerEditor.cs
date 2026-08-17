@@ -92,7 +92,10 @@ namespace VRCLightVolumes {
             _manager = (LightVolumeManager)target;
             _debugExpanded = SessionState.GetBool(DebugFoldoutSessionKey, false);
             RefreshManagerCount();
-            if (_manager != null && _manager == _primaryManager && _manager.SanitizeRegistries()) {
+            // UdonSharp creates a custom editor before its first Play Mode Udon-to-proxy copy.
+            // Merely selecting the Manager late must therefore never repair and serialize the
+            // still-stale managed proxy over the running UdonBehaviour.
+            if (!EditorApplication.isPlayingOrWillChangePlaymode && _manager != null && _manager == _primaryManager && _manager.SanitizeRegistries()) {
                 LightVolumeManagerEditorBackend.CopyProxyToUdon(_manager);
                 LightVolumeManagerEditorBackend.QueueRuntimeManagerRefresh(_manager);
                 LVUtils.MarkDirty(_manager);
@@ -133,6 +136,7 @@ namespace VRCLightVolumes {
 
         // Draws Manager registries and settings, then propagates explicit changes to runtime state.
         public override void OnInspectorGUI() {
+            LightVolumeManagerEditorBackend.SynchronizeRuntimeInspectorGraphFromUdon(_manager);
             serializedObject.Update();
             EditorGUILayout.Space(EditorGUIUtility.singleLineHeight * 0.5f);
 
@@ -208,7 +212,7 @@ namespace VRCLightVolumes {
             LightVolumeManagerEditorBackend.ApplySettings( _manager, false, cookieLayoutChanged, shadowLayoutChanged, fullRuntimeRefresh, !EditorApplication.isPlaying);
             if (!fullRuntimeRefresh) {
                 if (pointLightRangesChanged) {
-                    if (!LightVolumeManagerEditorBackend.RefreshRuntimeManagerFromProxyImmediately(_manager)) _manager.UpdateVolumes();
+                    LightVolumeManagerEditorBackend.RefreshManagerOnce(_manager, false);
                 } else {
                     LightVolumeManagerEditorBackend.ApplyRuntimeManagerSettings(_manager);
                 }
@@ -256,6 +260,10 @@ namespace VRCLightVolumes {
             EditorGUI.LabelField(new Rect(titleX, rect.y, Mathf.Max(0f, titleRight - titleX), rect.height), title);
             if (!pointLights) EditorGUI.LabelField(weightRect, "Weight");
 
+            // Registry references are Udon graph links rather than ordinary runtime values. Keep
+            // selection available in Play Mode, but do not present drag/drop that cannot safely
+            // replace the live graph while UdonSharp is running.
+            if (Application.isPlaying) return;
             Event current = Event.current;
             if (current.type != EventType.DragUpdated && current.type != EventType.DragPerform || !rect.Contains(current.mousePosition)) return;
             DragAndDrop.visualMode = DragAndDropVisualMode.Link;
@@ -585,6 +593,7 @@ namespace VRCLightVolumes {
 
         // Draws a registry in a bounded viewport with a custom header and smooth scrolling.
         private void DrawScrollableList(ReorderableList list, RegistryScrollState scroll, SerializedProperty source, bool pointLights) {
+            list.draggable = !Application.isPlaying;
             float contentHeight = Mathf.Max(list.GetHeight(), list.elementHeight + RegistryScrollPadding * 2f);
             float maxViewportHeight = (list.elementHeight + 2f) * VisibleRegistryRows + RegistryScrollPadding * 2f;
             float viewportHeight = Mathf.Min(contentHeight, maxViewportHeight);

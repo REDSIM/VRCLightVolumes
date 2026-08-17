@@ -48,6 +48,7 @@ namespace VRCLightVolumes {
         // Installs scene-open migration hooks and schedules the initial loaded-scene pass.
         static LightVolumeMigration() {
             EditorSceneManager.sceneOpened += OnSceneOpened;
+            EditorSceneManager.sceneClosed += OnSceneClosed;
             AssemblyReloadEvents.beforeAssemblyReload += Shutdown;
             EditorApplication.quitting += Shutdown;
             QueueLoadedScenesMigration();
@@ -56,6 +57,7 @@ namespace VRCLightVolumes {
         // Removes editor callbacks and discards transient migration caches before this editor domain ends.
         private static void Shutdown() {
             EditorSceneManager.sceneOpened -= OnSceneOpened;
+            EditorSceneManager.sceneClosed -= OnSceneClosed;
             AssemblyReloadEvents.beforeAssemblyReload -= Shutdown;
             EditorApplication.quitting -= Shutdown;
             EditorApplication.delayCall -= RunQueuedMigration;
@@ -68,6 +70,12 @@ namespace VRCLightVolumes {
         // Queues a coalesced migration after Unity and UdonSharp finish opening a scene.
         private static void OnSceneOpened(Scene scene, OpenSceneMode mode) {
             QueueLoadedScenesMigration();
+        }
+
+        // Releases YAML and exact-instance guards owned by an unloaded scene. Keeping those Component wrappers until a domain reload grows the cache every time scenes are cycled.
+        private static void OnSceneClosed(Scene scene) {
+            if (!string.IsNullOrEmpty(scene.path)) SceneLegacyRuntimeBlocksCache.Remove(scene.path);
+            PruneMigratedRuntimeComponents(scene, true);
         }
 
         // Schedules one coalesced migration pass after scene deserialization and UdonSharp setup finish.
@@ -96,6 +104,7 @@ namespace VRCLightVolumes {
             if (EditorApplication.isPlayingOrWillChangePlaymode) return 0;
 
             SceneLegacyRuntimeBlocksCache.Clear();
+            PruneMigratedRuntimeComponents(default, false);
             int migrated = 0;
             int blocked = 0;
             for (int i = 0; i < SceneManager.sceneCount; i++) {
@@ -1302,6 +1311,30 @@ namespace VRCLightVolumes {
             MigratedRuntimeComponents[component.GetInstanceID()] = component;
         }
 
+        // Removes destroyed or unloaded components while preserving guards for every still-loaded
+        // instance. A scene-specific pass is safe because reopening creates distinct components and
+        // must be allowed to consume legacy YAML again when the prior migration was not saved.
+        private static void PruneMigratedRuntimeComponents(Scene closedScene, bool removeClosedScene) {
+            List<int> staleIds = null;
+            foreach (KeyValuePair<int, Component> pair in MigratedRuntimeComponents) {
+                Component component = pair.Value;
+                bool stale = component == null;
+                if (!stale) {
+                    try {
+                        Scene componentScene = component.gameObject.scene;
+                        stale = !componentScene.IsValid() || !componentScene.isLoaded || removeClosedScene && componentScene == closedScene;
+                    } catch (MissingReferenceException) {
+                        stale = true;
+                    }
+                }
+                if (!stale) continue;
+                if (staleIds == null) staleIds = new List<int>();
+                staleIds.Add(pair.Key);
+            }
+            if (staleIds == null) return;
+            for (int i = 0; i < staleIds.Count; i++) MigratedRuntimeComponents.Remove(staleIds[i]);
+        }
+
         // Detects unified Point Light fields that make replaying legacy packed data unsafe.
         private static bool HasCurrentPointLightData(string block) {
             return TryReadYamlLine(block, "LightType", out _) || TryReadYamlLine(block, "Position", out _) || TryReadYamlLine(block, "InverseSquaredRange", out _) || TryReadYamlLine(block, "ProjectionMode", out _);
@@ -1315,20 +1348,21 @@ namespace VRCLightVolumes {
         // Clears obsolete or missing projection texture references that cannot be valid runtime arrays.
         private static bool MigrateLegacyManagerRuntimeTextures(LightVolumeManager manager) {
             if (manager == null || IsInheritedPrefabComponent(manager) || !IsExactReadyRuntimeComponent(manager)) return false;
-            SerializedObject serializedManager = new SerializedObject(manager);
-            SerializedProperty property = serializedManager.FindProperty("CustomTextures");
-            if (property == null) return false;
-            bool clear;
-            try {
-                UnityEngine.Object value = property.objectReferenceValue;
-                clear = value != null && !(value is RenderTexture) || value == null && property.objectReferenceInstanceIDValue != 0;
-            } catch (MissingReferenceException) {
-                clear = true;
+            using (SerializedObject serializedManager = new SerializedObject(manager)) {
+                SerializedProperty property = serializedManager.FindProperty("CustomTextures");
+                if (property == null) return false;
+                bool clear;
+                try {
+                    UnityEngine.Object value = property.objectReferenceValue;
+                    clear = value != null && !(value is RenderTexture) || value == null && property.objectReferenceInstanceIDValue != 0;
+                } catch (MissingReferenceException) {
+                    clear = true;
+                }
+                if (!clear) return false;
+                Undo.RecordObject(manager, UndoName);
+                property.objectReferenceValue = null;
+                serializedManager.ApplyModifiedPropertiesWithoutUndo();
             }
-            if (!clear) return false;
-            Undo.RecordObject(manager, UndoName);
-            property.objectReferenceValue = null;
-            serializedManager.ApplyModifiedPropertiesWithoutUndo();
             CopyProxyToUdon(manager);
             MarkDirty(manager);
             return true;

@@ -371,6 +371,45 @@ namespace VRCLightVolumes.Tests {
             }
         }
 
+        // Rebuilding shared shadow dependencies must release only the temporary materials created
+        // by the editor baker and preserve externally-owned non-persistent materials.
+        [Test]
+        public void ShadowDependencyReplacementReleasesOnlyOwnedRuntimeMaterials() {
+            MethodInfo ensureDependencies = typeof(PointLightShadowBaker).GetMethod(
+                "EnsureRuntimeShadowBakeDependencies",
+                BindingFlags.Static | BindingFlags.NonPublic);
+            GameObject managerObject = new GameObject("Shadow Dependency Replacement Manager");
+            GameObject pointObject = new GameObject("Shadow Dependency Replacement Point");
+            Material ownedDepth = null;
+            Material externalBlur = null;
+            try {
+                Assert.That(ensureDependencies, Is.Not.Null);
+                Shader wrongShader = Shader.Find("Hidden/InternalErrorShader");
+                Assert.That(wrongShader, Is.Not.Null);
+                ownedDepth = new Material(wrongShader) { hideFlags = HideFlags.HideAndDontSave };
+                externalBlur = new Material(wrongShader);
+                LightVolumeManager manager = managerObject.AddComponent<LightVolumeManager>();
+                PointLightVolumeInstance point = pointObject.AddComponent<PointLightVolumeInstance>();
+                point.LightVolumeManager = manager;
+                point.Blur = 1f;
+                manager.RuntimeShadowDepthEncodeMaterial = ownedDepth;
+                manager.RuntimeShadowBlurMaterial = externalBlur;
+
+                bool ready = (bool)ensureDependencies.Invoke(null, new object[] { manager, point });
+
+                Assert.That(ready, Is.True);
+                Assert.That(ownedDepth == null, Is.True, "The replaced editor-owned material must be destroyed.");
+                Assert.That(externalBlur == null, Is.False, "An external material must not be destroyed when the Manager stops referencing it.");
+                Assert.That(manager.RuntimeShadowDepthEncodeMaterial.shader.name, Is.EqualTo("Hidden/VRCLV/PointLightShadowDepthEncode"));
+                Assert.That(manager.RuntimeShadowBlurMaterial.shader.name, Is.EqualTo("Hidden/VRCLV/PointLightShadowRuntimeBlur"));
+            } finally {
+                UnityEngine.Object.DestroyImmediate(pointObject);
+                UnityEngine.Object.DestroyImmediate(managerObject);
+                if (ownedDepth != null) UnityEngine.Object.DestroyImmediate(ownedDepth);
+                if (externalBlur != null) UnityEngine.Object.DestroyImmediate(externalBlur);
+            }
+        }
+
         // Re-baking copies the new pixels into the already assigned native asset so its complete
         // Unity identity and references held by other lights remain valid.
         [TestCase(false)]

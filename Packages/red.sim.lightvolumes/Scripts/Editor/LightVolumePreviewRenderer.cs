@@ -191,9 +191,15 @@ namespace VRCLightVolumes {
             if (_material == null) {
                 Shader shader = Shader.Find(PreviewShaderName);
                 if (shader != null) {
-                    _material = new Material(shader);
-                    _material.enableInstancing = true;
-                    _material.hideFlags = HideFlags.HideAndDontSave;
+                    Material material = new Material(shader);
+                    try {
+                        material.enableInstancing = true;
+                        material.hideFlags = HideFlags.HideAndDontSave;
+                        _material = material;
+                    } catch {
+                        UnityEngine.Object.DestroyImmediate(material);
+                        throw;
+                    }
                     if (!shader.isSupported && !_reportedMissingShader) {
                         Debug.LogError($"[LightVolumes] Shader '{PreviewShaderName}' is not supported by the current graphics API. Voxel preview cannot be rendered.");
                         _reportedMissingShader = true;
@@ -241,16 +247,20 @@ namespace VRCLightVolumes {
                 indices[baseIndex + 5] = baseVertex + 3;
             }
 
-            Mesh mesh = new Mesh {
-                name = "LightVolumePreview_Cards",
-                indexFormat = IndexFormat.UInt16,
-                hideFlags = HideFlags.HideAndDontSave
-            };
-            mesh.SetVertices(vertices);
-            mesh.uv = cardData;
-            mesh.SetIndices(indices, MeshTopology.Triangles, 0, false);
-            mesh.bounds = new Bounds(Vector3.zero, Vector3.one * PreviewBoundsSize);
-            return mesh;
+            Mesh mesh = new Mesh();
+            try {
+                mesh.name = "LightVolumePreview_Cards";
+                mesh.indexFormat = IndexFormat.UInt16;
+                mesh.hideFlags = HideFlags.HideAndDontSave;
+                mesh.SetVertices(vertices);
+                mesh.uv = cardData;
+                mesh.SetIndices(indices, MeshTopology.Triangles, 0, false);
+                mesh.bounds = new Bounds(Vector3.zero, Vector3.one * PreviewBoundsSize);
+                return mesh;
+            } catch {
+                UnityEngine.Object.DestroyImmediate(mesh);
+                throw;
+            }
         }
 
         // Calculates the voxel-space camera position used by the shader shell traversal.
@@ -359,6 +369,7 @@ namespace VRCLightVolumes {
             AssemblyReloadEvents.beforeAssemblyReload -= Shutdown;
             EditorApplication.quitting -= Shutdown;
             _previewModeActive = false;
+            Array.Clear(_selectedVolumes, 0, _selectedVolumes.Length);
             _selectedVolumeCount = 0;
             DisposeRenderer();
         }
@@ -429,16 +440,21 @@ namespace VRCLightVolumes {
         private static void RefreshSelectedVolumes() {
             _selectedVolumeCount = 0;
 
-            GameObject[] gameObjects = Selection.gameObjects;
-            for (int i = 0; i < gameObjects.Length; i++) {
-                GameObject go = gameObjects[i];
-                if (go == null) continue;
-                LightVolumeInstance volume = go.GetComponent<LightVolumeInstance>();
-                if (volume == null) continue;
+            try {
+                GameObject[] gameObjects = Selection.gameObjects;
+                for (int i = 0; i < gameObjects.Length; i++) {
+                    GameObject go = gameObjects[i];
+                    if (go == null) continue;
+                    LightVolumeInstance volume = go.GetComponent<LightVolumeInstance>();
+                    if (volume == null) continue;
 
-                EnsureSelectedVolumeCapacity(_selectedVolumeCount + 1);
-                _selectedVolumes[_selectedVolumeCount] = volume;
-                _selectedVolumeCount++;
+                    EnsureSelectedVolumeCapacity(_selectedVolumeCount + 1);
+                    _selectedVolumes[_selectedVolumeCount] = volume;
+                    _selectedVolumeCount++;
+                }
+            } finally {
+                // Release every inactive slot, including capacity written by an interrupted refresh.
+                Array.Clear(_selectedVolumes, _selectedVolumeCount, _selectedVolumes.Length - _selectedVolumeCount);
             }
         }
 

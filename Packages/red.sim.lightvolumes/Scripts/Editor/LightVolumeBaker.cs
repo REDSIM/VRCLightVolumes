@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.IO;
 using Unity.Collections;
 using UnityEditor;
-using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.Rendering;
 using UnityEngine.SceneManagement;
@@ -16,53 +15,38 @@ namespace VRCLightVolumes {
         private const int MaxProbeBakedPointLightCount = 128;
         private const int ProbeBakeThreadGroupSize = 64;
         private const int AdditionalProbeIdStart = 0x4C560000;
+        private const int ProgressiveCompletionProbeId = 0x4C56FFFF;
         private const string ProbeBakeComputePath = "Packages/red.sim.lightvolumes/Scripts/Editor/PointLightProbeBake.compute";
         private const string ProbeBakeKernelName = "BakePointLightVolumesIntoProbes";
 
         // List order defines Unity's additional-probe IDs for the lifetime of the active bake.
         private static readonly List<LightVolumeInstance> _progressiveVolumes = new List<LightVolumeInstance>();
         private static LightVolumeManager _unityManager;
-        private static bool _unityBakeCompleted;
-        private static bool _unityProbePostProcessAttempted;
-        private static bool _unityManagerFinalized;
-        private static bool _progressiveCleanupQueued;
+        private static LightProbes _unityInitialLightProbes;
+        private static int _unityInitialLightProbesDirtyCount = -1;
         private static Texture3D _probeBakeDummyVolumeTexture;
         private static Texture2DArray _probeBakeDummyTextureArray;
 
         private static LightVolumeManager _bakeryManager;
         private static bool _bakeryFullRenderActive;
-        private static bool _bakeryWasBaking;
         private static bool _bakeryBitmaskPending;
+        private static bool _bakeryProbePostProcessPending;
+        private static bool _bakeryL2ProbePostProcessPending;
         private static bool _bakeryCompletionQueued;
-        private static bool _bakeryWatcherRefreshQueued;
-        private static bool _bakeryWatcherSubscribed;
 
         // Installs lightmapper lifecycle callbacks once per editor domain.
         static LightVolumeBaker() {
-#pragma warning disable CS0618
-            UnityEditor.Experimental.Lightmapping.additionalBakedProbesCompleted += OnAdditionalBakedProbesCompleted;
-#pragma warning restore CS0618
             Lightmapping.bakeStarted += OnUnityBakeStarted;
             Lightmapping.bakeCompleted += OnUnityBakeCompleted;
             EditorApplication.playModeStateChanged += OnPlayModeStateChanged;
             AssemblyReloadEvents.beforeAssemblyReload += Shutdown;
             EditorApplication.quitting += Shutdown;
 
-            if (BakeryEditorBridge.SupportsFullRenderLifecycle) {
-                BakeryEditorBridge.SubscribePreFullRender(OnBakeryStarted);
-                BakeryEditorBridge.SubscribeFinished(OnBakeryFinished);
-                EditorApplication.hierarchyChanged += QueueBakeryWatcherRefresh;
-                EditorSceneManager.sceneOpened += OnSceneOpened;
-                EditorSceneManager.sceneClosed += OnSceneClosed;
-                QueueBakeryWatcherRefresh();
-            }
+            BakeryEditorBridge.SetLifecycleCallbacks(OnBakeryStarted, OnBakeryFinished, OnBakeryProbesFinished, true);
         }
 
         // Removes global callbacks, temporary probe groups and compute fallback textures.
         private static void Shutdown() {
-#pragma warning disable CS0618
-            UnityEditor.Experimental.Lightmapping.additionalBakedProbesCompleted -= OnAdditionalBakedProbesCompleted;
-#pragma warning restore CS0618
             Lightmapping.bakeStarted -= OnUnityBakeStarted;
             Lightmapping.bakeCompleted -= OnUnityBakeCompleted;
             EditorApplication.playModeStateChanged -= OnPlayModeStateChanged;
@@ -70,16 +54,8 @@ namespace VRCLightVolumes {
             EditorApplication.quitting -= Shutdown;
             ResetUnityBakeState();
 
-            BakeryEditorBridge.UnsubscribePreFullRender(OnBakeryStarted);
-            BakeryEditorBridge.UnsubscribeFinished(OnBakeryFinished);
-            EditorApplication.hierarchyChanged -= QueueBakeryWatcherRefresh;
-            EditorSceneManager.sceneOpened -= OnSceneOpened;
-            EditorSceneManager.sceneClosed -= OnSceneClosed;
-            EditorApplication.delayCall -= RefreshBakeryWatcher;
-            EditorApplication.update -= WatchBakeryBake;
+            BakeryEditorBridge.SetLifecycleCallbacks(OnBakeryStarted, OnBakeryFinished, OnBakeryProbesFinished, false);
             ResetBakeryBakeState();
-            _bakeryWatcherRefreshQueued = false;
-            _bakeryWatcherSubscribed = false;
 
             if (_probeBakeDummyVolumeTexture != null) UnityEngine.Object.DestroyImmediate(_probeBakeDummyVolumeTexture);
             if (_probeBakeDummyTextureArray != null) UnityEngine.Object.DestroyImmediate(_probeBakeDummyTextureArray);
@@ -87,18 +63,24 @@ namespace VRCLightVolumes {
             _probeBakeDummyTextureArray = null;
         }
 
-        // Registers one additional Progressive probe group for every eligible Light Volume.
+        // Registers a completion marker and one Progressive probe group for every eligible Light Volume.
         private static void OnUnityBakeStarted() {
             if (Application.isPlaying) return;
-            EditorApplication.delayCall -= CleanupProgressiveBakeAfterCallbacks;
-            _progressiveCleanupQueued = false;
-            CleanupProgressiveProbeRegistrations();
+            ResetUnityBakeState();
 
             _unityManager = GetActiveManager(0);
-            _unityBakeCompleted = false;
-            _unityProbePostProcessAttempted = false;
-            _unityManagerFinalized = false;
             if (_unityManager == null) return;
+            _unityInitialLightProbes = LightmapSettings.lightProbes;
+            _unityInitialLightProbesDirtyCount = _unityInitialLightProbes != null ? EditorUtility.GetDirtyCount(_unityInitialLightProbes) : -1;
+
+            try {
+                // bakeCompleted is raised for canceled jobs too. A one-probe result lets us verify the additional-probe stage even when the Manager contains only Point Lights.
+                SetAdditionalProbes(ProgressiveCompletionProbeId, new[] { Vector3.zero });
+            } catch (Exception exception) {
+                Debug.LogError($"[LightVolumes] Can't register the Progressive completion probe. {exception}", _unityManager);
+                ResetUnityBakeState();
+                return;
+            }
 
             HashSet<LightVolumeInstance> registeredVolumes = new HashSet<LightVolumeInstance>();
             LightVolumeInstance[] volumes = _unityManager.LightVolumeInstances;
@@ -122,64 +104,47 @@ namespace VRCLightVolumes {
             }
         }
 
-        // Converts completed Progressive probe groups into per-volume 3D textures.
-        private static void OnAdditionalBakedProbesCompleted() {
+        // Collects committed Progressive results after Unity has published its final Light Probes asset.
+        private static void OnUnityBakeCompleted() {
             if (Application.isPlaying || _unityManager == null) {
                 ResetUnityBakeState();
                 return;
             }
-            EditorApplication.delayCall -= CleanupProgressiveBakeAfterCallbacks;
-            _progressiveCleanupQueued = false;
+
+            LightVolumeManager manager = _unityManager;
+            if (!HasProgressiveCompletionProbeResult()) {
+                Debug.LogWarning("[LightVolumes] Progressive baking ended without the completion-probe result. Temporary registrations were removed and Light Volume data was left unchanged.", manager);
+                ResetUnityBakeState();
+                return;
+            }
+            bool lightProbesCommitted = HaveUnityLightProbesChanged();
 
             for (int i = 0; i < _progressiveVolumes.Count; i++) {
                 LightVolumeInstance volume = _progressiveVolumes[i];
                 int additionalProbeId = GetAdditionalProbeId(i);
                 try {
-                    if (volume == null || volume.LightVolumeManager != _unityManager) continue;
+                    if (volume == null || volume.LightVolumeManager != manager) continue;
                     if (!Save3DTexturesProgressive(volume, additionalProbeId)) continue;
                     volume.InvBakedRotation = Quaternion.Inverse(LightVolumeTools.GetRotation(volume));
                     LVUtils.MarkDirty(volume);
                     LightVolumeManagerEditorBackend.CopyProxyToUdon(volume);
                 } catch (Exception exception) {
                     Debug.LogError($"[LightVolumes] {exception}", volume);
-                } finally {
-                    RemoveAdditionalProbes(additionalProbeId);
                 }
             }
-            _progressiveVolumes.Clear();
-            PostProcessUnityProbesOnce();
-            FinalizeUnityManagerOnce();
-            if (_unityBakeCompleted) _unityManager = null;
-        }
 
-        // Post-processes Unity probes and finalizes the primary Manager after Progressive baking completes.
-        private static void OnUnityBakeCompleted() {
-            if (Application.isPlaying || _unityManager == null) {
-                ResetUnityBakeState();
-                return;
-            }
-            _unityBakeCompleted = true;
-            PostProcessUnityProbesOnce();
-            if (_progressiveVolumes.Count == 0) {
-                FinalizeUnityManagerOnce();
-                _unityManager = null;
-                return;
-            }
-            // Unity normally invokes additionalBakedProbesCompleted first. Deferring cleanup by one editor tick also handles versions that invoke bakeCompleted first in the same cycle.
-            if (_progressiveCleanupQueued) return;
-            _progressiveCleanupQueued = true;
-            EditorApplication.delayCall += CleanupProgressiveBakeAfterCallbacks;
-        }
+            // Clear lifecycle state before post-processing or queuing editor work so re-entrant callbacks cannot apply the same non-idempotent probe additions twice.
+            ResetUnityBakeState();
 
-        // Removes unresolved additional probes when Unity omits their completion callback.
-        private static void CleanupProgressiveBakeAfterCallbacks() {
-            EditorApplication.delayCall -= CleanupProgressiveBakeAfterCallbacks;
-            _progressiveCleanupQueued = false;
-            if (_progressiveVolumes.Count > 0) {
-                Debug.LogWarning("[LightVolumes] Progressive baking completed without an additional-probe result. Temporary probe registrations were removed; no atlas was generated from them.");
-                CleanupProgressiveProbeRegistrations();
+            if (lightProbesCommitted) {
+                try {
+                    PostProcessLightProbes(manager, false);
+                } catch (Exception exception) {
+                    Debug.LogError($"[LightVolumes] {exception}", manager);
+                }
             }
-            _unityManager = null;
+            FinalizeManager(manager);
+            Debug.Log("[LightVolumes] Progressive Light Volume atlas generation queued.");
         }
 
         // Unregisters every temporary Progressive probe group still owned by this bake.
@@ -192,28 +157,37 @@ namespace VRCLightVolumes {
                 }
             }
             _progressiveVolumes.Clear();
+            try {
+                RemoveAdditionalProbes(ProgressiveCompletionProbeId);
+            } catch (Exception exception) {
+                Debug.LogError($"[LightVolumes] {exception}");
+            }
         }
 
         // Cancels the active Progressive bake and removes every temporary additional-probe registration.
         private static void ResetUnityBakeState() {
-            EditorApplication.delayCall -= CleanupProgressiveBakeAfterCallbacks;
-            _progressiveCleanupQueued = false;
             CleanupProgressiveProbeRegistrations();
             _unityManager = null;
-            _unityBakeCompleted = false;
-            _unityProbePostProcessAttempted = false;
-            _unityManagerFinalized = false;
+            _unityInitialLightProbes = null;
+            _unityInitialLightProbesDirtyCount = -1;
         }
 
-        // Runs light-probe post-processing at most once for the current Progressive bake.
-        private static void PostProcessUnityProbesOnce() {
-            if (_unityProbePostProcessAttempted) return;
-            _unityProbePostProcessAttempted = true;
-            try {
-                PostProcessLightProbes(_unityManager, false);
-            } catch (Exception exception) {
-                Debug.LogError($"[LightVolumes] {exception}", _unityManager);
+        // Confirms that Unity committed the additional-probe stage rather than canceling before it.
+        private static bool HasProgressiveCompletionProbeResult() {
+            using (NativeArray<SphericalHarmonicsL2> probes = new NativeArray<SphericalHarmonicsL2>(1, Allocator.Temp))
+            using (NativeArray<float> validity = new NativeArray<float>(1, Allocator.Temp)) {
+#pragma warning disable CS0618
+                return UnityEditor.Experimental.Lightmapping.GetAdditionalBakedProbes(ProgressiveCompletionProbeId, probes, validity);
+#pragma warning restore CS0618
             }
+        }
+
+        // Selected/lightmap-only jobs and late cancellation can finish additional probes without replacing classic Light Probes. Only a serialized probe change authorizes SH additions.
+        private static bool HaveUnityLightProbesChanged() {
+            LightProbes probes = LightmapSettings.lightProbes;
+            if (probes == null) return false;
+            return probes != _unityInitialLightProbes
+                || EditorUtility.GetDirtyCount(probes) != _unityInitialLightProbesDirtyCount;
         }
 
         // Checks Manager ownership, bake state and scene eligibility for one Light Volume.
@@ -226,14 +200,6 @@ namespace VRCLightVolumes {
             return AdditionalProbeIdStart + index;
         }
 
-        // Queues shadows and atlas generation once after a Progressive bake.
-        private static void FinalizeUnityManagerOnce() {
-            if (_unityManagerFinalized) return;
-            _unityManagerFinalized = true;
-            FinalizeManager(_unityManager);
-            Debug.Log("[LightVolumes] Progressive Light Volume atlas generation queued.");
-        }
-
         // Queues shadow baking and atlas packing for the completed Manager.
         private static void FinalizeManager(LightVolumeManager manager) {
             if (manager == null) return;
@@ -241,14 +207,19 @@ namespace VRCLightVolumes {
             LightVolumeManagerEditorBackend.QueueAtlasGeneration(manager);
         }
 
+        // Registers one additional probe group with Unity's Progressive lightmapper.
+        private static void SetAdditionalProbes(int id, Vector3[] positions) {
+#pragma warning disable CS0618
+            UnityEditor.Experimental.Lightmapping.SetAdditionalBakedProbes(id, positions);
+#pragma warning restore CS0618
+        }
+
         // Registers one Light Volume's voxel centers with Unity's Progressive lightmapper.
         private static bool SetAdditionalProbes(LightVolumeInstance volume, int id) {
             if (volume == null) return false;
             LightVolumeTools.Recalculate(volume);
             if (!LightVolumeTools.TryCalculateProbePositions(volume, volume.Resolution, out Vector3[] positions)) return false;
-#pragma warning disable CS0618
-            UnityEditor.Experimental.Lightmapping.SetAdditionalBakedProbes(id, positions);
-#pragma warning restore CS0618
+            SetAdditionalProbes(id, positions);
             return true;
         }
 
@@ -390,43 +361,31 @@ namespace VRCLightVolumes {
             }
         }
 
-        // Coalesces hierarchy and scene changes into one Bakery watcher refresh.
-        internal static void QueueBakeryWatcherRefresh() {
-            if (!BakeryEditorBridge.SupportsFullRenderLifecycle || Application.isPlaying || EditorApplication.isPlayingOrWillChangePlaymode) return;
-            if (_bakeryWatcherRefreshQueued) return;
-            _bakeryWatcherRefreshQueued = true;
-            EditorApplication.delayCall += RefreshBakeryWatcher;
+        // Polls Bakery only for the lifetime of an active render or queued completion.
+        private static void StartBakeryWatcher() {
+            EditorApplication.update -= WatchBakeryBake;
+            EditorApplication.update += WatchBakeryBake;
         }
 
-        // Re-evaluates Bakery monitoring after a scene is opened.
-        private static void OnSceneOpened(Scene scene, OpenSceneMode mode) {
-            QueueBakeryWatcherRefresh();
-        }
-
-        // Re-evaluates Bakery monitoring after a scene is closed.
-        private static void OnSceneClosed(Scene scene) {
-            QueueBakeryWatcherRefresh();
-        }
-
-        // Enables per-frame Bakery state polling only while a Bakery Manager exists or a bake is active.
-        private static void RefreshBakeryWatcher() {
-            EditorApplication.delayCall -= RefreshBakeryWatcher;
-            _bakeryWatcherRefreshQueued = false;
-            bool required = GetActiveManager(1) != null || _bakeryWasBaking || _bakeryFullRenderActive;
-            if (required == _bakeryWatcherSubscribed) return;
-            if (required) EditorApplication.update += WatchBakeryBake;
-            else EditorApplication.update -= WatchBakeryBake;
-            _bakeryWatcherSubscribed = required;
-        }
-
-        // This is the only per-frame editor callback. Full-render lifecycle comes from Bakery's dedicated events; polling only applies live bitmasks and detects cancellation.
+        // Full-render lifecycle comes from Bakery's dedicated events; polling only applies live bitmasks and detects the terminal edge.
         private static void WatchBakeryBake() {
             bool baking = BakeryEditorBridge.IsBaking;
-            bool wasBaking = _bakeryWasBaking;
-            if (baking && _bakeryBitmaskPending) TryApplyBakeryRuntimeBitmasks();
-            _bakeryWasBaking = baking;
-            if (baking || !wasBaking || !_bakeryFullRenderActive) return;
-            if (_bakeryCompletionQueued) return;
+            if (baking) {
+                if (_bakeryBitmaskPending) {
+                    try {
+                        TryApplyBakeryRuntimeBitmasks();
+                    } catch (Exception exception) {
+                        _bakeryBitmaskPending = false;
+                        Debug.LogError($"[LightVolumes] Bakery bitmask overrides were disabled after an unexpected compatibility error. {exception}");
+                    }
+                }
+                return;
+            }
+            if (_bakeryCompletionQueued) {
+                CompleteBakeryBake();
+                return;
+            }
+            if (!_bakeryFullRenderActive) return;
             // A confirmed success always arrives through OnFinishedFullRender. Any other falling edge is cancellation or an interrupted render and must not import stale output.
             CancelBakeryCompletion();
         }
@@ -434,89 +393,120 @@ namespace VRCLightVolumes {
         // Begins tracking only Bakery's full scene render, excluding probes, APV, reflection-only and selected-group operations that share bakeInProgress.
         private static void OnBakeryStarted(object sender, EventArgs args) {
             if (Application.isPlaying) return;
-            BeginBakeryBake();
+            try {
+                BeginBakeryBake();
+            } catch (Exception exception) {
+                ResetBakeryBakeState();
+                Debug.LogError($"[LightVolumes] Bakery start callback failed safely. {exception}");
+            }
         }
 
         // Captures the primary Bakery Manager, prepares helpers and starts the global bitmask override.
         private static void BeginBakeryBake() {
-            EditorApplication.delayCall -= CompleteBakeryBake;
-            _bakeryCompletionQueued = false;
+            ResetBakeryBakeState();
             _bakeryManager = GetActiveManager(1);
-            _bakeryBitmaskPending = false;
             _bakeryFullRenderActive = _bakeryManager != null;
             if (!_bakeryFullRenderActive) return;
+            StartBakeryWatcher();
 
             ConfigureExistingBakeryVolumes(_bakeryManager);
-            BakeryEditorBridge.ApplyStoredBitmasks(_bakeryManager.VolumeBitmask, _bakeryManager.ProbeBitmask);
-            BakeryEditorBridge.ClearImplicitProbeGroups();
-            _bakeryBitmaskPending = true;
+            _bakeryBitmaskPending = BakeryEditorBridge.SupportsRuntimeBitmasks;
+            if (_bakeryBitmaskPending) {
+                BakeryEditorBridge.ApplyStoredBitmasks(_bakeryManager.VolumeBitmask, _bakeryManager.ProbeBitmask);
+                BakeryEditorBridge.ClearImplicitProbeGroups();
+            }
         }
 
-        // Defers Bakery completion until its outer render loop has fully stopped.
+        // Routes both full renders and Bakery's L1/L2 probe-only command through one final SH pass.
         private static void OnBakeryFinished(object sender, EventArgs args) {
-            if (Application.isPlaying || !_bakeryFullRenderActive) return;
-            QueueBakeryCompletion();
+            if (Application.isPlaying) return;
+            try {
+                BakeryEditorBridge.ProbeRenderMode probeMode = BakeryEditorBridge.GetCompletedProbeRenderMode(sender);
+                if (_bakeryFullRenderActive) {
+                    _bakeryProbePostProcessPending |= probeMode != BakeryEditorBridge.ProbeRenderMode.None;
+                    _bakeryL2ProbePostProcessPending |= probeMode == BakeryEditorBridge.ProbeRenderMode.L2;
+                    QueueBakeryCompletion();
+                    return;
+                }
+                if (!BakeryEditorBridge.IsProbeOnlyRender(sender) || probeMode == BakeryEditorBridge.ProbeRenderMode.None) return;
+                _bakeryProbePostProcessPending = true;
+                _bakeryL2ProbePostProcessPending = probeMode == BakeryEditorBridge.ProbeRenderMode.L2;
+                QueueBakeryCompletion();
+            } catch (Exception exception) {
+                ResetBakeryBakeState();
+                Debug.LogError($"[LightVolumes] Bakery completion callback failed safely. {exception}");
+            }
+        }
+
+        // Bakery's Legacy probe renderer has a separate definitive completion event.
+        private static void OnBakeryProbesFinished(object sender, EventArgs args) {
+            if (Application.isPlaying) return;
+            try {
+                _bakeryProbePostProcessPending = true;
+                _bakeryL2ProbePostProcessPending = false;
+                QueueBakeryCompletion();
+            } catch (Exception exception) {
+                ResetBakeryBakeState();
+                Debug.LogError($"[LightVolumes] Bakery Legacy probe callback failed safely. {exception}");
+            }
         }
 
         // Coalesces Bakery completion callbacks into one delayed finalization.
         private static void QueueBakeryCompletion() {
-            if (_bakeryCompletionQueued || !_bakeryFullRenderActive) return;
+            if (_bakeryCompletionQueued || (!_bakeryFullRenderActive && !_bakeryProbePostProcessPending)) return;
             _bakeryCompletionQueued = true;
+            StartBakeryWatcher();
             EditorApplication.delayCall += CompleteBakeryBake;
         }
 
-        // Imports Bakery textures, post-processes probes and finalizes the restored primary Manager.
+        // Applies the successful Bakery result after its outer render loop has fully stopped.
         private static void CompleteBakeryBake() {
             EditorApplication.delayCall -= CompleteBakeryBake;
-            _bakeryCompletionQueued = false;
             if (Application.isPlaying) {
                 ResetBakeryBakeState();
                 return;
             }
-            if (!_bakeryFullRenderActive) return;
+            if (!_bakeryFullRenderActive && !_bakeryProbePostProcessPending) {
+                ResetBakeryBakeState();
+                return;
+            }
             // Bakery fires OnFinishedFullRender before its outer update clears bakeInProgress.
-            if (BakeryEditorBridge.IsBaking) {
-                QueueBakeryCompletion();
-                return;
-            }
-            if (BakeryEditorBridge.WasCanceled) {
-                CancelBakeryCompletion();
-                return;
-            }
-            _bakeryFullRenderActive = false;
+            if (BakeryEditorBridge.IsBaking) return;
+            bool finalizeFullRender = _bakeryFullRenderActive;
+            bool postProcessProbes = _bakeryProbePostProcessPending;
+            bool l2ProbeResult = _bakeryL2ProbePostProcessPending;
+            // Clear subscriptions and non-idempotent state before importing or post-processing.
+            ResetBakeryBakeState();
             LightVolumeManager manager = ResolveBakeryCompletionManager();
-            _bakeryBitmaskPending = false;
-            _bakeryWasBaking = false;
-            try {
-                if (manager == null) return;
+            if (manager == null) return;
 
-                LightVolumeInstance[] volumes = manager.LightVolumeInstances;
-                if (volumes != null) {
-                    for (int i = 0; i < volumes.Length; i++) {
-                        LightVolumeInstance volume = volumes[i];
-                        if (!IsBakeVolume(manager, volume)) continue;
-                        try {
-                            LightVolumeTools.Recalculate(volume);
-                            volume.InvBakedRotation = Quaternion.Inverse(LightVolumeTools.GetRotation(volume));
-                            LightVolumeTools.TryImportBakeryTextures(volume);
-                            LVUtils.MarkDirty(volume);
-                            LightVolumeManagerEditorBackend.CopyProxyToUdon(volume);
-                        } catch (Exception exception) {
-                            Debug.LogError($"[LightVolumes] {exception}", volume);
-                        }
+            LightVolumeInstance[] volumes = manager.LightVolumeInstances;
+            if (finalizeFullRender && volumes != null) {
+                for (int i = 0; i < volumes.Length; i++) {
+                    LightVolumeInstance volume = volumes[i];
+                    if (!IsBakeVolume(manager, volume)) continue;
+                    try {
+                        LightVolumeTools.Recalculate(volume);
+                        volume.InvBakedRotation = Quaternion.Inverse(LightVolumeTools.GetRotation(volume));
+                        LightVolumeTools.TryImportBakeryTextures(volume);
+                        LVUtils.MarkDirty(volume);
+                        LightVolumeManagerEditorBackend.CopyProxyToUdon(volume);
+                    } catch (Exception exception) {
+                        Debug.LogError($"[LightVolumes] {exception}", volume);
                     }
                 }
+            }
 
+            if (postProcessProbes) {
                 try {
-                    PostProcessLightProbes(manager, manager.FixLightProbesL1);
+                    PostProcessLightProbes(manager, manager.FixLightProbesL1, l2ProbeResult);
                 } catch (Exception exception) {
                     Debug.LogError($"[LightVolumes] {exception}", manager);
                 }
+            }
+            if (finalizeFullRender) {
                 FinalizeManager(manager);
                 Debug.Log("[LightVolumes] Bakery Light Volume atlas generation queued.");
-            } finally {
-                _bakeryManager = null;
-                QueueBakeryWatcherRefresh();
             }
         }
 
@@ -529,16 +519,17 @@ namespace VRCLightVolumes {
         // Clears all Bakery completion state after a canceled or interrupted full render.
         private static void CancelBakeryCompletion() {
             ResetBakeryBakeState();
-            QueueBakeryWatcherRefresh();
         }
 
         // Clears transient Bakery state without treating an interrupted render as a successful bake.
         private static void ResetBakeryBakeState() {
             EditorApplication.delayCall -= CompleteBakeryBake;
+            EditorApplication.update -= WatchBakeryBake;
             _bakeryCompletionQueued = false;
             _bakeryFullRenderActive = false;
             _bakeryBitmaskPending = false;
-            _bakeryWasBaking = false;
+            _bakeryProbePostProcessPending = false;
+            _bakeryL2ProbePostProcessPending = false;
             _bakeryManager = null;
         }
 
@@ -547,12 +538,6 @@ namespace VRCLightVolumes {
             if (state == PlayModeStateChange.ExitingEditMode || state == PlayModeStateChange.ExitingPlayMode) {
                 ResetUnityBakeState();
                 ResetBakeryBakeState();
-                EditorApplication.delayCall -= RefreshBakeryWatcher;
-                _bakeryWatcherRefreshQueued = false;
-                EditorApplication.update -= WatchBakeryBake;
-                _bakeryWatcherSubscribed = false;
-            } else if (state == PlayModeStateChange.EnteredEditMode) {
-                QueueBakeryWatcherRefresh();
             }
         }
 
@@ -578,7 +563,7 @@ namespace VRCLightVolumes {
         }
 
         // Optionally derings L1 probes and accumulates eligible Point Light Volumes into them.
-        private static void PostProcessLightProbes(LightVolumeManager manager, bool dering) {
+        private static void PostProcessLightProbes(LightVolumeManager manager, bool dering, bool knownL2 = false) {
             bool bakePointLights = HasProbeBakedPointLights(manager);
             if (!dering && !bakePointLights) return;
 
@@ -591,7 +576,7 @@ namespace VRCLightVolumes {
             Vector3[] positions = probes.positions;
             if (sh == null || sh.Length == 0 || positions == null) return;
 
-            bool didDering = dering && !LVUtils.CheckSHL2(sh[0]);
+            bool didDering = ShouldDeringLightProbes(dering, knownL2, sh);
             if (dering && !didDering)
                 Debug.Log("[LightVolumes] L2 Light Probes detected. Bakery L1 fix was skipped.");
             if (didDering) {
@@ -610,7 +595,7 @@ namespace VRCLightVolumes {
 
             probes.bakedProbes = sh;
             EditorUtility.SetDirty(probes);
-            AssetDatabase.SaveAssets();
+            AssetDatabase.SaveAssetIfDirty(probes);
             string deringLog = didDering ? $"{sh.Length} Light Probes fixed" : "";
             string pointLightLog = bakedPointLightCount > 0 ? $"{bakedPointLightCount} Point Light Volumes baked into Light Probes" : "";
             Debug.Log($"[LightVolumes] {deringLog}{(didDering && bakedPointLightCount > 0 ? ", " : "")}{pointLightLog}.");
@@ -622,9 +607,23 @@ namespace VRCLightVolumes {
             PointLightVolumeInstance[] pointLights = manager.PointLightVolumeInstances;
             for (int i = 0; i < pointLights.Length; i++) {
                 PointLightVolumeInstance pointLight = pointLights[i];
-                if (pointLight != null && pointLight.LightVolumeManager == manager && pointLight.BakeIntoProbes && pointLight.isActiveAndEnabled && !pointLight.CompareTag("EditorOnly") && pointLight.Intensity != 0f && pointLight.Color != Color.black) return true;
+                if (manager.IsEditorProbeBakePointLight(pointLight)) return true;
             }
             return false;
+        }
+
+        // Detects Bakery L2 output even when its first probe is dark and has zero L2 coefficients.
+        internal static bool HasL2ProbeData(SphericalHarmonicsL2[] probes) {
+            if (probes == null) return false;
+            for (int i = 0; i < probes.Length; i++) {
+                if (LVUtils.CheckSHL2(probes[i])) return true;
+            }
+            return false;
+        }
+
+        // Bakery's declared mode is authoritative even when a valid L2 bake has zero higher-band coefficients.
+        internal static bool ShouldDeringLightProbes(bool requested, bool knownL2, SphericalHarmonicsL2[] probes) {
+            return requested && !knownL2 && !HasL2ProbeData(probes);
         }
 
         // Uses the runtime-compatible compute path to add one Manager's lights to baked probes.

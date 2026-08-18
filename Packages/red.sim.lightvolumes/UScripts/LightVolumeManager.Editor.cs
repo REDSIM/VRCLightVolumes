@@ -443,7 +443,7 @@ namespace VRCLightVolumes {
         }
 
         // Checks whether a Point Light Volume is eligible for editor light-probe baking.
-        private bool IsEditorProbeBakePointLight(PointLightVolumeInstance instance) {
+        internal bool IsEditorProbeBakePointLight(PointLightVolumeInstance instance) {
             return instance != null && instance.LightVolumeManager == this && instance.BakeIntoProbes && instance.isActiveAndEnabled && !instance.CompareTag("EditorOnly")
                 && instance.Intensity != 0f && instance.Color != Color.black;
         }

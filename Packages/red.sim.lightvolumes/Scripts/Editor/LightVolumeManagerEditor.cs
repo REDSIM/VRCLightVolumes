@@ -127,7 +127,6 @@ namespace VRCLightVolumes {
             // Undo can restore source/layout fields together with their hidden derived values, so change detection alone cannot reliably invalidate either runtime texture cache.
             LightVolumeManagerEditorBackend.ApplySettings(_manager, false, updateVolumes: false, copyProxyToUdon: false);
             if (!LightVolumeManagerEditorBackend.RefreshRuntimeManagerFromProxyImmediately(_manager, true, true)) LightVolumeManagerEditorBackend.ReinitializeTextures(_manager, true, true);
-            LightVolumeBaker.QueueBakeryWatcherRefresh();
             _cachedPointCount = -1;
             _nextStatsRefresh = 0d;
             Repaint();
@@ -482,12 +481,23 @@ namespace VRCLightVolumes {
 
             if (isBakery) {
                 if (BakeryEditorBridge.IsAvailable) {
-                    DrawMask("Volume Bitmask", "VolumeBitmask");
-                    DrawMask("Probe Bitmask", "ProbeBitmask");
+                    if (!BakeryEditorBridge.SupportsFullRenderLifecycle) {
+                        EditorGUILayout.HelpBox("This Bakery version does not expose the full render lifecycle required for automatic Light Volume import and atlas finalization. Update Bakery to enable it.", MessageType.Warning);
+                    }
+                    using (new EditorGUI.DisabledScope(!BakeryEditorBridge.SupportsRuntimeBitmasks)) {
+                        DrawMask("Volume Bitmask", "VolumeBitmask");
+                        DrawMask("Probe Bitmask", "ProbeBitmask");
+                    }
+                    if (!BakeryEditorBridge.SupportsRuntimeBitmasks) {
+                        EditorGUILayout.HelpBox("This Bakery version does not expose compatible implicit-group bitmasks. Bitmask overrides are disabled.", MessageType.Warning);
+                    }
                     EditorGUILayout.PropertyField(serializedObject.FindProperty("FixLightProbesL1"));
                     EditorGUILayout.PropertyField(serializedObject.FindProperty("Denoise"));
                 } else {
-                    EditorGUILayout.HelpBox("Bakery mode requires the Bakery asset.", MessageType.Error);
+                    string message = BakeryEditorBridge.IsInstalled
+                        ? "The installed Bakery API is incomplete or incompatible with VRC Light Volumes. Update Bakery to use Bakery mode."
+                        : "Bakery mode requires the Bakery asset.";
+                    EditorGUILayout.HelpBox(message, MessageType.Error);
                 }
             }
             DrawIntPopup("Downscale Volumes", "DownscaleVolumes", DownscaleLabels, DownscaleValues);

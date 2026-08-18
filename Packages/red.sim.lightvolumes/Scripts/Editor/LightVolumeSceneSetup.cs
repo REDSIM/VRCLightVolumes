@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 #if UDONSHARP
 using UdonSharpEditor;
@@ -47,7 +48,7 @@ namespace VRCLightVolumes {
         }
 
         // Migrates and registers a hierarchy with the single global Manager, creating one when required.
-        internal static bool OnboardHierarchy(GameObject root, out LightVolumeManager manager) {
+        internal static bool OnboardHierarchy(GameObject root, out LightVolumeManager manager, bool recordRegistrationUndo = true) {
             manager = null;
             if (!IsMainStageSceneObject(root) || !ContainsAuthoringComponents(root)) return false;
 
@@ -88,9 +89,11 @@ namespace VRCLightVolumes {
 #endif
 
             bool hierarchyMigrated = legacyGraphMigrated || migrated > 0;
+            // Manager creation and legacy migration already own an Undo group. Keep every registry mutation in that same coherent setup operation; only pure repair on an existing graph is derived/no-Undo.
+            bool registrationUndo = recordRegistrationUndo || managerCreated || hierarchyMigrated;
             // The updater treats true as a mutation signal. A successful reconciliation that finds everything already registered must remain false and perform no serialized writes.
             bool changed = hierarchyMigrated;
-            changed |= (managerCreated || legacyGraphMigrated) ? RegisterScene(root.scene, manager, hierarchyMigrated) : RegisterHierarchy(root, manager, hierarchyMigrated);
+            changed |= (managerCreated || legacyGraphMigrated) ? RegisterScene(root.scene, manager, hierarchyMigrated, registrationUndo) : RegisterHierarchy(root, manager, hierarchyMigrated, registrationUndo);
             if (!changed && managerCreated) {
                 Undo.DestroyObjectImmediate(manager.gameObject);
                 manager = null;
@@ -136,8 +139,37 @@ namespace VRCLightVolumes {
         }
 #endif
 
+        // Repairs one existing Light Volume's derived registry link without adding a user-facing Undo operation.
+        internal static bool ReconcileRegistration(LightVolumeManager manager, LightVolumeInstance volume) {
+            if (!CanReconcileRegistration(manager, volume)) return false;
+            LightVolumeInstance[] registry = manager.LightVolumeInstances;
+            int index = registry == null ? -1 : Array.IndexOf(registry, volume);
+            if (index >= 0 && volume.LightVolumeManager == manager && volume.RegistryOrder == index) return false;
+#if UDONSHARP
+            if (!LightVolumeMigration.IsReadyRuntimeComponent(manager) || !LightVolumeMigration.IsReadyRuntimeComponent(volume)) return false;
+#endif
+            return LightVolumeManagerEditorBackend.EnsureRegistered(manager, volume, UndoName, false, out bool changed) && changed;
+        }
+
+        // Repairs one existing Point Light Volume's derived registry link without adding a user-facing Undo operation.
+        internal static bool ReconcileRegistration(LightVolumeManager manager, PointLightVolumeInstance pointLight) {
+            if (!CanReconcileRegistration(manager, pointLight)) return false;
+            PointLightVolumeInstance[] registry = manager.PointLightVolumeInstances;
+            int index = registry == null ? -1 : Array.IndexOf(registry, pointLight);
+            if (index >= 0 && pointLight.LightVolumeManager == manager && pointLight.RegistryOrder == index) return false;
+#if UDONSHARP
+            if (!LightVolumeMigration.IsReadyRuntimeComponent(manager) || !LightVolumeMigration.IsReadyRuntimeComponent(pointLight)) return false;
+#endif
+            return LightVolumeManagerEditorBackend.EnsureRegistered(manager, pointLight, UndoName, false, out bool changed) && changed;
+        }
+
+        // Restricts automatic reconciliation to editable components owned by the primary Manager's scene.
+        private static bool CanReconcileRegistration(LightVolumeManager manager, Component component) {
+            return manager != null && component != null && manager.gameObject.scene == component.gameObject.scene && IsMainStageSceneObject(manager.gameObject) && IsMainStageSceneObject(component.gameObject);
+        }
+
         // Registers every ready Light Volume below one hierarchy with the selected Manager.
-        private static bool RegisterHierarchy(GameObject root, LightVolumeManager manager, bool hierarchyMigrated) {
+        private static bool RegisterHierarchy(GameObject root, LightVolumeManager manager, bool hierarchyMigrated, bool recordRegistrationUndo) {
             bool changed = false;
             List<LightVolumeInstance> volumes = new List<LightVolumeInstance>();
             root.GetComponentsInChildren(true, volumes);
@@ -146,7 +178,7 @@ namespace VRCLightVolumes {
 #if UDONSHARP
                 if (!LightVolumeMigration.IsReadyRuntimeComponent(volume)) continue;
 #endif
-                if (!LightVolumeManagerEditorBackend.EnsureRegistered(manager, volume, UndoName, out bool volumeChanged)) continue;
+                if (!LightVolumeManagerEditorBackend.EnsureRegistered(manager, volume, UndoName, recordRegistrationUndo, out bool volumeChanged)) continue;
                 changed |= volumeChanged;
                 if (BakeryEditorBridge.IsAvailable && (volumeChanged || hierarchyMigrated) && manager.EditorIsBakeryMode && volume.Bake) LightVolumeTools.SetupBakeryDependencies(volume, true);
             }
@@ -158,16 +190,16 @@ namespace VRCLightVolumes {
 #if UDONSHARP
                 if (!LightVolumeMigration.IsReadyRuntimeComponent(pointLight)) continue;
 #endif
-                if (LightVolumeManagerEditorBackend.EnsureRegistered(manager, pointLight, UndoName, out bool pointLightChanged)) changed |= pointLightChanged;
+                if (LightVolumeManagerEditorBackend.EnsureRegistered(manager, pointLight, UndoName, recordRegistrationUndo, out bool pointLightChanged)) changed |= pointLightChanged;
             }
             return changed;
         }
 
         // Registers authoring components from every root hierarchy in a scene.
-        private static bool RegisterScene(Scene scene, LightVolumeManager manager, bool hierarchyMigrated) {
+        private static bool RegisterScene(Scene scene, LightVolumeManager manager, bool hierarchyMigrated, bool recordRegistrationUndo) {
             bool changed = false;
             GameObject[] roots = scene.GetRootGameObjects();
-            for (int i = 0; i < roots.Length; i++) changed |= RegisterHierarchy(roots[i], manager, hierarchyMigrated);
+            for (int i = 0; i < roots.Length; i++) changed |= RegisterHierarchy(roots[i], manager, hierarchyMigrated, recordRegistrationUndo);
             return changed;
         }
 

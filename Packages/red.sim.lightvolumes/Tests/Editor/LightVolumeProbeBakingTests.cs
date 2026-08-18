@@ -17,6 +17,29 @@ namespace VRCLightVolumes.Tests {
         private const float Epsilon = 0.0001f;
         private const float L1Coefficient = 1.65f;
 
+        // One dark first probe must not make an L2 result look like Bakery L1 data.
+        [Test]
+        public void L2DetectionChecksEveryLightProbe() {
+            SphericalHarmonicsL2[] probes = new SphericalHarmonicsL2[2];
+            probes[0][0, 0] = 1f;
+            probes[1][2, 8] = 0.000001f;
+
+            Assert.That(LightVolumeBaker.HasL2ProbeData(probes), Is.True);
+
+            probes[1][2, 8] = 0f;
+            Assert.That(LightVolumeBaker.HasL2ProbeData(probes), Is.False);
+        }
+
+        [Test]
+        public void DeclaredBakeryL2ModeSkipsL1FixWhenHigherBandsAreZero() {
+            SphericalHarmonicsL2[] probes = new SphericalHarmonicsL2[1];
+            probes[0][0, 0] = 1f;
+
+            Assert.That(LightVolumeBaker.HasL2ProbeData(probes), Is.False);
+            Assert.That(LightVolumeBaker.ShouldDeringLightProbes(true, true, probes), Is.False);
+            Assert.That(LightVolumeBaker.ShouldDeringLightProbes(true, false, probes), Is.True);
+        }
+
         // Matches LTCGI's material-driven registration, where a separate editor updater renders the target.
         [Test]
         public void ManagerEditorFacadeAcceptsMaterialProcessorWithoutCallback() {

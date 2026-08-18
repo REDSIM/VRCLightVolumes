@@ -207,11 +207,12 @@ namespace VRCLightVolumes {
         private static void QueueObject(UnityEngine.Object changedObject) {
             if (changedObject == null) return;
             if (changedObject is GameObject gameObject) {
-                if (gameObject.GetComponent<LightVolumeManager>() != null) QueueManagerRefresh();
+                LightVolumeManager manager = gameObject.GetComponent<LightVolumeManager>();
+                if (manager != null) QueueManagerRegistrationGraph(manager);
                 QueueHierarchy(gameObject);
             }
             else if (changedObject is Transform transform) QueueHierarchy(transform.gameObject);
-            else if (changedObject is LightVolumeManager manager) QueueManager(manager);
+            else if (changedObject is LightVolumeManager manager) QueueManagerRegistrationGraph(manager);
             else if (changedObject is LightVolumeInstance volume) QueueVolume(volume);
             else if (changedObject is PointLightVolumeInstance pointLight) QueuePointLight(pointLight);
         }
@@ -257,6 +258,14 @@ namespace VRCLightVolumes {
             if (!_isFlushing) QueueFlush();
         }
 
+        // A Manager property change can include an Undo-restored registry array. Queue every authoring component in its scene so the derived graph is checked in the same batch.
+        private static void QueueManagerRegistrationGraph(LightVolumeManager manager) {
+            QueueManager(manager);
+            if (!IsEditableSceneObject(manager) || !LightVolumeSceneSetup.IsMainStageSceneObject(manager.gameObject)) return;
+            GameObject[] roots = manager.gameObject.scene.GetRootGameObjects();
+            for (int i = 0; i < roots.Length; i++) QueueHierarchy(roots[i]);
+        }
+
         // Refreshes the primary Manager at most once for a coalesced structural-change batch.
         private static void QueueManagerRefresh() {
             if (!_flushQueued) RefreshPrimaryManager();
@@ -297,15 +306,22 @@ namespace VRCLightVolumes {
 
             _isFlushing = true;
             try {
+                bool registrationGraphChanged = false;
                 for (int i = 0; i < _onboardingRootsInOrder.Count; i++) {
                     GameObject root = _onboardingRootsInOrder[i];
-                    if (!LightVolumeSceneSetup.OnboardHierarchy(root, out LightVolumeManager manager)) continue;
+                    // Registration arrays are a derived graph. Automatic restoration must not add a hidden Undo step above the user's create/delete/move operation.
+                    if (!LightVolumeSceneSetup.OnboardHierarchy(root, out LightVolumeManager manager, false)) continue;
+                    registrationGraphChanged = true;
                     QueueHierarchy(root);
                     QueueManager(manager);
                 }
                 foreach (LightVolumeInstance volume in _volumes) {
                     if (!IsEditableSceneObject(volume)) continue;
                     LightVolumeTools.ApplyRuntimeState(volume, false);
+                    if (LightVolumeSceneSetup.ReconcileRegistration(_primaryManager, volume)) {
+                        registrationGraphChanged = true;
+                        _managerUpdateQueued = true;
+                    }
                     LightVolumeManagerEditorBackend.CopyProxyToUdon(volume);
                 }
                 foreach (PointLightVolumeInstance pointLight in _pointLights) {
@@ -313,8 +329,13 @@ namespace VRCLightVolumes {
                     bool customTexturesChanged = pointLight.HasEditorCustomTextureChanges();
                     bool shadowTexturesChanged = pointLight.HasEditorShadowTextureChanges();
                     pointLight.EditorApplyAuthoringData(customTexturesChanged, shadowTexturesChanged, false);
+                    if (LightVolumeSceneSetup.ReconcileRegistration(_primaryManager, pointLight)) {
+                        registrationGraphChanged = true;
+                        _managerUpdateQueued = true;
+                    }
                     LightVolumeManagerEditorBackend.CopyProxyToUdon(pointLight);
                 }
+                if (registrationGraphChanged) LightVolumeManagerEditorBackend.SynchronizeRegistryMetadata(_primaryManager);
                 if (!managerRecoveryFollows && _managerUpdateQueued && IsEditableSceneObject(_primaryManager)) _primaryManager.UpdateVolumes();
             } finally {
                 Clear();

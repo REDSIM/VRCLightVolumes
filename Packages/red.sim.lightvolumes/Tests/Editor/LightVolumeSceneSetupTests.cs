@@ -323,6 +323,231 @@ namespace VRCLightVolumes.Tests {
         }
 
         [UnityTest]
+        public IEnumerator DeletingAndUndoingPointLightDoesNotConsumeTransformUndoOrLoseRegistration() {
+            _scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+            UnityEngine.Object previousSelection = Selection.activeObject;
+            GameObject managerObject = new GameObject("Undo Registration Manager");
+            GameObject pointObject = new GameObject("Undo Registration Point Light");
+            SceneManager.MoveGameObjectToScene(managerObject, _scene);
+            SceneManager.MoveGameObjectToScene(pointObject, _scene);
+
+            try {
+                // Keep setup out of Unity's Undo stack so the test measures only the user's move,
+                // delete, and the editor's automatic registry repair.
+                Selection.activeObject = null;
+                LightVolumeManager manager = managerObject.AddUdonSharpComponent<LightVolumeManager>();
+                PointLightVolumeInstance pointLight = pointObject.AddUdonSharpComponent<PointLightVolumeInstance>();
+                manager.LightVolumeInstances = Array.Empty<LightVolumeInstance>();
+                manager.PointLightVolumeInstances = new[] { pointLight };
+                pointLight.LightVolumeManager = manager;
+                pointLight.RegistryOrder = 0;
+                Vector3 originalPosition = new Vector3(1f, 2f, 3f);
+                Vector3 movedPosition = new Vector3(4f, 5f, 6f);
+                pointObject.transform.position = originalPosition;
+                LightVolumeManagerEditorBackend.CopyProxyToUdon(pointLight);
+                LightVolumeManagerEditorBackend.CopyProxyToUdon(manager);
+                yield return DrainAutomaticEditorChanges();
+                AssertPointRegistered(manager, pointLight);
+
+                Undo.IncrementCurrentGroup();
+                int moveGroup = Undo.GetCurrentGroup();
+                Undo.SetCurrentGroupName("Move Point Light Volume");
+                Undo.RecordObject(pointLight.transform, "Move Point Light Volume");
+                pointLight.transform.position = movedPosition;
+                Undo.FlushUndoRecordObjects();
+                Undo.CollapseUndoOperations(moveGroup);
+                yield return DrainAutomaticEditorChanges();
+
+                Undo.IncrementCurrentGroup();
+                int deleteGroup = Undo.GetCurrentGroup();
+                Undo.SetCurrentGroupName("Delete Point Light Volume");
+                Undo.DestroyObjectImmediate(pointLight.gameObject);
+                Undo.CollapseUndoOperations(deleteGroup);
+                yield return DrainAutomaticEditorChanges();
+                bool registryWasEmptyAfterDelete = (manager.PointLightVolumeInstances ?? Array.Empty<PointLightVolumeInstance>()).Length == 0;
+
+                Undo.PerformUndo();
+                yield return DrainAutomaticEditorChanges();
+                pointLight = GetSingleSceneComponent<PointLightVolumeInstance>();
+                pointObject = pointLight.gameObject;
+                Assert.That(registryWasEmptyAfterDelete, Is.True);
+                Assert.That(pointLight.transform.position, Is.EqualTo(movedPosition));
+                AssertPointRegistered(manager, pointLight);
+
+                // Automatic reconciliation must not sit above the move as a hidden Undo record.
+                Undo.PerformUndo();
+                yield return DrainAutomaticEditorChanges();
+                pointLight = GetSingleSceneComponent<PointLightVolumeInstance>();
+                pointObject = pointLight.gameObject;
+                Assert.That(pointLight.transform.position, Is.EqualTo(originalPosition));
+                AssertPointRegistered(manager, pointLight);
+            } finally {
+                Selection.activeObject = previousSelection;
+                ClearHierarchyUndo(pointObject);
+                ClearHierarchyUndo(managerObject);
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator EditorChangesRepairAnOrphanedPointLightRegistration() {
+            _scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+            UnityEngine.Object previousSelection = Selection.activeObject;
+            GameObject managerObject = new GameObject("Registration Repair Manager");
+            GameObject pointObject = new GameObject("Registration Repair Point Light");
+            SceneManager.MoveGameObjectToScene(managerObject, _scene);
+            SceneManager.MoveGameObjectToScene(pointObject, _scene);
+            try {
+                Selection.activeObject = null;
+                LightVolumeManager manager = managerObject.AddUdonSharpComponent<LightVolumeManager>();
+                PointLightVolumeInstance pointLight = pointObject.AddUdonSharpComponent<PointLightVolumeInstance>();
+                manager.LightVolumeInstances = Array.Empty<LightVolumeInstance>();
+                manager.PointLightVolumeInstances = new[] { pointLight };
+                pointLight.LightVolumeManager = manager;
+                pointLight.RegistryOrder = 0;
+                LightVolumeManagerEditorBackend.CopyProxyToUdon(pointLight);
+                LightVolumeManagerEditorBackend.CopyProxyToUdon(manager);
+                yield return DrainAutomaticEditorChanges();
+
+                manager.PointLightVolumeInstances = Array.Empty<PointLightVolumeInstance>();
+                Undo.RecordObject(pointLight.transform, "Move Orphaned Point Light Volume");
+                pointLight.transform.position += Vector3.one;
+                Undo.FlushUndoRecordObjects();
+                yield return DrainAutomaticEditorChanges();
+                AssertPointRegistered(manager, pointLight);
+
+                manager.PointLightVolumeInstances = Array.Empty<PointLightVolumeInstance>();
+                Undo.RecordObject(pointLight.gameObject, "Disable Orphaned Point Light Volume");
+                pointLight.gameObject.SetActive(false);
+                Undo.FlushUndoRecordObjects();
+                yield return DrainAutomaticEditorChanges();
+                AssertPointRegistered(manager, pointLight);
+                Undo.RecordObject(pointLight.gameObject, "Enable Point Light Volume");
+                pointLight.gameObject.SetActive(true);
+                Undo.FlushUndoRecordObjects();
+                yield return DrainAutomaticEditorChanges();
+                AssertPointRegistered(manager, pointLight);
+
+                manager.PointLightVolumeInstances = Array.Empty<PointLightVolumeInstance>();
+                Undo.RecordObject(pointLight, "Disable Point Light Volume Component");
+                pointLight.enabled = false;
+                Undo.FlushUndoRecordObjects();
+                yield return DrainAutomaticEditorChanges();
+                AssertPointRegistered(manager, pointLight);
+                Undo.RecordObject(pointLight, "Enable Point Light Volume Component");
+                pointLight.enabled = true;
+                Undo.FlushUndoRecordObjects();
+                yield return DrainAutomaticEditorChanges();
+                AssertPointRegistered(manager, pointLight);
+
+                manager.PointLightVolumeInstances = Array.Empty<PointLightVolumeInstance>();
+                Undo.RecordObject(manager, "Disable Light Volume Manager");
+                manager.enabled = false;
+                Undo.FlushUndoRecordObjects();
+                yield return DrainAutomaticEditorChanges();
+                AssertPointRegistered(manager, pointLight);
+                Undo.RecordObject(manager, "Enable Light Volume Manager");
+                manager.enabled = true;
+                Undo.FlushUndoRecordObjects();
+                yield return DrainAutomaticEditorChanges();
+                AssertPointRegistered(manager, pointLight);
+            } finally {
+                Selection.activeObject = previousSelection;
+                ClearHierarchyUndo(pointObject);
+                ClearHierarchyUndo(managerObject);
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator OpeningSceneRepairsMissingPointRegistrationWithExistingManager() {
+            _scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+            GameObject managerObject = new GameObject("Reopen Registration Manager");
+            GameObject pointObject = new GameObject("Reopen Registration Point Light");
+            SceneManager.MoveGameObjectToScene(managerObject, _scene);
+            SceneManager.MoveGameObjectToScene(pointObject, _scene);
+            LightVolumeManager manager = managerObject.AddUdonSharpComponent<LightVolumeManager>();
+            PointLightVolumeInstance pointLight = pointObject.AddUdonSharpComponent<PointLightVolumeInstance>();
+            manager.LightVolumeInstances = Array.Empty<LightVolumeInstance>();
+            manager.PointLightVolumeInstances = new[] { pointLight };
+            pointLight.LightVolumeManager = manager;
+            pointLight.RegistryOrder = 0;
+            LightVolumeManagerEditorBackend.CopyProxyToUdon(pointLight);
+            LightVolumeManagerEditorBackend.CopyProxyToUdon(manager);
+            yield return DrainAutomaticEditorChanges();
+            AssertPointRegistered(manager, pointLight);
+
+            // Establish the corrupt serialized state only after all creation callbacks are drained,
+            // so scene-open reconciliation is the sole repair path measured below.
+            manager.PointLightVolumeInstances = Array.Empty<PointLightVolumeInstance>();
+            LVUtils.MarkDirty(manager);
+            LightVolumeManagerEditorBackend.CopyProxyToUdon(manager);
+            Assert.That(manager.PointLightVolumeInstances, Is.Empty);
+
+            _sceneAssetPath = AssetDatabase.GenerateUniqueAssetPath("Assets/VRCLightVolumesOrphanRegistrationReopenTest.unity");
+            Assert.That(EditorSceneManager.SaveScene(_scene, _sceneAssetPath), Is.True);
+            EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+            _scene = EditorSceneManager.OpenScene(_sceneAssetPath, OpenSceneMode.Single);
+            yield return DrainAutomaticEditorChanges();
+
+            manager = GetSingleSceneComponent<LightVolumeManager>();
+            pointLight = GetSingleSceneComponent<PointLightVolumeInstance>();
+            AssertPointRegistered(manager, pointLight);
+        }
+
+        [Test]
+        public void AutomaticRegistrationRepairRestoresStablePointLightOrder() {
+            _scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+            GameObject managerObject = new GameObject("Stable Repair Manager");
+            SceneManager.MoveGameObjectToScene(managerObject, _scene);
+            LightVolumeManager manager = managerObject.AddUdonSharpComponent<LightVolumeManager>();
+            PointLightVolumeInstance[] pointLights = new PointLightVolumeInstance[4];
+            for (int i = 0; i < pointLights.Length; i++) {
+                GameObject pointObject = new GameObject($"Stable Repair Point {i}");
+                SceneManager.MoveGameObjectToScene(pointObject, _scene);
+                PointLightVolumeInstance pointLight = pointObject.AddUdonSharpComponent<PointLightVolumeInstance>();
+                pointLight.LightVolumeManager = manager;
+                pointLight.RegistryOrder = i;
+                pointLights[i] = pointLight;
+            }
+            manager.LightVolumeInstances = Array.Empty<LightVolumeInstance>();
+            manager.PointLightVolumeInstances = new[] { pointLights[0], pointLights[3] };
+
+            // Restore the later missing entry first to prove recovery does not depend on callback order.
+            bool registeredLater = LightVolumeManagerEditorBackend.EnsureRegistered(
+                manager,
+                pointLights[2],
+                "Repair Point Light Registration",
+                false,
+                out bool changedLater);
+            bool registeredEarlier = LightVolumeManagerEditorBackend.EnsureRegistered(
+                manager,
+                pointLights[1],
+                "Repair Point Light Registration",
+                false,
+                out bool changedEarlier);
+            LightVolumeManagerEditorBackend.SynchronizeRegistryMetadata(manager);
+
+            Assert.That(registeredLater, Is.True);
+            Assert.That(changedLater, Is.True);
+            Assert.That(registeredEarlier, Is.True);
+            Assert.That(changedEarlier, Is.True);
+            Assert.That(manager.PointLightVolumeInstances, Is.EqualTo(pointLights));
+            for (int i = 0; i < pointLights.Length; i++) {
+                Assert.That(pointLights[i].LightVolumeManager, Is.SameAs(manager));
+                Assert.That(pointLights[i].RegistryOrder, Is.EqualTo(i));
+            }
+
+            pointLights[0].RegistryOrder = 7;
+            Assert.That(LightVolumeManagerEditorBackend.EnsureRegistered(
+                manager,
+                pointLights[0],
+                "Repair Point Light Metadata",
+                false,
+                out bool metadataChanged), Is.True);
+            Assert.That(metadataChanged, Is.True);
+            Assert.That(pointLights[0].RegistryOrder, Is.Zero);
+        }
+
+        [UnityTest]
         public IEnumerator OpeningSceneReconcilesManagerlessPrefabAfterLegacyMigrationPass() {
             _scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
             GameObject prefabAsset = CreatePrefab(includeLegacyHelpers: false, includeUnifiedComponents: true);
@@ -720,6 +945,13 @@ namespace VRCLightVolumes.Tests {
             LightVolumeEditorUpdater.FlushPendingSceneChanges();
         }
 
+        private static IEnumerator DrainAutomaticEditorChanges(int editorTurns = 4) {
+            for (int i = 0; i < editorTurns; i++) {
+                yield return null;
+                LightVolumeEditorUpdater.FlushPendingSceneChanges();
+            }
+        }
+
         private void SaveAndReopenScene() {
             _sceneAssetPath = AssetDatabase.GenerateUniqueAssetPath("Assets/VRCLightVolumesSceneSetupTest.unity");
             Assert.That(EditorSceneManager.SaveScene(_scene, _sceneAssetPath), Is.True);
@@ -765,6 +997,28 @@ namespace VRCLightVolumes.Tests {
             Assert.That(pointLight.LightVolumeManager, Is.SameAs(manager));
             Assert.That(volume.RegistryOrder, Is.Zero);
             Assert.That(pointLight.RegistryOrder, Is.Zero);
+        }
+
+        private static void AssertPointRegistered(LightVolumeManager manager, PointLightVolumeInstance pointLight) {
+            Assert.That(manager.PointLightVolumeInstances, Is.EqualTo(new[] { pointLight }));
+            Assert.That(pointLight.LightVolumeManager, Is.SameAs(manager));
+            Assert.That(pointLight.RegistryOrder, Is.Zero);
+            AssertBackingManager(pointLight, manager);
+
+            UdonBehaviour managerBacking = UdonSharpEditorUtility.GetBackingUdonBehaviour(manager);
+            UdonBehaviour pointBacking = UdonSharpEditorUtility.GetBackingUdonBehaviour(pointLight);
+            Assert.That(managerBacking.publicVariables.TryGetVariableValue("PointLightVolumeInstances", out object serializedPoints), Is.True);
+            Assert.That(serializedPoints, Is.EqualTo(new[] { pointBacking }));
+        }
+
+        private static void ClearHierarchyUndo(GameObject root) {
+            if (root == null) return;
+            Transform[] transforms = root.GetComponentsInChildren<Transform>(true);
+            for (int i = 0; i < transforms.Length; i++) Undo.ClearUndo(transforms[i].gameObject);
+            Component[] components = root.GetComponentsInChildren<Component>(true);
+            for (int i = 0; i < components.Length; i++) {
+                if (components[i] != null) Undo.ClearUndo(components[i]);
+            }
         }
 
         private static void AssertBackingManager(Component component, LightVolumeManager manager) {

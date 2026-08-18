@@ -180,47 +180,39 @@ namespace VRCLightVolumes {
                 if (volume == null || volume.LightVolumeManager != manager) continue;
                 LightVolumeTools.SetupBakeryDependencies(volume, createIfMissing);
             }
-            LightVolumeBaker.QueueBakeryWatcherRefresh();
         }
 
         // Synchronizes registry ownership and stable authoring order without rearranging the list.
         internal static void SynchronizeRegistryMetadata(LightVolumeManager manager) {
             if (manager == null) return;
 
-            LightVolumeInstance[] volumes = manager.LightVolumeInstances;
+            LightVolumeInstance[] volumes = manager.LightVolumeInstances ?? Array.Empty<LightVolumeInstance>();
             SynchronizeLightVolumeMetadata(manager, volumes);
 
-            PointLightVolumeInstance[] pointLights = manager.PointLightVolumeInstances;
-            for (int i = 0; i < pointLights.Length; i++) {
-                PointLightVolumeInstance pointLight = pointLights[i];
-                if (pointLight == null) continue;
-                bool changed = false;
-                if (pointLight.LightVolumeManager != manager) {
-                    pointLight.LightVolumeManager = manager;
-                    changed = true;
-                }
-                if (pointLight.RegistryOrder != i) {
-                    pointLight.RegistryOrder = i;
-                    changed = true;
-                }
-                if (!changed) continue;
-                LVUtils.MarkDirty(pointLight);
-                CopyProxyToUdon(pointLight);
-            }
+            PointLightVolumeInstance[] pointLights = manager.PointLightVolumeInstances ?? Array.Empty<PointLightVolumeInstance>();
+            SynchronizePointLightMetadata(manager, pointLights);
         }
 
         // Registers an authoring component without invoking its runtime OnEnable path. This is used both by hierarchy creation and by scene-instance prefab onboarding. Success and mutation are separate so callers cannot mistake an already-correct registration for a new change.
         internal static bool EnsureRegistered(LightVolumeManager manager, LightVolumeInstance volume, string undoName, out bool changed) {
+            return EnsureRegistered(manager, volume, undoName, true, out changed);
+        }
+
+        // Reconciles a Light Volume registration, optionally keeping the derived repair out of Unity's user-facing Undo history.
+        internal static bool EnsureRegistered(LightVolumeManager manager, LightVolumeInstance volume, string undoName, bool recordUndo, out bool changed) {
             changed = false;
             if (manager == null || volume == null) return false;
 
             LightVolumeInstance[] volumes = manager.LightVolumeInstances ?? Array.Empty<LightVolumeInstance>();
             int index = Array.IndexOf(volumes, volume);
             bool managerChanged = false;
+            bool restoreOrder = index < 0 && !recordUndo && volume.LightVolumeManager == manager && volume.RegistryOrder != int.MaxValue;
             if (index < 0) {
-                Undo.RecordObject(manager, undoName);
-                index = volumes.Length;
-                Array.Resize(ref volumes, index + 1);
+                if (recordUndo) Undo.RecordObject(manager, undoName);
+                int previousCount = volumes.Length;
+                index = restoreOrder ? FindRegistryRestoreIndex(volumes, volume.RegistryOrder) : previousCount;
+                Array.Resize(ref volumes, previousCount + 1);
+                if (index < previousCount) Array.Copy(volumes, index, volumes, index + 1, previousCount - index);
                 volumes[index] = volume;
                 manager.LightVolumeInstances = volumes;
                 LVUtils.MarkDirty(manager);
@@ -228,8 +220,8 @@ namespace VRCLightVolumes {
                 managerChanged = true;
             }
 
-            if (volume.LightVolumeManager != manager || volume.RegistryOrder != index) {
-                Undo.RecordObject(volume, undoName);
+            if (volume.LightVolumeManager != manager || (!restoreOrder && volume.RegistryOrder != index)) {
+                if (recordUndo) Undo.RecordObject(volume, undoName);
                 volume.LightVolumeManager = manager;
                 volume.RegistryOrder = index;
                 LVUtils.MarkDirty(volume);
@@ -243,16 +235,24 @@ namespace VRCLightVolumes {
 
         // Registers a Point Light Volume without invoking runtime lifecycle callbacks and reports actual mutation.
         internal static bool EnsureRegistered(LightVolumeManager manager, PointLightVolumeInstance pointLight, string undoName, out bool changed) {
+            return EnsureRegistered(manager, pointLight, undoName, true, out changed);
+        }
+
+        // Reconciles a Point Light Volume registration, optionally keeping the derived repair out of Unity's user-facing Undo history.
+        internal static bool EnsureRegistered(LightVolumeManager manager, PointLightVolumeInstance pointLight, string undoName, bool recordUndo, out bool changed) {
             changed = false;
             if (manager == null || pointLight == null) return false;
 
             PointLightVolumeInstance[] pointLights = manager.PointLightVolumeInstances ?? Array.Empty<PointLightVolumeInstance>();
             int index = Array.IndexOf(pointLights, pointLight);
             bool managerChanged = false;
+            bool restoreOrder = index < 0 && !recordUndo && pointLight.LightVolumeManager == manager && pointLight.RegistryOrder != int.MaxValue;
             if (index < 0) {
-                Undo.RecordObject(manager, undoName);
-                index = pointLights.Length;
-                Array.Resize(ref pointLights, index + 1);
+                if (recordUndo) Undo.RecordObject(manager, undoName);
+                int previousCount = pointLights.Length;
+                index = restoreOrder ? FindRegistryRestoreIndex(pointLights, pointLight.RegistryOrder) : previousCount;
+                Array.Resize(ref pointLights, previousCount + 1);
+                if (index < previousCount) Array.Copy(pointLights, index, pointLights, index + 1, previousCount - index);
                 pointLights[index] = pointLight;
                 manager.PointLightVolumeInstances = pointLights;
                 LVUtils.MarkDirty(manager);
@@ -260,8 +260,8 @@ namespace VRCLightVolumes {
                 managerChanged = true;
             }
 
-            if (pointLight.LightVolumeManager != manager || pointLight.RegistryOrder != index) {
-                Undo.RecordObject(pointLight, undoName);
+            if (pointLight.LightVolumeManager != manager || (!restoreOrder && pointLight.RegistryOrder != index)) {
+                if (recordUndo) Undo.RecordObject(pointLight, undoName);
                 pointLight.LightVolumeManager = manager;
                 pointLight.RegistryOrder = index;
                 LVUtils.MarkDirty(pointLight);
@@ -271,6 +271,16 @@ namespace VRCLightVolumes {
 
             if (managerChanged) CopyProxyToUdon(manager);
             return true;
+        }
+
+        // Inserts an Undo-restored entry before the first surviving entry that had a later authoring order. Metadata is normalized once after the whole editor batch so multiple restored entries retain their relative order.
+        private static int FindRegistryRestoreIndex<T>(T[] registry, int registryOrder) where T : Component {
+            for (int i = 0; i < registry.Length; i++) {
+                Component component = registry[i];
+                if (component is LightVolumeInstance volume && volume.RegistryOrder > registryOrder) return i;
+                if (component is PointLightVolumeInstance pointLight && pointLight.RegistryOrder > registryOrder) return i;
+            }
+            return registry.Length;
         }
 
         // Synchronizes Manager ownership and stable registry order for regular Light Volumes.
@@ -290,6 +300,26 @@ namespace VRCLightVolumes {
                 if (!changed) continue;
                 LVUtils.MarkDirty(volume);
                 CopyProxyToUdon(volume);
+            }
+        }
+
+        // Synchronizes Manager ownership and stable registry order for Point Light Volumes.
+        private static void SynchronizePointLightMetadata(LightVolumeManager manager, PointLightVolumeInstance[] pointLights) {
+            for (int i = 0; i < pointLights.Length; i++) {
+                PointLightVolumeInstance pointLight = pointLights[i];
+                if (pointLight == null) continue;
+                bool changed = false;
+                if (pointLight.LightVolumeManager != manager) {
+                    pointLight.LightVolumeManager = manager;
+                    changed = true;
+                }
+                if (pointLight.RegistryOrder != i) {
+                    pointLight.RegistryOrder = i;
+                    changed = true;
+                }
+                if (!changed) continue;
+                LVUtils.MarkDirty(pointLight);
+                CopyProxyToUdon(pointLight);
             }
         }
 

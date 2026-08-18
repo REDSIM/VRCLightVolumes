@@ -391,7 +391,7 @@ namespace VRCLightVolumes {
             return L1;
         }
 
-        // Fizes bakery L1 probe
+        // Fixes a Bakery L1 probe
         public static SphericalHarmonicsL2 DeringSH(SphericalHarmonicsL2 sh) {
 
             const int r = 0;
@@ -429,7 +429,7 @@ namespace VRCLightVolumes {
         // Checks if any L2 data is provided in SphericalHarmonicsL2
         public static bool CheckSHL2(SphericalHarmonicsL2 sh) {
             for(int rgb = 0; rgb < 3; rgb++) { // Iterating RGB color components
-                for(int coeff = 4; coeff < 9; coeff++) { // Iterating L1 and L2 coeffs
+                for(int coeff = 4; coeff < 9; coeff++) { // Iterating L2 coefficients
                     if(sh[rgb, coeff] != 0) return true;
                 }
             }

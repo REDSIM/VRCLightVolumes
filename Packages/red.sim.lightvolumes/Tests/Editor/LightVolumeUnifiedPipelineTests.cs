@@ -225,6 +225,42 @@ namespace VRCLightVolumes.Tests {
             }
         }
 
+        // Bakery's Legacy probe command does not raise the full-render event. Its dedicated
+        // completion callback must still schedule the same final SH post-process.
+        [Test]
+        public void BakeryLegacyProbeCompletionQueuesProbePostProcess() {
+            MethodInfo reset = typeof(LightVolumeBaker).GetMethod("ResetBakeryBakeState", _nonPublicStaticFlags);
+            MethodInfo finishedProbes = typeof(LightVolumeBaker).GetMethod("OnBakeryProbesFinished", _nonPublicStaticFlags);
+            FieldInfo probePending = typeof(LightVolumeBaker).GetField("_bakeryProbePostProcessPending", _nonPublicStaticFlags);
+            FieldInfo completionQueued = typeof(LightVolumeBaker).GetField("_bakeryCompletionQueued", _nonPublicStaticFlags);
+            Assert.That(reset, Is.Not.Null);
+            Assert.That(finishedProbes, Is.Not.Null);
+            Assert.That(probePending, Is.Not.Null);
+            Assert.That(completionQueued, Is.Not.Null);
+
+            reset.Invoke(null, null);
+            try {
+                finishedProbes.Invoke(null, new object[] { null, System.EventArgs.Empty });
+
+                Assert.That((bool)probePending.GetValue(null), Is.True);
+                Assert.That((bool)completionQueued.GetValue(null), Is.True);
+            } finally {
+                reset.Invoke(null, null);
+            }
+        }
+
+        [Test]
+        public void BakeryProbeCompletionPolicyMatchesSupportedModes() {
+            Assert.That(BakeryEditorBridge.ClassifyProbeRender("L1", true, true, false, false, true), Is.EqualTo(BakeryEditorBridge.ProbeRenderMode.L1));
+            Assert.That(BakeryEditorBridge.ClassifyProbeRender("L2", true, true, false, false, true), Is.EqualTo(BakeryEditorBridge.ProbeRenderMode.L2));
+            Assert.That(BakeryEditorBridge.ClassifyProbeRender("Legacy", true, true, false, false, true), Is.EqualTo(BakeryEditorBridge.ProbeRenderMode.None));
+            Assert.That(BakeryEditorBridge.ClassifyProbeRender("L1", false, true, false, false, true), Is.EqualTo(BakeryEditorBridge.ProbeRenderMode.None));
+            Assert.That(BakeryEditorBridge.ClassifyProbeRender("L1", true, false, false, false, true), Is.EqualTo(BakeryEditorBridge.ProbeRenderMode.None));
+            Assert.That(BakeryEditorBridge.ClassifyProbeRender("L1", true, true, true, false, true), Is.EqualTo(BakeryEditorBridge.ProbeRenderMode.None));
+            Assert.That(BakeryEditorBridge.ClassifyProbeRender("L1", true, true, false, true, false), Is.EqualTo(BakeryEditorBridge.ProbeRenderMode.None));
+            Assert.That(BakeryEditorBridge.ClassifyProbeRender("L1", true, true, false, true, true), Is.EqualTo(BakeryEditorBridge.ProbeRenderMode.L1));
+        }
+
         // Unified authoring infers animation only when a projection source changes and detects cubemap RenderTextures.
         [Test]
         public void PointLightAuthoringResolvesProjectionSourcesWithoutOverwritingManualAutoUpdate() {

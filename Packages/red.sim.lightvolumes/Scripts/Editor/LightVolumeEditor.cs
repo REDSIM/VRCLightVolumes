@@ -194,7 +194,10 @@ namespace VRCLightVolumes {
 
             if (!BakeryEditorBridge.IsAvailable) {
                 GUILayout.Space(10f);
-                EditorGUILayout.HelpBox("To use Bakery mode, please include Bakery into your project!", MessageType.Error);
+                string message = BakeryEditorBridge.IsInstalled
+                    ? "The installed Bakery API is incomplete or incompatible with VRC Light Volumes. Update Bakery to use Bakery mode."
+                    : "To use Bakery mode, please include Bakery into your project!";
+                EditorGUILayout.HelpBox(message, MessageType.Error);
                 return;
             }
 

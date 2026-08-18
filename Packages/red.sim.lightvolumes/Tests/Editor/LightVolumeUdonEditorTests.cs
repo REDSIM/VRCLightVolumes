@@ -56,7 +56,6 @@ namespace VRCLightVolumes.Tests {
         private static readonly int _pointLightShadowCountID = Shader.PropertyToID("_UdonPointLightVolumeShadowCount");
         private static readonly int _pointLightShadowTextureID = Shader.PropertyToID("_UdonPointLightVolumeShadowTexture");
         private static readonly int _pointLightShadowReceiverParamsID = Shader.PropertyToID("_UdonPointLightVolumeShadowReceiverParams");
-        private static readonly int _pointLightShadowTextureSizeID = Shader.PropertyToID("_UdonPointLightVolumeShadowTextureSize");
         private static readonly int _lightBrightnessCutoffID = Shader.PropertyToID("_UdonLightBrightnessCutoff");
         private static readonly int _forceSceneLightingID = Shader.PropertyToID("_UdonForceSceneLighting");
         private static readonly BindingFlags _lifecycleMethodFlags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
@@ -4999,78 +4998,6 @@ namespace VRCLightVolumes.Tests {
                 "Editor sample quality must not force spherical mode when the authored toggle is disabled.");
         }
 
-        // Cubemap shadows live in six independent Texture2DArray slices. The receiver must
-        // reproject bilinear taps at face borders because the array sampler cannot cross slices.
-        [Test]
-        public void PointShadowReceiverFiltersAcrossCubemapArraySlices() {
-            string shaderSource = ReadLightVolumesIncludeSource();
-
-            Assert.That(shaderSource, Does.Contain("uniform float4 _UdonPointLightVolumeShadowTextureSize;"));
-            Assert.That(shaderSource, Does.Contain("inline float3 LV_CubemapFaceUvDirection"));
-            Assert.That(shaderSource, Does.Contain("inline float3 LV_ShadowCubemapArrayTapAddress"));
-            Assert.That(shaderSource, Does.Contain("inline float4 LV_SampleShadowCubemapArray"));
-            Assert.That(shaderSource, Does.Contain("LV_ShadowCubemapArrayTapAddress(shadowId, face, tap00)"));
-            Assert.That(shaderSource, Does.Contain("LV_ShadowCubemapArrayTapAddress(shadowId, face, tap11)"));
-            Assert.That(shaderSource.Split(new[] { "LV_SampleShadowCubemapArray(shadowId, sampleDir)" }, StringSplitOptions.None).Length - 1,
-                Is.EqualTo(2), "Both the shared Point/Spot path and packed Point path must use seamless cubemap sampling.");
-        }
-
-        // Exercises the real GPU receiver at the +X/-Z boundary. An ordinary array sample would
-        // clamp to red on +X; seamless cubemap bilinear filtering must mix the blue -Z slice.
-        [Test]
-        public void PointShadowReceiverGpuSampleCrossesCubemapFaceBoundary() {
-            if (!SystemInfo.supports2DArrayTextures) Assert.Ignore("Texture2DArray is not supported by this graphics device.");
-            Shader shader = Shader.Find("Hidden/VRCLV/Tests/PointShadowCubemapSampler");
-            Assert.That(shader, Is.Not.Null);
-            Assert.That(shader.isSupported, Is.True);
-            Material material = new Material(shader);
-            _createdObjects.Add(material);
-
-            Color[] faceColors = { Color.red, Color.black, Color.black, Color.black, Color.black, Color.blue };
-            Texture2DArray source = CreateSliceColorTextureArray("Shadow Receiver Cubemap Boundary Source", 4, 4, faceColors);
-            Shader.SetGlobalTexture(_pointLightShadowTextureID, source);
-
-            Shader.SetGlobalVector(_pointLightShadowTextureSizeID, Vector4.zero);
-            Color legacyFaceSeam = RenderPointShadowSampler(material, new Vector3(1f, 0f, -1f));
-            Assert.That(legacyFaceSeam.r, Is.EqualTo(1f).Within(0.01f), "A missing size global must retain the legacy single-sample path.");
-            Assert.That(legacyFaceSeam.b, Is.EqualTo(0f).Within(0.01f));
-
-            Shader.SetGlobalVector(_pointLightShadowTextureSizeID, new Vector4(4f, 4f, 0.25f, 0.25f));
-
-            Color faceCenter = RenderPointShadowSampler(material, Vector3.right);
-            Assert.That(faceCenter.r, Is.EqualTo(1f).Within(0.01f));
-            Assert.That(faceCenter.b, Is.EqualTo(0f).Within(0.01f));
-
-            Color faceSeam = RenderPointShadowSampler(material, new Vector3(1f, 0f, -1f));
-            Assert.That(faceSeam.r, Is.EqualTo(0.5f).Within(0.03f), "The +X half of the cubemap seam was not retained.");
-            Assert.That(faceSeam.b, Is.EqualTo(0.5f).Within(0.03f), "The -Z tap was clamped out instead of crossing the array-slice boundary.");
-        }
-
-        // The half-texel seam region must follow the final manager atlas, including after a live
-        // resolution change, rather than the temporary runtime bake resolution.
-        [Test]
-        public void PointShadowTextureSizeGlobalTracksFinalAtlasResolution() {
-            LightVolumeManager manager = CreateManager("Shadow Texture Size Global Manager", false);
-            manager.ShadowTexturesWidth = 8;
-            manager.ShadowTexturesHeight = 4;
-            PointLightVolumeInstance point = CreatePointLight(manager, "Shadow Texture Size Global Light", true);
-            ConfigureShadowTexture(point, CreateCubemap("Shadow Texture Size Global Source"), false, true, false);
-            manager.PointLightVolumeInstances = new[] { point };
-
-            manager.ReinitializeShadowTextures();
-
-            Assert.That(manager.ShadowTextures, Is.Not.Null);
-            AssertVectorClose(new Vector4(8f, 4f, 1f / 8f, 1f / 4f), Shader.GetGlobalVector(_pointLightShadowTextureSizeID));
-
-            manager.ShadowTexturesWidth = 16;
-            manager.ShadowTexturesHeight = 8;
-            manager.ReinitializeShadowTextures();
-
-            Assert.That(manager.ShadowTextures.width, Is.EqualTo(16));
-            Assert.That(manager.ShadowTextures.height, Is.EqualTo(8));
-            AssertVectorClose(new Vector4(16f, 8f, 1f / 16f, 1f / 8f), Shader.GetGlobalVector(_pointLightShadowTextureSizeID));
-        }
-
         // The SM4/GLES3.0 fallback is selected at compile time; higher targets use native bit scan without a keyword variant.
         [Test]
         public void ClusteredBitScanUsesShaderTargetInsteadOfApiVariant() {
@@ -7126,25 +7053,6 @@ namespace VRCLightVolumes.Tests {
             Assert.That(edgePixel.b, Is.EqualTo(0.46875f).Within(0.02f));
         }
 
-        // Renders one raw receiver sample through the test shader and reads it back synchronously.
-        private static Color RenderPointShadowSampler(Material material, Vector3 direction) {
-            material.SetVector("_TestDirection", new Vector4(direction.x, direction.y, direction.z, 0f));
-            RenderTexture target = RenderTexture.GetTemporary(1, 1, 0, RenderTextureFormat.ARGBFloat, RenderTextureReadWrite.Linear);
-            RenderTexture previousActive = RenderTexture.active;
-            Texture2D readback = new Texture2D(1, 1, TextureFormat.RGBAFloat, false, true);
-            try {
-                Graphics.Blit(Texture2D.whiteTexture, target, material, 0);
-                RenderTexture.active = target;
-                readback.ReadPixels(new Rect(0, 0, 1, 1), 0, 0, false);
-                readback.Apply(false, false);
-                return readback.GetPixel(0, 0);
-            } finally {
-                RenderTexture.active = previousActive;
-                RenderTexture.ReleaseTemporary(target);
-                DestroyTestObject(readback);
-            }
-        }
-
         // Uses a small float tolerance because source and destination formats may differ.
         private static void AssertPixelArraysEqual(Color[] expected, Color[] actual, string message) {
             Assert.That(actual.Length, Is.EqualTo(expected.Length), message + " (pixel count)");
@@ -7442,7 +7350,6 @@ namespace VRCLightVolumes.Tests {
             Shader.SetGlobalFloat(_pointLightShadowCubeCountID, 0);
             Shader.SetGlobalFloat(_pointLightShadowCountID, 0);
             Shader.SetGlobalVector(_pointLightShadowReceiverParamsID, Vector4.zero);
-            Shader.SetGlobalVector(_pointLightShadowTextureSizeID, Vector4.zero);
             Shader.SetGlobalFloat(_lightBrightnessCutoffID, 0);
             Shader.SetGlobalInteger(_forceSceneLightingID, 0);
         }

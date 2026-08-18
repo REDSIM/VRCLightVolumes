@@ -1696,8 +1696,6 @@ MonoBehaviour:
   RuntimeShadowResolution: 512
   RuntimeShadowBlurSamplePreset: 2
   RuntimeShadowSphericalBlur: 1
-  RuntimeShadowFacesPerFrame: 6
-  RuntimeShadowDirectOutput: 0
   Projection: 0
   Range: 10
   Falloff: 1

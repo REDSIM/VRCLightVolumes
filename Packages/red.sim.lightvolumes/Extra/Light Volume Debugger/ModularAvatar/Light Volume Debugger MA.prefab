@@ -326,37 +326,6 @@ MonoBehaviour:
   isDefault: 0
   automaticValue: 0
   label: 
---- !u!1 &3768053313566820490
-GameObject:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  serializedVersion: 6
-  m_Component:
-  - component: {fileID: 4798189377236693476}
-  m_Layer: 0
-  m_Name: "\u2193 Do Not Enable GameObject Debugger \u2193"
-  m_TagString: EditorOnly
-  m_Icon: {fileID: 0}
-  m_NavMeshLayer: 0
-  m_StaticEditorFlags: 0
-  m_IsActive: 1
---- !u!4 &4798189377236693476
-Transform:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 3768053313566820490}
-  serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 0, z: 0}
-  m_LocalScale: {x: 1, y: 1, z: 1}
-  m_ConstrainProportionsScale: 0
-  m_Children: []
-  m_Father: {fileID: 1501356307778961437}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &4049097384993036396
 GameObject:
   m_ObjectHideFlags: 0
@@ -720,7 +689,6 @@ Transform:
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
-  - {fileID: 4798189377236693476}
   - {fileID: 6217711554071675560}
   - {fileID: 6346173331761564023}
   m_Father: {fileID: 0}
@@ -1023,7 +991,7 @@ MeshFilter:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 8827064194495397888}
-  m_Mesh: {fileID: 4300000, guid: 5d7b92bac9b84df49b504b11461fe321, type: 2}
+  m_Mesh: {fileID: 0}
 --- !u!23 &1544427540742223149
 MeshRenderer:
   m_ObjectHideFlags: 0

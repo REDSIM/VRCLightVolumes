@@ -1,0 +1,65 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!206 &20600000
+BlendTree:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_Name: LVDebugger All BlendTree
+  m_Childs:
+  - serializedVersion: 2
+    m_Motion: {fileID: 20600000, guid: b2ecfb61fb223a949a43c8f6c0632fc6, type: 2}
+    m_Threshold: 0
+    m_Position: {x: 0, y: 0}
+    m_TimeScale: 1
+    m_CycleOffset: 0
+    m_DirectBlendParameter: LVDebugger/Internal/DirectTree1
+    m_Mirror: 0
+  - serializedVersion: 2
+    m_Motion: {fileID: 20600000, guid: 129488a3cb8624145be4603facc3e858, type: 2}
+    m_Threshold: 0.16000001
+    m_Position: {x: 0, y: 0}
+    m_TimeScale: 1
+    m_CycleOffset: 0
+    m_DirectBlendParameter: LVDebugger/Internal/DirectTree1
+    m_Mirror: 0
+  - serializedVersion: 2
+    m_Motion: {fileID: 20600000, guid: f88e595fafe387b40a1b07e1274584c4, type: 2}
+    m_Threshold: 0.32000002
+    m_Position: {x: 0, y: 0}
+    m_TimeScale: 1
+    m_CycleOffset: 0
+    m_DirectBlendParameter: LVDebugger/Internal/DirectTree1
+    m_Mirror: 0
+  - serializedVersion: 2
+    m_Motion: {fileID: 20600000, guid: c1a33845662c9a746a28671bf18adede, type: 2}
+    m_Threshold: 0.48000002
+    m_Position: {x: 0, y: 0}
+    m_TimeScale: 1
+    m_CycleOffset: 0
+    m_DirectBlendParameter: LVDebugger/Internal/DirectTree1
+    m_Mirror: 0
+  - serializedVersion: 2
+    m_Motion: {fileID: 20600000, guid: cf6bf9f4891c956419f75ed0f2ea818a, type: 2}
+    m_Threshold: 0.64000005
+    m_Position: {x: 0, y: 0}
+    m_TimeScale: 1
+    m_CycleOffset: 0
+    m_DirectBlendParameter: LVDebugger/Internal/DirectTree1
+    m_Mirror: 0
+  - serializedVersion: 2
+    m_Motion: {fileID: 20600000, guid: fdfaad33a6eb06142bfd80c9c1bdc241, type: 2}
+    m_Threshold: 0.8
+    m_Position: {x: 0, y: 0}
+    m_TimeScale: 1
+    m_CycleOffset: 0
+    m_DirectBlendParameter: LVDebugger/Internal/DirectTree1
+    m_Mirror: 0
+  m_BlendParameter: LVDebugger/DirectTree1
+  m_BlendParameterY: Blend
+  m_MinThreshold: 0
+  m_MaxThreshold: 0.8
+  m_UseAutomaticThresholds: 1
+  m_NormalizedBlendValues: 0
+  m_BlendType: 4

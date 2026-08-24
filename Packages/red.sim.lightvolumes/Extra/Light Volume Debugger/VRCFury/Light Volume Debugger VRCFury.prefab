@@ -19,7 +19,7 @@ GameObject:
   - component: {fileID: 2706219625358188738}
   - component: {fileID: 5517089827506316524}
   m_Layer: 0
-  m_Name: Light Volume Debugger
+  m_Name: Light Volume Debugger VRCFury
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0

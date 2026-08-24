@@ -9,7 +9,7 @@ BlendTree:
   m_Name: LVDebugger All BlendTree
   m_Childs:
   - serializedVersion: 2
-    m_Motion: {fileID: 20600000, guid: b2ecfb61fb223a949a43c8f6c0632fc6, type: 2}
+    m_Motion: {fileID: 20600000, guid: e448624833739ea47babb6ffbf28ddd6, type: 2}
     m_Threshold: 0
     m_Position: {x: 0, y: 0}
     m_TimeScale: 1

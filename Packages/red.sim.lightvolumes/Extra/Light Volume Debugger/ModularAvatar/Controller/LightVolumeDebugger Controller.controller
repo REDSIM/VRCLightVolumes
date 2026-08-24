@@ -31,6 +31,12 @@ AnimatorController:
   m_Name: LightVolumeDebugger Controller
   serializedVersion: 5
   m_AnimatorParameters:
+  - m_Name: IsLocal
+    m_Type: 1
+    m_DefaultFloat: 0
+    m_DefaultInt: 0
+    m_DefaultBool: 0
+    m_Controller: {fileID: 0}
   - m_Name: LVDebugger/Toggle
     m_Type: 1
     m_DefaultFloat: 0
@@ -64,6 +70,12 @@ AnimatorController:
   - m_Name: LVDebugger/AutoVolumeID
     m_Type: 1
     m_DefaultFloat: 1
+    m_DefaultInt: 0
+    m_DefaultBool: 0
+    m_Controller: {fileID: 0}
+  - m_Name: LVDebugger/LocalOnly
+    m_Type: 1
+    m_DefaultFloat: 0
     m_DefaultInt: 0
     m_DefaultBool: 0
     m_Controller: {fileID: 0}

@@ -31,7 +31,13 @@
     "defineConstraints": [
         "UDONSHARP"
     ],
-    "versionDefines": [],
+    "versionDefines": [
+        {
+            "name": "com.vrchat.worlds",
+            "expression": "0.0.0",
+            "define": "UDONSHARP"
+        }
+    ],
     "noEngineReferences": false,
     "optionalUnityReferences": [
         "TestAssemblies"

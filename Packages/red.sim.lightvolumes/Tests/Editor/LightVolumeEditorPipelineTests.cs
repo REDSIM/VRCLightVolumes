@@ -9,7 +9,7 @@ namespace VRCLightVolumes.Tests {
     public class LightVolumeEditorPipelineTests {
 
         private const float Epsilon = 0.0001f;
-        private const string TargetSwitchUdonSharpGuard = "#if !UDONSHARP && (UNITY_EDITOR || COMPILER_UDONSHARP)\n#define UDONSHARP\n#endif";
+        private const string DirectUdonSharpCompilerGuard = "#if !UDONSHARP && COMPILER_UDONSHARP\n#define UDONSHARP\n#endif";
 
         private static readonly string[] UdonSharpSourcePaths = {
             "Packages/red.sim.lightvolumes/UScripts/LightVolumeManager.cs",
@@ -23,6 +23,13 @@ namespace VRCLightVolumes.Tests {
             "Packages/red.sim.lightvolumes/Extra/Audio Link/LightVolumeAudioLink.cs",
             "Packages/red.sim.lightvolumes/Extra/TV Global Illumination/LightVolumeTVGI.cs",
             "Packages/red.sim.lightvolumes/Extra/Shadow Runtime Baker/PointLightShadowRuntimeBaker.cs"
+        };
+
+        private static readonly string[] UdonSharpAssemblyPaths = {
+            "Packages/red.sim.lightvolumes/UScripts/red.sim.LightVolumesUdon.asmdef",
+            "Packages/red.sim.lightvolumes/Scripts/Editor/red.sim.LightVolumesEditor.asmdef",
+            "Packages/red.sim.lightvolumes/Extra/Audio Link/red.sim.LightVolumes.AudioLinkUdon.asmdef",
+            "Packages/red.sim.lightvolumes/Tests/Editor/red.sim.LightVolumesUdon.EditorTests.asmdef"
         };
 
         private GameObject _legacyObject;
@@ -88,15 +95,29 @@ namespace VRCLightVolumes.Tests {
             UnityEngine.Object.DestroyImmediate(texture2);
         }
 
-        // UdonSharp adds its project define after a new build-target group has already reloaded once.
-        // Every U# source must keep the U# branch active during that Editor reload and direct U# compilation.
+        // Direct U# compilation supplies COMPILER_UDONSHARP. Regular Editor compilation gets UDONSHARP
+        // from the assembly's Worlds SDK version define instead of enabling U# in every Editor project.
         [Test]
-        public void UdonSharpSourcesKeepStableProxyTypesDuringTargetDefineInitialization() {
+        public void UdonSharpSourcesDoNotEnableUdonSharpForAvatarProjects() {
             for (int i = 0; i < UdonSharpSourcePaths.Length; i++) {
                 string path = UdonSharpSourcePaths[i];
                 string source = File.ReadAllText(path).Replace("\r\n", "\n");
-                Assert.That(source, Does.StartWith(TargetSwitchUdonSharpGuard),
-                    path + " can temporarily change its serialized proxy layout during a build-target switch.");
+                Assert.That(source, Does.StartWith(DirectUdonSharpCompilerGuard),
+                    path + " must select its U# branch during direct UdonSharp compilation.");
+                Assert.That(source, Does.Not.Contain("UNITY_EDITOR || COMPILER_UDONSHARP"),
+                    path + " must keep its MonoBehaviour fallback in avatar projects without UdonSharp.");
+            }
+        }
+
+        // The Worlds package version define is assembly-local, stable across build-target reloads, and
+        // absent from avatar projects. This preserves U# proxy types without regressing avatar support.
+        [Test]
+        public void UdonSharpAssembliesDefineUdonSharpOnlyWithWorldsSdk() {
+            for (int i = 0; i < UdonSharpAssemblyPaths.Length; i++) {
+                string path = UdonSharpAssemblyPaths[i];
+                string assemblyDefinition = File.ReadAllText(path);
+                Assert.That(assemblyDefinition, Does.Contain("\"name\": \"com.vrchat.worlds\""), path);
+                Assert.That(assemblyDefinition, Does.Contain("\"define\": \"UDONSHARP\""), path);
             }
         }
 

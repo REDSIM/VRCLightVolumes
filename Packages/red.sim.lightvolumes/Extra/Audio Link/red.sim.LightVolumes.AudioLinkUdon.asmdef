@@ -22,6 +22,11 @@
             "name": "com.llealloo.audiolink",
             "expression": "0.0.0",
             "define": "VRCLV_AUDIOLINK"
+        },
+        {
+            "name": "com.vrchat.worlds",
+            "expression": "0.0.0",
+            "define": "UDONSHARP"
         }
     ],
     "noEngineReferences": false

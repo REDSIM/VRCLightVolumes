@@ -18,6 +18,12 @@
     "precompiledReferences": [],
     "autoReferenced": true,
     "defineConstraints": [],
-    "versionDefines": [],
+    "versionDefines": [
+        {
+            "name": "com.vrchat.worlds",
+            "expression": "0.0.0",
+            "define": "UDONSHARP"
+        }
+    ],
     "noEngineReferences": false
 }

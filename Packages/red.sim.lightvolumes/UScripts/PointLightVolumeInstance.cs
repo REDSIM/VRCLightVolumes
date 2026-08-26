@@ -81,12 +81,8 @@ namespace VRCLightVolumes {
         public Texture CustomTexture;
         [Tooltip("Material source used by this light's active LUT, cookie or cubemap projection.")]
         public Material CustomTextureMaterial;
-        [Tooltip("Projection source type used by this light. 0 = none, 1 = texture, 2 = material.")]
-        public int ProjectionType = 0; // 0: none, 1: texture, 2: material
         [Tooltip("Projection mode used by this light. 0 = parametric, 1 = LUT, 2 = custom cookie or cubemap.")]
         public int ProjectionMode = 0; // 0: parametric, 1: LUT, 2: custom cookie or cubemap
-        [Tooltip("Updates this light's custom texture slice every frame.")]
-        public bool AutoUpdateCustomTexture = false;
 
         [Header("Shadow Source")]
         [Tooltip("Texture source used by this light's shadow map.")]
@@ -168,14 +164,9 @@ namespace VRCLightVolumes {
         [NonSerialized] public Material RuntimeShadowDepthEncodeMaterial;
         // Cached shared runtime shadow blur material assigned by the Light Volume Manager.
         [NonSerialized] public Material RuntimeShadowBlurMaterial;
-
         // Temporary exclusion state kept only while the shadow camera renders.
         private Renderer[] _appliedExclusionMask;
         private bool[] _shadowExclusionRendererStates;
-
-        // Internal projection source metadata resolved by the editor authoring layer
-        [HideInInspector] public bool CustomTextureIsCubemap = false;
-        [HideInInspector] public bool CustomTextureHasDepthSlices = false;
 
         // Internal shadow source metadata resolved by the editor authoring layer
         [HideInInspector] public bool ShadowMapTextureIsCubemap = false;
@@ -429,28 +420,11 @@ namespace VRCLightVolumes {
             MarkRangeDirtyAndNotify(true, CustomTexture != null || CustomTextureMaterial != null, false);
         }
 
-        // Sets cubemap or cookie projection mode
-        public void SetCustomTexture() {
-            SetCustomProjectionMode();
-            MarkRangeDirtyAndNotify(true, CustomTexture != null || CustomTextureMaterial != null, false);
-        }
-
-        // Sets a texture source for this light's custom projection and schedules manager runtime texture cache refresh
-        public void SetCustomTexture(Texture texture, bool isCubemap, bool autoUpdate) {
+        // Assigns a texture source and schedules a runtime texture cache refresh. RenderTexture and CustomRenderTexture sources are detected by the Manager and updated automatically in the final array.
+        public void SetCustomTexture(Texture texture) {
             CustomTexture = texture;
             CustomTextureMaterial = null;
-            ProjectionType = 0; // 0: none
-            AutoUpdateCustomTexture = false;
-            CustomTextureIsCubemap = false;
-            CustomTextureHasDepthSlices = false;
             if (texture != null) {
-                ProjectionType = 1; // 1: texture
-                AutoUpdateCustomTexture = autoUpdate;
-                if (isCubemap) {
-                    int textureDimension = (int)texture.dimension;
-                    if (textureDimension == 4) CustomTextureIsCubemap = true; // 4: TextureDimension.Cube
-                    else if (textureDimension == 5) CustomTextureHasDepthSlices = true; // 5: TextureDimension.Tex2DArray
-                }
                 SetCustomProjectionMode();
             } else {
                 SetParametricMode();
@@ -459,16 +433,10 @@ namespace VRCLightVolumes {
         }
 
         // Sets a material source for this light's custom projection and schedules manager runtime texture cache refresh
-        public void SetCustomMaterial(Material material, bool autoUpdate) {
+        public void SetCustomMaterial(Material material) {
             CustomTexture = null;
             CustomTextureMaterial = material;
-            ProjectionType = 0; // 0: none
-            AutoUpdateCustomTexture = false;
-            CustomTextureIsCubemap = false;
-            CustomTextureHasDepthSlices = false;
             if (material != null) {
-                ProjectionType = 2; // 2: material
-                AutoUpdateCustomTexture = autoUpdate;
                 SetCustomProjectionMode();
             } else {
                 SetParametricMode();
@@ -483,17 +451,23 @@ namespace VRCLightVolumes {
             MarkRangeDirtyAndNotify(true, CustomTexture != null || CustomTextureMaterial != null, false);
         }
 
+        // A custom Point cookie occupies six atlas slices; Spot and Area cookies occupy one.
+        private bool CustomCookieStateChangesWithLightType(int targetLightType) {
+            return LightType != targetLightType && ProjectionMode == 2 && (CustomTexture != null || CustomTextureMaterial != null);
+        }
+
         // Sets the light into the point light type
         public void SetPointLight() {
             Transform instanceTransform = transform;
             Vector3 position = instanceTransform.position;
             if (LightType == 0 && Position == position && ShadowMapUsesCubemap) return;
+            bool customTexturesChanged = CustomCookieStateChangesWithLightType(0);
             bool shadowTexturesChanged = !ShadowMapUsesCubemap && (ShadowMapID >= 0 || ShadowMapTexture != null || ShadowMapMaterial != null);
             LightType = 0; // 0: point
             ShadowMapUsesCubemap = true;
             Position = position;
             if (ProjectionMode != 0) UpdateRotationCore(instanceTransform.rotation, Matrix4x4.identity);
-            MarkRangeDirtyAndNotify(false, false, shadowTexturesChanged);
+            MarkRangeDirtyAndNotify(false, customTexturesChanged, shadowTexturesChanged);
         }
 
         // Sets the light into the spotlight type with both angle and falloff because angle is required to determine falloff
@@ -508,6 +482,7 @@ namespace VRCLightVolumes {
             Vector3 direction = transformRotation * Vector3.forward;
             Quaternion rotation = Quaternion.Inverse(transformRotation);
             if (LightType == 1 && Angle == angle && OuterAngleTan == outerAngleTan && Position == position && (ProjectionMode == 2 ? Rotation == rotation : Direction == direction && OuterAngleCos == outerAngleCos && ConeFalloff == coneFalloff)) return;
+            bool customTexturesChanged = CustomCookieStateChangesWithLightType(1);
             LightType = 1; // 1: spot
             Angle = angle;
             OuterAngleTan = outerAngleTan;
@@ -517,7 +492,7 @@ namespace VRCLightVolumes {
             }
             Position = position;
             UpdateRotationCore(transformRotation, Matrix4x4.identity);
-            MarkRangeDirtyAndNotify(false, false, false);
+            MarkRangeDirtyAndNotify(false, customTexturesChanged, false);
         }
 
         // Sets the light into the spotlight type with a specified angle
@@ -531,17 +506,19 @@ namespace VRCLightVolumes {
             Vector3 direction = transformRotation * Vector3.forward;
             Quaternion rotation = Quaternion.Inverse(transformRotation);
             if (LightType == 1 && Angle == angle && OuterAngleTan == outerAngleTan && Position == position && (ProjectionMode == 2 ? Rotation == rotation : Direction == direction && OuterAngleCos == outerAngleCos)) return;
+            bool customTexturesChanged = CustomCookieStateChangesWithLightType(1);
             LightType = 1; // 1: spot
             Angle = angle;
             OuterAngleTan = outerAngleTan;
             if (ProjectionMode != 2) OuterAngleCos = outerAngleCos; // 2: custom cookie or cubemap
             Position = position;
             UpdateRotationCore(transformRotation, Matrix4x4.identity);
-            MarkRangeDirtyAndNotify(false, false, false);
+            MarkRangeDirtyAndNotify(false, customTexturesChanged, false);
         }
 
         // Sets the light into the area light type
         public void SetAreaLight() {
+            bool customTexturesChanged = CustomCookieStateChangesWithLightType(2);
             bool shadowTexturesChanged = !ShadowMapUsesCubemap && (ShadowMapID >= 0 || ShadowMapTexture != null || ShadowMapMaterial != null);
             Transform instanceTransform = transform;
             Vector3 lossyScale = instanceTransform.lossyScale;
@@ -552,7 +529,7 @@ namespace VRCLightVolumes {
             Width = Mathf.Max(Mathf.Abs(lossyScale.x), 0.001f);
             Height = Mathf.Max(Mathf.Abs(lossyScale.y), 0.001f);
             UpdateRotationCore(transformRotation, instanceTransform.localToWorldMatrix);
-            MarkRangeDirtyAndNotify(true, CustomTexture != null || CustomTextureMaterial != null, shadowTexturesChanged);
+            MarkRangeDirtyAndNotify(true, customTexturesChanged, shadowTexturesChanged);
         }
 
         // Sets light source color
@@ -648,6 +625,13 @@ namespace VRCLightVolumes {
 
         // Updates data required for shader
         public void UpdateTransform() {
+            if (!UpdateTransformCore()) return;
+            NotifyManager(false, false, false);
+        }
+
+        // Synchronizes cached transform/range inputs without publishing an intermediate Manager state.
+        // Runtime shadow baking uses this core and publishes once after the complete cubemap is ready, so moving a pooled light cannot rebuild or flash the shared atlas between faces.
+        private bool UpdateTransformCore() {
             Transform instanceTransform = transform;
             Vector3 position = instanceTransform.position;
             Quaternion rotation = instanceTransform.rotation;
@@ -655,7 +639,7 @@ namespace VRCLightVolumes {
             bool positionChanged = _prevPosition != position;
             bool rotationChanged = _prevRotation != rotation;
             bool scaleChanged = _prevScale != lossyScale;
-            if (!positionChanged && !rotationChanged && !scaleChanged) return;
+            if (!positionChanged && !rotationChanged && !scaleChanged) return false;
 
             if (positionChanged) {
                 _prevPosition = position;
@@ -671,7 +655,7 @@ namespace VRCLightVolumes {
                 Matrix4x4 localToWorldMatrix = LightType == 2 ? instanceTransform.localToWorldMatrix : Matrix4x4.identity;
                 UpdateRotationCore(rotation, localToWorldMatrix);
             }
-            NotifyManager(false, false, false);
+            return true;
         }
 
         // Force update position

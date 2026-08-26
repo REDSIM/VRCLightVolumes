@@ -67,6 +67,8 @@ namespace VRCLightVolumes {
                 return;
             }
 
+            // Baking is a complete public operation: synchronize shader-facing transform data from the current GameObject before deriving range and receiver metadata.
+            UpdateTransformCore();
             bool rangeChanged = IsRangeDirty;
             int bakeResolution = Mathf.Max(RuntimeShadowResolution, 16);
             bool useCubemapShadow = LightType != 1 || ShadowMapUsesCubemap; // 1: spot
@@ -206,7 +208,8 @@ namespace VRCLightVolumes {
                 } else { // Keep the source unpublished while inactive
                     _runtimeShadowSourceInitialized = false;
                 }
-                ReleaseIdleRuntimeShadowTextures();
+                // A realtime direct request falls back to this path when its bake resolution differs from the atlas. Keep reusable scratch until the baker explicitly stops.
+                if (!RuntimeShadowDirectOutput) ReleaseIdleRuntimeShadowTextures();
             }
         }
 

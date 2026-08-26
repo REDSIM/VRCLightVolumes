@@ -232,7 +232,6 @@ namespace VRCLightVolumes.Tests {
             source.Projection = PointLightVolume.LightProjection.Custom;
             destination.LightType = 1;
             destination.ProjectionMode = 2;
-            destination.ProjectionType = 1;
             destination.CustomTexture = cookie;
             MethodInfo copy = typeof(LightVolumeMigration).GetMethod(
                 "CopyLegacyPointLight",
@@ -260,7 +259,6 @@ namespace VRCLightVolumes.Tests {
             Texture2D staleCookie = new Texture2D(2, 2, TextureFormat.RGBA32, false);
             destination.LightType = 1;
             destination.ProjectionMode = 2;
-            destination.ProjectionType = 1;
             destination.CustomTexture = staleCookie;
             MethodInfo copy = typeof(LightVolumeMigration).GetMethod(
                 "CopyLegacyPointLight",

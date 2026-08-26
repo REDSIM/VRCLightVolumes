@@ -841,7 +841,7 @@ namespace VRCLightVolumes {
             UnityEngine.Object falloffLut = source.FalloffLUT;
             UnityEngine.Object cookie = source.Cookie;
             UnityEngine.Object cubemap = source.Cubemap;
-            // Authoring data stays authoritative. Recover only a missing active source when the old runtime cache agrees on the same light type, non-parametric mode and source kind.
+            // Authoring data stays authoritative. Recover only a missing active source when the old runtime cache agrees on the same light type and non-parametric mode.
             if (GetLegacyProjectionSource(lightType, projection, falloffLut, cookie, cubemap) == null
                 && TryGetMatchingLegacyRuntimeProjectionSource(lightType, projection, destination, out UnityEngine.Object runtimeProjectionSource)) {
                 if (lightType == 2 || (lightType == 1 && projection == 2)) cookie = runtimeProjectionSource;
@@ -888,14 +888,12 @@ namespace VRCLightVolumes {
             return lightType == 0 ? cubemap : lightType == 1 ? cookie : null;
         }
 
-        // Recovers a missing legacy authoring source only when cached runtime metadata matches exactly.
+        // Recovers a missing legacy authoring source only when cached runtime metadata matches the active projection.
         private static bool TryGetMatchingLegacyRuntimeProjectionSource(int lightType, int projection, PointLightVolumeInstance destination, out UnityEngine.Object source) {
             source = destination.CustomTexture != null ? (UnityEngine.Object)destination.CustomTexture : destination.CustomTextureMaterial;
             int expectedProjectionMode = lightType == 2 ? 2 : projection;
             if (expectedProjectionMode == 0 || destination.LightType != lightType || destination.ProjectionMode != expectedProjectionMode) return false;
-            if (source is Texture) return destination.ProjectionType == 1;
-            if (source is Material) return destination.ProjectionType == 2;
-            return false;
+            return source is Texture || source is Material;
         }
 
         // Copies v2 Manager settings, registries and atlas post processors into the unified Manager.
@@ -1266,7 +1264,6 @@ namespace VRCLightVolumes {
             pointLight.Position = new Vector3(positionData.x, positionData.y, positionData.z);
             pointLight.LightType = positionData.w < 0f ? 1 : angleData > 1.5f ? 2 : 0;
             pointLight.ProjectionMode = customId > 0f ? 1 : customId < 0f ? 2 : 0;
-            pointLight.ProjectionType = pointLight.ProjectionMode == 0 ? 0 : 1;
             if (pointLight.LightType == 2) {
                 pointLight.Width = Mathf.Max(Mathf.Abs(positionData.w), 0.001f);
                 pointLight.Height = Mathf.Max(angleData - 2f, 0.001f);
@@ -1288,7 +1285,6 @@ namespace VRCLightVolumes {
             }
             pointLight.CustomTexture = null;
             pointLight.CustomTextureMaterial = null;
-            pointLight.AutoUpdateCustomTexture = false;
             pointLight.ShadowMapID = -1f;
             pointLight.IsRangeDirty = true;
             RememberMigratedRuntimeComponent(pointLight);

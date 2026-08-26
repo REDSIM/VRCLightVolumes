@@ -685,6 +685,7 @@ namespace VRCLightVolumes {
                 ShadowTextures = null;
             }
 #endif
+            ReleaseDirectShadowPreservation();
             ReleaseClusteringTextures();
 #if UDONSHARP
             if (_dummyRT != null) {

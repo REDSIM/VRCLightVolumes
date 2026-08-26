@@ -7,10 +7,10 @@ namespace VRCLightVolumes {
         internal const int ShadowTexturesChanged = 2;
 
         // Applies derived data once and copies the proxy without rebuilding Manager-owned caches.
-        internal static int Sync(PointLightVolumeInstance pointLightVolume, bool recordUndo = false, bool notifyManager = true) {
+        internal static int Sync(PointLightVolumeInstance pointLightVolume, bool recordUndo = false, bool notifyManager = true, bool forceCustomTexturesChanged = false) {
             if (pointLightVolume == null) return 0;
 
-            bool customTexturesChanged = pointLightVolume.HasEditorCustomTextureChanges();
+            bool customTexturesChanged = forceCustomTexturesChanged || pointLightVolume.HasEditorCustomTextureChanges();
             bool shadowTexturesChanged = pointLightVolume.HasEditorShadowTextureChanges();
             if (recordUndo) Undo.RecordObject(pointLightVolume, "Sync Point Light Volume");
 

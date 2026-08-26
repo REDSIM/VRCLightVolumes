@@ -423,7 +423,7 @@ namespace VRCLightVolumes {
         }
 #endif
 
-        // Publishes the resolved projection source and layout to a Point Light Volume's Udon heap.
+        // Publishes the resolved projection source and mode to a Point Light Volume's Udon heap.
         private static void ApplyPointLightRuntimeCustomSource(PointLightVolumeInstance pointLight) {
             if (pointLight == null) return;
 #if UDONSHARP
@@ -431,11 +431,7 @@ namespace VRCLightVolumes {
             if (udonBehaviour == null) return;
             SetUdonProgramVariable(udonBehaviour, "CustomTexture", pointLight.CustomTexture);
             SetUdonProgramVariable(udonBehaviour, "CustomTextureMaterial", pointLight.CustomTextureMaterial);
-            SetUdonProgramVariable(udonBehaviour, "ProjectionType", pointLight.ProjectionType);
             SetUdonProgramVariable(udonBehaviour, "ProjectionMode", pointLight.ProjectionMode);
-            SetUdonProgramVariable(udonBehaviour, "AutoUpdateCustomTexture", pointLight.AutoUpdateCustomTexture);
-            SetUdonProgramVariable(udonBehaviour, "CustomTextureIsCubemap", pointLight.CustomTextureIsCubemap);
-            SetUdonProgramVariable(udonBehaviour, "CustomTextureHasDepthSlices", pointLight.CustomTextureHasDepthSlices);
 #endif
         }
 

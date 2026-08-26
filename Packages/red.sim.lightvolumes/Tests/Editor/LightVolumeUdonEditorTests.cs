@@ -59,12 +59,12 @@ namespace VRCLightVolumes.Tests {
         private static readonly int _lightBrightnessCutoffID = Shader.PropertyToID("_UdonLightBrightnessCutoff");
         private static readonly int _forceSceneLightingID = Shader.PropertyToID("_UdonForceSceneLighting");
         private static readonly BindingFlags _lifecycleMethodFlags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+        private static readonly FieldInfo _customTexturesInitializedField = typeof(LightVolumeManager).GetField("_customTexturesInitialized", _lifecycleMethodFlags);
         private static readonly FieldInfo _customTexturesDepthField = typeof(LightVolumeManager).GetField("_customTextureArrayDepth", _lifecycleMethodFlags);
         private static readonly FieldInfo _shadowTexturesDepthField = typeof(LightVolumeManager).GetField("_shadowTextureArrayDepth", _lifecycleMethodFlags);
         private static readonly FieldInfo _customCubemapTextureCountField = typeof(LightVolumeManager).GetField("_customCubemapTextureCount", _lifecycleMethodFlags);
         private static readonly FieldInfo _customSingleTextureCountField = typeof(LightVolumeManager).GetField("_customSingleTextureCount", _lifecycleMethodFlags);
         private static readonly FieldInfo _customSingleMaterialCountField = typeof(LightVolumeManager).GetField("_customSingleMaterialCount", _lifecycleMethodFlags);
-        private static readonly FieldInfo _customSingleMaterialAutoUpdatesField = typeof(LightVolumeManager).GetField("_customSingleMaterialAutoUpdates", _lifecycleMethodFlags);
         private static readonly FieldInfo _shadowCubemapTextureCountField = typeof(LightVolumeManager).GetField("_shadowCubemapTextureCount", _lifecycleMethodFlags);
         private static readonly FieldInfo _shadowSingleTextureCountField = typeof(LightVolumeManager).GetField("_shadowSingleTextureCount", _lifecycleMethodFlags);
         private static readonly FieldInfo _pointLightCustomIDsField = typeof(LightVolumeManager).GetField("_pointLightCustomIDs", _lifecycleMethodFlags);
@@ -222,6 +222,27 @@ namespace VRCLightVolumes.Tests {
             Assert.That(typeof(PointLightShadowRuntimeBaker).GetField("RealtimeFacesPerFrame", PublicInstanceDeclared), Is.Null);
             Assert.That(typeof(LightVolumeManager).GetMethod("UpdatePointLightShadowTextureSlice", PublicInstanceDeclared), Is.Null);
             Assert.That(typeof(LightVolumeManager).GetMethod("UpdatePointLightShadowTextureRange", PublicInstanceDeclared), Is.Null);
+        }
+
+        // Cookie source mutability is derived from the source object. Removed metadata and overloads
+        // must not silently restore the old per-light auto-update/snapshot split.
+        [Test]
+        public void RemovedCookieSnapshotLegacyContractDoesNotReturn() {
+            Type pointType = typeof(PointLightVolumeInstance);
+            Assert.That(pointType.GetField("AutoUpdateCustomTexture", PublicInstanceDeclared), Is.Null);
+            Assert.That(pointType.GetField("ProjectionType", PublicInstanceDeclared), Is.Null);
+            Assert.That(pointType.GetField("CustomTextureIsCubemap", PublicInstanceDeclared), Is.Null);
+            Assert.That(pointType.GetField("CustomTextureHasDepthSlices", PublicInstanceDeclared), Is.Null);
+            Assert.That(pointType.GetMethod("SetCustomTexture", PublicInstanceDeclared, null, Type.EmptyTypes, null), Is.Null);
+            Assert.That(pointType.GetMethod("SetCustomTexture", PublicInstanceDeclared, null, new[] { typeof(Texture), typeof(bool), typeof(bool) }, null), Is.Null);
+            Assert.That(pointType.GetMethod("SetCustomTexture", PublicInstanceDeclared, null, new[] { typeof(Texture), typeof(bool) }, null), Is.Null);
+            Assert.That(pointType.GetMethod("SetCustomRenderTexture", PublicInstanceDeclared), Is.Null);
+            Assert.That(pointType.GetMethod("SetCustomMaterial", PublicInstanceDeclared, null, new[] { typeof(Material), typeof(bool) }, null), Is.Null);
+            Assert.That(typeof(LightVolumeManager).GetField("HasLiveCustomTextureUpdates", PublicInstanceDeclared), Is.Null);
+            Assert.That(typeof(LightVolumeManager).GetMethod("UpdateLiveCustomTextures", PublicInstanceDeclared), Is.Null);
+
+            Assert.That(pointType.GetMethod("SetCustomTexture", PublicInstanceDeclared, null, new[] { typeof(Texture) }, null), Is.Not.Null);
+            Assert.That(pointType.GetMethod("SetCustomMaterial", PublicInstanceDeclared, null, new[] { typeof(Material) }, null), Is.Not.Null);
         }
 
         // A default handle is intentionally usable by generic editor integrations before a Manager is assigned.
@@ -1661,8 +1682,7 @@ namespace VRCLightVolumes.Tests {
             PointLightVolumeInstance plain = CreatePointLight(manager, "Set Weight Plain Point", true);
             cookie.Color = new Color(0.2f, 0.4f, 0.8f, 1);
             plain.Color = new Color(1f, 0.25f, 0.1f, 1);
-            cookie.CustomTexture = CreateTexture2D("Set Weight Cookie Source");
-            cookie.ProjectionType = 1; // 1: texture
+            cookie.SetCustomTexture(CreateTexture2D("Set Weight Cookie Source"));
             cookie.SetLut();
             manager.ReinitializeCustomTextures();
 
@@ -2888,7 +2908,7 @@ namespace VRCLightVolumes.Tests {
             point.transform.rotation = Quaternion.Euler(0, 90, 0);
             point.transform.localScale = new Vector3(1.5f, 1.5f, 1.5f);
             SetPointLightSquaredSize(point, 3);
-            point.SetCustomTexture();
+            point.SetCustomTexture(CreateCubemap("Dynamic Point Projection"));
             manager.LightVolumeInstances = new[] { volume };
             manager.PointLightVolumeInstances = new[] { point };
 
@@ -3090,8 +3110,7 @@ namespace VRCLightVolumes.Tests {
             AssertVectorClose(new Vector4(5, 6, 7, ExpectedCubemapShadowInvDepthRange(point)), Shader.GetGlobalVectorArray(_pointLightShadowReprojectionDataID)[0]);
             AssertVectorClose(new Vector4(expectedLocalSpaceRotation.x, expectedLocalSpaceRotation.y, expectedLocalSpaceRotation.z, expectedLocalSpaceRotation.w), Shader.GetGlobalVectorArray(_pointLightShadowRotationDataID)[0]);
 
-            point.CustomTexture = CreateTexture2D("Point Globals LUT");
-            point.ProjectionType = 1; // 1: texture
+            point.SetCustomTexture(CreateTexture2D("Point Globals LUT"));
             point.SetLut();
             point.SetLightSourceSize(5);
 
@@ -3102,7 +3121,7 @@ namespace VRCLightVolumes.Tests {
             AssertPointCustomData(point, 1, -1);
             AssertVectorClose(ExpectedPointLightPosition(point), Shader.GetGlobalVectorArray(_pointLightPositionID)[0]);
 
-            point.SetCustomTexture();
+            point.SetCustomTexture(point.CustomTexture);
             point.SetSpotLight(60, 0.25f);
 
             manager.ReinitializeCustomTextures();
@@ -3148,10 +3167,7 @@ namespace VRCLightVolumes.Tests {
                 point.transform.position = new Vector3(i, i + 1, i + 2);
                 point.transform.rotation = Quaternion.Euler(i * 5, i * 7, i * 11);
                 SetPointLightSquaredSize(point, i + 1);
-                point.CustomTexture = CreateCubemap("Cubemap Projection Source " + i);
-                point.CustomTextureIsCubemap = true;
-                point.ProjectionType = 1; // 1: texture
-                point.SetCustomTexture();
+                point.SetCustomTexture(CreateCubemap("Cubemap Projection Source " + i));
                 points[i] = point;
             }
             manager.PointLightVolumeInstances = points;
@@ -3180,12 +3196,9 @@ namespace VRCLightVolumes.Tests {
             manager.CustomTexturesHeight = 4;
 
             PointLightVolumeInstance point = CreatePointLight(manager, "Animated Spot Cookie Light", true);
-            point.SetCustomTexture();
             point.SetSpotLight(60, 0.5f);
+            point.SetCustomTexture(source);
             point.SpotCookieAspect = 1.75f;
-            point.CustomTexture = source;
-            point.ProjectionType = 1; // 1: texture
-            point.AutoUpdateCustomTexture = true;
             manager.PointLightVolumeInstances = new[] { point };
 
             manager.ReinitializeCustomTextures();
@@ -3232,10 +3245,8 @@ namespace VRCLightVolumes.Tests {
 
             PointLightVolumeInstance point = CreatePointLight(manager, "Area Cookie Light", true);
             point.transform.localScale = new Vector3(2, 3, 1);
-            point.SetCustomTexture();
             point.SetAreaLight();
-            point.CustomTexture = source;
-            point.ProjectionType = 1; // 1: texture
+            point.SetCustomTexture(source);
             manager.PointLightVolumeInstances = new[] { point };
 
             manager.ReinitializeCustomTextures();
@@ -3256,29 +3267,27 @@ namespace VRCLightVolumes.Tests {
             AssertPointCustomData(point, -1, 0);
         }
 
-        // Verifies the runtime manager respects a manual auto-update override on an area RenderTexture cookie.
+        // Verifies RenderTexture cookies always use the animated projection path without a snapshot mode.
         [Test]
-        public void AreaRenderTextureCookieRespectsManualAutoUpdateOverride() {
-            LightVolumeManager manager = CreateManager("Area Render Texture Manual Auto Update Manager", false);
+        public void AreaRenderTextureCookieAlwaysUsesAnimatedPath() {
+            LightVolumeManager manager = CreateManager("Area Render Texture Animated Manager", false);
             RenderTexture source = CreateRenderTexture("Area Render Texture Cookie Source", 4, 4, 1, TextureDimension.Tex2D);
             manager.CustomTexturesWidth = 4;
             manager.CustomTexturesHeight = 4;
 
-            PointLightVolumeInstance point = CreatePointLight(manager, "Area Render Texture Manual Cookie Light", true);
+            PointLightVolumeInstance point = CreatePointLight(manager, "Area Render Texture Animated Cookie Light", true);
             point.transform.localScale = new Vector3(2, 3, 1);
-            point.SetCustomTexture();
             point.SetAreaLight();
-            point.CustomTexture = source;
-            point.ProjectionType = 1; // 1: texture
-            point.AutoUpdateCustomTexture = false;
+            point.SetCustomTexture(source);
             manager.PointLightVolumeInstances = new[] { point };
 
             manager.ReinitializeCustomTextures();
 
-            Assert.That(manager.HasAutoCustomTextureUpdates, Is.False);
+            Assert.That(point.CustomTexture, Is.SameAs(source));
+            Assert.That(manager.HasAutoCustomTextureUpdates, Is.True);
         }
 
-        // Verifies edit-mode auto updates rebuild stale auto-mip arrays before manual mip generation.
+        // Verifies edit-mode animated cookie updates rebuild stale auto-mip arrays before manual mip generation.
         [Test]
         public void AreaCookieAutoUpdateRebuildsStaleAutoMipArray() {
             LightVolumeManager manager = CreateManager("Area Cookie Stale Auto Mip Manager", false);
@@ -3288,11 +3297,8 @@ namespace VRCLightVolumes.Tests {
 
             PointLightVolumeInstance point = CreatePointLight(manager, "Area Cookie Auto Update Light", true);
             point.transform.localScale = new Vector3(2, 3, 1);
-            point.SetCustomTexture();
             point.SetAreaLight();
-            point.CustomTexture = source;
-            point.ProjectionType = 1; // 1: texture
-            point.AutoUpdateCustomTexture = true;
+            point.SetCustomTexture(source);
             manager.PointLightVolumeInstances = new[] { point };
 
             manager.ReinitializeCustomTextures();
@@ -3335,10 +3341,8 @@ namespace VRCLightVolumes.Tests {
             point.transform.localScale = new Vector3(2, 3, 1);
             point.Color = new Color(0.25f, 0.5f, 1f, 1f);
             point.Intensity = 2f;
-            point.SetCustomTexture();
             point.SetAreaLight();
-            point.CustomTexture = source;
-            point.ProjectionType = 1; // 1: texture
+            point.SetCustomTexture(source);
             manager.PointLightVolumeInstances = new[] { point };
 
             manager.ReinitializeCustomTextures();
@@ -3410,10 +3414,8 @@ namespace VRCLightVolumes.Tests {
             firstPoint.transform.localScale = new Vector3(2, 3, 1);
             firstPoint.Color = new Color(0.25f, 0.5f, 1f, 1f);
             firstPoint.Intensity = 2f;
-            firstPoint.SetCustomTexture();
             firstPoint.SetAreaLight();
-            firstPoint.CustomTexture = source;
-            firstPoint.ProjectionType = 1; // 1: texture
+            firstPoint.SetCustomTexture(source);
             manager.PointLightVolumeInstances = new[] { firstPoint };
 
             manager.ReinitializeCustomTextures();
@@ -3423,10 +3425,8 @@ namespace VRCLightVolumes.Tests {
             secondPoint.transform.localScale = new Vector3(2, 3, 1);
             secondPoint.Color = new Color(1f, 0.5f, 0.25f, 1f);
             secondPoint.Intensity = 2f;
-            secondPoint.SetCustomTexture();
             secondPoint.SetAreaLight();
-            secondPoint.CustomTexture = source;
-            secondPoint.ProjectionType = 1; // 1: texture
+            secondPoint.SetCustomTexture(source);
             manager.PointLightVolumeInstances = new[] { firstPoint, secondPoint };
 
             manager.ReinitializeCustomTextures();
@@ -3457,10 +3457,8 @@ namespace VRCLightVolumes.Tests {
             point.transform.localScale = new Vector3(2, 3, 1);
             point.Color = new Color(0.25f, 0.5f, 1f, 1f);
             point.Intensity = 2f;
-            point.SetCustomTexture();
             point.SetAreaLight();
-            point.CustomTexture = source;
-            point.ProjectionType = 1; // 1: texture
+            point.SetCustomTexture(source);
             manager.PointLightVolumeInstances = new[] { point };
 
             manager.ReinitializeCustomTextures();
@@ -3498,10 +3496,8 @@ namespace VRCLightVolumes.Tests {
             point.transform.localScale = new Vector3(2, 3, 1);
             point.Color = new Color(0.25f, 0.5f, 1f, 1f);
             point.Intensity = 2f;
-            point.SetCustomTexture();
             point.SetAreaLight();
-            point.CustomTexture = source;
-            point.ProjectionType = 1; // 1: texture
+            point.SetCustomTexture(source);
             manager.PointLightVolumeInstances = new[] { point };
 
             manager.ReinitializeCustomTextures();
@@ -3529,10 +3525,8 @@ namespace VRCLightVolumes.Tests {
             manager.CustomTexturesHeight = 4;
 
             PointLightVolumeInstance oldPoint = CreatePointLight(manager, "Area Removed Cookie Light", true);
-            oldPoint.SetCustomTexture();
             oldPoint.SetAreaLight();
-            oldPoint.CustomTexture = oldSource;
-            oldPoint.ProjectionType = 1;
+            oldPoint.SetCustomTexture(oldSource);
             manager.PointLightVolumeInstances = new[] { oldPoint };
             manager.ReinitializeCustomTextures();
 
@@ -3546,10 +3540,8 @@ namespace VRCLightVolumes.Tests {
             Assert.That(oldPoint.AreaCookieAverageCustomId, Is.EqualTo(-1));
 
             PointLightVolumeInstance replacement = CreatePointLight(manager, "Area Replacement Cookie Light", true);
-            replacement.SetCustomTexture();
             replacement.SetAreaLight();
-            replacement.CustomTexture = replacementSource;
-            replacement.ProjectionType = 1;
+            replacement.SetCustomTexture(replacementSource);
             manager.PointLightVolumeInstances = new[] { replacement };
             manager.ReinitializeCustomTextures();
             UploadAreaCookieAverageColor(manager, 0, replacementAverage);
@@ -3575,10 +3567,8 @@ namespace VRCLightVolumes.Tests {
             point.transform.localScale = new Vector3(2, 3, 1);
             point.Color = new Color(0.25f, 0.5f, 1f, 1f);
             point.Intensity = 2f;
-            point.SetCustomTexture();
             point.SetAreaLight();
-            point.CustomTexture = source;
-            point.ProjectionType = 1; // 1: texture
+            point.SetCustomTexture(source);
             manager.PointLightVolumeInstances = new[] { point };
 
             manager.ReinitializeCustomTextures();
@@ -3611,10 +3601,8 @@ namespace VRCLightVolumes.Tests {
 
             PointLightVolumeInstance point = CreatePointLight(manager, "Area Pending Cookie Light", true);
             point.transform.localScale = new Vector3(2, 3, 1);
-            point.SetCustomTexture();
             point.SetAreaLight();
-            point.CustomTexture = source;
-            point.ProjectionType = 1; // 1: texture
+            point.SetCustomTexture(source);
             manager.PointLightVolumeInstances = new[] { point };
 
             manager.ReinitializeCustomTextures();
@@ -3642,16 +3630,12 @@ namespace VRCLightVolumes.Tests {
 
             PointLightVolumeInstance area = CreatePointLight(manager, "Area Cookie Shared Source Light", true);
             area.transform.localScale = new Vector3(2, 3, 1);
-            area.SetCustomTexture();
             area.SetAreaLight();
-            area.CustomTexture = source;
-            area.ProjectionType = 1; // 1: texture
+            area.SetCustomTexture(source);
 
             PointLightVolumeInstance spot = CreatePointLight(manager, "Wide Spot Shared Cookie Light", true);
-            spot.SetCustomTexture();
             spot.SetSpotLight(150, 0.25f);
-            spot.CustomTexture = source;
-            spot.ProjectionType = 1; // 1: texture
+            spot.SetCustomTexture(source);
 
             manager.PointLightVolumeInstances = new[] { area, spot };
 
@@ -3674,13 +3658,13 @@ namespace VRCLightVolumes.Tests {
 
             PointLightVolumeInstance firstPoint = CreatePointLight(manager, "Area Material Cookie A", true);
             firstPoint.transform.localScale = new Vector3(2, 3, 1);
-            firstPoint.SetCustomMaterial(material, true);
+            firstPoint.SetCustomMaterial(material);
             firstPoint.SetAreaLight();
 
             PointLightVolumeInstance secondPoint = CreatePointLight(manager, "Area Material Cookie B", true);
             secondPoint.transform.localScale = new Vector3(2, 3, 1);
             secondPoint.Color = Color.red;
-            secondPoint.SetCustomMaterial(material, true);
+            secondPoint.SetCustomMaterial(material);
             secondPoint.SetAreaLight();
 
             manager.PointLightVolumeInstances = new[] { firstPoint, secondPoint };
@@ -3714,13 +3698,13 @@ namespace VRCLightVolumes.Tests {
 
             PointLightVolumeInstance firstPoint = CreatePointLight(manager, "Area Material Cookie Deinit A", true);
             firstPoint.transform.localScale = new Vector3(2, 3, 1);
-            firstPoint.SetCustomMaterial(firstMaterial, true);
+            firstPoint.SetCustomMaterial(firstMaterial);
             firstPoint.SetAreaLight();
 
             PointLightVolumeInstance secondPoint = CreatePointLight(manager, "Area Material Cookie Deinit B", true);
             secondPoint.transform.localScale = new Vector3(2, 3, 1);
             secondPoint.Color = new Color(1f, 0.5f, 0.25f, 1f);
-            secondPoint.SetCustomMaterial(secondMaterial, true);
+            secondPoint.SetCustomMaterial(secondMaterial);
             secondPoint.SetAreaLight();
 
             manager.PointLightVolumeInstances = new[] { firstPoint, secondPoint };
@@ -3742,92 +3726,228 @@ namespace VRCLightVolumes.Tests {
             secondPoint.AreaCookieAverageCustomId = -1;
         }
 
-        // Verifies a shared material source is split when lights need different runtime auto-update behavior.
-        [Test]
-        public void AreaMaterialCookieAutoUpdateMismatchUsesSeparateRuntimeSlices() {
-            LightVolumeManager manager = CreateManager("Area Material Cookie Auto Update Split Manager", false);
-            Material material = CreateMaterial("Hidden/CubeFace");
-            manager.CustomTexturesWidth = 4;
-            manager.CustomTexturesHeight = 4;
-
-            PointLightVolumeInstance livePoint = CreatePointLight(manager, "Area Material Cookie Live", true);
-            livePoint.transform.localScale = new Vector3(2, 3, 1);
-            livePoint.SetCustomMaterial(material, true);
-            livePoint.SetAreaLight();
-
-            PointLightVolumeInstance snapshotPoint = CreatePointLight(manager, "Area Material Cookie Snapshot", true);
-            snapshotPoint.transform.localScale = new Vector3(2, 3, 1);
-            snapshotPoint.SetCustomMaterial(material, false);
-            snapshotPoint.SetAreaLight();
-
-            manager.PointLightVolumeInstances = new[] { livePoint, snapshotPoint };
-
-            manager.ReinitializeCustomTextures();
-            manager.UpdateVolumes();
-
-            Assert.That(GetManagerField<int>(manager, _customSingleMaterialCountField), Is.EqualTo(2));
-            Assert.That(manager.CustomTextures, Is.Not.Null);
-            Assert.That(manager.CustomTextures.volumeDepth, Is.EqualTo(2));
-            Assert.That(manager.HasAutoCustomTextureUpdates, Is.True);
-            Assert.That(GetManagerField<bool[]>(manager, _customSingleMaterialAutoUpdatesField), Is.EqualTo(new[] { true, false }));
-            Assert.That(GetManagerField<int[]>(manager, _pointLightCustomIDsField), Is.EqualTo(new[] { 0, 1 }));
-            AssertPointCustomData(0, livePoint, -1, 0);
-            AssertPointCustomData(1, snapshotPoint, -2, 0);
-        }
-
         // Verifies the runtime API assigns a texture source and refreshes manager-owned projection arrays
         [Test]
         public void CustomTextureApiAssignsTextureAndRefreshesRuntimeArray() {
             LightVolumeManager manager = CreateManager("Custom Texture API Manager", false);
-            RenderTexture source = CreateRenderTexture("Custom Texture API Source", 4, 4, 1, TextureDimension.Tex2D);
+            Texture2D source = CreateTexture2D("Custom Texture API Source");
             manager.CustomTexturesWidth = 4;
             manager.CustomTexturesHeight = 4;
 
             PointLightVolumeInstance point = CreatePointLight(manager, "Custom Texture API Spot", true);
             point.SetSpotLight(60, 0.5f);
-            point.SetCustomTexture(source, false, true);
+            point.SetCustomTexture(source);
             manager.UpdateVolumes();
 
             Assert.That(point.CustomTexture, Is.SameAs(source));
             Assert.That(point.CustomTextureMaterial, Is.Null);
-            Assert.That(point.ProjectionType, Is.EqualTo(1)); // 1: texture
             Assert.That(point.ProjectionMode, Is.EqualTo(2)); // 2: custom cookie or cubemap
-            Assert.That(point.AutoUpdateCustomTexture, Is.True);
-            Assert.That(point.CustomTextureIsCubemap, Is.False);
-            Assert.That(point.CustomTextureHasDepthSlices, Is.False);
+            Assert.That(manager.HasAutoCustomTextureUpdates, Is.False);
             Assert.That(manager.CustomTextures, Is.Not.Null);
             Assert.That(Shader.GetGlobalTexture(_pointLightTextureID), Is.SameAs(manager.CustomTextures));
             Assert.That(manager.CustomTextures.volumeDepth, Is.EqualTo(1));
             AssertPointCustomData(point, -1, 0);
 
-            point.SetCustomTexture(null, false, false);
+            point.SetCustomTexture(null);
             manager.UpdateVolumes();
 
             Assert.That(point.CustomTexture, Is.Null);
-            Assert.That(point.ProjectionType, Is.EqualTo(0)); // 0: none
             Assert.That(point.ProjectionMode, Is.EqualTo(0)); // 0: parametric
             Assert.That(manager.CustomTextures, Is.Null);
         }
 
-        // Verifies the runtime API uses isCubemap to mark cubemap texture sources
+        // Verifies the unified texture API detects RenderTexture sources as always animated.
         [Test]
-        public void CustomTextureApiMarksCubemapSources() {
+        public void CustomTextureApiAssignsRenderTextureAsAnimatedSource() {
+            LightVolumeManager manager = CreateManager("Custom Render Texture API Manager", false);
+            RenderTexture source = CreateRenderTexture("Custom Render Texture API Source", 4, 4, 1, TextureDimension.Tex2D);
+            manager.CustomTexturesWidth = 4;
+            manager.CustomTexturesHeight = 4;
+
+            PointLightVolumeInstance point = CreatePointLight(manager, "Custom Render Texture API Spot", true);
+            point.SetSpotLight(60, 0.5f);
+            point.SetCustomTexture(source);
+            manager.UpdateVolumes();
+
+            Assert.That(point.CustomTexture, Is.SameAs(source));
+            Assert.That(point.CustomTextureMaterial, Is.Null);
+            Assert.That(point.ProjectionMode, Is.EqualTo(2)); // 2: custom cookie or cubemap
+            Assert.That(manager.HasAutoCustomTextureUpdates, Is.True);
+            Assert.That(manager.CustomTextures, Is.Not.Null);
+            Assert.That(Shader.GetGlobalTexture(_pointLightTextureID), Is.SameAs(manager.CustomTextures));
+            Assert.That(manager.CustomTextures.volumeDepth, Is.EqualTo(1));
+            AssertPointCustomData(point, -1, 0);
+        }
+
+        // An auto-update pass must update RenderTexture sources in place without recopying immutable Texture assets.
+        [Test]
+        public void AutoCustomTextureUpdateLeavesStaticSliceUntouched() {
+            LightVolumeManager manager = CreateManager("Mixed Static Animated Cookie Manager", false);
+            manager.CustomTexturesWidth = 4;
+            manager.CustomTexturesHeight = 4;
+
+            Texture2D staticSource = CreateTexture2D("Mixed Static Cookie Source");
+            RenderTexture animatedSource = CreateRenderTexture("Mixed Animated Cookie Source", 4, 4, 1, TextureDimension.Tex2D);
+            RenderTexture previousActive = RenderTexture.active;
+            Graphics.SetRenderTarget(animatedSource);
+            GL.Clear(false, true, Color.red);
+            RenderTexture.active = previousActive;
+
+            PointLightVolumeInstance staticSpot = CreatePointLight(manager, "Mixed Static Cookie Spot", true);
+            staticSpot.SetSpotLight(60f, 0.5f);
+            staticSpot.SetCustomTexture(staticSource);
+            PointLightVolumeInstance animatedSpot = CreatePointLight(manager, "Mixed Animated Cookie Spot", true);
+            animatedSpot.SetSpotLight(60f, 0.5f);
+            animatedSpot.SetCustomTexture(animatedSource);
+            manager.PointLightVolumeInstances = new[] { staticSpot, animatedSpot };
+            manager.ReinitializeCustomTextures();
+
+            Color[][] before = ReadRenderTextureArrayPixels(manager.CustomTextures);
+            Assert.That(before.Length, Is.EqualTo(2));
+            staticSource.SetPixel(0, 0, Color.green);
+            staticSource.Apply(false);
+            previousActive = RenderTexture.active;
+            Graphics.SetRenderTarget(animatedSource);
+            GL.Clear(false, true, Color.blue);
+            RenderTexture.active = previousActive;
+
+            manager.UpdateAutoCustomTextures();
+
+            Color[][] after = ReadRenderTextureArrayPixels(manager.CustomTextures);
+            AssertPixelArraysEqual(before[0], after[0], "The auto-update pass recopied the immutable cookie slice.");
+            Assert.That(PixelArraysDiffer(before[1], after[1]), Is.True, "The auto-update pass did not refresh the RenderTexture cookie slice.");
+            Assert.That(after[1][0].b, Is.GreaterThan(0.9f));
+        }
+
+        // CustomRenderTexture inherits RenderTexture and must use the same animated path through the
+        // unified Texture API without an explicit type or update flag.
+        [Test]
+        public void CustomTextureApiAssignsCustomRenderTextureAsAnimatedSource() {
+            LightVolumeManager manager = CreateManager("Custom Render Texture Inheritance Manager", false);
+            CustomRenderTexture source = new CustomRenderTexture(4, 4);
+            source.name = "Custom Render Texture Inheritance Source";
+            source.dimension = TextureDimension.Tex2D;
+            source.volumeDepth = 1;
+            source.Create();
+            _createdObjects.Add(source);
+            manager.CustomTexturesWidth = 4;
+            manager.CustomTexturesHeight = 4;
+
+            PointLightVolumeInstance point = CreatePointLight(manager, "Custom Render Texture Inheritance Spot", true);
+            point.SetSpotLight(60, 0.5f);
+            point.SetCustomTexture(source);
+            manager.ReinitializeCustomTextures();
+
+            Assert.That(point.CustomTexture, Is.SameAs(source));
+            Assert.That(manager.HasAutoCustomTextureUpdates, Is.True);
+            Assert.That(manager.CustomTextures, Is.Not.Null);
+        }
+
+        // Verifies the runtime API derives cubemap layout from the texture itself.
+        [Test]
+        public void CustomTextureApiDerivesCubemapLayout() {
             LightVolumeManager manager = CreateManager("Custom Texture API Cubemap Manager", false);
             Cubemap source = CreateCubemap("Custom Texture API Cubemap Source");
             manager.CustomTexturesWidth = 4;
             manager.CustomTexturesHeight = 4;
 
             PointLightVolumeInstance point = CreatePointLight(manager, "Custom Texture API Point", true);
-            point.SetCustomTexture(source, true, true);
+            point.SetCustomTexture(source);
             manager.UpdateVolumes();
 
             Assert.That(point.CustomTexture, Is.SameAs(source));
-            Assert.That(point.CustomTextureIsCubemap, Is.True);
-            Assert.That(point.CustomTextureHasDepthSlices, Is.False);
             Assert.That(manager.CustomTextures, Is.Not.Null);
             Assert.That(manager.CubemapsCount, Is.EqualTo(1));
             Assert.That(manager.CustomTextures.volumeDepth, Is.EqualTo(6));
             AssertPointCustomData(point, -1, 0);
+        }
+
+        // Runtime light-type setters must invalidate the cookie cache before the editor-only
+        // source-state capture can hide a stale six-slice versus single-slice atlas layout.
+        [Test]
+        public void CustomCookieLightTypeSettersInvalidateInitializedAtlasBeforeEditorCapture() {
+            LightVolumeManager manager = CreateManager("Custom Cookie Type Transition Manager", false);
+            Texture2D source = CreateTexture2D("Custom Cookie Type Transition Source");
+            manager.CustomTexturesWidth = 4;
+            manager.CustomTexturesHeight = 4;
+
+            PointLightVolumeInstance point = CreatePointLight(manager, "Custom Cookie Type Transition Light", true);
+            point.SetCustomTexture(source);
+            manager.PointLightVolumeInstances = new[] { point };
+            manager.UpdateVolumes();
+
+            Assert.That(GetManagerField<bool>(manager, _customTexturesInitializedField), Is.True);
+            Assert.That(manager.CubemapsCount, Is.EqualTo(1));
+            Assert.That(manager.CustomTextures.volumeDepth, Is.EqualTo(6));
+
+            SetManagerField(manager, _isUpdatingVolumesField, true);
+            try {
+                point.SetSpotLight(60f, 0.5f);
+            } finally {
+                SetManagerField(manager, _isUpdatingVolumesField, false);
+            }
+            Assert.That(GetManagerField<bool>(manager, _customTexturesInitializedField), Is.False, "Point -> Spot(falloff) kept the six-slice cookie cache initialized.");
+            manager.ReinitializeCustomTextures();
+            Assert.That(manager.CubemapsCount, Is.Zero);
+            Assert.That(manager.CustomTextures.volumeDepth, Is.EqualTo(1));
+
+            SetManagerField(manager, _isUpdatingVolumesField, true);
+            try {
+                point.SetPointLight();
+            } finally {
+                SetManagerField(manager, _isUpdatingVolumesField, false);
+            }
+            Assert.That(GetManagerField<bool>(manager, _customTexturesInitializedField), Is.False, "Spot -> Point kept the single-slice cookie cache initialized.");
+            manager.ReinitializeCustomTextures();
+            Assert.That(manager.CubemapsCount, Is.EqualTo(1));
+            Assert.That(manager.CustomTextures.volumeDepth, Is.EqualTo(6));
+
+            SetManagerField(manager, _isUpdatingVolumesField, true);
+            try {
+                point.SetSpotLight(45f);
+            } finally {
+                SetManagerField(manager, _isUpdatingVolumesField, false);
+            }
+            Assert.That(GetManagerField<bool>(manager, _customTexturesInitializedField), Is.False, "Point -> Spot(angle) kept the six-slice cookie cache initialized.");
+            manager.ReinitializeCustomTextures();
+            Assert.That(manager.CubemapsCount, Is.Zero);
+            Assert.That(manager.CustomTextures.volumeDepth, Is.EqualTo(1));
+
+            SetManagerField(manager, _isUpdatingVolumesField, true);
+            try {
+                point.SetPointLight();
+            } finally {
+                SetManagerField(manager, _isUpdatingVolumesField, false);
+            }
+            Assert.That(GetManagerField<bool>(manager, _customTexturesInitializedField), Is.False, "Spot(angle) -> Point kept the single-slice cookie cache initialized.");
+            manager.ReinitializeCustomTextures();
+            Assert.That(manager.CubemapsCount, Is.EqualTo(1));
+            Assert.That(manager.CustomTextures.volumeDepth, Is.EqualTo(6));
+
+            SetManagerField(manager, _isUpdatingVolumesField, true);
+            try {
+                point.SetAreaLight();
+            } finally {
+                SetManagerField(manager, _isUpdatingVolumesField, false);
+            }
+            Assert.That(GetManagerField<bool>(manager, _customTexturesInitializedField), Is.False, "Point -> Area kept the six-slice cookie cache initialized.");
+            manager.ReinitializeCustomTextures();
+            Assert.That(manager.CubemapsCount, Is.Zero);
+            Assert.That(manager.CustomTextures.volumeDepth, Is.EqualTo(1));
+
+            SetManagerField(manager, _isUpdatingVolumesField, true);
+            try {
+                point.SetPointLight();
+            } finally {
+                SetManagerField(manager, _isUpdatingVolumesField, false);
+            }
+            Assert.That(GetManagerField<bool>(manager, _customTexturesInitializedField), Is.False, "Area -> Point kept the single-slice cookie cache initialized.");
+            manager.ReinitializeCustomTextures();
+
+            Assert.That(point.CustomTexture, Is.SameAs(source));
+            Assert.That(point.ProjectionMode, Is.EqualTo(2));
+            Assert.That(manager.CubemapsCount, Is.EqualTo(1));
+            Assert.That(manager.CustomTextures.volumeDepth, Is.EqualTo(6));
         }
 
         // Verifies the runtime API assigns a material source and refreshes manager-owned projection arrays
@@ -3839,20 +3959,18 @@ namespace VRCLightVolumes.Tests {
             manager.CustomTexturesHeight = 4;
 
             PointLightVolumeInstance firstPoint = CreatePointLight(manager, "Material API Point A", true);
-            firstPoint.SetCustomMaterial(material, true);
+            firstPoint.SetCustomMaterial(material);
 
             PointLightVolumeInstance duplicatePoint = CreatePointLight(manager, "Material API Point B", true);
-            duplicatePoint.SetCustomMaterial(material, true);
+            duplicatePoint.SetCustomMaterial(material);
 
             Assert.That(firstPoint.CustomTexture, Is.Null);
             Assert.That(firstPoint.CustomTextureMaterial, Is.SameAs(material));
-            Assert.That(firstPoint.ProjectionType, Is.EqualTo(2)); // 2: material
             Assert.That(firstPoint.ProjectionMode, Is.EqualTo(2)); // 2: custom cookie or cubemap
-            Assert.That(firstPoint.AutoUpdateCustomTexture, Is.True);
-
             manager.UpdateVolumes();
 
             Assert.That(manager.CubemapsCount, Is.EqualTo(1));
+            Assert.That(manager.HasAutoCustomTextureUpdates, Is.True);
             Assert.That(manager.CustomTextures, Is.Not.Null);
             Assert.That(manager.CustomTextures.volumeDepth, Is.EqualTo(6));
             Assert.That(GetManagerField<int[]>(manager, _pointLightCustomIDsField), Is.EqualTo(new[] { 0, 0 }));
@@ -3869,11 +3987,8 @@ namespace VRCLightVolumes.Tests {
             manager.CustomTexturesHeight = 8;
 
             PointLightVolumeInstance point = CreatePointLight(manager, "Animated Spot Cookie No Fallback Light", true);
-            point.SetCustomTexture();
             point.SetSpotLight(60, 0.5f);
-            point.CustomTexture = source;
-            point.ProjectionType = 1; // 1: texture
-            point.AutoUpdateCustomTexture = true;
+            point.SetCustomTexture(source);
             manager.PointLightVolumeInstances = new[] { point };
 
             manager.ReinitializeCustomTextures();
@@ -3897,12 +4012,8 @@ namespace VRCLightVolumes.Tests {
             manager.CustomTexturesHeight = 4;
 
             PointLightVolumeInstance point = CreatePointLight(manager, "Animated Point Cubemap Light", true);
-            point.SetCustomTexture();
             point.SetPointLight();
-            point.CustomTexture = source;
-            point.ProjectionType = 1; // 1: texture
-            point.CustomTextureHasDepthSlices = true;
-            point.AutoUpdateCustomTexture = true;
+            point.SetCustomTexture(source);
             manager.PointLightVolumeInstances = new[] { point };
 
             manager.ReinitializeCustomTextures();
@@ -4003,6 +4114,7 @@ namespace VRCLightVolumes.Tests {
             LightVolumeManager manager = CreateManager("Runtime Texture Cleanup Manager", false);
             RenderTexture customTextures = CreateRenderTexture("Runtime Custom Texture Array", 32, 32, 2, TextureDimension.Tex2DArray);
             RenderTexture shadowTextures = CreateRenderTexture("Runtime Shadow Texture Array", 64, 64, 6, TextureDimension.Tex2DArray);
+            RenderTexture directShadowPreservation = CreateRenderTexture("Runtime Direct Shadow Preservation", 64, 64, 6, TextureDimension.Tex2DArray);
             RenderTexture fineClusterMask = CreateRenderTexture("Runtime Fine Cluster Mask", 16, 16, 1, TextureDimension.Tex2D);
             RenderTexture coarseClusterMask = CreateRenderTexture("Runtime Coarse Cluster Mask", 8, 8, 1, TextureDimension.Tex2D);
             RenderTexture clusteringSource = CreateRenderTexture("Runtime Clustering Source", 1, 1, 1, TextureDimension.Tex2D);
@@ -4015,12 +4127,15 @@ namespace VRCLightVolumes.Tests {
             FieldInfo fineClusterMaskField = typeof(LightVolumeManager).GetField("_clusterMask", _lifecycleMethodFlags);
             FieldInfo coarseClusterMaskField = typeof(LightVolumeManager).GetField("_coarseClusterMask", _lifecycleMethodFlags);
             FieldInfo clusteringSourceField = typeof(LightVolumeManager).GetField("_clusteringSource", _lifecycleMethodFlags);
+            FieldInfo directShadowPreservationField = typeof(LightVolumeManager).GetField("_directShadowPreservationTexture", _lifecycleMethodFlags);
             Assert.That(fineClusterMaskField, Is.Not.Null);
             Assert.That(coarseClusterMaskField, Is.Not.Null);
             Assert.That(clusteringSourceField, Is.Not.Null);
+            Assert.That(directShadowPreservationField, Is.Not.Null);
             fineClusterMaskField.SetValue(manager, fineClusterMask);
             coarseClusterMaskField.SetValue(manager, coarseClusterMask);
             clusteringSourceField.SetValue(manager, clusteringSource);
+            directShadowPreservationField.SetValue(manager, directShadowPreservation);
             _dummyRTField.SetValue(manager, dummyBlitSource);
 
             InvokeLifecycleMethod(manager, "OnDestroy");
@@ -4030,12 +4145,14 @@ namespace VRCLightVolumes.Tests {
             Assert.That(fineClusterMaskField.GetValue(manager), Is.Null);
             Assert.That(coarseClusterMaskField.GetValue(manager), Is.Null);
             Assert.That(clusteringSourceField.GetValue(manager), Is.Null);
+            Assert.That(directShadowPreservationField.GetValue(manager), Is.Null);
             Assert.That(_dummyRTField.GetValue(manager), Is.Null);
             Assert.That(customTextures == null, Is.True);
             Assert.That(shadowTextures == null, Is.True);
             Assert.That(fineClusterMask == null, Is.True);
             Assert.That(coarseClusterMask == null, Is.True);
             Assert.That(clusteringSource == null, Is.True);
+            Assert.That(directShadowPreservation == null, Is.True);
             Assert.That(dummyBlitSource == null, Is.True);
         }
 
@@ -4523,20 +4640,45 @@ namespace VRCLightVolumes.Tests {
 
             PointLightVolumeInstance baker = point;
             baker.RuntimeShadowResolution = 96;
+            baker.RuntimeShadowDirectOutput = true;
+            baker.Blur = 1f;
             baker.RuntimeShadowDepthEncodeMaterial = CreateMaterial("Hidden/VRCLV/PointLightShadowDepthEncode");
+            baker.RuntimeShadowBlurMaterial = CreateMaterial("Hidden/VRCLV/PointLightShadowRuntimeBlur");
             AddRuntimeShadowCamera(baker);
 
             FieldInfo shadowTextureField = typeof(PointLightVolumeInstance).GetField("_runtimeShadowTexture", _lifecycleMethodFlags);
+            FieldInfo depthTextureField = typeof(PointLightVolumeInstance).GetField("_runtimeShadowDepthTexture", _lifecycleMethodFlags);
+            FieldInfo blurTextureField = typeof(PointLightVolumeInstance).GetField("_runtimeShadowBlurTempTexture", _lifecycleMethodFlags);
             Assert.That(shadowTextureField, Is.Not.Null);
+            Assert.That(depthTextureField, Is.Not.Null);
+            Assert.That(blurTextureField, Is.Not.Null);
 
             baker.BakeShadows();
 
             RenderTexture shadowTexture = (RenderTexture)shadowTextureField.GetValue(baker);
+            RenderTexture depthTexture = (RenderTexture)depthTextureField.GetValue(baker);
+            RenderTexture blurTexture = (RenderTexture)blurTextureField.GetValue(baker);
             Assert.That(shadowTexture, Is.Not.Null);
+            Assert.That(depthTexture, Is.Not.Null);
+            Assert.That(blurTexture, Is.Not.Null);
             Assert.That(shadowTexture.width, Is.EqualTo(96));
             Assert.That(shadowTexture.height, Is.EqualTo(96));
             Assert.That(manager.ShadowTexturesWidth, Is.EqualTo(32));
             Assert.That(manager.ShadowTexturesHeight, Is.EqualTo(32));
+
+            baker.BakeShadows();
+
+            Assert.That(shadowTextureField.GetValue(baker), Is.SameAs(shadowTexture));
+            Assert.That(depthTextureField.GetValue(baker), Is.SameAs(depthTexture), "Realtime resolution fallback recreated its depth texture.");
+            Assert.That(blurTextureField.GetValue(baker), Is.SameAs(blurTexture), "Realtime resolution fallback recreated its blur texture.");
+
+            baker._ReleaseRuntimeShadowBakeResources();
+
+            Assert.That(shadowTextureField.GetValue(baker), Is.SameAs(shadowTexture), "Releasing bake scratch also released the published normal fallback source.");
+            Assert.That(depthTextureField.GetValue(baker), Is.Null);
+            Assert.That(blurTextureField.GetValue(baker), Is.Null);
+            Assert.That(depthTexture == null, Is.True);
+            Assert.That(blurTexture == null, Is.True);
         }
 
         // Reproduces the problematic 16x upscale ratio (32 -> 512) with a compact fixture.
@@ -4754,12 +4896,10 @@ namespace VRCLightVolumes.Tests {
             manager.PointLightVolumeInstances = new[] { point };
             manager.ReinitializeShadowTextures();
             RenderTexture previousAtlas = manager.ShadowTextures;
-
             point.BakeShadows();
 
             Assert.That(point.ShadowMapTexture, Is.SameAs(previousSource));
             Assert.That(manager.ShadowTextures, Is.SameAs(previousAtlas));
-
             point.RuntimeShadowBlurMaterial = CreateMaterial("Hidden/VRCLV/PointLightShadowRuntimeBlur");
             point.BakeShadows();
 
@@ -4984,6 +5124,62 @@ namespace VRCLightVolumes.Tests {
             for (int face = 0; face < 6; face++)
                 AssertPixelArraysEqual(pixelsBeforeRebake[neighbourBaseSlice + face], pixelsAfterRebake[neighbourBaseSlice + face],
                     "Direct spot blur changed neighbour slice " + face);
+        }
+
+        // The realtime flashlight path is a source-less direct spot. Its one published slice must
+        // survive a structural atlas resize and ID shift before the next realtime bake runs.
+        [Test]
+        public void RuntimeShadowDirectSpotSurvivesAtlasReallocationWithoutNextBake() {
+            LightVolumeManager manager = CreateManager("Runtime Shadow Direct Spot Reallocation Manager", false);
+            manager.ShadowTexturesWidth = 16;
+            manager.ShadowTexturesHeight = 16;
+
+            PointLightVolumeInstance directSpot = CreatePointLight(manager, "Runtime Shadow Direct Spot Reallocation", true);
+            directSpot.SetSpotLight(60, 0.5f);
+            directSpot.ShadowMapUsesCubemap = false;
+            directSpot.Shadows = true;
+            directSpot.RuntimeShadowResolution = 16;
+            directSpot.RuntimeShadowDirectOutput = true;
+
+            Color[] firstSourceColors = { Color.red, Color.green, Color.blue, Color.yellow, Color.cyan, Color.white };
+            Texture2DArray firstSource = CreateSliceColorTextureArray("Runtime Shadow Direct Spot First Source", 16, 16, firstSourceColors);
+            PointLightVolumeInstance first = CreatePointLight(manager, "Runtime Shadow Direct Spot First Light", true);
+            ConfigureShadowTexture(first, firstSource, false, false, true);
+            first.ShadowMapUsesCubemap = true;
+            first.Shadows = true;
+
+            manager.PointLightVolumeInstances = new[] { directSpot, first };
+            manager.ReinitializeShadowTextures();
+
+            RenderTexture originalAtlas = manager.ShadowTextures;
+            int originalDirectSlice = manager.ShadowCubemapsCount * 6 + (int)directSpot.ShadowMapID - manager.ShadowCubemapsCount;
+            Assert.That(originalAtlas.volumeDepth, Is.EqualTo(7));
+            FillRenderTextureArraySlice(originalAtlas, originalDirectSlice, new Color(0.91f, 0.07f, 0.73f, 1f));
+            Color[] pixelsBeforeReallocation = ReadRenderTextureArrayPixels(originalAtlas)[originalDirectSlice];
+
+            Color[] addedSourceColors = { Color.magenta, Color.gray, Color.black, Color.blue, Color.green, Color.red };
+            Texture2DArray addedSource = CreateSliceColorTextureArray("Runtime Shadow Direct Spot Added Source", 16, 16, addedSourceColors);
+            PointLightVolumeInstance added = CreatePointLight(manager, "Runtime Shadow Direct Spot Added Light", true);
+            ConfigureShadowTexture(added, addedSource, false, false, true);
+            added.ShadowMapUsesCubemap = true;
+            added.Shadows = true;
+
+            manager.PointLightVolumeInstances = new[] { directSpot, first, added };
+            // Runtime source changes invalidate the layout before their delayed UpdateVolumes call.
+            // The previous atlas remains the only source for direct output during that dirty window.
+            manager.NotifyPointLightVolumeChanged(added, false, false, true);
+
+            RenderTexture rebuiltAtlas = manager.ShadowTextures;
+            FieldInfo preservationTextureField = typeof(LightVolumeManager).GetField("_directShadowPreservationTexture", _lifecycleMethodFlags);
+            int rebuiltDirectSlice = manager.ShadowCubemapsCount * 6 + (int)directSpot.ShadowMapID - manager.ShadowCubemapsCount;
+            Assert.That(preservationTextureField, Is.Not.Null);
+            Assert.That(preservationTextureField.GetValue(manager), Is.Null, "The rebuild retained its temporary direct-shadow texture after restoration.");
+            Assert.That(originalAtlas, Is.Not.SameAs(rebuiltAtlas));
+            Assert.That(rebuiltAtlas.volumeDepth, Is.EqualTo(13));
+            AssertPixelArraysEqual(
+                pixelsBeforeReallocation,
+                ReadRenderTextureArrayPixels(rebuiltAtlas)[rebuiltDirectSlice],
+                "Atlas reallocation dropped the direct spot slice before its next realtime bake.");
         }
 
         // Verifies runtime-selected blur variants are kept in player builds instead of relying on editor-only shader_feature fallback.
@@ -5420,7 +5616,8 @@ namespace VRCLightVolumes.Tests {
             }
         }
 
-        // A structural atlas rebuild may move a source-less direct slot; one following bake must recover its complete new range.
+        // A structural atlas rebuild may move a source-less direct slot. Its last complete result
+        // must survive the remap without waiting for the following realtime bake.
         [Test]
         public void RuntimeShadowDirectBakeRecoversAfterAtlasReallocation() {
             LightVolumeManager manager = CreateManager("Runtime Shadow Direct Reallocation Manager", false);
@@ -5450,6 +5647,19 @@ namespace VRCLightVolumes.Tests {
 
             Assert.That(manager.ShadowTextures, Is.Not.Null);
             Assert.That(manager.ShadowTextures.volumeDepth, Is.EqualTo(12));
+            RenderTexture originalAtlas = manager.ShadowTextures;
+            int originalDirectBaseSlice = (int)direct.ShadowMapID * 6;
+            Color[] preservedDirectColors = {
+                new Color(0.91f, 0.07f, 0.73f, 1f),
+                new Color(0.13f, 0.86f, 0.21f, 1f),
+                new Color(0.08f, 0.31f, 0.94f, 1f),
+                new Color(0.77f, 0.62f, 0.05f, 1f),
+                new Color(0.18f, 0.72f, 0.81f, 1f),
+                new Color(0.66f, 0.19f, 0.42f, 1f)
+            };
+            for (int face = 0; face < 6; face++)
+                FillRenderTextureArraySlice(originalAtlas, originalDirectBaseSlice + face, preservedDirectColors[face]);
+            Color[][] pixelsBeforeReallocation = ReadRenderTextureArrayPixels(originalAtlas);
 
             Color[] addedColors = { Color.magenta, Color.gray, Color.black, Color.blue, Color.green, Color.red };
             Texture2DArray addedSource = CreateSliceColorTextureArray("Runtime Shadow Added Reallocation Source", 16, 16, addedColors);
@@ -5468,6 +5678,12 @@ namespace VRCLightVolumes.Tests {
             int addedBaseSlice = (int)added.ShadowMapID * 6;
             Assert.That(rebuiltAtlas, Is.Not.Null);
             Assert.That(rebuiltAtlas.volumeDepth, Is.EqualTo(18));
+            Color[][] pixelsAfterReallocation = ReadRenderTextureArrayPixels(rebuiltAtlas);
+            for (int face = 0; face < 6; face++)
+                AssertPixelArraysEqual(
+                    pixelsBeforeReallocation[originalDirectBaseSlice + face],
+                    pixelsAfterReallocation[directBaseSlice + face],
+                    "Atlas reallocation dropped direct face " + face + " before its next realtime bake.");
 
             for (int face = 0; face < 6; face++) {
                 FillRenderTextureArraySlice(rebuiltAtlas, directBaseSlice + face, new Color(0.91f, 0.07f, 0.73f, 1f));
@@ -5671,6 +5887,8 @@ namespace VRCLightVolumes.Tests {
 
             Assert.That(depthField.GetValue(first), Is.Null);
             Assert.That(first.ShadowMapTexture, Is.Null);
+            Assert.That(first.RuntimeShadowDirectOutput, Is.False,
+                "A baker must not leave transient direct-atlas ownership on its previous target.");
             Assert.That(manager.ShadowTextures, Is.SameAs(publishedAtlas));
             Assert.That(second.RuntimeShadowDirectOutput, Is.True);
         }
@@ -6318,10 +6536,8 @@ namespace VRCLightVolumes.Tests {
             point.ShadowMapUsesCubemap = false;
 
             PointLightVolumeInstance area = CreatePointLight(manager, "Malformed Area Shadow", true);
-            area.SetCustomTexture();
             area.SetAreaLight();
-            area.CustomTexture = CreateTexture2D("Area Shadow Cookie");
-            area.ProjectionType = 1; // 1: texture
+            area.SetCustomTexture(CreateTexture2D("Area Shadow Cookie"));
             area.transform.localScale = new Vector3(-2, 3, 1);
             area.UpdateScale();
             ConfigureShadowTexture(area, CreateTexture2D("Malformed Area Shadow Source"), false, false, false);
@@ -6449,35 +6665,23 @@ namespace VRCLightVolumes.Tests {
 
             PointLightVolumeInstance cubemapPointA = CreatePointLight(manager, "Duplicate Cubemap Point A", true);
             cubemapPointA.SetPointLight();
-            cubemapPointA.SetCustomTexture();
-            cubemapPointA.CustomTexture = cubemap;
-            cubemapPointA.CustomTextureIsCubemap = true;
-            cubemapPointA.ProjectionType = 1; // 1: texture
+            cubemapPointA.SetCustomTexture(cubemap);
 
             PointLightVolumeInstance cubemapPointB = CreatePointLight(manager, "Duplicate Cubemap Point B", true);
             cubemapPointB.SetPointLight();
-            cubemapPointB.SetCustomTexture();
-            cubemapPointB.CustomTexture = cubemap;
-            cubemapPointB.CustomTextureIsCubemap = true;
-            cubemapPointB.ProjectionType = 1; // 1: texture
+            cubemapPointB.SetCustomTexture(cubemap);
 
             PointLightVolumeInstance cookieSpotA = CreatePointLight(manager, "Duplicate Cookie Spot A", true);
-            cookieSpotA.SetCustomTexture();
             cookieSpotA.SetSpotLight(60, 0.5f);
-            cookieSpotA.CustomTexture = cookieA;
-            cookieSpotA.ProjectionType = 1; // 1: texture
+            cookieSpotA.SetCustomTexture(cookieA);
 
             PointLightVolumeInstance cookieSpotB = CreatePointLight(manager, "Duplicate Cookie Spot B", true);
-            cookieSpotB.SetCustomTexture();
             cookieSpotB.SetSpotLight(60, 0.5f);
-            cookieSpotB.CustomTexture = cookieB;
-            cookieSpotB.ProjectionType = 1; // 1: texture
+            cookieSpotB.SetCustomTexture(cookieB);
 
             PointLightVolumeInstance cookieSpotADuplicate = CreatePointLight(manager, "Duplicate Cookie Spot A Duplicate", true);
-            cookieSpotADuplicate.SetCustomTexture();
             cookieSpotADuplicate.SetSpotLight(60, 0.5f);
-            cookieSpotADuplicate.CustomTexture = cookieA;
-            cookieSpotADuplicate.ProjectionType = 1; // 1: texture
+            cookieSpotADuplicate.SetCustomTexture(cookieA);
 
             manager.PointLightVolumeInstances = new[] { cubemapPointA, cubemapPointB, cookieSpotA, cookieSpotB, cookieSpotADuplicate };
             manager.ReinitializeCustomTextures();
@@ -6507,22 +6711,17 @@ namespace VRCLightVolumes.Tests {
 
             PointLightVolumeInstance area = CreatePointLight(manager, "Area Material Cookie", true);
             area.transform.localScale = new Vector3(2, 3, 1);
-            area.SetCustomTexture();
             area.SetAreaLight();
-            area.CustomTextureMaterial = areaCookie;
-            area.ProjectionType = 2; // 2: material
-            area.AutoUpdateCustomTexture = true;
+            area.SetCustomMaterial(areaCookie);
 
             PointLightVolumeInstance spot = CreatePointLight(manager, "Spot LUT", true);
+            spot.SetCustomTexture(lut);
             spot.SetLut();
             spot.SetSpotLight(60, 0.5f);
-            spot.CustomTexture = lut;
-            spot.ProjectionType = 1; // 1: texture
 
             PointLightVolumeInstance point = CreatePointLight(manager, "Point LUT", true);
+            point.SetCustomTexture(lut);
             point.SetLut();
-            point.CustomTexture = lut;
-            point.ProjectionType = 1; // 1: texture
 
             manager.PointLightVolumeInstances = new[] { area, spot, point };
             manager.ReinitializeCustomTextures();
@@ -6555,10 +6754,8 @@ namespace VRCLightVolumes.Tests {
                 PointLightVolumeInstance area = CreatePointLight(manager, "Mirrored Area " + i, true);
                 area.transform.rotation = Quaternion.Euler(17, 31, 43);
                 area.transform.localScale = scales[i];
-                area.SetCustomTexture();
                 area.SetAreaLight();
-                area.CustomTexture = cookie;
-                area.ProjectionType = 1; // 1: texture
+                area.SetCustomTexture(cookie);
                 area.UpdateScale();
                 areas[i] = area;
             }
@@ -6607,10 +6804,8 @@ namespace VRCLightVolumes.Tests {
                 area.transform.SetParent(parent.transform, false);
                 area.transform.localRotation = Quaternion.identity;
                 area.transform.localScale = new Vector3(2, 3, 1);
-                area.SetCustomTexture();
                 area.SetAreaLight();
-                area.CustomTexture = cookie;
-                area.ProjectionType = 1; // 1: texture
+                area.SetCustomTexture(cookie);
                 areas[i] = area;
             }
 
@@ -6637,8 +6832,8 @@ namespace VRCLightVolumes.Tests {
             area.transform.SetParent(parent.transform, false);
             area.transform.localRotation = Quaternion.identity;
             area.transform.localScale = new Vector3(2, 3, 1);
-            area.SetCustomTexture();
             area.SetAreaLight();
+            area.SetCustomTexture(CreateTexture2D("Manual Area Cookie Mirror Source"));
 
             Assert.That(area.AreaCookieMirror, Is.EqualTo(-1f).Within(Epsilon));
 
@@ -6656,8 +6851,8 @@ namespace VRCLightVolumes.Tests {
         public void InactiveCustomTextureUsersReleaseRuntimeArrayUntilReactivated() {
             LightVolumeManager manager = CreateManager("Inactive Cookie Users Manager", false);
             Cubemap cubemap = CreateCubemap("Inactive Cookie Cubemap");
-            PointLightVolumeInstance firstPoint = ConfigurePointCubemapSource(CreatePointLight(manager, "Inactive Cookie Point A", true), cubemap, true);
-            PointLightVolumeInstance secondPoint = ConfigurePointCubemapSource(CreatePointLight(manager, "Inactive Cookie Point B", true), cubemap, true);
+            PointLightVolumeInstance firstPoint = ConfigurePointCubemapSource(CreatePointLight(manager, "Inactive Cookie Point A", true), cubemap);
+            PointLightVolumeInstance secondPoint = ConfigurePointCubemapSource(CreatePointLight(manager, "Inactive Cookie Point B", true), cubemap);
             manager.PointLightVolumeInstances = new[] { firstPoint, secondPoint };
 
             manager.UpdateVolumes();
@@ -6725,8 +6920,8 @@ namespace VRCLightVolumes.Tests {
             LightVolumeManager manager = CreateManager("Retained Texture Mapping Manager", false);
             Cubemap customSource = CreateCubemap("Retained Custom Source");
             Cubemap shadowSource = CreateCubemap("Retained Shadow Source");
-            PointLightVolumeInstance first = ConfigurePointCubemapSource(CreatePointLight(manager, "Retained Source A", true), customSource, false);
-            PointLightVolumeInstance removed = ConfigurePointCubemapSource(CreatePointLight(manager, "Retained Source B", true), customSource, false);
+            PointLightVolumeInstance first = ConfigurePointCubemapSource(CreatePointLight(manager, "Retained Source A", true), customSource);
+            PointLightVolumeInstance removed = ConfigurePointCubemapSource(CreatePointLight(manager, "Retained Source B", true), customSource);
             ConfigureShadowTexture(first, shadowSource, false, true, false);
             ConfigureShadowTexture(removed, shadowSource, false, true, false);
             manager.PointLightVolumeInstances = new[] { first, removed };
@@ -6963,6 +7158,7 @@ namespace VRCLightVolumes.Tests {
 
         // Adds the hidden camera that the editor preprocessor normally injects before Play Mode or build
         private Camera AddRuntimeShadowCamera(PointLightVolumeInstance point) {
+            point.Shadows = true;
             GameObject cameraObject = CreateGameObject(point.name + " Runtime Shadow Camera", true);
             cameraObject.transform.SetParent(point.transform, false);
             Camera camera = cameraObject.AddComponent<Camera>();
@@ -7122,6 +7318,7 @@ namespace VRCLightVolumes.Tests {
 
         // Assigns a shadow texture source in the same shape as point-light authoring sync.
         private static void ConfigureShadowTexture(PointLightVolumeInstance point, Texture source, bool autoUpdate, bool isCubemap, bool hasDepthSlices) {
+            point.Shadows = true;
             point.ShadowMapID = 0;
             point.ShadowMapTexture = source;
             point.ShadowMapMaterial = null;
@@ -7131,15 +7328,9 @@ namespace VRCLightVolumes.Tests {
         }
 
         // Assigns a point cubemap projection source in the same shape as point-light authoring sync.
-        private static PointLightVolumeInstance ConfigurePointCubemapSource(PointLightVolumeInstance point, Texture source, bool autoUpdate) {
+        private static PointLightVolumeInstance ConfigurePointCubemapSource(PointLightVolumeInstance point, Texture source) {
             point.SetPointLight();
-            point.SetCustomTexture();
-            point.CustomTexture = source;
-            point.CustomTextureMaterial = null;
-            point.ProjectionType = 1; // 1: texture
-            point.CustomTextureIsCubemap = true;
-            point.CustomTextureHasDepthSlices = false;
-            point.AutoUpdateCustomTexture = autoUpdate;
+            point.SetCustomTexture(source);
             return point;
         }
 

@@ -51,7 +51,7 @@ namespace VRCLightVolumes {
             int lightType = Mathf.Clamp(lightTypeProperty.intValue, 0, 2);
             int projection = Mathf.Clamp(projectionProperty.intValue, 0, 2);
             DrawSectionHeader("Light", false);
-            DrawPopup(lightTypeProperty, "Type", _lightTypeNames);
+            bool lightTypeChanged = DrawPopup(lightTypeProperty, "Type", _lightTypeNames);
             lightType = Mathf.Clamp(lightTypeProperty.intValue, 0, 2);
             DrawProperty("IsDynamic", "Dynamic");
             DrawProperty("Color");
@@ -125,7 +125,7 @@ namespace VRCLightVolumes {
             propertiesChanged |= serializedObject.ApplyModifiedProperties();
             if (!propertiesChanged) return;
 
-            SyncTargets(true, false, false);
+            SyncTargets(true, false, false, lightTypeChanged);
             Undo.CollapseUndoOperations(undoGroup);
         }
 
@@ -161,14 +161,10 @@ namespace VRCLightVolumes {
                 LightVolumeDebugGUI.DrawFloat(serializedObject, nameof(PointLightVolumeInstance.SquaredScale), PointLightVolume.SquaredScale);
                 LightVolumeDebugGUI.DrawBool("Range Dirty", PointLightVolume.IsRangeDirty, "Whether the Manager still needs to recalculate the effective range.");
 
-                LightVolumeDebugGUI.DrawGroupHeader("Resolved Projection", true, "Resolved runtime source and layout for this light's projection.");
+                LightVolumeDebugGUI.DrawGroupHeader("Resolved Projection", true, "Resolved runtime source for this light's projection.");
                 LightVolumeDebugGUI.DrawText(serializedObject, nameof(PointLightVolumeInstance.ProjectionMode), GetProjectionModeName(PointLightVolume.ProjectionMode));
-                LightVolumeDebugGUI.DrawText(serializedObject, nameof(PointLightVolumeInstance.ProjectionType), GetSourceTypeName(PointLightVolume.ProjectionType), "Source Type");
                 LightVolumeDebugGUI.DrawObject(serializedObject, nameof(PointLightVolumeInstance.CustomTexture), PointLightVolume.CustomTexture, typeof(Texture), "Texture");
                 LightVolumeDebugGUI.DrawObject(serializedObject, nameof(PointLightVolumeInstance.CustomTextureMaterial), PointLightVolume.CustomTextureMaterial, typeof(Material), "Material");
-                LightVolumeDebugGUI.DrawBool("Cubemap Source", PointLightVolume.CustomTextureIsCubemap, "Whether the resolved texture is a cubemap.");
-                LightVolumeDebugGUI.DrawBool("Depth Slices", PointLightVolume.CustomTextureHasDepthSlices, "Whether the resolved texture already contains array slices.");
-                LightVolumeDebugGUI.DrawBool(serializedObject, nameof(PointLightVolumeInstance.AutoUpdateCustomTexture), PointLightVolume.AutoUpdateCustomTexture, "Dynamic Source");
 
                 if (PointLightVolume.LightType == 2) {
                     LightVolumeDebugGUI.DrawGroupHeader("Area Cookie", true, "Live fallback color and GPU readback state for an Area Light cookie.");
@@ -215,13 +211,6 @@ namespace VRCLightVolumes {
             return "Parametric";
         }
 
-        // Converts a packed projection source type to a readable inspector label.
-        private static string GetSourceTypeName(int value) {
-            if (value == 1) return "Texture";
-            if (value == 2) return "Material";
-            return "None";
-        }
-
         // Draws a serialized field while preserving its field-level tooltip.
         private void DrawProperty(string propertyName, string label = null) {
             SerializedProperty property = serializedObject.FindProperty(propertyName);
@@ -235,14 +224,22 @@ namespace VRCLightVolumes {
         }
 
         // Draws an integer-backed popup with correct mixed-selection handling.
-        private static void DrawPopup(SerializedProperty property, string label, string[] names) {
+        private static bool DrawPopup(SerializedProperty property, string label, string[] names) {
             int value = Mathf.Clamp(property.intValue, 0, names.Length - 1);
-            if (!property.hasMultipleDifferentValues && property.intValue != value) property.intValue = value;
+            bool changed = false;
+            if (!property.hasMultipleDifferentValues && property.intValue != value) {
+                property.intValue = value;
+                changed = true;
+            }
             EditorGUI.showMixedValue = property.hasMultipleDifferentValues;
             EditorGUI.BeginChangeCheck();
             value = EditorGUILayout.Popup(GetPropertyContent(property, label), value, names);
-            if (EditorGUI.EndChangeCheck()) property.intValue = value;
+            if (EditorGUI.EndChangeCheck()) {
+                property.intValue = value;
+                changed = true;
+            }
             EditorGUI.showMixedValue = false;
+            return changed;
         }
 
         // Draws an integer popup whose serialized values are not zero-based indices.
@@ -303,14 +300,14 @@ namespace VRCLightVolumes {
         }
 
         // Applies all selected proxies first, then rebuilds each shared array at most once.
-        private void SyncTargets(bool recordUndo, bool reinitializeTextures = false, bool refreshRuntimeImmediately = true) {
+        private void SyncTargets(bool recordUndo, bool reinitializeTextures = false, bool refreshRuntimeImmediately = true, bool forceCustomTexturesChanged = false) {
             LightVolumeManager manager = LightVolumeManagerEditorBackend.GetPrimaryManager();
             int managerChanges = 0;
             bool refreshManager = false;
             for (int i = 0; i < targets.Length; i++) {
                 PointLightVolumeInstance pointLightVolume = targets[i] as PointLightVolumeInstance;
                 if (pointLightVolume == null) continue;
-                int changes = PointLightVolumeEditorUtility.Sync(pointLightVolume, recordUndo, false);
+                int changes = PointLightVolumeEditorUtility.Sync(pointLightVolume, recordUndo, false, forceCustomTexturesChanged);
                 if (reinitializeTextures) changes |= PointLightVolumeEditorUtility.CustomTexturesChanged | PointLightVolumeEditorUtility.ShadowTexturesChanged;
                 if (manager == null || pointLightVolume.LightVolumeManager != manager) continue;
                 refreshManager = true;

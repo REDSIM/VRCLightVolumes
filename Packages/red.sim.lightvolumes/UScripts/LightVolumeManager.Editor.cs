@@ -320,16 +320,9 @@ namespace VRCLightVolumes {
                 Material material = null;
                 int state = 0;
                 if (instance != null && instance.IsActive && instance.ProjectionMode != 0) {
-                    if (instance.ProjectionType == 1 && instance.CustomTexture != null) texture = instance.CustomTexture;
-                    else if (instance.ProjectionType == 2 && instance.CustomTextureMaterial != null) material = instance.CustomTextureMaterial;
-                    if (texture != null || material != null) {
-                        state = 1 | (instance.LightType & 3) << 1 | (instance.ProjectionMode & 3) << 3 | (instance.AutoUpdateCustomTexture ? 1 << 5 : 0);
-                        if (texture != null) {
-                            state |= 1 << 6;
-                            if (instance.CustomTextureIsCubemap) state |= 1 << 7;
-                            if (instance.CustomTextureHasDepthSlices) state |= 1 << 8;
-                        }
-                    }
+                    if (instance.CustomTexture != null) texture = instance.CustomTexture;
+                    else if (instance.CustomTextureMaterial != null) material = instance.CustomTextureMaterial;
+                    if (texture != null || material != null) state = 1 | (instance.LightType & 3) << 1 | (instance.ProjectionMode & 3) << 3;
                 }
                 if (editorState.CustomSourceOwners[i] != instance || editorState.CustomSourceTextures[i] != texture || editorState.CustomSourceMaterials[i] != material || editorState.CustomSourceStates[i] != state) changed = true;
                 editorState.CustomSourceOwners[i] = instance;

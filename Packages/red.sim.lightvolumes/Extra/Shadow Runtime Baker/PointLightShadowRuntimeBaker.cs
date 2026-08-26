@@ -129,7 +129,10 @@ namespace VRCLightVolumes {
         // Gives retained camera and blur scratch back when realtime baking stops or changes targets.
         private void ReleaseConfiguredTarget() {
             PointLightVolumeInstance target = _configuredTargetPointLightVolume;
-            if (target != null) target._ReleaseRuntimeShadowBakeResources();
+            if (target != null) {
+                target.RuntimeShadowDirectOutput = false;
+                target._ReleaseRuntimeShadowBakeResources();
+            }
             _configuredTargetPointLightVolume = null;
             _configuredDirectOutput = false;
         }

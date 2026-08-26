@@ -261,9 +261,9 @@ namespace VRCLightVolumes.Tests {
             Assert.That(BakeryEditorBridge.ClassifyProbeRender("L1", true, true, false, true, true), Is.EqualTo(BakeryEditorBridge.ProbeRenderMode.L1));
         }
 
-        // Unified authoring infers animation only when a projection source changes and detects cubemap RenderTextures.
+        // Unified authoring mirrors every supported texture source without serialized type metadata.
         [Test]
-        public void PointLightAuthoringResolvesProjectionSourcesWithoutOverwritingManualAutoUpdate() {
+        public void PointLightAuthoringResolvesProjectionTextureSources() {
             PointLightVolumeInstance point = CreateComponent<PointLightVolumeInstance>("Unified Projection Point");
             Texture2D staticCookie = CreateTexture2D("Static Cookie");
             RenderTexture animatedCookie = CreateRenderTexture("Animated Cookie", 4, 4, 1, TextureDimension.Tex2D);
@@ -274,35 +274,23 @@ namespace VRCLightVolumes.Tests {
             point.Cookie = staticCookie;
             point.EditorApplyAuthoringData(true, false, false);
             Assert.That(point.CustomTexture, Is.SameAs(staticCookie));
-            Assert.That(point.ProjectionType, Is.EqualTo(1));
             Assert.That(point.ProjectionMode, Is.EqualTo(2));
-            Assert.That(point.AutoUpdateCustomTexture, Is.False);
 
             point.Cookie = animatedCookie;
             point.EditorApplyAuthoringData(true, false, false);
             Assert.That(point.CustomTexture, Is.SameAs(animatedCookie));
-            Assert.That(point.AutoUpdateCustomTexture, Is.True);
-
-            point.AutoUpdateCustomTexture = false;
-            point.Intensity = 2f;
-            point.EditorApplyAuthoringData(false, false, false);
-            Assert.That(point.AutoUpdateCustomTexture, Is.False);
 
             point.LightType = 0; // point
             point.Cubemap = animatedCubemap;
             point.EditorApplyAuthoringData(true, false, false);
             Assert.That(point.CustomTexture, Is.SameAs(animatedCubemap));
-            Assert.That(point.CustomTextureIsCubemap, Is.True);
-            Assert.That(point.CustomTextureHasDepthSlices, Is.False);
-            Assert.That(point.AutoUpdateCustomTexture, Is.True);
+            Assert.That(point.CustomTexture.dimension, Is.EqualTo(TextureDimension.Cube));
 
             point.LightType = 2; // area always uses Cookie as its projection source
             point.Cookie = staticCookie;
             point.EditorApplyAuthoringData(true, false, false);
             Assert.That(point.CustomTexture, Is.SameAs(staticCookie));
-            Assert.That(point.ProjectionType, Is.EqualTo(1));
             Assert.That(point.ProjectionMode, Is.EqualTo(2));
-            Assert.That(point.AutoUpdateCustomTexture, Is.False);
         }
 
         // Spot shadow layout, animated source metadata and the public Shadows toggle share one unified source of truth.
@@ -414,9 +402,7 @@ namespace VRCLightVolumes.Tests {
             point.ExclusionMask = new Renderer[] { excludedRenderer };
             point.CustomTexture = cookie;
             point.CustomTextureMaterial = null;
-            point.ProjectionType = 1;
             point.ProjectionMode = 2;
-            point.AutoUpdateCustomTexture = true;
             point.ShadowMapTexture = shadow;
             point.ShadowMapMaterial = null;
             point.AutoUpdateShadowMap = true;
@@ -448,9 +434,7 @@ namespace VRCLightVolumes.Tests {
             Assert.That(point.ShadowMap, Is.Null);
             Assert.That(point.ExclusionMask, Is.EqualTo(new Renderer[] { excludedRenderer }));
             Assert.That(point.CustomTexture, Is.SameAs(cookie));
-            Assert.That(point.ProjectionType, Is.EqualTo(1));
             Assert.That(point.ProjectionMode, Is.EqualTo(2));
-            Assert.That(point.AutoUpdateCustomTexture, Is.True);
             Assert.That(point.ShadowMapTexture, Is.SameAs(shadow));
             Assert.That(point.AutoUpdateShadowMap, Is.True);
             Assert.That(point.ShadowMapID, Is.EqualTo(0f).Within(Epsilon));
@@ -548,10 +532,7 @@ namespace VRCLightVolumes.Tests {
             point.LightVolumeManager = manager;
             point.IsActive = true;
             point.LightType = 1; // spot keeps the cookie in one 2D array slice
-            point.CustomTexture = customSource;
-            point.ProjectionType = 1;
-            point.ProjectionMode = 2;
-            point.AutoUpdateCustomTexture = true;
+            point.SetCustomTexture(customSource);
             point.ShadowMapID = 0f;
             point.ShadowMapTexture = shadowSource;
             point.AutoUpdateShadowMap = true;

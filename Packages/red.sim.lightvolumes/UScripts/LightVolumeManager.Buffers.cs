@@ -352,7 +352,7 @@ namespace VRCLightVolumes {
                 bool rebuiltShadowTextures = !_shadowTexturesInitialized && !_shadowTextureAllocationFailed;
                 if (rebuiltCustomTextures) ReinitializeCustomTextures();
                 if (rebuiltShadowTextures) ReinitializeShadowTextures();
-                // A full rebuild already copied every auto source in this tick.
+                // A full rebuild already copied every animated source in this tick.
                 if (!rebuiltCustomTextures && HasAutoCustomTextureUpdates) UpdateAutoCustomTextures();
                 if (!rebuiltShadowTextures && !_shadowTextureAllocationFailed && HasAutoShadowTextureUpdates) UpdateAutoShadowTextures();
             }
@@ -524,8 +524,7 @@ namespace VRCLightVolumes {
             if (isSpot && isCustomCookie) extraData.x = spotCookieAspect;
             extraData.w = 0f;
             Vector4 color = lightColor;
-            int customSourceType = sourceIndex < _customSourceTypes.Length ? _customSourceTypes[sourceIndex] : 0;
-            if (isArea && isCustomCookie && resolvedCustomId >= 0 && customSourceType >= 3) {
+            if (isArea && isCustomCookie && resolvedCustomId >= CubemapsCount) {
                 Color averageColor = sourceIndex < _pointLightAreaCookieAverageColors.Length ? _pointLightAreaCookieAverageColors[sourceIndex] : Color.clear;
                 if (averageColor.a <= 0f) averageColor = Color.white;
                 color.x = extraData.x * averageColor.r;
@@ -544,7 +543,7 @@ namespace VRCLightVolumes {
             int resolvedShadowId = sourceIndex < _pointLightShadowIDs.Length ? _pointLightShadowIDs[sourceIndex] : -1;
             float shadingStrength = Mathf.Clamp01(instance.ShadingStrength);
             bool hasShading = shadingStrength > 0f;
-            bool hasShadow = hasShading && ShadowTextures != null && !_shadowTextureAllocationFailed && ShadowMapsCount > 0 && resolvedShadowId >= 0 && resolvedShadowId < ShadowMapsCount;
+            bool hasShadow = instance.Shadows && hasShading && ShadowTextures != null && !_shadowTextureAllocationFailed && ShadowMapsCount > 0 && resolvedShadowId >= 0 && resolvedShadowId < ShadowMapsCount;
             if (countActiveShadow && hasShadow) _activeShadowCount++;
             float shadowNearClip = 0f;
             float shadowInvDepthRange = 0f;

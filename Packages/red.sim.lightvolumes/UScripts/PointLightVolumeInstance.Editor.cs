@@ -92,14 +92,6 @@ namespace VRCLightVolumes {
             return GetProjectionSource() as Material;
         }
 
-        // Returns the runtime projection source type encoded for the Manager.
-        internal int GetProjectionType() {
-            UnityEngine.Object source = GetProjectionSource();
-            if (source is Texture) return 1;
-            if (source is Material) return 2;
-            return 0;
-        }
-
         // Checks whether the selected source is valid for the current light and projection type.
         internal bool HasProjectionSource() {
             UnityEngine.Object source = GetProjectionSource();
@@ -218,9 +210,7 @@ namespace VRCLightVolumes {
             Texture texture = GetCustomTexture();
             Material material = GetCustomTextureMaterial();
             int mode = GetAuthoringProjectionMode();
-            int type = GetProjectionType();
-            return CustomTexture != texture || CustomTextureMaterial != material || ProjectionMode != mode || ProjectionType != type
-                || CustomTextureIsCubemap != IsEditorCubemapTexture(texture) || CustomTextureHasDepthSlices != EditorTextureHasDepthSlices(texture);
+            return CustomTexture != texture || CustomTextureMaterial != material || ProjectionMode != mode;
         }
 
         // Compares authoring shadow state with the runtime fields mirrored to this instance.
@@ -262,10 +252,6 @@ namespace VRCLightVolumes {
             Material customMaterial = GetCustomTextureMaterial();
             CustomTexture = customTexture;
             CustomTextureMaterial = customMaterial;
-            ProjectionType = GetProjectionType();
-            if (customTexturesChanged) AutoUpdateCustomTexture = IsAnimatedEditorSource(GetProjectionSource());
-            CustomTextureIsCubemap = IsEditorCubemapTexture(customTexture);
-            CustomTextureHasDepthSlices = EditorTextureHasDepthSlices(customTexture);
 
             bool preserveRuntimeShadow = PreserveRuntimeShadowSourceInEditor();
             if (!preserveRuntimeShadow && Application.isPlaying && _runtimeShadowSourceInitialized)

@@ -111,7 +111,7 @@ namespace VRCLightVolumes {
         public bool SharpBounds = true;
         [Tooltip("Automatically updates most volume properties at runtime. Enabling/disabling, Color and Intensity update automatically even without this option enabled. Position, Rotation and Scale get updated only for volumes that are marked dynamic. It's more performant to keep it off.")]
         public bool AutoUpdateVolumes = true;
-        [Tooltip("Automatically updates dynamic point light cookie and shadow texture sources at runtime. It's more performant to keep it off.")]
+        [Tooltip("Automatically refreshes animated RenderTexture, Custom Render Texture and Material projection sources, plus shadow sources marked for automatic updates. Regular Texture assets are copied only when the atlas is rebuilt. It's more performant to keep this off when all sources are static.")]
         public bool AutoUpdateTextures = true;
         [Tooltip("Limits the maximum number of additive volumes and Point Light Volumes that can affect a single pixel. This also limits individual Point Light Volume speculars in modern compatible shaders. Lower values improve worst-case performance in overlap-heavy areas.")]
         public int AdditiveMaxOverdraw = 4;
@@ -166,7 +166,7 @@ namespace VRCLightVolumes {
         [Tooltip("Shadow maps count stored in ShadowTextures. Cubemaps use 6 array elements, single projected shadows use 1 array element.")]
         public int ShadowMapsCount = 0;
 
-        // Material used to copy cubemap source faces into the animated projection texture array
+        // Material used to copy cubemap source faces into the shared projection texture array
         [HideInInspector] public Material CubemapFaceMaterial;
         // Shared disabled camera used by all runtime point light shadow bakes
         [HideInInspector] public Camera RuntimeShadowCamera;
@@ -198,22 +198,20 @@ namespace VRCLightVolumes {
         private int _customSingleMaterialCount = 0;
         private bool _customTexturesUseMipMap = false;
 
-        // Unique custom projection sources split by source shape and source type
+        // Unique custom projection sources split by destination shape and source class
         private Texture[] _customCubemapTextures = new Texture[0];
         private Material[] _customCubemapMaterials = new Material[0];
         private Texture[] _customSingleTextures = new Texture[0];
         private Material[] _customSingleMaterials = new Material[0];
 
+        // Auto-update flags are derived from the source object type once during a cache rebuild.
+        // Materials always update, while immutable Texture assets need only the initial copy.
         private bool[] _customCubemapTextureAutoUpdates = new bool[0];
-        private bool[] _customCubemapMaterialAutoUpdates = new bool[0];
         private bool[] _customSingleTextureAutoUpdates = new bool[0];
-        private bool[] _customSingleMaterialAutoUpdates = new bool[0];
         private PointLightVolumeInstance[] _customSingleAreaCookieReceivers = new PointLightVolumeInstance[0];
         private int[] _customSingleAreaCookieReceiverIndices = new int[0];
 
-        private int[] _customCubemapTextureModes = new int[0]; // Texture layouts: 0 = single 2D texture copied to all faces, 1 = Texture2DArray slices 0..5, 2 = native Cubemap faces
         private int[] _pointLightCustomIDs = new int[0];
-        private int[] _customSourceTypes = new int[0]; // Source types per point light: 0 = none, 1 = cubemap texture, 2 = cubemap material, 3 = single texture, 4 = single material
         private Color[] _pointLightAreaCookieAverageColors = new Color[0];
         private bool _areaCookieAverageReadbackScheduled = false;
         private bool _areaCookieAverageReadbackForceAll = false;
@@ -242,6 +240,13 @@ namespace VRCLightVolumes {
         private bool[] _shadowSingleMaterialAutoUpdates = new bool[0];
         private int[] _pointLightShadowIDs = new int[0];
         private int[] _shadowSourceTypes = new int[0]; // Source types per point light: 0 = none, 1/2 = cubemap texture/material, 3/4 = single texture/material, 5/6 = source-less direct cubemap/single
+        // Direct owners from the last published shadow layout. The public registry can be compacted before the next rebuild, so preserving direct atlas ranges by registry index alone is unsafe.
+        private PointLightVolumeInstance[] _shadowSourceOwners = new PointLightVolumeInstance[0];
+        // A small transient array keeps only source-less direct ranges alive while the shared atlas is resized or remapped. It avoids double-buffering the entire (potentially very large) atlas.
+        private RenderTexture _directShadowPreservationTexture;
+        private PointLightVolumeInstance[] _preservedDirectShadowOwners = new PointLightVolumeInstance[0];
+        private int[] _preservedDirectShadowSliceCounts = new int[0];
+        private int _preservedDirectShadowCount = 0;
         [HideInInspector] public bool HasAutoShadowTextureUpdates = false;
 #if !UNITY_EDITOR && !COMPILER_UDONSHARP
         // Standalone non-Udon execution still owns these runtime values directly.

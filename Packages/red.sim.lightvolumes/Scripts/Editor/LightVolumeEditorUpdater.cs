@@ -328,6 +328,7 @@ namespace VRCLightVolumes {
                     if (!IsEditableSceneObject(pointLight)) continue;
                     bool customTexturesChanged = pointLight.HasEditorCustomTextureChanges();
                     bool shadowTexturesChanged = pointLight.HasEditorShadowTextureChanges();
+                    if (customTexturesChanged) PointLightVolumeEditorUtility.EnsureProjectionTextureImportSettings(pointLight);
                     pointLight.EditorApplyAuthoringData(customTexturesChanged, shadowTexturesChanged, false);
                     if (LightVolumeSceneSetup.ReconcileRegistration(_primaryManager, pointLight)) {
                         registrationGraphChanged = true;

@@ -121,6 +121,75 @@ namespace VRCLightVolumes.Tests {
             }
         }
 
+        // Player builds and Play Mode must not silently rewrite persistent import settings for
+        // project textures. Custom projection assets remain fully owned by the project author.
+        [Test]
+        public void BuildLifecycleDoesNotReimportProjectionTextures() {
+            const string preprocessorPath = "Packages/red.sim.lightvolumes/Scripts/Editor/LightVolumeBuildPreprocessor.cs";
+            const string utilitiesPath = "Packages/red.sim.lightvolumes/Scripts/LVUtils.cs";
+            string preprocessorSource = File.ReadAllText(preprocessorPath);
+            string utilitiesSource = File.ReadAllText(utilitiesPath);
+
+            Assert.That(preprocessorSource, Does.Not.Contain("TextureSetLinearHDRAndroidImport"),
+                "Build and Play Mode callbacks must not mutate projection texture importers.");
+            Assert.That(preprocessorSource, Does.Not.Contain("EnsureProjectionTextureImportSettings"),
+                "Projection import checks must remain in edit-time authoring synchronization.");
+            Assert.That(preprocessorSource, Does.Not.Contain("LightVolumeTextureImportBuildPreprocessor"),
+                "VRCLV must not register a projection texture-import callback for player builds.");
+            Assert.That(utilitiesSource, Does.Not.Contain("TextureSetLinearHDRAndroidImport"),
+                "The destructive project-asset import helper must not be reintroduced.");
+        }
+
+        // Assigning an HDR source configures only that active Light Volumes projection. Detection
+        // uses the source data rather than its extension, while LDR and unrelated assets stay intact.
+        [Test]
+        public void AssigningHdrProjectionConfiguresOnlyTheAssignedAsset() {
+            string assignedPath = AssetDatabase.GenerateUniqueAssetPath("Assets/VRCLightVolumesAssignedProjection.hdr");
+            string unrelatedPath = AssetDatabase.GenerateUniqueAssetPath("Assets/VRCLightVolumesUnrelatedProjection.exr");
+            string existingHdrPath = AssetDatabase.GenerateUniqueAssetPath("Assets/VRCLightVolumesExistingHdrProjection.exr");
+            string ldrPath = AssetDatabase.GenerateUniqueAssetPath("Assets/VRCLightVolumesLdrProjection.png");
+            try {
+                CreateRadianceHdrImport(assignedPath);
+                CreateExrImport(unrelatedPath);
+                CreateExrImport(existingHdrPath);
+                CreatePngImport(ldrPath);
+                SetAndroidHdrOverride(existingHdrPath, TextureImporterFormat.RGBAFloat);
+                Texture assignedTexture = AssetDatabase.LoadAssetAtPath<Texture>(assignedPath);
+                Assert.That(assignedTexture, Is.Not.Null);
+
+                _unifiedObject = new GameObject("Projection Import Test");
+                PointLightVolumeInstance pointLight = _unifiedObject.AddComponent<PointLightVolumeInstance>();
+                pointLight.LightType = 1;
+                pointLight.Projection = 2;
+                pointLight.Cookie = assignedTexture;
+
+                int changes = PointLightVolumeEditorUtility.Sync(pointLight, false, false);
+
+                Assert.That(changes & PointLightVolumeEditorUtility.CustomTexturesChanged, Is.Not.Zero);
+                AssertAndroidHdrOverridePreservesDefaultSrgb(assignedPath, TextureImporterFormat.RGBAHalf);
+                AssertMisconfiguredExrImport(unrelatedPath);
+
+                Texture existingHdrTexture = AssetDatabase.LoadAssetAtPath<Texture>(existingHdrPath);
+                Assert.That(existingHdrTexture, Is.Not.Null);
+                pointLight.Cookie = existingHdrTexture;
+                PointLightVolumeEditorUtility.Sync(pointLight, false, false);
+                AssertAndroidHdrOverridePreservesDefaultSrgb(existingHdrPath, TextureImporterFormat.RGBAFloat);
+                Assert.That(PointLightVolumeEditorUtility.EnsureProjectionTextureImportSettings(pointLight), Is.False,
+                    "A correctly configured projection must not be reimported again.");
+
+                Texture ldrTexture = AssetDatabase.LoadAssetAtPath<Texture>(ldrPath);
+                Assert.That(ldrTexture, Is.Not.Null);
+                pointLight.Cookie = ldrTexture;
+                PointLightVolumeEditorUtility.Sync(pointLight, false, false);
+                AssertStandardLdrImport(ldrPath);
+            } finally {
+                AssetDatabase.DeleteAsset(assignedPath);
+                AssetDatabase.DeleteAsset(unrelatedPath);
+                AssetDatabase.DeleteAsset(existingHdrPath);
+                AssetDatabase.DeleteAsset(ldrPath);
+            }
+        }
+
         // Optional plugins must never become hard dependencies of the VRCLV core or stale global-define gates.
         [Test]
         public void OptionalPluginAssembliesRemainConditionalAndCoreIndependent() {
@@ -509,6 +578,102 @@ namespace VRCLightVolumes.Tests {
             Texture2D texture2D = (Texture2D)texture;
             texture2D.SetPixels(pixels);
             texture2D.Apply(false);
+        }
+
+        private static void CreateExrImport(string path) {
+            Texture2D source = new Texture2D(2, 2, TextureFormat.RGBAFloat, false, true);
+            try {
+                source.SetPixels(new[] { new Color(4f, 0f, 0f, 1f), Color.green, Color.blue, Color.white });
+                source.Apply(false);
+                File.WriteAllBytes(path, source.EncodeToEXR(Texture2D.EXRFlags.OutputAsFloat));
+            } finally {
+                UnityEngine.Object.DestroyImmediate(source);
+            }
+
+            ConfigureMisconfiguredHdrImport(path);
+        }
+
+        private static void CreateRadianceHdrImport(string path) {
+            byte[] header = System.Text.Encoding.ASCII.GetBytes("#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n-Y 2 +X 2\n");
+            byte[] pixels = {
+                128, 0, 0, 131,
+                0, 128, 0, 129,
+                0, 0, 128, 129,
+                128, 128, 128, 129
+            };
+            byte[] data = new byte[header.Length + pixels.Length];
+            System.Buffer.BlockCopy(header, 0, data, 0, header.Length);
+            System.Buffer.BlockCopy(pixels, 0, data, header.Length, pixels.Length);
+            File.WriteAllBytes(path, data);
+
+            ConfigureMisconfiguredHdrImport(path);
+        }
+
+        private static void CreatePngImport(string path) {
+            Texture2D source = new Texture2D(2, 2, TextureFormat.RGBA32, false);
+            try {
+                source.SetPixels(new[] { Color.red, Color.green, Color.blue, Color.white });
+                source.Apply(false);
+                File.WriteAllBytes(path, source.EncodeToPNG());
+            } finally {
+                UnityEngine.Object.DestroyImmediate(source);
+            }
+
+            AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
+            TextureImporter importer = AssetImporter.GetAtPath(path) as TextureImporter;
+            Assert.That(importer, Is.Not.Null);
+            importer.sRGBTexture = true;
+            importer.textureCompression = TextureImporterCompression.Compressed;
+            importer.ClearPlatformTextureSettings("Android");
+            importer.SaveAndReimport();
+        }
+
+        private static void ConfigureMisconfiguredHdrImport(string path) {
+            AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
+            TextureImporter importer = AssetImporter.GetAtPath(path) as TextureImporter;
+            Assert.That(importer, Is.Not.Null);
+            importer.sRGBTexture = true;
+            importer.textureCompression = TextureImporterCompression.Compressed;
+            importer.ClearPlatformTextureSettings("Android");
+            importer.SaveAndReimport();
+            Assert.That(importer.sRGBTexture, Is.True);
+            Assert.That(importer.GetPlatformTextureSettings("Android").overridden, Is.False);
+        }
+
+        private static void AssertStandardLdrImport(string path) {
+            TextureImporter importer = AssetImporter.GetAtPath(path) as TextureImporter;
+            Assert.That(importer, Is.Not.Null);
+            Assert.That(importer.sRGBTexture, Is.True);
+            Assert.That(importer.GetPlatformTextureSettings("Android").overridden, Is.False,
+                "An LDR projection must retain its normal Android import settings.");
+        }
+
+        private static void SetAndroidHdrOverride(string path, TextureImporterFormat format) {
+            TextureImporter importer = AssetImporter.GetAtPath(path) as TextureImporter;
+            Assert.That(importer, Is.Not.Null);
+            TextureImporterPlatformSettings androidSettings = importer.GetPlatformTextureSettings("Android");
+            androidSettings.overridden = true;
+            androidSettings.format = format;
+            androidSettings.textureCompression = TextureImporterCompression.Uncompressed;
+            importer.SetPlatformTextureSettings(androidSettings);
+            importer.SaveAndReimport();
+        }
+
+        private static void AssertAndroidHdrOverridePreservesDefaultSrgb(string path, TextureImporterFormat format) {
+            TextureImporter importer = AssetImporter.GetAtPath(path) as TextureImporter;
+            Assert.That(importer, Is.Not.Null);
+            Assert.That(importer.sRGBTexture, Is.True, "The default import used by non-Android platforms must remain unchanged.");
+            TextureImporterPlatformSettings androidSettings = importer.GetPlatformTextureSettings("Android");
+            Assert.That(androidSettings.overridden, Is.True);
+            Assert.That(androidSettings.format, Is.EqualTo(format));
+            Assert.That(androidSettings.textureCompression, Is.EqualTo(TextureImporterCompression.Uncompressed));
+        }
+
+        private static void AssertMisconfiguredExrImport(string path) {
+            TextureImporter importer = AssetImporter.GetAtPath(path) as TextureImporter;
+            Assert.That(importer, Is.Not.Null);
+            Assert.That(importer.sRGBTexture, Is.True);
+            Assert.That(importer.GetPlatformTextureSettings("Android").overridden, Is.False);
         }
 
         private static void AssertProjectionCopy(MethodInfo copy, PointLightVolume.LightType lightType, PointLightVolume.LightProjection projection, UnityEngine.Object sourceObject, int expectedMode) {

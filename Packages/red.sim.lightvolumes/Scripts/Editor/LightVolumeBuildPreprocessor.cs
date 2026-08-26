@@ -5,8 +5,6 @@ using UdonSharp;
 using UdonSharpEditor;
 #endif
 using UnityEditor;
-using UnityEditor.Build;
-using UnityEditor.Build.Reporting;
 using UnityEditor.Callbacks;
 using UnityEngine;
 using UnityEngine.SceneManagement;
@@ -96,14 +94,6 @@ namespace VRCLightVolumes {
             if (manager != null) PrepareRuntimeDependencies(manager.gameObject.scene.GetRootGameObjects(), true, manager);
         }
 
-        // Applies Android-safe settings to active EXR point-light projection textures.
-        internal static void PrepareProjectionTextureImportsForOpenScenes() {
-            for (int i = 0; i < SceneManager.sceneCount; i++) {
-                Scene scene = SceneManager.GetSceneAt(i);
-                if (scene.isLoaded) PrepareProjectionTextureImports(scene.GetRootGameObjects());
-            }
-        }
-
         // Removes temporary play-mode dependencies from the primary Manager's scene.
         private static void ClearPrimaryRuntimeDependencies() {
             LightVolumeManager manager = LightVolumeManagerEditorBackend.GetPrimaryManager();
@@ -114,8 +104,7 @@ namespace VRCLightVolumes {
         private static void PrepareRuntimeDependencies(GameObject[] roots, bool editorTemporary, LightVolumeManager manager) {
             if (manager == null) return;
             try {
-                if (editorTemporary) PrepareProjectionTextureImports(roots);
-                else CanonicalizeBuildScene(roots, manager);
+                if (!editorTemporary) CanonicalizeBuildScene(roots, manager);
 
                 Shader cubemapFaceShader = Shader.Find(CubemapFaceShaderName);
                 Shader shadowDepthEncodeShader = Shader.Find(ShadowDepthEncodeShaderName);
@@ -189,24 +178,6 @@ namespace VRCLightVolumes {
             // Publish the completed registries once after every child has been canonicalized.
             manager.UpdateVolumes();
             LightVolumeManagerEditorBackend.CopyProxyToUdon(manager);
-        }
-
-        // Applies mobile-safe HDR import settings to active projection texture assets.
-        private static void PrepareProjectionTextureImports(GameObject[] roots) {
-            try {
-                for (int i = 0; i < roots.Length; i++) {
-                    GameObject root = roots[i];
-                    if (root == null) continue;
-                    _pointLightBuffer.Clear();
-                    root.GetComponentsInChildren(true, _pointLightBuffer);
-                    for (int j = 0; j < _pointLightBuffer.Count; j++) {
-                        PointLightVolumeInstance pointLight = _pointLightBuffer[j];
-                        if (pointLight != null) LVUtils.TextureSetLinearHDRAndroidImport(pointLight.GetCustomTexture());
-                    }
-                }
-            } finally {
-                _pointLightBuffer.Clear();
-            }
         }
 
         // Destroys temporary materials and clears runtime-shadow references below the supplied roots.
@@ -569,14 +540,6 @@ namespace VRCLightVolumes {
             else udonBehaviour.publicVariables.TrySetVariableValue(variableName, value);
         }
 #endif
-    }
-
-    internal sealed class LightVolumeTextureImportBuildPreprocessor : IPreprocessBuildWithReport {
-        public int callbackOrder => -1000;
-        // Applies mobile-safe projection texture import settings before a player build begins.
-        public void OnPreprocessBuild(BuildReport report) {
-            LightVolumePreprocessor.PrepareProjectionTextureImportsForOpenScenes();
-        }
     }
 
 #if UDONSHARP

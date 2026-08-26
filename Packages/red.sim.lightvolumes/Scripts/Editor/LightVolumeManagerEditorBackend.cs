@@ -115,9 +115,10 @@ namespace VRCLightVolumes {
             return primary;
         }
 
-        // Excludes prefab/preview data and EditorOnly fixtures from the global Manager invariant.
+        // Excludes prefab/preview data from the global Manager invariant. EditorOnly Managers still
+        // represent an intentional scene setup and must prevent automatic duplicate creation.
         private static bool IsLoadedManager(LightVolumeManager manager) {
-            return manager != null && !manager.CompareTag("EditorOnly") && LightVolumeSceneSetup.IsMainStageSceneObject(manager.gameObject);
+            return manager != null && LightVolumeSceneSetup.IsMainStageSceneObject(manager.gameObject);
         }
 
         // Mirrors Unity's Hierarchy order: first loaded scene, then first hierarchy entry.

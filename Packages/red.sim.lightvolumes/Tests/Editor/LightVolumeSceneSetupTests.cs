@@ -89,6 +89,35 @@ namespace VRCLightVolumes.Tests {
         }
 
         [Test]
+        public void DisabledEditorOnlyManagerPreventsAutomaticDuplicateCreation() {
+            _scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+            GameObject managerObject = new GameObject("Excluded Light Volume Manager") { tag = "EditorOnly" };
+            SceneManager.MoveGameObjectToScene(managerObject, _scene);
+            LightVolumeManager manager = UdonSharpUndo.AddComponent<LightVolumeManager>(managerObject);
+            managerObject.SetActive(false);
+            GameObject prefabAsset = CreatePrefab(includeLegacyHelpers: false, includeUnifiedComponents: true);
+            GameObject instanceRoot = (GameObject)PrefabUtility.InstantiatePrefab(prefabAsset, _scene);
+            LightVolumeInstance volume = instanceRoot.GetComponentInChildren<LightVolumeInstance>(true);
+            PointLightVolumeInstance pointLight = instanceRoot.GetComponentInChildren<PointLightVolumeInstance>(true);
+            manager.LightVolumeInstances = new[] { volume };
+            manager.PointLightVolumeInstances = new[] { pointLight };
+            volume.LightVolumeManager = manager;
+            pointLight.LightVolumeManager = manager;
+            LightVolumeManagerEditorBackend.CopyProxyToUdon(volume);
+            LightVolumeManagerEditorBackend.CopyProxyToUdon(pointLight);
+            LightVolumeManagerEditorBackend.CopyProxyToUdon(manager);
+            instanceRoot.tag = "EditorOnly";
+            instanceRoot.SetActive(false);
+
+            QueueAndFlush(instanceRoot);
+
+            Assert.That(GetSceneComponents<LightVolumeManager>(), Is.EqualTo(new[] { manager }));
+            Assert.That(LightVolumeManagerEditorBackend.GetPrimaryManager(out int count), Is.SameAs(manager));
+            Assert.That(count, Is.EqualTo(1));
+            AssertRegistered(manager, volume, pointLight);
+        }
+
+        [Test]
         public void PrimaryManagerUsesLoadedSceneOrderBeforeHierarchyOrder() {
             _scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
             GameObject firstObject = new GameObject("First Loaded Scene Manager");

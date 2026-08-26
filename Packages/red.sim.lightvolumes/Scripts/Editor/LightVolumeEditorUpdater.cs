@@ -252,7 +252,7 @@ namespace VRCLightVolumes {
         // Queues one rebuild for the cached primary Manager and schedules a deferred batch flush.
         private static void QueueManager(LightVolumeManager manager) {
             if (IsEditableSceneObject(manager)) {
-                if (_primaryManager == null && !manager.CompareTag("EditorOnly") && LightVolumeSceneSetup.IsMainStageSceneObject(manager.gameObject)) _primaryManager = manager;
+                if (_primaryManager == null && LightVolumeSceneSetup.IsMainStageSceneObject(manager.gameObject)) _primaryManager = manager;
                 if (manager == _primaryManager) _managerUpdateQueued = true;
             }
             if (!_isFlushing) QueueFlush();

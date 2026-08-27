@@ -66,6 +66,22 @@ namespace VRCLightVolumes.Tests {
         }
 
         [Test]
+        public void AutomaticallyCreatedManagerDefaultsToAvailableLightmapper() {
+            _scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+            GameObject prefabAsset = CreatePrefab(
+                includeLegacyHelpers: false,
+                includeUnifiedComponents: true,
+                includeVolume: false,
+                includePointLight: true);
+            GameObject instanceRoot = (GameObject)PrefabUtility.InstantiatePrefab(prefabAsset, _scene);
+
+            QueueAndFlush(instanceRoot);
+
+            LightVolumeManager manager = GetSingleSceneComponent<LightVolumeManager>();
+            Assert.That(manager.BakingMode, Is.EqualTo(BakeryEditorBridge.IsAvailable ? 1 : 0));
+        }
+
+        [Test]
         public void DuplicateManagersUseFirstHierarchyEntryForOnboarding() {
             _scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
             GameObject firstObject = new GameObject("Primary Manager");
@@ -236,6 +252,11 @@ namespace VRCLightVolumes.Tests {
         public void ProgressiveOnboardingPreservesAnInheritedBakeryDependency() {
             if (FindBakeryVolumeType() == null) Assert.Ignore("Bakery is not installed.");
             _scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+            GameObject managerObject = new GameObject("Progressive Light Volume Manager");
+            SceneManager.MoveGameObjectToScene(managerObject, _scene);
+            LightVolumeManager progressiveManager = UdonSharpUndo.AddComponent<LightVolumeManager>(managerObject);
+            progressiveManager.BakingMode = 0;
+            LightVolumeManagerEditorBackend.CopyProxyToUdon(progressiveManager);
             CreatePrefab(
                 includeLegacyHelpers: false,
                 includeUnifiedComponents: true,
@@ -249,6 +270,7 @@ namespace VRCLightVolumes.Tests {
             QueueAndFlush(instanceRoot);
 
             LightVolumeManager manager = GetSingleSceneComponent<LightVolumeManager>();
+            Assert.That(manager, Is.SameAs(progressiveManager));
             Assert.That(manager.IsBakeryMode, Is.False);
             Assert.That(volume.BakeryVolume, Is.SameAs(inheritedDependency));
             Assert.That(inheritedDependency, Is.Not.Null);

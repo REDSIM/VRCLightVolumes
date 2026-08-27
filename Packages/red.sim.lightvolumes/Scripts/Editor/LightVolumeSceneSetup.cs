@@ -225,6 +225,7 @@ namespace VRCLightVolumes {
 #else
             LightVolumeManager manager = Undo.AddComponent<LightVolumeManager>(managerObject);
 #endif
+            manager.BakingMode = BakeryEditorBridge.IsAvailable ? 1 : 0;
             LightVolumeManagerEditorBackend.CopyProxyToUdon(manager);
             return manager;
         }

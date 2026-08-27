@@ -226,6 +226,12 @@ namespace VRCLightVolumes {
                 string scenePath = scene.path;
                 string escapedName = LVUtils.EscapeFileName(pointLightVolume.gameObject.name);
                 string defaultPath = $"{System.IO.Path.GetDirectoryName(scenePath)}/{scene.name}/VRCLightVolumes/Temp/{escapedName}_shadows.asset";
+                string shadowDirectory = System.IO.Path.GetDirectoryName(defaultPath)?.Replace('\\', '/');
+                if (!EnsureAssetFolderExists(shadowDirectory)) {
+                    Debug.LogError($"[LightVolumes] Failed to create shadow asset directory '{shadowDirectory}'.", pointLightVolume);
+                    DestroyTransientShadowAsset(shadowAsset);
+                    return null;
+                }
                 string path = ResolveShadowAssetPath(pointLightVolume, defaultPath);
                 UnityEngine.Object existingAsset = AssetDatabase.LoadMainAssetAtPath(path);
 
@@ -242,6 +248,20 @@ namespace VRCLightVolumes {
                 DestroyTransientShadowAsset(shadowAsset);
                 return null;
             }
+        }
+
+        // Creates every missing segment through the AssetDatabase so Unity registers each folder and its meta file immediately.
+        private static bool EnsureAssetFolderExists(string folderPath) {
+            if (string.IsNullOrEmpty(folderPath)) return false;
+
+            folderPath = folderPath.Replace('\\', '/');
+            if (AssetDatabase.IsValidFolder(folderPath)) return true;
+
+            string parentPath = System.IO.Path.GetDirectoryName(folderPath)?.Replace('\\', '/');
+            if (!EnsureAssetFolderExists(parentPath)) return false;
+
+            string guid = AssetDatabase.CreateFolder(parentPath, System.IO.Path.GetFileName(folderPath));
+            return !string.IsNullOrEmpty(guid) || AssetDatabase.IsValidFolder(folderPath);
         }
 
         // Resolves the authoring override shared by editor and in-game shadow bakes.

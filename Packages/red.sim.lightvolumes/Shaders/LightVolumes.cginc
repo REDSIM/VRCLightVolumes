@@ -580,7 +580,8 @@ inline float4 LV_AreaLightCookie(float3 localPos, float invDist, float2 size, ui
 // An exact-zero EVSM result still returns true because shadow sampling already consumed the overdraw budget.
 inline bool LV_PointLightVolumeShadowMask(uint id, float shadowIdData, float shadowInvDepthRange, float3 worldPos, float3 lightVector, float3 normalMaskLightDir, float distSq, float invDist, float3 pointLightShadingNormal, float pointLightShadingBias, bool forceCubemapShadow, bool packedPointCube, out float shadow) {
     shadow = 1;
-    bool shadowVisible = true;
+    // Keep the value crossing flattened control flow numeric. Unity 2022.3 HLSLcc can otherwise try to bitcast a bool phi/select to float on GLES3 and emit the invalid placeholder "ERROR missing components in GetBitcastOp()" into the generated GLSL.
+    float shadowVisible = 1.0;
     float shadowIdAbs = abs(shadowIdData);
     float normalAttenuation = 1;
     [flatten] if (pointLightShadingBias >= 0 && shadowIdAbs < 10000) {
@@ -592,11 +593,11 @@ inline bool LV_PointLightVolumeShadowMask(uint id, float shadowIdData, float sha
             float shadingStrength = 1 - frac(shadowIdAbs);
 
             [flatten] if (pointLightShadingBias >= 0) { // Apply surface-normal shading before strength blending
-                shadowVisible = normalAttenuation > 0 || shadingStrength < 1;
+                shadowVisible = (normalAttenuation > 0 || shadingStrength < 1) ? 1.0 : 0.0;
             }
 
             float shadowAttenuation = 1;
-            [branch] if (shadowVisible && shadowIdAbs >= 1) { // Baked shadow
+            [branch] if (shadowVisible > 0 && shadowIdAbs >= 1) { // Baked shadow
                 uint shadowIndex = (uint)shadowIdAbs - 1; // Integer part stores shadow index + 1. Fraction stores inverted shading strength
                 [branch] if (_UdonLightVolumeVersion >= 3) {
                     if (packedPointCube) {
@@ -612,10 +613,10 @@ inline bool LV_PointLightVolumeShadowMask(uint id, float shadowIdData, float sha
     } else {
         [flatten] if (pointLightShadingBias >= 0) { // Apply full-strength surface-normal shading when configured
             shadow = normalAttenuation;
-            shadowVisible = shadow > 0;
+            shadowVisible = shadow > 0 ? 1.0 : 0.0;
         }
     }
-    return shadowVisible;
+    return shadowVisible > 0;
 }
 
 // Samples one Point Light Volume. Returns true once the light reaches shadow/contribution evaluation.

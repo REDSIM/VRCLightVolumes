@@ -11,6 +11,8 @@ namespace VRCLightVolumes {
 
         private static readonly GUIContent _bakeShadowsButtonContent = new GUIContent("Bake Shadows", "Bakes or re-bakes shadow maps for all selected lights with Shadows enabled.");
         private static readonly GUIContent _clearShadowsButtonContent = new GUIContent("Clear Shadows", "Removes the assigned shadow maps from all selected lights without deleting their source assets.");
+        private static readonly GUIContent _automaticFarClipSuffixContent = new GUIContent("(Auto)");
+        private static readonly GUIContent _zeroFarClipContent = new GUIContent("0 ");
         private static readonly GUIContent _emptyContent = GUIContent.none;
         private static readonly string _textureMaterialHint = "None (Texture/Material)";
         private static readonly string _cubemapMaterialHint = "None (Texture/Material)";
@@ -24,6 +26,8 @@ namespace VRCLightVolumes {
         private const float InspectorSectionSpacing = 10f;
         private const float ShadowGroupSpacing = 6f;
         private const float ShadowButtonSpacing = 6f;
+        private const string FarClipControlName = "VRCLightVolumes.PointLightVolumeEditor.FarClip";
+        private const string AutomaticFarClipText = "0 (Auto)";
         private static readonly Color _shadowClipVisibleColor = new Color(0.2f, 0.65f, 1f, 0.75f);
         private static readonly Color _shadowClipHiddenColor = new Color(0.2f, 0.65f, 1f, 0.18f);
         private static GUIStyle _projectionSourceHintStyle;
@@ -88,7 +92,7 @@ namespace VRCLightVolumes {
                 GUILayout.Space(ShadowGroupSpacing);
                 DrawProperty("Bias");
                 DrawProperty("NearClip", "Near Plane");
-                DrawProperty("FarClip", "Far Plane");
+                DrawFarClip();
                 DrawProperty("DebugClipPlanes");
 
                 GUILayout.Space(ShadowGroupSpacing);
@@ -221,6 +225,38 @@ namespace VRCLightVolumes {
         // Builds custom labels while keeping the serialized field's TooltipAttribute as the single tooltip source.
         private static GUIContent GetPropertyContent(SerializedProperty property, string label = null) {
             return EditorGUIUtility.TrTextContent(label ?? property.displayName, property.tooltip);
+        }
+
+        // Keeps the far plane numeric while making its automatic zero state explicit.
+        private void DrawFarClip() {
+            SerializedProperty property = serializedObject.FindProperty("FarClip");
+            GUIContent label = GetPropertyContent(property, "Far Plane");
+            Rect position = EditorGUILayout.GetControlRect();
+            string controlName = FarClipControlName + serializedObject.targetObject.GetInstanceID();
+
+            EditorGUI.BeginProperty(position, label, property);
+            EditorGUI.showMixedValue = property.hasMultipleDifferentValues;
+            GUI.SetNextControlName(controlName);
+            EditorGUI.BeginChangeCheck();
+            float value = EditorGUI.FloatField(position, label, property.floatValue);
+            if (EditorGUI.EndChangeCheck()) property.floatValue = Mathf.Max(0f, value);
+
+            string displayText = GetFarClipDisplayText(property.floatValue);
+            if (!property.hasMultipleDifferentValues && displayText != null && GUI.GetNameOfFocusedControl() != controlName) {
+                // FloatField already drew the zero and its correctly aligned frame. Add only the
+                // transparent suffix so the custom hint cannot shift or redraw that frame.
+                float zeroTextWidth = EditorStyles.numberField.CalcSize(_zeroFarClipContent).x - EditorStyles.numberField.padding.horizontal;
+                Rect suffixPosition = position;
+                suffixPosition.xMin += EditorGUIUtility.labelWidth + EditorStyles.numberField.padding.left + Mathf.Max(0f, zeroTextWidth);
+                GUI.Label(suffixPosition, _automaticFarClipSuffixContent, EditorStyles.label);
+            }
+            EditorGUI.showMixedValue = false;
+            EditorGUI.EndProperty();
+        }
+
+        // Returns the idle field text for the automatic far-plane sentinel.
+        internal static string GetFarClipDisplayText(float value) {
+            return value == 0f ? AutomaticFarClipText : null;
         }
 
         // Draws an integer-backed popup with correct mixed-selection handling.

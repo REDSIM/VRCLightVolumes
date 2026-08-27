@@ -140,9 +140,17 @@ namespace VRCLightVolumes.Tests {
 #pragma warning restore CS0618
             PointLightVolume legacyPoint = CreateComponent<PointLightVolume>("Legacy Default Shadow Point");
 
+            Assert.That(point.FarClip, Is.Zero);
             Assert.That(legacySetup.ShadowMinVariance, Is.Zero);
             Assert.That(legacySetup.ShadowMinVarianceMobile, Is.EqualTo(1f));
             Assert.That(legacyPoint.Bias, Is.EqualTo(0.01f).Within(Epsilon));
+            Assert.That(legacyPoint.FarPlane, Is.Zero);
+        }
+
+        [Test]
+        public void ShadowFarClipInspectorLabelsZeroAsAutomatic() {
+            Assert.That(PointLightVolumeEditor.GetFarClipDisplayText(0f), Is.EqualTo("0 (Auto)"));
+            Assert.That(PointLightVolumeEditor.GetFarClipDisplayText(1f), Is.Null);
         }
 
         // External lightmappers consume manager-scoped unified volumes and world-space voxel centers.

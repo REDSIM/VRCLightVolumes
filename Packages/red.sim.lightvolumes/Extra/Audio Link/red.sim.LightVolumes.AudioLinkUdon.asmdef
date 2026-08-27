@@ -5,8 +5,7 @@
         "GUID:a7ff01b0ae211b5439bf8d957d1583a8",
         "GUID:99835874ee819da44948776e0df4ff1d",
         "GUID:e1a67d4778ffb214390ddafa61c1a557",
-        "GUID:3c1bc1267eab5884ebe7f232c09ee0d9",
-        "GUID:58281da7f948e9644aceb5d0178bf06b"
+        "GUID:3c1bc1267eab5884ebe7f232c09ee0d9"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],
@@ -14,15 +13,8 @@
     "overrideReferences": false,
     "precompiledReferences": [],
     "autoReferenced": true,
-    "defineConstraints": [
-        "VRCLV_AUDIOLINK"
-    ],
+    "defineConstraints": [],
     "versionDefines": [
-        {
-            "name": "com.llealloo.audiolink",
-            "expression": "0.0.0",
-            "define": "VRCLV_AUDIOLINK"
-        },
         {
             "name": "com.vrchat.worlds",
             "expression": "0.0.0",

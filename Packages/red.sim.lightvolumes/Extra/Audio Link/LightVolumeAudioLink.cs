@@ -8,6 +8,7 @@ using UnityEngine;
 using UdonSharp;
 using VRC.SDKBase;
 #else
+using System.Reflection;
 using VRCShader = UnityEngine.Shader;
 #endif
 
@@ -21,7 +22,11 @@ namespace VRCLightVolumes {
 #endif
     {
         [Tooltip("Reference to your Audio Link manager that should control Light Volumes")]
-        public AudioLink.AudioLink AudioLink;
+#if UDONSHARP
+        public UdonSharpBehaviour AudioLink;
+#else
+        public MonoBehaviour AudioLink;
+#endif
         [Tooltip("Defines which audio band will be used to control Light Volumes. Four bands available: Bass, Low Mid, High Mid, Treble")]
         public AudioLinkBand AudioBand = AudioLinkBand.Bass;
         [Tooltip("Defines how many samples back in history we're getting data from. Can be a value from 0 to 127. Zero means no delay at all")]
@@ -73,20 +78,30 @@ namespace VRCLightVolumes {
 
         private MaterialPropertyBlock _block;
         private float _prevData = 0f;
+        private Color[] _audioData;
+
+#if UDONSHARP
+        private UdonSharpBehaviour _initializedAudioLink;
+#else
+        private MonoBehaviour _initializedAudioLink;
+#endif
+
+        private const int AudioLinkTextureWidth = 128;
+        private const string EnableReadbackEvent = "EnableReadback";
+        private const string AudioDataVariable = "audioData";
 
         // Initializes renderer state and enables AudioLink readback.
         private void Start() {
             _block = new MaterialPropertyBlock();
             _colorID = VRCShader.PropertyToID("_Color");
             _emissionColorID = VRCShader.PropertyToID("_EmissionColor");
-
-            if (AudioLink != null) {
-                AudioLink.EnableReadback();
-            }
+            EnsureAudioLinkReady();
         }
 
         // Samples AudioLink and applies the resulting color and intensity to every configured target.
         private void Update() {
+            if (!EnsureAudioLinkReady()) return;
+
             int band = (int)AudioBand;
 
             // choose color
@@ -95,42 +110,40 @@ namespace VRCLightVolumes {
                 case AudioLinkColor.NoChange:
                     break;
                 case AudioLinkColor.Auto:
-                    // wrap this around because of the size mismatch between number
-                    // of bands and number of colors
-                    _color = NormalizeColor(AudioLink.GetDataAtPixel(band % 4, 23));
+                    // wrap this around because of the size mismatch between number of bands and number of colors
+                    _color = NormalizeColor(ReadAudioLinkPixel(band % 4, 23));
                     break;
                 case AudioLinkColor.OverrideColor:
                     _color = Color;
                     break;
                 default:
-                    _color = NormalizeColor(AudioLink.GetDataAtPixel((int)ColorMode, 23));
+                    _color = NormalizeColor(ReadAudioLinkPixel((int)ColorMode, 23));
                     break;
             }
 
             float alData = SampleALData(Delay, band);
             if (ColorMode == AudioLinkColor.NoChange) return;
-            float alFactors = (Invert ? (1 - alData) : alData)
-                * Mathf.Lerp(MinimumMultiply, MaximumMultiply, alData)
-                + Mathf.Lerp(MinimumAdd, MaximumAdd, alData);
+            float alFactors = (Invert ? (1 - alData) : alData) * Mathf.Lerp(MinimumMultiply, MaximumMultiply, alData) + Mathf.Lerp(MinimumAdd, MaximumAdd, alData);
             Color lightColor = _color * alFactors;
 
             LightVolumeInstance[] targetLightVolumes = TargetLightVolumes;
-            int _count = targetLightVolumes.Length;
+            int _count = targetLightVolumes != null ? targetLightVolumes.Length : 0;
             for (int i = 0; i < _count; i++) {
-                targetLightVolumes[i].SetColor(lightColor);
+                if (targetLightVolumes[i] != null) targetLightVolumes[i].SetColor(lightColor);
             }
 
             PointLightVolumeInstance[] targetPointLightVolumes = TargetPointLightVolumes;
-            _count = targetPointLightVolumes.Length;
+            _count = targetPointLightVolumes != null ? targetPointLightVolumes.Length : 0;
             for (int i = 0; i < _count; i++) {
-                targetPointLightVolumes[i].SetColor(lightColor);
+                if (targetPointLightVolumes[i] != null) targetPointLightVolumes[i].SetColor(lightColor);
             }
 
             Color materialColor = lightColor * MaterialsIntensity;
             Renderer[] targetMeshRenderers = TargetMeshRenderers;
-            _count = targetMeshRenderers.Length;
+            _count = targetMeshRenderers != null ? targetMeshRenderers.Length : 0;
             for (int i = 0; i < _count; i++) {
                 Renderer targetRenderer = targetMeshRenderers[i];
+                if (targetRenderer == null) continue;
                 targetRenderer.GetPropertyBlock(_block, 0);
 
                 _block.SetColor(_emissionColorID, materialColor);
@@ -140,6 +153,45 @@ namespace VRCLightVolumes {
 
                 targetRenderer.SetPropertyBlock(_block);
             }
+        }
+
+        // Keeps AudioLink optional at compile time while using the same public readback buffer in both Unity and Udon.
+        private bool EnsureAudioLinkReady() {
+            if (AudioLink == null) {
+                _initializedAudioLink = null;
+                _audioData = null;
+                return false;
+            }
+
+            if (_initializedAudioLink == AudioLink) return _audioData != null;
+
+            _initializedAudioLink = AudioLink;
+#if UDONSHARP
+            AudioLink.SendCustomEvent(EnableReadbackEvent);
+            _audioData = (Color[])AudioLink.GetProgramVariable(AudioDataVariable);
+#else
+            try {
+                System.Type audioLinkType = AudioLink.GetType();
+                MethodInfo enableReadback = audioLinkType.GetMethod(EnableReadbackEvent, BindingFlags.Instance | BindingFlags.Public);
+                FieldInfo audioData = audioLinkType.GetField(AudioDataVariable, BindingFlags.Instance | BindingFlags.Public);
+                if (enableReadback == null || audioData == null) {
+                    _audioData = null;
+                    return false;
+                }
+
+                enableReadback.Invoke(AudioLink, null);
+                _audioData = audioData.GetValue(AudioLink) as Color[];
+            } catch {
+                _audioData = null;
+            }
+#endif
+            return _audioData != null;
+        }
+
+        private Color ReadAudioLinkPixel(int x, int y) {
+            int index = y * AudioLinkTextureWidth + x;
+            if (_audioData == null || index < 0 || index >= _audioData.Length) return Color.black;
+            return _audioData[index];
         }
 
         // Gets color with max brightness and saturation. Applies on top of the color chord color because AL dims the brightness of this color by default, which makes no sense to use with smoothing, delayed effects, etc.
@@ -156,14 +208,12 @@ namespace VRCLightVolumes {
         private float SampleALData(int delay, int band) {
             float alData = 0f;
 
-            // sample from ALPASS_GENERALVU + (8, 0) to get volume (RMS Left)
-            // note that we don't get delay here.
+            // sample from ALPASS_GENERALVU + (8, 0) to get volume (RMS Left) note that we don't get delay here.
             if (band == (int)AudioLinkBand.Volume) {
-                alData = AudioLink.GetDataAtPixel(8, 22).x;
+                alData = ReadAudioLinkPixel(8, 22).r;
             } else {
-                // sample the audiolink band data from ALPASS_AUDIOLINK
-                // when delay is 0 or ALPASS_AUDIOLINKHISTORY when > 0
-                alData = AudioLink.GetDataAtPixel(delay, band).x;
+                // sample the audiolink band data from ALPASS_AUDIOLINK when delay is 0 or ALPASS_AUDIOLINKHISTORY when > 0
+                alData = ReadAudioLinkPixel(delay, band).r;
             }
 
             if (!SmoothingEnabled) {
@@ -184,9 +234,9 @@ namespace VRCLightVolumes {
 #if UNITY_EDITOR && !COMPILER_UDONSHARP
         // Keeps AudioLink GPU readback enabled after inspector changes.
         private void OnValidate() {
-            if (AudioLink != null) {
-                AudioLink.EnableReadback();
-            }
+            _initializedAudioLink = null;
+            _audioData = null;
+            EnsureAudioLinkReady();
         }
 #endif
 

@@ -95,22 +95,18 @@ namespace VRCLightVolumes.Tests {
             UnityEngine.Object.DestroyImmediate(texture2);
         }
 
-        // Direct U# compilation supplies COMPILER_UDONSHARP. Regular Editor compilation gets UDONSHARP
-        // from the assembly's Worlds SDK version define instead of enabling U# in every Editor project.
+        // Direct U# compilation supplies COMPILER_UDONSHARP. Regular Editor compilation gets UDONSHARP from the assembly's Worlds SDK version define instead of enabling U# in every Editor project.
         [Test]
         public void UdonSharpSourcesDoNotEnableUdonSharpForAvatarProjects() {
             for (int i = 0; i < UdonSharpSourcePaths.Length; i++) {
                 string path = UdonSharpSourcePaths[i];
                 string source = File.ReadAllText(path).Replace("\r\n", "\n");
-                Assert.That(source, Does.StartWith(DirectUdonSharpCompilerGuard),
-                    path + " must select its U# branch during direct UdonSharp compilation.");
-                Assert.That(source, Does.Not.Contain("UNITY_EDITOR || COMPILER_UDONSHARP"),
-                    path + " must keep its MonoBehaviour fallback in avatar projects without UdonSharp.");
+                Assert.That(source, Does.StartWith(DirectUdonSharpCompilerGuard), path + " must select its U# branch during direct UdonSharp compilation.");
+                Assert.That(source, Does.Not.Contain("UNITY_EDITOR || COMPILER_UDONSHARP"), path + " must keep its MonoBehaviour fallback in avatar projects without UdonSharp.");
             }
         }
 
-        // The Worlds package version define is assembly-local, stable across build-target reloads, and
-        // absent from avatar projects. This preserves U# proxy types without regressing avatar support.
+        // The Worlds package version define is assembly-local, stable across build-target reloads, and absent from avatar projects. This preserves U# proxy types without regressing avatar support.
         [Test]
         public void UdonSharpAssembliesDefineUdonSharpOnlyWithWorldsSdk() {
             for (int i = 0; i < UdonSharpAssemblyPaths.Length; i++) {
@@ -121,8 +117,7 @@ namespace VRCLightVolumes.Tests {
             }
         }
 
-        // Player builds and Play Mode must not silently rewrite persistent import settings for
-        // project textures. Custom projection assets remain fully owned by the project author.
+        // Player builds and Play Mode must not silently rewrite persistent import settings for project textures. Custom projection assets remain fully owned by the project author.
         [Test]
         public void BuildLifecycleDoesNotReimportProjectionTextures() {
             const string preprocessorPath = "Packages/red.sim.lightvolumes/Scripts/Editor/LightVolumeBuildPreprocessor.cs";
@@ -130,18 +125,13 @@ namespace VRCLightVolumes.Tests {
             string preprocessorSource = File.ReadAllText(preprocessorPath);
             string utilitiesSource = File.ReadAllText(utilitiesPath);
 
-            Assert.That(preprocessorSource, Does.Not.Contain("TextureSetLinearHDRAndroidImport"),
-                "Build and Play Mode callbacks must not mutate projection texture importers.");
-            Assert.That(preprocessorSource, Does.Not.Contain("EnsureProjectionTextureImportSettings"),
-                "Projection import checks must remain in edit-time authoring synchronization.");
-            Assert.That(preprocessorSource, Does.Not.Contain("LightVolumeTextureImportBuildPreprocessor"),
-                "VRCLV must not register a projection texture-import callback for player builds.");
-            Assert.That(utilitiesSource, Does.Not.Contain("TextureSetLinearHDRAndroidImport"),
-                "The destructive project-asset import helper must not be reintroduced.");
+            Assert.That(preprocessorSource, Does.Not.Contain("TextureSetLinearHDRAndroidImport"), "Build and Play Mode callbacks must not mutate projection texture importers.");
+            Assert.That(preprocessorSource, Does.Not.Contain("EnsureProjectionTextureImportSettings"), "Projection import checks must remain in edit-time authoring synchronization.");
+            Assert.That(preprocessorSource, Does.Not.Contain("LightVolumeTextureImportBuildPreprocessor"), "VRCLV must not register a projection texture-import callback for player builds.");
+            Assert.That(utilitiesSource, Does.Not.Contain("TextureSetLinearHDRAndroidImport"), "The destructive project-asset import helper must not be reintroduced.");
         }
 
-        // Assigning an HDR source configures only that active Light Volumes projection. Detection
-        // uses the source data rather than its extension, while LDR and unrelated assets stay intact.
+        // Assigning an HDR source configures only that active Light Volumes projection. Detection uses the source data rather than its extension, while LDR and unrelated assets stay intact.
         [Test]
         public void AssigningHdrProjectionConfiguresOnlyTheAssignedAsset() {
             string assignedPath = AssetDatabase.GenerateUniqueAssetPath("Assets/VRCLightVolumesAssignedProjection.hdr");
@@ -190,9 +180,9 @@ namespace VRCLightVolumes.Tests {
             }
         }
 
-        // Optional plugins must never become hard dependencies of the VRCLV core or stale global-define gates.
+        // UdonSharp validates every program asset even when a conditional asmdef is disabled. Keep the integration assembly active, but keep AudioLink optional at compile time in both Unity and Udon.
         [Test]
-        public void OptionalPluginAssembliesRemainConditionalAndCoreIndependent() {
+        public void AudioLinkIntegrationUsesOptionalRuntimeBridge() {
             const string audioLinkGuid = "58281da7f948e9644aceb5d0178bf06b";
             const string bakeryRuntimeGuid = "a1653399f63795746b1857281d1e400d";
             const string bakeryEditorGuid = "290dd5870d0ead646bcb6ea5c6a60af5";
@@ -208,17 +198,31 @@ namespace VRCLightVolumes.Tests {
                 Assert.That(asmdef, Does.Not.Contain(bakeryEditorGuid), coreAsmdefs[i]);
             }
 
+            const string audioLinkSourcePath = "Packages/red.sim.lightvolumes/Extra/Audio Link/LightVolumeAudioLink.cs";
+            const string audioLinkProgramAssetPath = "Packages/red.sim.lightvolumes/Extra/Audio Link/LightVolumeAudioLink.asset";
             const string optionalAsmdefPath = "Packages/red.sim.lightvolumes/Extra/Audio Link/red.sim.LightVolumes.AudioLinkUdon.asmdef";
             const string optionalAssemblyAssetPath = "Packages/red.sim.lightvolumes/Extra/Audio Link/red.sim.LightVolumes.AudioLinkUdon.asset";
-            string optionalAsmdef = File.ReadAllText(optionalAsmdefPath);
-            Assert.That(optionalAsmdef, Does.Contain("com.llealloo.audiolink"));
-            Assert.That(optionalAsmdef, Does.Contain("VRCLV_AUDIOLINK"));
-            Assert.That(optionalAsmdef, Does.Contain("\"defineConstraints\""));
-            Assert.That(optionalAsmdef, Does.Contain("\"versionDefines\""));
-            Assert.That(optionalAsmdef, Does.Contain(audioLinkGuid));
+            string audioLinkSource = File.ReadAllText(audioLinkSourcePath);
+            string audioLinkAsmdef = File.ReadAllText(optionalAsmdefPath);
+            Assert.That(audioLinkAsmdef, Does.Not.Contain(audioLinkGuid));
+            Assert.That(audioLinkAsmdef, Does.Contain("\"defineConstraints\": []"), "A conditional asmdef leaves its UdonSharp program asset outside every active U# assembly.");
+            Assert.That(audioLinkAsmdef, Does.Not.Contain("VRCLV_AUDIOLINK"));
             Assert.That(File.Exists(optionalAssemblyAssetPath), Is.True);
             Assert.That(File.ReadAllText(optionalAssemblyAssetPath), Does.Contain(AssetDatabase.AssetPathToGUID(optionalAsmdefPath)));
             Assert.That(File.Exists("Packages/red.sim.lightvolumes/Extra/Audio Link/UdonLightVolumesRef.asmref"), Is.False);
+            Assert.That(audioLinkSource, Does.Not.Contain("AudioLink.AudioLink"));
+            Assert.That(audioLinkSource, Does.Contain("public UdonSharpBehaviour AudioLink;"));
+            Assert.That(audioLinkSource, Does.Contain("public MonoBehaviour AudioLink;"));
+            Assert.That(audioLinkSource, Does.Contain("AudioLink.SendCustomEvent(EnableReadbackEvent);"));
+            Assert.That(audioLinkSource, Does.Contain("AudioLink.GetProgramVariable(AudioDataVariable)"));
+            Assert.That(audioLinkSource, Does.Contain("GetField(AudioDataVariable"));
+            string audioLinkProgramAsset = File.ReadAllText(audioLinkProgramAssetPath);
+            Assert.That(audioLinkProgramAsset, Does.Not.Contain("AudioLink.AudioLink, AudioLink"));
+            Assert.That(audioLinkProgramAsset, Does.Contain("UdonSharp.UdonSharpBehaviour, UdonSharp.Runtime"));
+
+            string packageManifest = File.ReadAllText("Packages/red.sim.lightvolumes/package.json");
+            Assert.That(packageManifest, Does.Not.Contain("\"vpmDependencies\""));
+            Assert.That(packageManifest, Does.Not.Contain("com.llealloo.audiolink"));
 
             string[] productionRoots = {
                 "Packages/red.sim.lightvolumes/UScripts",

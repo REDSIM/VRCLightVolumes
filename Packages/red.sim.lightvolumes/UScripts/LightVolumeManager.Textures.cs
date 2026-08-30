@@ -472,6 +472,8 @@ namespace VRCLightVolumes {
         private void RebuildShadowTextures() {
             // Calling this method is an explicit retry point. The automatic update loop skips it while the allocation-failure latch is set, so a failed Create cannot thrash every frame.
             _shadowTextureAllocationFailed = false;
+            _shadowCullPyramidAllocationFailed = false;
+            InvalidateShadowCullPyramid();
 #if UNITY_EDITOR && !COMPILER_UDONSHARP
             if (!Application.isPlaying) CaptureEditorShadowSourceState();
 #endif
@@ -484,6 +486,9 @@ namespace VRCLightVolumes {
                 return;
             }
             BuildShadowTextureSourceCache();
+            // Hi-Z rebuilds lazily from clustering. Release an incompatible cached allocation immediately so deleting shadow sources still returns its VRAM when the remaining light count falls below ClusteringMinLights and no later clustering build runs.
+            if (_shadowCullPyramid != null && (_shadowCullPyramidResolution != ShadowTexturesWidth || _shadowCullPyramidResolution != ShadowTexturesHeight || _shadowCullPyramidSliceCount != _shadowTextureArrayDepth))
+                ReleaseShadowCullPyramidTextures();
             if (_shadowTextureArrayDepth <= 0) { // No shadow sources are active, so release the stale runtime texture array
                 if (ShadowTextures != null) {
                     ReleaseRuntimeRenderTexture(ShadowTextures);
@@ -512,6 +517,8 @@ namespace VRCLightVolumes {
                 return;
             }
             BlitShadowTextures(true);
+            if (AutoUpdateTextures && HasAutoShadowTextureUpdates) RefreshShadowCullAutoUpdateState();
+            else InvalidateShadowCullPyramid();
         }
 
         // Resolves one direct light to its current final atlas base slice and synchronously publishes a rebuilt layout before the caller renders into it.
@@ -591,6 +598,7 @@ namespace VRCLightVolumes {
                     cubemapFaceMaterial.SetInt(_cubemapFaceIndexID, sourceFace);
                     BlitMaterialToSlice(null, cubemapFaceMaterial, destination, firstTargetSlice + sourceFace, 0);
                 }
+                if (!instance.RuntimeShadowDirectOutput) InvalidateShadowCullPyramid();
                 return true;
             }
             bool resampleCubemapArray = usesCubemapShadow && sourceTextureMode == 1 && CubemapArrayNeedsResampling(sourceTexture, destination);
@@ -601,6 +609,7 @@ namespace VRCLightVolumes {
                     BlitCubemapArraySliceSeamless(resampleMaterial, sourceSlice, destination, targetSlice);
                 else VRCGraphics.Blit(sourceTexture, destination, instance.ShadowMapTextureHasDepthSlices ? sourceSlice : 0, targetSlice);
             }
+            if (!instance.RuntimeShadowDirectOutput) InvalidateShadowCullPyramid();
             return true;
         }
 
@@ -1037,9 +1046,7 @@ namespace VRCLightVolumes {
         // Writes a six-face cubemap texture source into consecutive destination array slices
         private void BlitCubemapTexture(Texture sourceTexture, int textureMode, int firstSlice, RenderTexture destination) {
             if (sourceTexture == null) return;
-            // Undo can restore the texture reference and its serialized layout flags from different
-            // runtime snapshots. The actual texture dimension is authoritative before touching a
-            // Cube-only material property.
+            // Undo can restore the texture reference and its serialized layout flags from different runtime snapshots. The actual texture dimension is authoritative before touching a Cube-only material property.
             textureMode = GetTextureMode(sourceTexture);
             if (textureMode == 2) { // Native Cubemap: unwrap each cubemap face into its destination slice
                 if (!EnsureCubemapFaceMaterial()) return;
@@ -1062,8 +1069,7 @@ namespace VRCLightVolumes {
             }
         }
 
-        // A cubemap stored as array slices needs cross-face filtering whenever its resolution
-        // changes; an ordinary array blit clamps every face independently.
+        // A cubemap stored as array slices needs cross-face filtering whenever its resolution changes; an ordinary array blit clamps every face independently.
         private bool CubemapArrayNeedsResampling(Texture sourceTexture, RenderTexture destination) {
             return sourceTexture != null && destination != null && (sourceTexture.width != destination.width || sourceTexture.height != destination.height);
         }
@@ -1080,15 +1086,13 @@ namespace VRCLightVolumes {
             return resampleMaterial;
         }
 
-        // Resamples one prepared face using the source texel footprint. This keeps a low-resolution
-        // bake continuous when it is expanded into a much larger Manager atlas.
+        // Resamples one prepared face using the source texel footprint. This keeps a low-resolution bake continuous when it is expanded into a much larger Manager atlas.
         private void BlitCubemapArraySliceSeamless(Material resampleMaterial, int sourceFace, RenderTexture destination, int targetSlice) {
             resampleMaterial.SetInt(_cubemapFaceIndexID, sourceFace);
             BlitMaterialToSlice(null, resampleMaterial, destination, targetSlice, CubemapResampleMaterialPass);
         }
 
-        // Resolves the physical source layout without trusting serialized metadata that Undo may
-        // restore independently from a runtime-generated texture reference.
+        // Resolves the physical source layout without trusting serialized metadata that Undo may restore independently from a runtime-generated texture reference.
         private int GetTextureMode(Texture texture) {
             if (texture == null) return 0;
             int textureDimension = (int)texture.dimension;
@@ -1241,7 +1245,7 @@ namespace VRCLightVolumes {
             }
         }
 
-        // Destroys the editor/standalone clustering material created outside the build preprocessor.
+        // Destroys editor/standalone clustering materials created outside the build preprocessor.
         private void DestroyClusteringMaterial() {
 #if !COMPILER_UDONSHARP
             if (_generatedClusteringMaterial != null) {
@@ -1249,11 +1253,21 @@ namespace VRCLightVolumes {
                 else DestroyImmediate(_generatedClusteringMaterial);
                 _generatedClusteringMaterial = null;
             }
+            if (_generatedShadowCullingMaterial != null) {
+                if (Application.isPlaying) Destroy(_generatedShadowCullingMaterial);
+                else DestroyImmediate(_generatedShadowCullingMaterial);
+                _generatedShadowCullingMaterial = null;
+            }
 #endif
             if (ClusteringMaterial != null && ClusteringMaterial.hideFlags == HideFlags.HideAndDontSave) {
                 if (Application.isPlaying) Destroy(ClusteringMaterial);
                 else DestroyImmediate(ClusteringMaterial);
                 ClusteringMaterial = null;
+            }
+            if (ShadowCullingMaterial != null && ShadowCullingMaterial.hideFlags == HideFlags.HideAndDontSave) {
+                if (Application.isPlaying) Destroy(ShadowCullingMaterial);
+                else DestroyImmediate(ShadowCullingMaterial);
+                ShadowCullingMaterial = null;
             }
         }
 

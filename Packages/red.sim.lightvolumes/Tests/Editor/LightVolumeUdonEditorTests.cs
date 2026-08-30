@@ -4,6 +4,8 @@ using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
 using NUnit.Framework;
+using UdonSharp;
+using UdonSharp.Compiler;
 using UdonSharpEditor;
 using UnityEditor;
 using UnityEditor.TestTools;
@@ -23,6 +25,7 @@ namespace VRCLightVolumes.Tests {
         private const int PointLightUploadDirection = 8;
         private const int PointLightUploadCustomId = 16;
         private const int PointLightUploadShadowRotation = 64;
+        private const int PointLightUploadFroxelShadowMetadata = 128;
         private const string CustomRenderTextureInfoProperty = "_CustomRenderTextureInfo";
         private const string LightVolumesIncludePath = "Shaders/LightVolumes.cginc";
         private const string RuntimeShadowBlurShaderPath = "Shaders/Internal/PointLightShadowRuntimeBlur.shader";
@@ -52,6 +55,7 @@ namespace VRCLightVolumes.Tests {
         private static readonly int _pointLightTextureTexelCountID = Shader.PropertyToID("_UdonPointLightVolumeTextureTexelCount");
         private static readonly int _pointLightShadowReprojectionDataID = Shader.PropertyToID("_UdonPointLightVolumeShadowReprojectionData");
         private static readonly int _pointLightShadowRotationDataID = Shader.PropertyToID("_UdonPointLightVolumeShadowRotationData");
+        private static readonly int _froxelShadowMetadataID = Shader.PropertyToID("_UdonFroxelShadowMetadata");
         private static readonly int _pointLightShadowCubeCountID = Shader.PropertyToID("_UdonPointLightVolumeShadowCubeCount");
         private static readonly int _pointLightShadowCountID = Shader.PropertyToID("_UdonPointLightVolumeShadowCount");
         private static readonly int _pointLightShadowTextureID = Shader.PropertyToID("_UdonPointLightVolumeShadowTexture");
@@ -130,6 +134,7 @@ namespace VRCLightVolumes.Tests {
                 { "FroxelSlices", typeof(int) },
                 { "FroxelCoarse", typeof(int) },
                 { "ClusteringMinLights", typeof(int) },
+                { "ShadowCulling", typeof(bool) },
                 { "LightProbesBlending", typeof(bool) },
                 { "SharpBounds", typeof(bool) },
                 { "AutoUpdateVolumes", typeof(bool) },
@@ -166,11 +171,12 @@ namespace VRCLightVolumes.Tests {
                 { "RuntimeShadowBlurDirectKeyword", typeof(int) },
                 { "RuntimeShadowBlurSphericalKeyword", typeof(int) },
                 { "ClusteringMaterial", typeof(Material) },
+                { "ShadowCullingMaterial", typeof(Material) },
                 { "HasAutoCustomTextureUpdates", typeof(bool) },
                 { "HasAutoShadowTextureUpdates", typeof(bool) }
             };
 
-            Assert.That(expectedFields.GetLength(0), Is.EqualTo(53), "Update the contract deliberately when its baseline changes.");
+            Assert.That(expectedFields.GetLength(0), Is.EqualTo(55), "Update the contract deliberately when its baseline changes.");
             FieldInfo[] declaredFields = typeof(LightVolumeManager).GetFields(PublicInstanceDeclared);
             Array.Sort(declaredFields, (left, right) => left.MetadataToken.CompareTo(right.MetadataToken));
             Assert.That(declaredFields, Has.Length.EqualTo(expectedFields.GetLength(0)), "Unexpected public instance field changed the serialized/Udon ABI.");
@@ -222,6 +228,20 @@ namespace VRCLightVolumes.Tests {
             Assert.That(typeof(PointLightShadowRuntimeBaker).GetField("RealtimeFacesPerFrame", PublicInstanceDeclared), Is.Null);
             Assert.That(typeof(LightVolumeManager).GetMethod("UpdatePointLightShadowTextureSlice", PublicInstanceDeclared), Is.Null);
             Assert.That(typeof(LightVolumeManager).GetMethod("UpdatePointLightShadowTextureRange", PublicInstanceDeclared), Is.Null);
+        }
+
+        // Release builds must never ship a stale or failed serialized Udon program beside current sources.
+        [Test]
+        public void ManagerUdonProgramAssetIsCompiledAndRetrievable() {
+            UdonSharpProgramAsset program = UdonSharpEditorUtility.GetUdonSharpProgramAsset(typeof(LightVolumeManager));
+            Assert.That(program, Is.Not.Null);
+            Assert.That(program.sourceCsScript, Is.Not.Null);
+            Assert.That(AssetDatabase.GetAssetPath(program), Is.EqualTo("Packages/red.sim.lightvolumes/UScripts/LightVolumeManager.asset"));
+            Assert.That(program.AssemblyError, Is.Null.Or.Empty);
+            Assert.That(program.CompiledVersion, Is.Not.EqualTo(UdonSharpProgramVersion.Unknown));
+            Assert.That(program.CompiledVersion, Is.EqualTo(program.ScriptVersion));
+            Assert.That(program.SerializedProgramAsset, Is.Not.Null);
+            Assert.That(program.SerializedProgramAsset.RetrieveProgram(), Is.Not.Null);
         }
 
         // Cookie source mutability is derived from the source object. Removed metadata and overloads
@@ -509,6 +529,7 @@ namespace VRCLightVolumes.Tests {
             manager.FroxelDensity = 1f;
             object[] arguments = {
                 Vector3.zero,
+                Quaternion.identity,
                 Vector3.right,
                 Vector3.up,
                 Vector3.forward,
@@ -591,16 +612,559 @@ namespace VRCLightVolumes.Tests {
         [Test]
         public void FroxelPreviewShadersAreSupported() {
             Shader builder = Shader.Find("Hidden/VRCLV/FroxelClusteringBuild");
+            Shader shadowCullPyramid = Shader.Find("Hidden/VRCLV/FroxelShadowCullPyramid");
             Shader fine = Shader.Find("Hidden/LV_DebugDisplayFineClustering");
             Shader coarse = Shader.Find("Hidden/LV_DebugDisplayCoarseClustering");
 
             Assert.That(builder, Is.Not.Null);
             Assert.That(builder.isSupported, Is.True);
-            Assert.That(builder.passCount, Is.EqualTo(1));
+            Assert.That(builder.passCount, Is.EqualTo(2));
+            Assert.That(shadowCullPyramid, Is.Not.Null);
+            Assert.That(shadowCullPyramid.isSupported, Is.True);
+            Assert.That(shadowCullPyramid.passCount, Is.EqualTo(3));
             Assert.That(fine, Is.Not.Null);
             Assert.That(fine.isSupported, Is.True);
             Assert.That(coarse, Is.Not.Null);
             Assert.That(coarse.isSupported, Is.True);
+        }
+
+        // The hierarchy stores an upward-biased EVSM depth threshold, not an averaged shadow value.
+        [Test]
+        public void FroxelShadowCullPyramidBuildsConservativeCriticalDepth() {
+            if (SystemInfo.graphicsShaderLevel < 35 || !SystemInfo.SupportsRenderTextureFormat(RenderTextureFormat.RFloat))
+                Assert.Ignore("The active graphics API does not support the RFloat shadow-culling hierarchy.");
+            Shader shader = Shader.Find("Hidden/VRCLV/FroxelShadowCullPyramid");
+            if (shader == null || !shader.isSupported) Assert.Ignore("The shadow-culling hierarchy shader is unavailable.");
+
+            LightVolumeManager manager = CreateManager("Shadow Cull Pyramid Manager", false, false);
+            RenderTexture shadows = CreateRenderTexture("Shadow Cull EVSM Source", 4, 4, 1, TextureDimension.Tex2DArray, RenderTextureFormat.ARGBFloat);
+            RenderTexture blitSource = CreateRenderTexture("Shadow Cull Blit Source", 1, 1, 1, TextureDimension.Tex2D);
+            float casterDepth = -0.5f;
+            float positiveMean = Mathf.Exp(5.54f * casterDepth);
+            float negativeMagnitude = Mathf.Exp(-5f * casterDepth);
+            FillRenderTextureArraySlice(shadows, 0, new Color(positiveMean, -negativeMagnitude,
+                positiveMean * positiveMean, negativeMagnitude * negativeMagnitude));
+
+            manager.ShadowTextures = shadows;
+            manager.ShadowMapsCount = 1;
+            manager.ShadowBleedReduction = 0.2f;
+            manager.ShadowMinVariance = 0f;
+            typeof(LightVolumeManager).GetField("_activeShadowCount", _lifecycleMethodFlags).SetValue(manager, 1);
+            typeof(LightVolumeManager).GetField("_activeShadowCullCount", _lifecycleMethodFlags).SetValue(manager, 1);
+            typeof(LightVolumeManager).GetField("_clusteringSource", _lifecycleMethodFlags).SetValue(manager, blitSource);
+            typeof(LightVolumeManager).GetMethod("TryInitialize", _lifecycleMethodFlags).Invoke(manager, null);
+            typeof(LightVolumeManager).GetMethod("RefreshShadowCullReceiverParameters", _lifecycleMethodFlags).Invoke(manager, null);
+            Vector4 receiverParams = Shader.GetGlobalVector(Shader.PropertyToID("_UdonPointLightVolumeShadowReceiverParams"));
+            Assert.That(receiverParams.x, Is.EqualTo(manager.ShadowMinVariance * 0.01f * 5.54f).Within(0.000001f));
+            Assert.That(receiverParams.y, Is.EqualTo(-manager.ShadowBleedReduction / (1f - manager.ShadowBleedReduction)).Within(0.000001f));
+
+            MethodInfo buildMethod = typeof(LightVolumeManager).GetMethod("BuildShadowCullPyramid", _lifecycleMethodFlags);
+            Assert.That(buildMethod, Is.Not.Null);
+            Assert.That((bool)buildMethod.Invoke(manager, null), Is.True);
+
+            RenderTexture pyramid = (RenderTexture)typeof(LightVolumeManager).GetField("_shadowCullPyramid", _lifecycleMethodFlags).GetValue(manager);
+            Assert.That(pyramid, Is.Not.Null);
+            Assert.That(pyramid.format, Is.EqualTo(RenderTextureFormat.RFloat));
+            Assert.That(pyramid.width, Is.EqualTo(2));
+            Assert.That(pyramid.height, Is.EqualTo(2));
+            Assert.That(manager.ShadowCullPyramidPreview, Is.SameAs(pyramid));
+            Assert.That(manager.ShadowCullPyramidLevelCountPreview, Is.EqualTo(1));
+            Assert.That(manager.ShadowCullPyramidSliceCountPreview, Is.EqualTo(1));
+            Assert.That(manager.ShadowCullPyramidNodeCountPreview, Is.EqualTo(4));
+            Assert.That(manager.ShadowCullPyramidValidPreview, Is.True);
+            Assert.That(manager.ShadowCullPyramidDirtyPreview, Is.False);
+            RenderTexture[] buildLevels = (RenderTexture[])typeof(LightVolumeManager).GetField("_shadowCullBuildLevels", _lifecycleMethodFlags).GetValue(manager);
+            Assert.That(buildLevels, Is.Not.Null);
+            for (int levelIndex = 0; levelIndex < buildLevels.Length; levelIndex++)
+                Assert.That(buildLevels[levelIndex], Is.Null, "Temporary hierarchy build levels must be released after packing.");
+
+            float criticalDepth = ReadRenderTexturePixel(pyramid, 0, 0).r;
+            Assert.That(criticalDepth, Is.GreaterThanOrEqualTo(casterDepth),
+                "The stored threshold must never round in front of a zero-variance blocker.");
+            Assert.That(criticalDepth, Is.LessThan(casterDepth + 0.01f),
+                "Mean-range/variance bounds should stay close to a flat blocker instead of retaining the old second-moment gap.");
+
+            manager.ShadowBleedReduction = 0f;
+            typeof(LightVolumeManager).GetMethod("RefreshShadowCullReceiverParameters", _lifecycleMethodFlags).Invoke(manager, null);
+            receiverParams = Shader.GetGlobalVector(Shader.PropertyToID("_UdonPointLightVolumeShadowReceiverParams"));
+            Assert.That(receiverParams.y, Is.Zero.Within(0.000001f),
+                "The main receiver must retain authored zero bleed reduction; only the froxel proof ignores a fixed negligible visibility tail.");
+            Assert.That((bool)buildMethod.Invoke(manager, null), Is.True,
+                "Zero authored bleed reduction must no longer disable shadow froxel culling.");
+            pyramid = (RenderTexture)typeof(LightVolumeManager).GetField("_shadowCullPyramid", _lifecycleMethodFlags).GetValue(manager);
+            criticalDepth = ReadRenderTexturePixel(pyramid, 0, 0).r;
+            Assert.That(criticalDepth, Is.GreaterThanOrEqualTo(casterDepth));
+            Assert.That(criticalDepth, Is.LessThan(casterDepth + 0.015f),
+                "The tiny probability floor should still classify a flat physical umbra almost immediately behind its blocker.");
+
+            // The final receiver takes min(positive, negative).  Either channel must be able to
+            // prove the umbra independently when the other pair is malformed/unavailable.
+            manager.ShadowBleedReduction = 0.2f;
+            FillRenderTextureArraySlice(shadows, 0, new Color(0f, -negativeMagnitude, 0f,
+                negativeMagnitude * negativeMagnitude));
+            typeof(LightVolumeManager).GetMethod("InvalidateShadowCullPyramid", _lifecycleMethodFlags).Invoke(manager, null);
+            typeof(LightVolumeManager).GetMethod("RefreshShadowCullReceiverParameters", _lifecycleMethodFlags).Invoke(manager, null);
+            Assert.That((bool)buildMethod.Invoke(manager, null), Is.True);
+            pyramid = (RenderTexture)typeof(LightVolumeManager).GetField("_shadowCullPyramid", _lifecycleMethodFlags).GetValue(manager);
+            criticalDepth = ReadRenderTexturePixel(pyramid, 0, 0).r;
+            Assert.That(criticalDepth, Is.GreaterThanOrEqualTo(casterDepth));
+            Assert.That(criticalDepth, Is.LessThan(casterDepth + 0.01f),
+                "The negative EVSM warp should provide an independent tight shadow proof.");
+
+            manager.AutoUpdateTextures = true;
+            manager.HasAutoShadowTextureUpdates = true;
+            Assert.That((bool)buildMethod.Invoke(manager, null), Is.False,
+                "Per-frame shadow sources must use geometry-only clustering instead of rebuilding every shadow slice.");
+            Assert.That(manager.ShadowCullPyramidSuspendedPreview, Is.True);
+            Assert.That(manager.ShadowCullPyramidValidPreview, Is.False);
+            Assert.That((bool)typeof(LightVolumeManager).GetField("_shadowCullPyramidDirty", _lifecycleMethodFlags).GetValue(manager), Is.True);
+            FieldInfo clusterMaskDirtyField = typeof(LightVolumeManager).GetField("_clusterMaskDirty", _lifecycleMethodFlags);
+            clusterMaskDirtyField.SetValue(manager, false); // Simulate the completed geometry-only mask build.
+            manager.AutoUpdateTextures = false;
+            typeof(LightVolumeManager).GetMethod("RefreshShadowCullAutoUpdateState", _lifecycleMethodFlags).Invoke(manager, null);
+            Assert.That((bool)clusterMaskDirtyField.GetValue(manager), Is.True,
+                "Disabling automatic shadow updates must re-arm the hierarchy even for a motionless camera.");
+            Assert.That((bool)buildMethod.Invoke(manager, null), Is.True,
+                "The cached hierarchy must re-arm after automatic shadow updates stop.");
+
+            pyramid.Release();
+            Assert.That(pyramid.IsCreated(), Is.False);
+            Assert.That((bool)buildMethod.Invoke(manager, null), Is.True, "A cached hierarchy must recover after native RenderTexture loss.");
+            pyramid = (RenderTexture)typeof(LightVolumeManager).GetField("_shadowCullPyramid", _lifecycleMethodFlags).GetValue(manager);
+            Assert.That(pyramid, Is.Not.Null);
+            Assert.That(pyramid.IsCreated(), Is.True);
+
+            clusterMaskDirtyField.SetValue(manager, false);
+            manager.ShadowCulling = false;
+            typeof(LightVolumeManager).GetMethod("RefreshShadowCullReceiverParameters", _lifecycleMethodFlags).Invoke(manager, null);
+            Assert.That(manager.ShadowCullPyramidPreview, Is.Null,
+                "Disabling Shadow Culling must release its persistent hierarchy immediately.");
+            Assert.That((bool)clusterMaskDirtyField.GetValue(manager), Is.True,
+                "Disabling Shadow Culling must rebuild a geometry-only Fine mask.");
+            Assert.That((bool)buildMethod.Invoke(manager, null), Is.False);
+
+            manager.ShadowCulling = true;
+            typeof(LightVolumeManager).GetMethod("RefreshShadowCullReceiverParameters", _lifecycleMethodFlags).Invoke(manager, null);
+            Assert.That((bool)buildMethod.Invoke(manager, null), Is.True,
+                "Re-enabling Shadow Culling must clear retry latches and rebuild the hierarchy.");
+        }
+
+        [Test]
+        public void FroxelShadowCullPackedAtlasPreservesLevelMajorSlicesAndFusedTail() {
+            if (SystemInfo.graphicsShaderLevel < 35 || !SystemInfo.SupportsRenderTextureFormat(RenderTextureFormat.RFloat))
+                Assert.Ignore("The active graphics API does not support the RFloat shadow-culling hierarchy.");
+            Shader shader = Shader.Find("Hidden/VRCLV/FroxelShadowCullPyramid");
+            if (shader == null || !shader.isSupported) Assert.Ignore("The shadow-culling hierarchy shader is unavailable.");
+
+            LightVolumeManager manager = CreateManager("Packed Shadow Cull Layout Manager", false, false);
+            RenderTexture shadows = CreateRenderTexture("Packed Shadow Cull EVSM Source", 16, 16, 2,
+                TextureDimension.Tex2DArray, RenderTextureFormat.ARGBFloat);
+            RenderTexture blitSource = CreateRenderTexture("Packed Shadow Cull Blit Source", 1, 1, 1, TextureDimension.Tex2D);
+            float[] casterDepths = { -0.65f, 0.25f };
+            for (int slice = 0; slice < casterDepths.Length; slice++) {
+                float positiveMean = Mathf.Exp(5.54f * casterDepths[slice]);
+                float negativeMagnitude = Mathf.Exp(-5f * casterDepths[slice]);
+                FillRenderTextureArraySlice(shadows, slice, new Color(positiveMean, -negativeMagnitude,
+                    positiveMean * positiveMean, negativeMagnitude * negativeMagnitude));
+            }
+
+            manager.ShadowTextures = shadows;
+            manager.ShadowMapsCount = 2;
+            manager.ShadowBleedReduction = 0.2f;
+            manager.ShadowMinVariance = 0f;
+            typeof(LightVolumeManager).GetField("_activeShadowCount", _lifecycleMethodFlags).SetValue(manager, 2);
+            typeof(LightVolumeManager).GetField("_activeShadowCullCount", _lifecycleMethodFlags).SetValue(manager, 2);
+            typeof(LightVolumeManager).GetField("_clusteringSource", _lifecycleMethodFlags).SetValue(manager, blitSource);
+            typeof(LightVolumeManager).GetMethod("TryInitialize", _lifecycleMethodFlags).Invoke(manager, null);
+            typeof(LightVolumeManager).GetMethod("RefreshShadowCullReceiverParameters", _lifecycleMethodFlags).Invoke(manager, null);
+
+            MethodInfo buildMethod = typeof(LightVolumeManager).GetMethod("BuildShadowCullPyramid", _lifecycleMethodFlags);
+            Assert.That(buildMethod, Is.Not.Null);
+            Assert.That((bool)buildMethod.Invoke(manager, null), Is.True);
+
+            RenderTexture pyramid = (RenderTexture)typeof(LightVolumeManager).GetField("_shadowCullPyramid", _lifecycleMethodFlags).GetValue(manager);
+            Assert.That(pyramid, Is.Not.Null);
+            Assert.That(pyramid.width, Is.EqualTo(16));
+            Assert.That(pyramid.height, Is.EqualTo(11));
+            Assert.That(manager.ShadowCullPyramidLevelCountPreview, Is.EqualTo(3));
+            Assert.That(manager.ShadowCullPyramidSliceCountPreview, Is.EqualTo(2));
+            Assert.That(manager.ShadowCullPyramidNodeCountPreview, Is.EqualTo(168));
+
+            Color[] atlasPixels = ReadRenderTexturePixels(pyramid);
+            Assert.That(atlasPixels, Has.Length.EqualTo(176));
+            float[] criticalDepths = { atlasPixels[0].r, atlasPixels[64].r };
+            for (int slice = 0; slice < casterDepths.Length; slice++) {
+                Assert.That(criticalDepths[slice], Is.GreaterThanOrEqualTo(casterDepths[slice]));
+                Assert.That(criticalDepths[slice], Is.LessThan(casterDepths[slice] + 0.01f),
+                    "Each uniform slice must retain a tight critical depth before layout validation.");
+            }
+
+            // Level-major layout: L1 has 64 nodes per slice, L2 has 16 and the fused L3 tail has 4.
+            int[] levelBases = { 0, 128, 160 };
+            int[] nodesPerSlice = { 64, 16, 4 };
+            for (int levelIndex = 0; levelIndex < levelBases.Length; levelIndex++) {
+                for (int slice = 0; slice < casterDepths.Length; slice++) {
+                    int firstNode = levelBases[levelIndex] + slice * nodesPerSlice[levelIndex];
+                    int endNode = firstNode + nodesPerSlice[levelIndex];
+                    for (int node = firstNode; node < endNode; node++)
+                        Assert.That(atlasPixels[node].r, Is.EqualTo(criticalDepths[slice]).Within(Epsilon),
+                            "Packed level " + (levelIndex + 1) + ", slice " + slice + ", node " + node);
+                }
+            }
+            for (int node = 168; node < atlasPixels.Length; node++)
+                Assert.That(atlasPixels[node].r, Is.EqualTo(2f).Within(Epsilon),
+                    "Unused packed-atlas texels must remain the fail-open sentinel (node " + node + ").");
+
+            RenderTexture[] buildLevels = (RenderTexture[])typeof(LightVolumeManager).GetField("_shadowCullBuildLevels", _lifecycleMethodFlags).GetValue(manager);
+            Assert.That(buildLevels, Is.Not.Null);
+            for (int levelIndex = 0; levelIndex < buildLevels.Length; levelIndex++)
+                Assert.That(buildLevels[levelIndex], Is.Null, "Temporary hierarchy build levels must be released after packing.");
+        }
+
+        [Test]
+        public void FroxelShadowCullAutomaticResolutionCapOmitsFineLevelsWithoutChangingTheirMaxReduction() {
+            if (SystemInfo.graphicsShaderLevel < 35 || !SystemInfo.SupportsRenderTextureFormat(RenderTextureFormat.RFloat))
+                Assert.Ignore("The active graphics API does not support the RFloat shadow-culling hierarchy.");
+            Shader shader = Shader.Find("Hidden/VRCLV/FroxelShadowCullPyramid");
+            if (shader == null || !shader.isSupported) Assert.Ignore("The shadow-culling hierarchy shader is unavailable.");
+
+            LightVolumeManager manager = CreateManager("Capped Shadow Cull Layout Manager", false, false);
+            RenderTexture shadows = CreateRenderTexture("Capped Shadow Cull EVSM Source", 512, 512, 2,
+                TextureDimension.Tex2DArray, RenderTextureFormat.ARGBFloat);
+            RenderTexture blitSource = CreateRenderTexture("Capped Shadow Cull Blit Source", 1, 1, 1, TextureDimension.Tex2D);
+            float[] casterDepths = { -0.4f, 0.35f };
+            for (int slice = 0; slice < casterDepths.Length; slice++) {
+                float positiveMean = Mathf.Exp(5.54f * casterDepths[slice]);
+                float negativeMagnitude = Mathf.Exp(-5f * casterDepths[slice]);
+                FillRenderTextureArraySlice(shadows, slice, new Color(positiveMean, -negativeMagnitude,
+                    positiveMean * positiveMean, negativeMagnitude * negativeMagnitude));
+            }
+
+            manager.ShadowTextures = shadows;
+            manager.ShadowMapsCount = 2;
+            manager.ShadowBleedReduction = 0.2f;
+            manager.ShadowMinVariance = 0f;
+            typeof(LightVolumeManager).GetField("_activeShadowCount", _lifecycleMethodFlags).SetValue(manager, 2);
+            typeof(LightVolumeManager).GetField("_activeShadowCullCount", _lifecycleMethodFlags).SetValue(manager, 2);
+            typeof(LightVolumeManager).GetField("_clusteringSource", _lifecycleMethodFlags).SetValue(manager, blitSource);
+            typeof(LightVolumeManager).GetMethod("TryInitialize", _lifecycleMethodFlags).Invoke(manager, null);
+            typeof(LightVolumeManager).GetMethod("RefreshShadowCullReceiverParameters", _lifecycleMethodFlags).Invoke(manager, null);
+
+            MethodInfo buildMethod = typeof(LightVolumeManager).GetMethod("BuildShadowCullPyramid", _lifecycleMethodFlags);
+            Assert.That((bool)buildMethod.Invoke(manager, null), Is.True);
+            RenderTexture pyramid = manager.ShadowCullPyramidPreview;
+            Assert.That(pyramid, Is.Not.Null);
+            Assert.That(pyramid.width, Is.EqualTo(256));
+            Assert.That(pyramid.height, Is.EqualTo(171));
+            Assert.That(manager.ShadowCullPyramidFinestResolutionPreview, Is.EqualTo(128));
+            Assert.That(manager.ShadowCullPyramidLevelCountPreview, Is.EqualTo(7));
+            Assert.That(manager.ShadowCullPyramidNodeCountPreview, Is.EqualTo(43688));
+
+            Color[] atlasPixels = ReadRenderTexturePixels(pyramid);
+            Assert.That(atlasPixels, Has.Length.EqualTo(43776));
+            float[] criticalDepths = { atlasPixels[0].r, atlasPixels[16384].r };
+            int[] levelBases = { 0, 32768, 40960, 43008, 43520, 43648, 43680 };
+            int[] nodesPerSlice = { 16384, 4096, 1024, 256, 64, 16, 4 };
+            for (int levelIndex = 0; levelIndex < levelBases.Length; levelIndex++) {
+                for (int slice = 0; slice < casterDepths.Length; slice++) {
+                    int firstNode = levelBases[levelIndex] + slice * nodesPerSlice[levelIndex];
+                    int endNode = firstNode + nodesPerSlice[levelIndex];
+                    for (int node = firstNode; node < endNode; node++)
+                        Assert.That(atlasPixels[node].r, Is.EqualTo(criticalDepths[slice]).Within(Epsilon),
+                            "Automatically capped packed level " + (levelIndex + 2) + ", slice " + slice + ", node " + node);
+                }
+            }
+            for (int slice = 0; slice < casterDepths.Length; slice++) {
+                Assert.That(criticalDepths[slice], Is.GreaterThanOrEqualTo(casterDepths[slice]));
+                Assert.That(criticalDepths[slice], Is.LessThan(casterDepths[slice] + 0.01f));
+            }
+            for (int node = 43688; node < atlasPixels.Length; node++)
+                Assert.That(atlasPixels[node].r, Is.EqualTo(2f).Within(Epsilon),
+                    "Unused packed-atlas texels must remain the fail-open sentinel (node " + node + ").");
+        }
+
+        [Test]
+        public void FroxelShadowCullAutomaticResolutionCapTracksShadowSourceResolution() {
+            MethodInfo resolver = typeof(LightVolumeManager).GetMethod("ResolveShadowCullFirstStoredLevel", BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.That(resolver, Is.Not.Null);
+
+            Assert.That((int)resolver.Invoke(null, new object[] { 64 }), Is.EqualTo(1));
+            Assert.That((int)resolver.Invoke(null, new object[] { 256 }), Is.EqualTo(1));
+            Assert.That((int)resolver.Invoke(null, new object[] { 512 }), Is.EqualTo(2));
+            Assert.That((int)resolver.Invoke(null, new object[] { 2048 }), Is.EqualTo(4));
+            Assert.That((int)resolver.Invoke(null, new object[] { 4096 }), Is.EqualTo(5));
+        }
+
+        [Test]
+        public void FroxelShadowCullAtlasPackingUsesShiftablePortableTiles() {
+            MethodInfo resolver = typeof(LightVolumeManager).GetMethod("ResolveShadowCullTileColumns", BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.That(resolver, Is.Not.Null);
+            Assert.That((int)resolver.Invoke(null, new object[] { 126, 128 }), Is.EqualTo(8));
+            Assert.That((int)resolver.Invoke(null, new object[] { 768, 128 }), Is.EqualTo(32));
+            Assert.That((int)resolver.Invoke(null, new object[] { 126, 1024 }), Is.Zero, "Oversized packed pyramids must fall back to geometry-only clustering.");
+        }
+
+        [Test]
+        public void FroxelShadowCullPackedAtlasUsesTheFullPortableCapacity() {
+            MethodInfo resolver = typeof(LightVolumeManager).GetMethod("ResolveShadowCullPackedAtlas", BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.That(resolver, Is.Not.Null);
+
+            object[] singlePointLayout = { 256, 6, 1, 0, 0, 0 };
+            Assert.That((bool)resolver.Invoke(null, singlePointLayout), Is.True);
+            Assert.That((int)singlePointLayout[3], Is.EqualTo(512));
+            Assert.That((int)singlePointLayout[4], Is.EqualTo(256));
+            Assert.That((int)singlePointLayout[5], Is.EqualTo(131064));
+            Assert.That((int)singlePointLayout[3] * (int)singlePointLayout[4] - (int)singlePointLayout[5], Is.EqualTo(8),
+                "One point light has six faces and only eight padding texels in the packed allocation.");
+
+            object[] maximumLayout = { 256, 768, 1, 0, 0, 0 };
+            Assert.That((bool)resolver.Invoke(null, maximumLayout), Is.True);
+            Assert.That((int)maximumLayout[3], Is.EqualTo(4096));
+            Assert.That((int)maximumLayout[4], Is.EqualTo(4096));
+            Assert.That((int)maximumLayout[5], Is.EqualTo(16776192));
+
+            object[] capped512Layout = { 512, 768, 2, 0, 0, 0 };
+            Assert.That((bool)resolver.Invoke(null, capped512Layout), Is.True);
+            Assert.That((int)capped512Layout[3], Is.EqualTo(4096));
+            Assert.That((int)capped512Layout[4], Is.EqualTo(4096));
+            Assert.That((int)capped512Layout[5], Is.EqualTo(16776192));
+
+            object[] capped2048Layout = { 2048, 768, 4, 0, 0, 0 };
+            Assert.That((bool)resolver.Invoke(null, capped2048Layout), Is.True);
+            Assert.That((int)capped2048Layout[3], Is.EqualTo(4096));
+            Assert.That((int)capped2048Layout[4], Is.EqualTo(4096));
+            Assert.That((int)capped2048Layout[5], Is.EqualTo(16776192));
+
+            object[] tooDetailedLayout = { 512, 768, 1, 0, 0, 0 };
+            Assert.That((bool)resolver.Invoke(null, tooDetailedLayout), Is.False,
+                "A 256 x 256 finest level for 128 point lights must exceed one portable 4K atlas.");
+
+            object[] oversizedLayout = { 256, 769, 1, 0, 0, 0 };
+            Assert.That((bool)resolver.Invoke(null, oversizedLayout), Is.False,
+                "One more cube face than the portable 4096x4096 atlas can hold must fail closed to geometry-only clustering.");
+
+            object[] allLightsTooDetailed = { 2048, 768, 3, 0, 0, 0 };
+            Assert.That((bool)resolver.Invoke(null, allLightsTooDetailed), Is.False,
+                "A 256 x 256 finest level for all 128 cubemap lights exceeds the shared 4K atlas.");
+            object[] allLightsGuaranteedLevel = { 2048, 768, 4, 0, 0, 0 };
+            Assert.That((bool)resolver.Invoke(null, allLightsGuaranteedLevel), Is.True,
+                "Automatic quality reduction must still fit all 128 cubemap lights at 128 x 128.");
+        }
+
+        [Test]
+        public void FroxelShadowCullReleasesStaleAllocationWhenShadowSourcesShrinkBelowClusteringThreshold() {
+            if (SystemInfo.graphicsShaderLevel < 35 || !SystemInfo.SupportsRenderTextureFormat(RenderTextureFormat.RFloat))
+                Assert.Ignore("The active graphics API does not support the RFloat shadow-culling hierarchy.");
+            Shader shader = Shader.Find("Hidden/VRCLV/FroxelShadowCullPyramid");
+            if (shader == null || !shader.isSupported) Assert.Ignore("The shadow-culling hierarchy shader is unavailable.");
+
+            LightVolumeManager manager = CreateManager("Shrinking Shadow Cull Layout Manager", false);
+            manager.ShadowTexturesWidth = 16;
+            manager.ShadowTexturesHeight = 16;
+            manager.ShadowBleedReduction = 0.2f;
+            manager.ClusteringMinLights = 4;
+            PointLightVolumeInstance[] points = new PointLightVolumeInstance[4];
+            for (int i = 0; i < points.Length; i++) {
+                points[i] = CreatePointLight(manager, "Shrinking Shadow Source " + i, true);
+                ConfigureShadowTexture(points[i], CreateCubemap("Shrinking Shadow Cubemap " + i), false, true, false);
+            }
+            manager.PointLightVolumeInstances = points;
+            manager.ReinitializeShadowTextures();
+
+            RenderTexture blitSource = CreateRenderTexture("Shrinking Shadow Cull Blit Source", 1, 1, 1, TextureDimension.Tex2D);
+            typeof(LightVolumeManager).GetField("_clusteringSource", _lifecycleMethodFlags).SetValue(manager, blitSource);
+            typeof(LightVolumeManager).GetMethod("TryInitialize", _lifecycleMethodFlags).Invoke(manager, null);
+            typeof(LightVolumeManager).GetMethod("RefreshShadowCullReceiverParameters", _lifecycleMethodFlags).Invoke(manager, null);
+            MethodInfo buildMethod = typeof(LightVolumeManager).GetMethod("BuildShadowCullPyramid", _lifecycleMethodFlags);
+            Assert.That(buildMethod, Is.Not.Null);
+            Assert.That((bool)buildMethod.Invoke(manager, null), Is.True);
+
+            RenderTexture oldHierarchy = manager.ShadowCullPyramidPreview;
+            Assert.That(oldHierarchy, Is.Not.Null);
+            Assert.That(oldHierarchy.width, Is.EqualTo(64));
+            Assert.That(oldHierarchy.height, Is.EqualTo(32));
+            Assert.That(manager.ShadowCullPyramidSliceCountPreview, Is.EqualTo(24));
+
+            for (int i = 0; i < 3; i++) {
+                points[i].IsActive = false;
+                manager.DeinitializePointLightVolume(points[i], false, true);
+            }
+            manager.UpdateVolumes();
+
+            Assert.That(manager.PointLightVolumeInstances, Has.Length.EqualTo(1));
+            Assert.That(manager.ShadowTextures, Is.Not.Null);
+            Assert.That(manager.ShadowTextures.volumeDepth, Is.EqualTo(6));
+            Assert.That(manager.ShadowCullPyramidPreview, Is.Null,
+                "An incompatible hierarchy must release immediately even though one remaining light is below ClusteringMinLights.");
+            Assert.That(oldHierarchy == null, Is.True, "The old native hierarchy allocation must be destroyed, not merely marked invalid.");
+            Assert.That(manager.ShadowCullPyramidDirtyPreview, Is.True);
+
+            Assert.That((bool)buildMethod.Invoke(manager, null), Is.True);
+            RenderTexture rebuiltHierarchy = manager.ShadowCullPyramidPreview;
+            Assert.That(rebuiltHierarchy, Is.Not.Null);
+            Assert.That(rebuiltHierarchy.width, Is.EqualTo(32));
+            Assert.That(rebuiltHierarchy.height, Is.EqualTo(16));
+            Assert.That(manager.ShadowCullPyramidSliceCountPreview, Is.EqualTo(6));
+            Assert.That(manager.ShadowCullPyramidNodeCountPreview, Is.EqualTo(504));
+
+            points[3].IsActive = false;
+            manager.DeinitializePointLightVolume(points[3], false, true);
+            manager.UpdateVolumes();
+
+            Assert.That(manager.ShadowTextures, Is.Null);
+            Assert.That(manager.ShadowCullPyramidPreview, Is.Null);
+            Assert.That(rebuiltHierarchy == null, Is.True,
+                "Removing the last shadow source must release the final hierarchy allocation too.");
+        }
+
+        [Test]
+        public void ShadowCullingDisableWhileClusteringOffReleasesAndRearms() {
+            LightVolumeManager manager = CreateManager("Disabled Clustering Shadow Cull Lifecycle Manager", false);
+            manager.Clustering = false;
+            manager.ShadowCulling = true;
+            typeof(LightVolumeManager).GetMethod("TryInitialize", _lifecycleMethodFlags).Invoke(manager, null);
+            typeof(LightVolumeManager).GetField("_shadowCullSettingsInitialized", _lifecycleMethodFlags).SetValue(manager, true);
+            typeof(LightVolumeManager).GetField("_shadowCullSettingsEnabled", _lifecycleMethodFlags).SetValue(manager, true);
+            typeof(LightVolumeManager).GetField("_shadowCullAuthoredBleedReduction", _lifecycleMethodFlags).SetValue(manager, manager.ShadowBleedReduction);
+            typeof(LightVolumeManager).GetField("_shadowCullAuthoredMinVariance", _lifecycleMethodFlags).SetValue(manager, manager.ShadowMinVariance);
+
+            RenderTexture hierarchy = CreateRenderTexture("Disabled Clustering Shadow Cull Hierarchy", 2, 2, 1, TextureDimension.Tex2D, RenderTextureFormat.RFloat);
+            typeof(LightVolumeManager).GetField("_shadowCullPyramid", _lifecycleMethodFlags).SetValue(manager, hierarchy);
+            typeof(LightVolumeManager).GetField("_shadowCullPyramidValid", _lifecycleMethodFlags).SetValue(manager, true);
+            typeof(LightVolumeManager).GetField("_shadowCullPyramidDirty", _lifecycleMethodFlags).SetValue(manager, false);
+            MethodInfo updateClusteringMethod = typeof(LightVolumeManager).GetMethod("UpdateClustering", _lifecycleMethodFlags);
+
+            manager.ShadowCulling = false;
+            updateClusteringMethod.Invoke(manager, null);
+
+            Assert.That(manager.ShadowCullPyramidPreview, Is.Null);
+            Assert.That(hierarchy == null, Is.True, "Disabling Shadow Culling while clustering is off must release the native hierarchy.");
+            Assert.That((bool)typeof(LightVolumeManager).GetField("_shadowCullSettingsEnabled", _lifecycleMethodFlags).GetValue(manager), Is.False);
+            Assert.That(manager.ShadowCullPyramidDirtyPreview, Is.False);
+
+            manager.ShadowCulling = true;
+            updateClusteringMethod.Invoke(manager, null);
+            Assert.That((bool)typeof(LightVolumeManager).GetField("_shadowCullSettingsEnabled", _lifecycleMethodFlags).GetValue(manager), Is.False, "Clustering-off frames must not do unrelated settings work after the hierarchy is gone.");
+            manager.Clustering = true;
+            updateClusteringMethod.Invoke(manager, null);
+            Assert.That((bool)typeof(LightVolumeManager).GetField("_shadowCullSettingsEnabled", _lifecycleMethodFlags).GetValue(manager), Is.True);
+            Assert.That(manager.ShadowCullPyramidDirtyPreview, Is.True);
+        }
+
+        [Test]
+        public void FroxelShadowCullSkipsPartialOnlyLightsAndRearmsForFirstEligibleShadow() {
+            LightVolumeManager manager = CreateManager("Shadow Cull Rearm Manager", false);
+            manager.ShadowTexturesWidth = 4;
+            manager.ShadowTexturesHeight = 4;
+            PointLightVolumeInstance point = CreatePointLight(manager, "Shadow Cull Rearm Point", true);
+            ConfigureShadowTexture(point, CreateCubemap("Shadow Cull Rearm Source"), false, true, false);
+            point.WorldSpaceShadows = true;
+            point.ShadowBakeRotation = new Quaternion(1f, 0f, 0f, 1f);
+            point.ShadingStrength = 0.5f;
+            manager.PointLightVolumeInstances = new[] { point };
+            manager.UpdateVolumes();
+
+            MethodInfo buildMethod = typeof(LightVolumeManager).GetMethod("BuildShadowCullPyramid", _lifecycleMethodFlags);
+            FieldInfo dirtyField = typeof(LightVolumeManager).GetField("_shadowCullPyramidDirty", _lifecycleMethodFlags);
+            FieldInfo activeShadowCountField = typeof(LightVolumeManager).GetField("_activeShadowCount", _lifecycleMethodFlags);
+            FieldInfo activeShadowCullCountField = typeof(LightVolumeManager).GetField("_activeShadowCullCount", _lifecycleMethodFlags);
+            FieldInfo dirtyPointLightCountField = typeof(LightVolumeManager).GetField("_dirtyPointLightCount", _lifecycleMethodFlags);
+            int[] dirtyPointLightIndices = (int[])typeof(LightVolumeManager).GetField("_dirtyPointLightShaderIndices", _lifecycleMethodFlags).GetValue(manager);
+            int[] dirtyPointLightFlags = (int[])typeof(LightVolumeManager).GetField("_dirtyPointLightUpdateFlags", _lifecycleMethodFlags).GetValue(manager);
+            MethodInfo updateDynamicVolumesMethod = typeof(LightVolumeManager).GetMethod("UpdateDynamicVolumeTransforms", _lifecycleMethodFlags);
+            Assert.That(buildMethod, Is.Not.Null);
+            Assert.That(dirtyField, Is.Not.Null);
+            Assert.That(updateDynamicVolumesMethod, Is.Not.Null);
+            Assert.That((int)activeShadowCountField.GetValue(manager), Is.EqualTo(1));
+            Assert.That((int)activeShadowCullCountField.GetValue(manager), Is.Zero,
+                "A partial shadow still shades pixels but can never make their final contribution exactly zero.");
+            Assert.That((bool)buildMethod.Invoke(manager, null), Is.False);
+            Assert.That(manager.ShadowCullPyramidPreview, Is.Null,
+                "A partial-only scene must not allocate a hierarchy that no light can consume.");
+            Assert.That((bool)dirtyField.GetValue(manager), Is.False, "The ineligible attempt should consume its current invalidation.");
+
+            point.ShadingStrength = 1f;
+            dirtyPointLightIndices[0] = 0;
+            dirtyPointLightFlags[0] = 2; // PointLightUpdateFull
+            dirtyPointLightCountField.SetValue(manager, 1);
+            updateDynamicVolumesMethod.Invoke(manager, null);
+
+            Assert.That((bool)dirtyField.GetValue(manager), Is.True,
+                "An incremental transition to the first complete shadow must re-arm the hierarchy.");
+            Assert.That((int)activeShadowCullCountField.GetValue(manager), Is.EqualTo(1));
+            Vector4 uploadedRotation = Shader.GetGlobalVectorArray(_pointLightShadowRotationDataID)[0];
+            Assert.That(uploadedRotation.sqrMagnitude, Is.EqualTo(1f).Within(0.000001f), "Uploaded shadow rotations must preserve froxel-sphere radii.");
+            Vector4 froxelShadowMetadata = Shader.GetGlobalVectorArray(_froxelShadowMetadataID)[0];
+            Assert.That(Mathf.Abs(froxelShadowMetadata.x), Is.EqualTo(1f), "The first cubemap shadow must predecode to base slice zero plus its non-zero sentinel offset.");
+            Assert.That(froxelShadowMetadata.y, Is.GreaterThan(0f), "A positive near clip marks a cubemap shadow.");
+            Assert.That(Mathf.Abs(froxelShadowMetadata.z), Is.GreaterThan(0f));
+            Assert.That(froxelShadowMetadata.w, Is.GreaterThan(0f), "A non-identity shadow rotation must select the cold rotation path.");
+            Assert.That(Mathf.Abs(froxelShadowMetadata.z * froxelShadowMetadata.w), Is.EqualTo(1f).Within(0.00001f),
+                "Predecoded reciprocal and physical shadow ranges must stay paired.");
+
+            RenderTexture staleHierarchy = CreateRenderTexture("Partial Shadow Stale Hierarchy", 2, 2, 1,
+                TextureDimension.Tex2D, RenderTextureFormat.RFloat);
+            typeof(LightVolumeManager).GetField("_shadowCullPyramid", _lifecycleMethodFlags).SetValue(manager, staleHierarchy);
+            typeof(LightVolumeManager).GetField("_shadowCullPyramidValid", _lifecycleMethodFlags).SetValue(manager, true);
+            point.ShadingStrength = 0.5f;
+            dirtyPointLightIndices[0] = 0;
+            dirtyPointLightFlags[0] = 2; // PointLightUpdateFull
+            dirtyPointLightCountField.SetValue(manager, 1);
+            updateDynamicVolumesMethod.Invoke(manager, null);
+
+            Assert.That((int)activeShadowCullCountField.GetValue(manager), Is.Zero);
+            Assert.That(Shader.GetGlobalVectorArray(_froxelShadowMetadataID)[0], Is.EqualTo(Vector4.zero),
+                "An ineligible partial shadow must clear the clustering-only metadata slot.");
+            Assert.That(manager.ShadowCullPyramidPreview, Is.Null,
+                "An incremental transition of the last eligible shadow to partial strength must release the hierarchy immediately.");
+            Assert.That(staleHierarchy == null, Is.True);
+        }
+
+        [Test]
+        public void FroxelShadowCullKeepsHierarchyWhenEligibleLightsSwapInOneBatch() {
+            LightVolumeManager manager = CreateManager("Shadow Cull Eligibility Swap Manager", false);
+            manager.ShadowTexturesWidth = 4;
+            manager.ShadowTexturesHeight = 4;
+            PointLightVolumeInstance first = CreatePointLight(manager, "Shadow Cull Swap First", true);
+            PointLightVolumeInstance second = CreatePointLight(manager, "Shadow Cull Swap Second", true);
+            ConfigureShadowTexture(first, CreateCubemap("Shadow Cull Swap First Source"), false, true, false);
+            ConfigureShadowTexture(second, CreateCubemap("Shadow Cull Swap Second Source"), false, true, false);
+            first.ShadingStrength = 1f;
+            second.ShadingStrength = 0.5f;
+            manager.PointLightVolumeInstances = new[] { first, second };
+            manager.UpdateVolumes();
+
+            FieldInfo activeShadowCullCountField = typeof(LightVolumeManager).GetField("_activeShadowCullCount", _lifecycleMethodFlags);
+            FieldInfo hierarchyField = typeof(LightVolumeManager).GetField("_shadowCullPyramid", _lifecycleMethodFlags);
+            FieldInfo hierarchyValidField = typeof(LightVolumeManager).GetField("_shadowCullPyramidValid", _lifecycleMethodFlags);
+            FieldInfo hierarchyDirtyField = typeof(LightVolumeManager).GetField("_shadowCullPyramidDirty", _lifecycleMethodFlags);
+            FieldInfo dirtyPointLightCountField = typeof(LightVolumeManager).GetField("_dirtyPointLightCount", _lifecycleMethodFlags);
+            int[] dirtyPointLightIndices = (int[])typeof(LightVolumeManager).GetField("_dirtyPointLightShaderIndices", _lifecycleMethodFlags).GetValue(manager);
+            int[] dirtyPointLightFlags = (int[])typeof(LightVolumeManager).GetField("_dirtyPointLightUpdateFlags", _lifecycleMethodFlags).GetValue(manager);
+            MethodInfo updateDynamicVolumesMethod = typeof(LightVolumeManager).GetMethod("UpdateDynamicVolumeTransforms", _lifecycleMethodFlags);
+            Assert.That(updateDynamicVolumesMethod, Is.Not.Null);
+            Assert.That((int)activeShadowCullCountField.GetValue(manager), Is.EqualTo(1));
+
+            RenderTexture hierarchy = CreateRenderTexture("Retained Shadow Cull Swap Hierarchy", 2, 2, 1,
+                TextureDimension.Tex2D, RenderTextureFormat.RFloat);
+            hierarchyField.SetValue(manager, hierarchy);
+            hierarchyValidField.SetValue(manager, true);
+            hierarchyDirtyField.SetValue(manager, false);
+
+            first.ShadingStrength = 0.5f;
+            second.ShadingStrength = 1f;
+            dirtyPointLightIndices[0] = 0;
+            dirtyPointLightIndices[1] = 1;
+            dirtyPointLightFlags[0] = 2; // PointLightUpdateFull
+            dirtyPointLightFlags[1] = 2;
+            dirtyPointLightCountField.SetValue(manager, 2);
+            updateDynamicVolumesMethod.Invoke(manager, null);
+
+            Assert.That((int)activeShadowCullCountField.GetValue(manager), Is.EqualTo(1));
+            Assert.That(manager.ShadowCullPyramidPreview, Is.SameAs(hierarchy),
+                "A same-frame eligibility swap must not destroy a hierarchy whose final consumer count is unchanged.");
+            Assert.That((bool)hierarchyValidField.GetValue(manager), Is.True);
+            Assert.That((bool)hierarchyDirtyField.GetValue(manager), Is.False);
         }
 
         // Native editor texture loss must invalidate the C# cache even when camera and layout values stay unchanged.
@@ -652,6 +1216,21 @@ namespace VRCLightVolumes.Tests {
             Assert.That(recoveredMask, Is.Not.Null);
             Assert.That(recoveredMask.IsCreated(), Is.True);
 
+            Material replacementMaterial = CreateMaterial("Hidden/VRCLV/FroxelClusteringBuild");
+            manager.ClusteringMaterial = replacementMaterial;
+            manager.UpdateClusteringFromCamera(camera);
+
+            Vector4 fineGrid = manager.FineFroxelGridParamsPreview;
+            Vector4 coarseGrid = manager.CoarseFroxelGridParamsPreview;
+            Assert.That(replacementMaterial.GetVector(Shader.PropertyToID("_UdonFroxelFineGrid")), Is.EqualTo(fineGrid));
+            Assert.That(replacementMaterial.GetVector(Shader.PropertyToID("_UdonFroxelCoarseGrid")), Is.EqualTo(coarseGrid));
+            Assert.That(replacementMaterial.GetVector(Shader.PropertyToID("_UdonFroxelGridInverse")), Is.EqualTo(new Vector4(
+                1f / fineGrid.x, 1f / fineGrid.y, 1f / coarseGrid.x, 1f / coarseGrid.y)));
+            Assert.That(replacementMaterial.GetTexture(Shader.PropertyToID("_UdonCoarseClusterMask")),
+                Is.SameAs(manager.CoarseClusterMaskPreview));
+            Assert.That(replacementMaterial.GetVector(Shader.PropertyToID("_UdonFroxelDepthStep")).y,
+                Is.GreaterThan(1f), "A replacement material must receive the cached depth ratios before its first Fine draw.");
+
             int clusteringEnabledID = Shader.PropertyToID("_UdonClusteringEnabled");
             int fineMaskID = Shader.PropertyToID("_UdonClusterMask");
             int coarseMaskID = Shader.PropertyToID("_UdonCoarseClusterMask");
@@ -660,6 +1239,57 @@ namespace VRCLightVolumes.Tests {
             Assert.That(Shader.GetGlobalFloat(clusteringEnabledID), Is.Zero);
             Assert.That(Shader.GetGlobalTexture(fineMaskID), Is.Null);
             Assert.That(Shader.GetGlobalTexture(coarseMaskID), Is.Null);
+        }
+
+        // A delayed runtime material publish must re-arm Hi-Z even when the camera itself stays still.
+        [Test]
+        public void FroxelClusteringRetriesPendingShadowHierarchyWithoutCameraMotion() {
+            if (SystemInfo.graphicsShaderLevel < 35
+                    || !SystemInfo.SupportsRenderTextureFormat(RenderTextureFormat.ARGBInt)
+                    || !SystemInfo.SupportsRenderTextureFormat(RenderTextureFormat.RFloat))
+                Assert.Ignore("The active graphics API does not support the froxel clustering formats.");
+            Shader clusteringShader = Shader.Find("Hidden/VRCLV/FroxelClusteringBuild");
+            Shader shadowCullShader = Shader.Find("Hidden/VRCLV/FroxelShadowCullPyramid");
+            if (clusteringShader == null || !clusteringShader.isSupported
+                    || shadowCullShader == null || !shadowCullShader.isSupported)
+                Assert.Ignore("The froxel clustering shaders are unavailable on the active graphics API.");
+
+            LightVolumeManager manager = CreateManager("Pending Shadow Cull Retry Manager", false);
+            manager.Clustering = true;
+            manager.ClusteringMinLights = 1;
+            manager.FroxelDensity = 0.1f;
+            manager.FroxelSlices = 8;
+            manager.FroxelCoarse = 2;
+            manager.ShadowTexturesWidth = 4;
+            manager.ShadowTexturesHeight = 4;
+            PointLightVolumeInstance point = CreatePointLight(manager, "Pending Shadow Cull Retry Light", true);
+            ConfigureShadowTexture(point, CreateCubemap("Pending Shadow Cull Retry Source"), false, true, false);
+            manager.PointLightVolumeInstances = new[] { point };
+            manager.ReinitializeShadowTextures();
+            manager.UpdateVolumes();
+
+            GameObject cameraObject = CreateGameObject("Pending Shadow Cull Retry Camera", false);
+            Camera camera = cameraObject.AddComponent<Camera>();
+            camera.fieldOfView = 60f;
+            camera.aspect = 16f / 9f;
+            camera.nearClipPlane = 0.1f;
+            camera.farClipPlane = 100f;
+            manager.UpdateClusteringFromCamera(camera);
+            Assert.That(manager.ShadowCullPyramidValidPreview, Is.True);
+
+            FieldInfo hierarchyDirtyField = typeof(LightVolumeManager).GetField("_shadowCullPyramidDirty", _lifecycleMethodFlags);
+            FieldInfo hierarchyValidField = typeof(LightVolumeManager).GetField("_shadowCullPyramidValid", _lifecycleMethodFlags);
+            FieldInfo maskDirtyField = typeof(LightVolumeManager).GetField("_clusterMaskDirty", _lifecycleMethodFlags);
+            hierarchyDirtyField.SetValue(manager, true);
+            hierarchyValidField.SetValue(manager, false);
+            maskDirtyField.SetValue(manager, false);
+
+            manager.UpdateClusteringFromCamera(camera);
+
+            Assert.That(manager.ShadowCullPyramidValidPreview, Is.True,
+                "A ready dependency must rebuild a pending hierarchy without waiting for camera motion.");
+            Assert.That(manager.ShadowCullPyramidDirtyPreview, Is.False);
+            Assert.That((bool)maskDirtyField.GetValue(manager), Is.False);
         }
 
         // Domain reload recovery must distrust every restored runtime gate, not only the depth cache.
@@ -980,6 +1610,7 @@ namespace VRCLightVolumes.Tests {
             manager.RuntimeShadowBlurUniformKeyword = 1;
             manager.RuntimeShadowBlurDirectKeyword = 1;
             manager.RuntimeShadowBlurSphericalKeyword = 1;
+            manager.ShadowCulling = false;
             point.RuntimeShadowCamera = runtimeCamera;
 
             MethodInfo applyManagerDependencies = preprocessorType.GetMethod("ApplyManagerRuntimeDependencies", _staticMigrationMethodFlags);
@@ -996,6 +1627,10 @@ namespace VRCLightVolumes.Tests {
             Assert.That(manager.RuntimeShadowCamera, Is.SameAs(runtimeCamera));
             Assert.That(managerBacking.publicVariables.TryGetVariableValue("RuntimeShadowCamera", out object serializedManagerCamera), Is.True);
             Assert.That(serializedManagerCamera, Is.SameAs(runtimeCamera));
+            Assert.That(managerBacking.publicVariables.TryGetVariableValue("FroxelShadowCullResolution", out object removedShadowCullResolution), Is.False,
+                "The removed authoring control must not remain in the compiled Udon heap.");
+            Assert.That(managerBacking.publicVariables.TryGetVariableValue("ShadowCulling", out object serializedShadowCulling), Is.True);
+            Assert.That(serializedShadowCulling, Is.EqualTo(false));
             Assert.That(manager.RuntimeShadowBlurQualityPreset, Is.EqualTo(-1));
             Assert.That(managerBacking.publicVariables.TryGetVariableValue("RuntimeShadowBlurQualityPreset", out object serializedBlurPreset), Is.True);
             Assert.That(serializedBlurPreset, Is.EqualTo(-1));
@@ -1841,6 +2476,7 @@ namespace VRCLightVolumes.Tests {
             manager.RuntimeShadowBlurMaterial = null;
             manager.CubemapFaceMaterial = null;
             manager.ClusteringMaterial = null;
+            manager.ShadowCullingMaterial = null;
             LightVolumePreprocessor.EnsureRuntimeDependencies(manager);
             LightVolumePreprocessor.PreparePointLightRuntimeShadowDependencies(point, manager, false);
 
@@ -1849,8 +2485,11 @@ namespace VRCLightVolumes.Tests {
             Assert.That(manager.RuntimeShadowCamera, Is.Not.Null);
             Assert.That(manager.RuntimeShadowDepthEncodeMaterial, Is.Not.Null);
             Assert.That(manager.RuntimeShadowBlurMaterial, Is.Not.Null);
+            Assert.That(manager.ShadowCullingMaterial, Is.Not.Null);
             Assert.That(managerBacking.publicVariables.TryGetVariableValue("RuntimeShadowCamera", out object backingCamera), Is.True);
             Assert.That(backingCamera, Is.SameAs(manager.RuntimeShadowCamera));
+            Assert.That(managerBacking.publicVariables.TryGetVariableValue("ShadowCullingMaterial", out object backingShadowCullingMaterial), Is.True);
+            Assert.That(backingShadowCullingMaterial, Is.SameAs(manager.ShadowCullingMaterial));
             Assert.That(point.ShadowMapTexture, Is.SameAs(previousShadow));
             Assert.That(point.ShadowMapID, Is.EqualTo(0f));
             Assert.That(pointBacking.publicVariables.TryGetVariableValue("ShadowMapTexture", out object backingShadow), Is.True);
@@ -4118,6 +4757,8 @@ namespace VRCLightVolumes.Tests {
             RenderTexture fineClusterMask = CreateRenderTexture("Runtime Fine Cluster Mask", 16, 16, 1, TextureDimension.Tex2D);
             RenderTexture coarseClusterMask = CreateRenderTexture("Runtime Coarse Cluster Mask", 8, 8, 1, TextureDimension.Tex2D);
             RenderTexture clusteringSource = CreateRenderTexture("Runtime Clustering Source", 1, 1, 1, TextureDimension.Tex2D);
+            RenderTexture shadowCullHierarchy = CreateRenderTexture("Runtime Shadow Cull Hierarchy", 8, 8, 1, TextureDimension.Tex2D, RenderTextureFormat.RFloat);
+            RenderTexture shadowCullBuildLevel = CreateRenderTexture("Runtime Shadow Cull Build Level", 4, 4, 1, TextureDimension.Tex2D, RenderTextureFormat.RFloat);
             RenderTexture dummyBlitSource = CreateRenderTexture("Runtime Dummy Blit Source", 1, 1, 1, TextureDimension.Tex2D);
             customTextures.hideFlags = HideFlags.HideAndDontSave;
             shadowTextures.hideFlags = HideFlags.HideAndDontSave;
@@ -4127,14 +4768,22 @@ namespace VRCLightVolumes.Tests {
             FieldInfo fineClusterMaskField = typeof(LightVolumeManager).GetField("_clusterMask", _lifecycleMethodFlags);
             FieldInfo coarseClusterMaskField = typeof(LightVolumeManager).GetField("_coarseClusterMask", _lifecycleMethodFlags);
             FieldInfo clusteringSourceField = typeof(LightVolumeManager).GetField("_clusteringSource", _lifecycleMethodFlags);
+            FieldInfo shadowCullPyramidField = typeof(LightVolumeManager).GetField("_shadowCullPyramid", _lifecycleMethodFlags);
+            FieldInfo shadowCullBuildLevelsField = typeof(LightVolumeManager).GetField("_shadowCullBuildLevels", _lifecycleMethodFlags);
             FieldInfo directShadowPreservationField = typeof(LightVolumeManager).GetField("_directShadowPreservationTexture", _lifecycleMethodFlags);
             Assert.That(fineClusterMaskField, Is.Not.Null);
             Assert.That(coarseClusterMaskField, Is.Not.Null);
             Assert.That(clusteringSourceField, Is.Not.Null);
+            Assert.That(shadowCullPyramidField, Is.Not.Null);
+            Assert.That(shadowCullBuildLevelsField, Is.Not.Null);
             Assert.That(directShadowPreservationField, Is.Not.Null);
             fineClusterMaskField.SetValue(manager, fineClusterMask);
             coarseClusterMaskField.SetValue(manager, coarseClusterMask);
             clusteringSourceField.SetValue(manager, clusteringSource);
+            shadowCullPyramidField.SetValue(manager, shadowCullHierarchy);
+            RenderTexture[] shadowCullBuildLevels = new RenderTexture[12];
+            shadowCullBuildLevels[0] = shadowCullBuildLevel;
+            shadowCullBuildLevelsField.SetValue(manager, shadowCullBuildLevels);
             directShadowPreservationField.SetValue(manager, directShadowPreservation);
             _dummyRTField.SetValue(manager, dummyBlitSource);
 
@@ -4145,6 +4794,8 @@ namespace VRCLightVolumes.Tests {
             Assert.That(fineClusterMaskField.GetValue(manager), Is.Null);
             Assert.That(coarseClusterMaskField.GetValue(manager), Is.Null);
             Assert.That(clusteringSourceField.GetValue(manager), Is.Null);
+            Assert.That(shadowCullPyramidField.GetValue(manager), Is.Null);
+            Assert.That(((RenderTexture[])shadowCullBuildLevelsField.GetValue(manager))[0], Is.Null);
             Assert.That(directShadowPreservationField.GetValue(manager), Is.Null);
             Assert.That(_dummyRTField.GetValue(manager), Is.Null);
             Assert.That(customTextures == null, Is.True);
@@ -4152,6 +4803,8 @@ namespace VRCLightVolumes.Tests {
             Assert.That(fineClusterMask == null, Is.True);
             Assert.That(coarseClusterMask == null, Is.True);
             Assert.That(clusteringSource == null, Is.True);
+            Assert.That(shadowCullHierarchy == null, Is.True);
+            Assert.That(shadowCullBuildLevel == null, Is.True);
             Assert.That(directShadowPreservation == null, Is.True);
             Assert.That(dummyBlitSource == null, Is.True);
         }
@@ -4218,17 +4871,27 @@ namespace VRCLightVolumes.Tests {
             LightVolumeManager manager = CreateManager("Runtime Shadow Material Cleanup Manager", false);
             Material depthMaterial = CreateMaterial("Hidden/VRCLV/PointLightShadowDepthEncode");
             Material blurMaterial = CreateMaterial("Hidden/VRCLV/PointLightShadowRuntimeBlur");
+            Material clusteringMaterial = CreateMaterial("Hidden/VRCLV/FroxelClusteringBuild");
+            Material shadowCullingMaterial = CreateMaterial("Hidden/VRCLV/FroxelShadowCullPyramid");
             depthMaterial.hideFlags = HideFlags.HideAndDontSave;
             blurMaterial.hideFlags = HideFlags.HideAndDontSave;
+            clusteringMaterial.hideFlags = HideFlags.HideAndDontSave;
+            shadowCullingMaterial.hideFlags = HideFlags.HideAndDontSave;
             manager.RuntimeShadowDepthEncodeMaterial = depthMaterial;
             manager.RuntimeShadowBlurMaterial = blurMaterial;
+            manager.ClusteringMaterial = clusteringMaterial;
+            manager.ShadowCullingMaterial = shadowCullingMaterial;
 
             InvokeLifecycleMethod(manager, "OnDestroy");
 
             Assert.That(manager.RuntimeShadowDepthEncodeMaterial, Is.Null);
             Assert.That(manager.RuntimeShadowBlurMaterial, Is.Null);
+            Assert.That(manager.ClusteringMaterial, Is.Null);
+            Assert.That(manager.ShadowCullingMaterial, Is.Null);
             Assert.That(depthMaterial == null, Is.True);
             Assert.That(blurMaterial == null, Is.True);
+            Assert.That(clusteringMaterial == null, Is.True);
+            Assert.That(shadowCullingMaterial == null, Is.True);
         }
 
         // Verifies shadow runtime arrays use the default EVSM float format.
@@ -5594,12 +6257,18 @@ namespace VRCLightVolumes.Tests {
             Assert.That(direct.ShadowMapTexture, Is.Null);
             Assert.That(direct.ShadowMapMaterial, Is.Null);
             Assert.That(direct.AutoUpdateShadowMap, Is.False);
+            Assert.That(manager.ActiveShadowCullCountPreview, Is.EqualTo(1), "Only the static source-backed neighbour may consume Hi-Z; realtime direct output changes every frame.");
+            Vector4[] froxelShadowMetadata = Shader.GetGlobalVectorArray(_froxelShadowMetadataID);
+            Assert.That(froxelShadowMetadata[0], Is.EqualTo(Vector4.zero));
+            Assert.That(froxelShadowMetadata[1].x, Is.Not.Zero);
 
             for (int face = 0; face < 6; face++) {
                 FillRenderTextureArraySlice(publishedAtlas, directBaseSlice + face, new Color(0.91f, 0.07f, 0.73f, 1f));
                 FillRenderTextureArraySlice(publishedAtlas, neighbourBaseSlice + face, new Color(0.03f, 0.82f, 0.19f, 1f));
             }
             Color[][] pixelsBeforeRebake = ReadRenderTextureArrayPixels(publishedAtlas);
+            FieldInfo hierarchyDirtyField = typeof(LightVolumeManager).GetField("_shadowCullPyramidDirty", _lifecycleMethodFlags);
+            hierarchyDirtyField.SetValue(manager, false);
 
             direct.transform.position = new Vector3(4f, 5f, 6f);
             direct.BakeShadows();
@@ -5607,17 +6276,91 @@ namespace VRCLightVolumes.Tests {
             Assert.That(manager.ShadowTextures, Is.SameAs(publishedAtlas));
             Assert.That(sourceField.GetValue(direct), Is.Null);
             Assert.That(direct.ShadowMapTexture, Is.Null);
+            Assert.That((bool)hierarchyDirtyField.GetValue(manager), Is.False, "A realtime direct slice is never queried by Hi-Z and must not invalidate the static hierarchy.");
             Color[][] pixelsAfterRebake = ReadRenderTextureArrayPixels(publishedAtlas);
             for (int face = 0; face < 6; face++) {
-                Assert.That(PixelArraysDiffer(pixelsBeforeRebake[directBaseSlice + face], pixelsAfterRebake[directBaseSlice + face]), Is.True,
-                    "The complete direct rebake did not rewrite owned face " + face);
-                AssertPixelArraysEqual(pixelsBeforeRebake[neighbourBaseSlice + face], pixelsAfterRebake[neighbourBaseSlice + face],
-                    "Direct rebake changed neighbour slice " + face);
+                Assert.That(PixelArraysDiffer(pixelsBeforeRebake[directBaseSlice + face], pixelsAfterRebake[directBaseSlice + face]), Is.True, "The complete direct rebake did not rewrite owned face " + face);
+                AssertPixelArraysEqual(pixelsBeforeRebake[neighbourBaseSlice + face], pixelsAfterRebake[neighbourBaseSlice + face], "Direct rebake changed neighbour slice " + face);
             }
         }
 
-        // A structural atlas rebuild may move a source-less direct slot. Its last complete result
-        // must survive the remap without waiting for the following realtime bake.
+        // A realtime direct request falls back to a normal source when its resolution differs from the Manager atlas. That continuously rewritten fallback must remain outside Hi-Z.
+        [Test]
+        public void RuntimeShadowDirectResolutionFallbackTransitionsHiZWithoutPerFrameRebuild() {
+            LightVolumeManager manager = CreateManager("Runtime Shadow Direct Resolution Fallback Manager", false);
+            manager.ShadowTexturesWidth = 16;
+            manager.ShadowTexturesHeight = 16;
+
+            PointLightVolumeInstance realtime = CreatePointLight(manager, "Runtime Shadow Direct Resolution Fallback Light", true);
+            realtime.ShadowMapUsesCubemap = true;
+            realtime.Shadows = true;
+            realtime.LayerMask = 0;
+            realtime.FarClip = 4f;
+            realtime.Blur = 0f;
+            realtime.RuntimeShadowResolution = 32;
+            realtime.RuntimeShadowDepthEncodeMaterial = CreateMaterial("Hidden/VRCLV/PointLightShadowDepthEncode");
+            AddRuntimeShadowCamera(realtime);
+
+            Texture2DArray neighbourSource = CreateSliceColorTextureArray("Runtime Shadow Direct Resolution Fallback Neighbour", 16, 16, new[] { Color.red, Color.green, Color.blue, Color.yellow, Color.cyan, Color.white });
+            PointLightVolumeInstance neighbour = CreatePointLight(manager, "Runtime Shadow Direct Resolution Fallback Neighbour Light", true);
+            ConfigureShadowTexture(neighbour, neighbourSource, false, false, true);
+            neighbour.ShadowMapUsesCubemap = true;
+            neighbour.Shadows = true;
+            manager.PointLightVolumeInstances = new[] { realtime, neighbour };
+
+            FieldInfo sourceField = typeof(PointLightVolumeInstance).GetField("_runtimeShadowTexture", _lifecycleMethodFlags);
+            FieldInfo hierarchyDirtyField = typeof(LightVolumeManager).GetField("_shadowCullPyramidDirty", _lifecycleMethodFlags);
+            Assert.That(sourceField, Is.Not.Null);
+            Assert.That(hierarchyDirtyField, Is.Not.Null);
+
+            realtime.BakeShadows();
+            RenderTexture fallbackSource = sourceField.GetValue(realtime) as RenderTexture;
+            Assert.That(fallbackSource, Is.Not.Null);
+            Assert.That(fallbackSource.width, Is.EqualTo(32));
+            Assert.That(manager.ShadowTextures, Is.Not.Null);
+            Assert.That(manager.ShadowTextures.width, Is.EqualTo(16));
+            Assert.That(manager.ActiveShadowCullCountPreview, Is.EqualTo(2));
+            Assert.That(Shader.GetGlobalVectorArray(_froxelShadowMetadataID)[0].x, Is.Not.Zero);
+
+            GameObject bakerObject = CreateGameObject("Runtime Shadow Direct Resolution Fallback Baker", false);
+            PointLightShadowRuntimeBaker baker = bakerObject.AddComponent<PointLightShadowRuntimeBaker>();
+            MethodInfo configureMethod = typeof(PointLightShadowRuntimeBaker).GetMethod("ConfigureTargetBake", _lifecycleMethodFlags);
+            MethodInfo releaseMethod = typeof(PointLightShadowRuntimeBaker).GetMethod("ReleaseConfiguredTarget", _lifecycleMethodFlags);
+            Assert.That(configureMethod, Is.Not.Null);
+            Assert.That(releaseMethod, Is.Not.Null);
+            configureMethod.Invoke(baker, new object[] { realtime, true });
+
+            Assert.That(manager.ActiveShadowCullCountPreview, Is.EqualTo(1), "Only the static neighbour may consume Hi-Z while the realtime request uses a resolution fallback.");
+            Vector4[] froxelShadowMetadata = Shader.GetGlobalVectorArray(_froxelShadowMetadataID);
+            Assert.That(froxelShadowMetadata[0], Is.EqualTo(Vector4.zero));
+            Assert.That(froxelShadowMetadata[1].x, Is.Not.Zero);
+
+            hierarchyDirtyField.SetValue(manager, false);
+            realtime.transform.position = new Vector3(4f, 5f, 6f);
+            realtime.BakeShadows();
+            realtime.BakeShadows();
+
+            Assert.That(sourceField.GetValue(realtime), Is.SameAs(fallbackSource));
+            Assert.That((bool)hierarchyDirtyField.GetValue(manager), Is.False, "A continuously rewritten resolution-fallback source is never queried by Hi-Z and must not invalidate its static hierarchy.");
+
+            configureMethod.Invoke(baker, new object[] { realtime, false });
+            Assert.That(manager.ActiveShadowCullCountPreview, Is.EqualTo(2));
+            Assert.That(Shader.GetGlobalVectorArray(_froxelShadowMetadataID)[0].x, Is.Not.Zero);
+            Assert.That((bool)hierarchyDirtyField.GetValue(manager), Is.True, "Re-arming a now-static fallback source must rebuild the hierarchy even while another eligible light remains active.");
+
+            configureMethod.Invoke(baker, new object[] { realtime, true });
+            Assert.That(manager.ActiveShadowCullCountPreview, Is.EqualTo(1));
+            hierarchyDirtyField.SetValue(manager, false);
+            releaseMethod.Invoke(baker, null);
+
+            Assert.That(realtime.RuntimeShadowDirectOutput, Is.False);
+            Assert.That(sourceField.GetValue(realtime), Is.SameAs(fallbackSource));
+            Assert.That(manager.ActiveShadowCullCountPreview, Is.EqualTo(2));
+            Assert.That(Shader.GetGlobalVectorArray(_froxelShadowMetadataID)[0].x, Is.Not.Zero);
+            Assert.That((bool)hierarchyDirtyField.GetValue(manager), Is.True, "Stopping the production realtime loop must re-arm the retained fallback source and rebuild its hierarchy.");
+        }
+
+        // A structural atlas rebuild may move a source-less direct slot. Its last complete result must survive the remap without waiting for the following realtime bake.
         [Test]
         public void RuntimeShadowDirectBakeRecoversAfterAtlasReallocation() {
             LightVolumeManager manager = CreateManager("Runtime Shadow Direct Reallocation Manager", false);
@@ -6208,18 +6951,39 @@ namespace VRCLightVolumes.Tests {
             SetManagerField(manager, _clusteringLightsDirtyField, false);
             SetManagerField(manager, _clusterGeometryUploadPendingField, false);
 
-            _writeClusteringLightMethod.Invoke(manager, new object[] { 0, point.SquaredRange, 0, 0f, Vector3.forward });
+            _writeClusteringLightMethod.Invoke(manager, new object[] { 0, point.SquaredRange, 0, 0f, Vector3.forward, false });
 
             Assert.That(GetManagerField<bool>(manager, _clusteringLightsDirtyField), Is.False);
             Assert.That(GetManagerField<bool>(manager, _clusterGeometryUploadPendingField), Is.False);
             Assert.That(GetManagerField<bool>(manager, _clusterMaskDirtyField), Is.False);
 
-            _writeClusteringLightMethod.Invoke(manager, new object[] { 0, point.SquaredRange + 1f, 0, 0f, Vector3.forward });
+            _writeClusteringLightMethod.Invoke(manager, new object[] { 0, point.SquaredRange + 1f, 0, 0f, Vector3.forward, false });
 
             Assert.That(GetManagerField<bool>(manager, _clusteringLightsDirtyField), Is.True);
             Assert.That(GetManagerField<bool>(manager, _clusterGeometryUploadPendingField), Is.True);
             Assert.That(GetManagerField<bool>(manager, _clusterMaskDirtyField), Is.False,
                 "Mask invalidation is deferred until geometry globals have been submitted.");
+        }
+
+        [Test]
+        public void FroxelShadowCullEligibilityUsesOnlyThePackedRangeSign() {
+            LightVolumeManager manager = CreateManager("Shadow Cull Eligibility Manager", false);
+            Assert.That(_writeClusteringLightMethod, Is.Not.Null);
+            FieldInfo clusteringLightsField = typeof(LightVolumeManager).GetField("_clusteringLights", _lifecycleMethodFlags);
+            Assert.That(clusteringLightsField, Is.Not.Null);
+
+            _writeClusteringLightMethod.Invoke(manager,
+                new object[] { 0, 49f, 0, 0f, Vector3.forward, true });
+            Vector4[] clusteringLights = (Vector4[])clusteringLightsField.GetValue(manager);
+            Assert.That(clusteringLights[0].x, Is.EqualTo(-7f));
+            Assert.That(clusteringLights[0].y, Is.Zero,
+                "Hi-Z eligibility must not consume or alter any packed shape bits.");
+
+            _writeClusteringLightMethod.Invoke(manager,
+                new object[] { 0, 49f, 0, 0f, Vector3.forward, false });
+            clusteringLights = (Vector4[])clusteringLightsField.GetValue(manager);
+            Assert.That(clusteringLights[0].x, Is.EqualTo(7f));
+            Assert.That(clusteringLights[0].y, Is.Zero);
         }
 
         // Shadowed translation keeps the packed basis and refreshes only position plus world-origin reuse state.
@@ -6239,6 +7003,7 @@ namespace VRCLightVolumes.Tests {
             manager.UpdateVolumes();
 
             Assert.That(Shader.GetGlobalVectorArray(_pointLightCustomIdID)[0].w, Is.LessThan(0f));
+            Assert.That(Shader.GetGlobalVectorArray(_froxelShadowMetadataID)[0].z, Is.LessThan(0f));
             Vector4 reprojectionBefore = Shader.GetGlobalVectorArray(_pointLightShadowReprojectionDataID)[0];
             Vector4 rotationBefore = Shader.GetGlobalVectorArray(_pointLightShadowRotationDataID)[0];
 
@@ -6246,12 +7011,15 @@ namespace VRCLightVolumes.Tests {
             _updateAutoUpdatedVolumeChangesMethod.Invoke(manager, null);
 
             Assert.That(GetManagerField<int>(manager, _pointLightArrayUploadMaskField),
-                Is.EqualTo(PointLightUploadPosition | PointLightUploadCustomId));
+                Is.EqualTo(PointLightUploadPosition | PointLightUploadCustomId | PointLightUploadFroxelShadowMetadata));
             _uploadAutoUpdatedVolumeChangesMethod.Invoke(manager, null);
 
             AssertVectorClose(ExpectedPointLightPosition(point), Shader.GetGlobalVectorArray(_pointLightPositionID)[0]);
             Assert.That(Shader.GetGlobalVectorArray(_pointLightCustomIdID)[0].w,
                 Is.EqualTo(ExpectedCustomShadowInvDepthRange(point)).Within(Epsilon));
+            Assert.That(Shader.GetGlobalVectorArray(_froxelShadowMetadataID)[0].z,
+                Is.EqualTo(ExpectedShadowInvDepthRange(point)).Within(Epsilon),
+                "Moving away from a world-space bake origin must make froxel culling reproject from the baked origin.");
             AssertVectorClose(reprojectionBefore, Shader.GetGlobalVectorArray(_pointLightShadowReprojectionDataID)[0]);
             AssertVectorClose(rotationBefore, Shader.GetGlobalVectorArray(_pointLightShadowRotationDataID)[0]);
 
@@ -6264,13 +7032,16 @@ namespace VRCLightVolumes.Tests {
             point.transform.position = point.ShadowBakePosition;
             _updateAutoUpdatedVolumeChangesMethod.Invoke(manager, null);
             Assert.That(GetManagerField<int>(manager, _pointLightArrayUploadMaskField),
-                Is.EqualTo(PointLightUploadPosition | PointLightUploadCustomId));
+                Is.EqualTo(PointLightUploadPosition | PointLightUploadCustomId | PointLightUploadFroxelShadowMetadata));
             _uploadAutoUpdatedVolumeChangesMethod.Invoke(manager, null);
 
             AssertVectorClose(ExpectedPointLightPosition(point), Shader.GetGlobalVectorArray(_pointLightPositionID)[0]);
             Assert.That(Shader.GetGlobalVectorArray(_pointLightCustomIdID)[0].w,
                 Is.EqualTo(-ExpectedShadowInvDepthRange(point)).Within(Epsilon),
                 "Returning to the exact world-space bake origin must restore the negative reuse marker.");
+            Assert.That(Shader.GetGlobalVectorArray(_froxelShadowMetadataID)[0].z,
+                Is.EqualTo(-ExpectedShadowInvDepthRange(point)).Within(Epsilon),
+                "Froxel culling must restore the current-origin fast path together with the receiver.");
             AssertVectorClose(reprojectionBefore, Shader.GetGlobalVectorArray(_pointLightShadowReprojectionDataID)[0]);
             AssertVectorClose(rotationBefore, Shader.GetGlobalVectorArray(_pointLightShadowRotationDataID)[0]);
         }
@@ -7234,6 +8005,27 @@ namespace VRCLightVolumes.Tests {
                 DestroyTestObject(readback);
             }
             return slices;
+        }
+
+        // Reads one scalar RFloat render-target texel without a ReadPixels format conversion.
+        private static Color ReadRenderTexturePixel(RenderTexture texture, int x, int y) {
+            Color[] pixels = ReadRenderTexturePixels(texture);
+            return pixels[y * texture.width + x];
+        }
+
+        // Reads a complete scalar render target in physical row-major order. AsyncGPUReadback keeps
+        // the native RFloat values and works on backends where ReadPixels rejects float formats.
+        private static Color[] ReadRenderTexturePixels(RenderTexture texture) {
+            Assert.That(texture, Is.Not.Null);
+            Assert.That(texture.dimension, Is.EqualTo(TextureDimension.Tex2D));
+            AsyncGPUReadbackRequest request = AsyncGPUReadback.Request(texture, 0, TextureFormat.RFloat);
+            request.WaitForCompletion();
+            Assert.That(request.hasError, Is.False, "RFloat hierarchy readback failed.");
+            var values = request.GetData<float>();
+            Assert.That(values.Length, Is.EqualTo(texture.width * texture.height));
+            Color[] pixels = new Color[values.Length];
+            for (int pixel = 0; pixel < values.Length; pixel++) pixels[pixel] = new Color(values[pixel], 0f, 0f, 1f);
+            return pixels;
         }
 
         // Checks the exact source-texel transition shared by the managed and compiled-Udon paths.

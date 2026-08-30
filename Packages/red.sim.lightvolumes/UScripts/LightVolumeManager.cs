@@ -51,9 +51,21 @@ namespace VRCLightVolumes {
         private const int PointLightUploadCustomId = 16;
         private const int PointLightUploadShadowReprojection = 32;
         private const int PointLightUploadShadowRotation = 64;
+        private const int PointLightUploadFroxelShadowMetadata = 128;
         private const int ShadowTextureFormatHalf = 0;
         private const string RuntimeShadowCameraName = "Runtime Shadow Camera";
         private const string ClusteringShaderName = "Hidden/VRCLV/FroxelClusteringBuild";
+        private const string ShadowCullingShaderName = "Hidden/VRCLV/FroxelShadowCullPyramid";
+        private const RenderTextureFormat ShadowCullPyramidFormat = RenderTextureFormat.RFloat;
+        private const int MaxShadowCullMipCount = 12;
+        // Leading reductions are fused into the EVSM pass and the final three into packing. Five
+        // scratch levels cover the automatic 128 cap even for a 4096 source shadow map.
+        private const int MaxShadowCullBuildLevelCount = 5;
+        private const int MaxShadowCullAtlasSize = 4096;
+        private const int MaxFroxelShadowCullResolution = 128;
+        // Keeps the conservative EVSM proof useful when receiver bleed reduction is zero without
+        // exposing a second, visually ambiguous threshold in the Manager UI.
+        private const float ShadowCullProbabilityFloor = 0.00390625f; // 1 / 256
         private const int MaxFroxelTileShift = 4;
         private const int MaxFroxelSize = 256;
         private const int MaxFroxelAtlasSize = 4096;
@@ -61,6 +73,13 @@ namespace VRCLightVolumes {
         private const int MaxFroxelCoarse = 8;
         private const float DefaultFroxelFov = 90f;
         private const float DefaultFroxelAspect = 1.7777778f;
+        // Hi-Z masks are built for a small conservative sweep around the current camera. The
+        // published grid remains valid throughout that sweep, so normal VR head motion does not
+        // force two full-screen clustering draws every frame.
+        private const float FroxelCameraGuardAngleDegrees = 1.5f;
+        private const float FroxelCameraGuardRotationDot = 0.999914328f; // cos(1.5 degrees / 2)
+        private const float FroxelCameraGuardRadius = 0.1f;
+        private const float FroxelCameraGuardCoordinateEpsilon = 0.0005f;
         private const int ClusterAxisScale = 255;
         private const int ClusterAxisStride = 256;
         private const int ClusterShapeStride = 65536;
@@ -104,6 +123,8 @@ namespace VRCLightVolumes {
         [Range(MinFroxelCoarse, MaxFroxelCoarse)] public int FroxelCoarse = 4;
         [Tooltip("Uses the non-clustered loop below this active Point Light Volume count because building and sampling the cluster mask is unlikely to amortize.")]
         [Range(1, MaxPointLightCount)] public int ClusteringMinLights = 8;
+        [Tooltip("Uses a hierarchical z-buffer (Hi-Z) built from the shadow maps to skip lights in froxels that are completely in shadow. It is most useful in heavily shadowed scenes; disable it when shadows rarely hide whole froxels or profiling shows no performance gain.")]
+        public bool ShadowCulling = true;
 
         [Tooltip("When enabled, areas outside Light Volumes fall back to light probes. Otherwise, the Light Volume with the smallest weight is used as fallback. It also improves performance.")]
         public bool LightProbesBlending = true;
@@ -184,6 +205,8 @@ namespace VRCLightVolumes {
         [HideInInspector] public int RuntimeShadowBlurSphericalKeyword = -1;
         // Shared material used to build the Coarse and Fine clustered-light masks in packed 2D integer atlases
         [HideInInspector] public Material ClusteringMaterial;
+        // Shared material used to build the conservative EVSM zero-reach max pyramid consumed by Fine clustering
+        [HideInInspector] public Material ShadowCullingMaterial;
 #endregion
 
 #region Runtime Texture Cache
@@ -251,6 +274,8 @@ namespace VRCLightVolumes {
 #if !UNITY_EDITOR && !COMPILER_UDONSHARP
         // Standalone non-Udon execution still owns these runtime values directly.
         private Material _generatedClusteringMaterial;
+        private Material _generatedShadowCullingMaterial;
+        private RenderTexture _shadowCullPyramidSource;
         private Vector4 _editorFroxelDepthParams;
 #endif
 #if UDONSHARP
@@ -284,6 +309,8 @@ namespace VRCLightVolumes {
         // Point Light Volume shader upload buffers
         private int _pointLightCount = 0;
         private int _activeShadowCount = 0;
+        // Full-strength shadow receivers are the only lights for which a Hi-Z proof can remove a bit.
+        private int _activeShadowCullCount = 0;
         private int[] _enabledPointIDs = new int[MaxPointLightCount];
         // Rebuilt with compact buffers. Every lookup validates the hint against _enabledPointIDs before using it, so registry mutations can only cause a slower fallback, never a wrong slot.
         private int[] _pointLightRegistryToShaderIndex = new int[0];
@@ -299,6 +326,9 @@ namespace VRCLightVolumes {
         private Vector4[] _clusteringLights = new Vector4[MaxPointLightCount / 2];
         private Vector4[] _pointLightShadowReprojectionData = new Vector4[MaxPointLightCount];
         private Vector4[] _pointLightShadowRotationData = new Vector4[MaxPointLightCount];
+        // Clustering-only shadow data is predecoded once per light. Sign bits carry the four
+        // cold-path flags; magnitudes stay strictly positive for every culling-eligible light.
+        private Vector4[] _froxelShadowMetadata = new Vector4[MaxPointLightCount];
         private bool _clusteringLightsDirty = true;
 
         // Matrix upload buffer for active regular volumes
@@ -341,8 +371,44 @@ namespace VRCLightVolumes {
         private bool _clusterMaskDirty = true;
         private bool _clusterMaskValid = false;
         private bool _clusterGeometryUploadPending = false;
+#if !COMPILER_UDONSHARP
+        // Standalone benchmark diagnostics. These fields are excluded from the Udon program so production Udon pays no counter increment or heap cost.
+        // Static storage also keeps the UdonSharp proxy serializer from looking for standalone-only fields in the Udon heap.
+        [System.NonSerialized]
+        private static int _clusterMaskBuildCount = 0;
+        [System.NonSerialized]
+        private static int _shadowCullPyramidBuildCount = 0;
+        [System.NonSerialized]
+        private static int _shadowCullPyramidBlitCount = 0;
+#endif
+        // The finished hierarchy is one compact linear mip-tail atlas. Per-level textures exist only as build scratch and are released immediately after the final packing blit.
+        private RenderTexture _shadowCullPyramid;
+        private RenderTexture[] _shadowCullBuildLevels = new RenderTexture[MaxShadowCullBuildLevelCount];
+        private bool _shadowCullPyramidDirty = true;
+        private bool _shadowCullPyramidValid = false;
+        private bool _shadowCullPyramidUnsupported = false;
+        private bool _shadowCullPyramidAllocationFailed = false;
+        private bool _shadowCullPyramidSuspendedForAutoUpdates = false;
+        private int _shadowCullPyramidResolution = 0;
+        private int _shadowCullPyramidFirstLevel = 0;
+        private int _shadowCullPyramidLevelCount = 0;
+        private int _shadowCullPyramidSliceCount = 0;
+        private int _shadowCullPyramidAtlasWidthShift = 0;
+        private int _shadowCullPyramidNodeCount = 0;
+        private bool _shadowCullSettingsInitialized = false;
+        private bool _shadowCullSettingsEnabled = false;
+        private float _shadowCullAuthoredBleedReduction = -1f;
+        private float _shadowCullAuthoredMinVariance = -1f;
+        private float _shadowCullBleedReduction = -1f;
+        private float _shadowCullPositiveVarianceScale = -1f;
+        private float _shadowCullNegativeVarianceScale = -1f;
+        private bool _shadowCullMaterialBindingDirty = true;
+        private Material _boundClusteringMaterial;
         private float _froxelLayoutFov;
         private float _froxelLayoutAspect;
+        private float _froxelLayoutHorizontalFov;
+        private float _froxelSourceTanHalfHorizontal;
+        private float _froxelSourceTanHalfVertical;
         private float _froxelLayoutDensity;
         private int _froxelLayoutSlices;
         private int _froxelLayoutCoarse;
@@ -363,6 +429,13 @@ namespace VRCLightVolumes {
         private Vector3 _froxelCameraRight;
         private Vector3 _froxelCameraUp;
         private Vector3 _froxelCameraForward;
+        private Quaternion _froxelCameraRotation;
+        private bool _froxelCameraAnchorValid = false;
+        private bool _froxelCameraAnchorGuarded = false;
+        private float _froxelAnchorSourceNearClip;
+        private float _froxelAnchorSourceFarClip;
+        private float _froxelAnchorSourceHorizontalPadding;
+        private float _froxelAnchorSourceVerticalPadding;
 
 #endregion
 
@@ -420,6 +493,7 @@ namespace VRCLightVolumes {
         private int _pointLightShadowTextureID;
         private int _pointLightShadowReceiverParamsID;
         private int _clusteringLightsID;
+        private int _froxelShadowMetadataID;
         private int _lightBrightnessCutoffID;
         // Froxel Clustering
         private int _clusteringEnabledID;
@@ -427,15 +501,22 @@ namespace VRCLightVolumes {
         private int _froxelGridID;
         private int _froxelDepthID;
         private int _froxelDepthStepID;
+        private int _froxelGridInverseID;
         private int _coarseClusterMaskID;
         private int _froxelCoarseGridID;
         private int _froxelFineGridID;
-        private int _froxelPassID;
         private int _froxelCoarseID;
         private int _froxelProjectionID;
         private int _froxelRightID;
         private int _froxelUpID;
         private int _froxelForwardID;
+        private int _froxelShadowCullID;
+        private int _shadowCullBuildParamsID;
+        private int _shadowCullReceiverParamsID;
+        private int _shadowCullPreviousID;
+        private int _shadowCullPackParamsID;
+        private int _shadowCullHierarchyID;
+        private int[] _shadowCullMipIDs = new int[MaxShadowCullBuildLevelCount];
         // Other
         private int _forceSceneLightingID;
         private int _cubemapMainTexID;

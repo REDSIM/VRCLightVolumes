@@ -432,6 +432,43 @@ namespace VRCLightVolumes.Tests {
             Assert.That((ulong)getTextureTexels.Invoke(null, new object[] { destroyedCubemap }), Is.Zero);
         }
 
+        // The Manager estimate follows the actual texture format and exact mip dimensions instead of applying one RGBAHalf bytes-per-texel assumption to every source.
+        [Test]
+        public void ManagerStatsUseExactArrayMipStorage() {
+            MethodInfo getTextureGpuBytes = typeof(LightVolumeManagerEditor).GetMethod(
+                "GetTextureGpuBytes",
+                BindingFlags.Static | BindingFlags.NonPublic);
+            Texture2DArray texture = new Texture2DArray(4, 4, 2, TextureFormat.RGBAHalf, true, true);
+            try {
+                Assert.That(getTextureGpuBytes, Is.Not.Null);
+                // (4x4 + 2x2 + 1x1) * two array slices * eight bytes per RGBAHalf texel.
+                Assert.That((ulong)getTextureGpuBytes.Invoke(null, new object[] { texture }), Is.EqualTo(336UL));
+            } finally {
+                UnityEngine.Object.DestroyImmediate(texture);
+            }
+        }
+
+        // Block-compressed imports already represent their GPU-ready payload and must not receive the empirical bundle ratio a second time.
+        [Test]
+        public void ManagerStatsDoNotDoubleCompressBlockTextureEstimate() {
+            MethodInfo getTextureGpuBytes = typeof(LightVolumeManagerEditor).GetMethod(
+                "GetTextureGpuBytes",
+                BindingFlags.Static | BindingFlags.NonPublic);
+            MethodInfo estimateBundleBytes = typeof(LightVolumeManagerEditor).GetMethod(
+                "EstimateCompressedBundleBytes",
+                BindingFlags.Static | BindingFlags.NonPublic);
+            Texture2D texture = new Texture2D(4, 4, TextureFormat.DXT1, false, true);
+            try {
+                Assert.That(getTextureGpuBytes, Is.Not.Null);
+                Assert.That(estimateBundleBytes, Is.Not.Null);
+                ulong gpuBytes = (ulong)getTextureGpuBytes.Invoke(null, new object[] { texture });
+                Assert.That(gpuBytes, Is.EqualTo(8UL));
+                Assert.That((ulong)estimateBundleBytes.Invoke(null, new object[] { texture }), Is.EqualTo(gpuBytes));
+            } finally {
+                UnityEngine.Object.DestroyImmediate(texture);
+            }
+        }
+
         // Two same-name lights receive separate shadow assets, while a rebake keeps the path already
         // owned by that light.
         [Test]

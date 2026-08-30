@@ -53,8 +53,7 @@ namespace VRCLightVolumes {
 #endif
         }
 
-        // Releases retained scratch resources. A queued Udon event owns the scheduled flag until it
-        // runs; keeping the flag prevents a quick disable-enable cycle from creating a second loop.
+        // Releases retained scratch resources. A queued Udon event owns the scheduled flag until it runs; keeping the flag prevents a quick disable-enable cycle from creating a second loop.
         private void OnDisable() {
             ReleaseConfiguredTarget();
         }
@@ -121,16 +120,25 @@ namespace VRCLightVolumes {
         private void ConfigureTargetBake(PointLightVolumeInstance target, bool directOutput) {
             if (_configuredTargetPointLightVolume != target) ReleaseConfiguredTarget();
             if (_configuredTargetPointLightVolume == target && _configuredDirectOutput == directOutput) return;
+            bool modeChanged = target.RuntimeShadowDirectOutput != directOutput;
             target.RuntimeShadowDirectOutput = directOutput;
             _configuredTargetPointLightVolume = target;
             _configuredDirectOutput = directOutput;
+            if (!modeChanged || !target.IsActive) return;
+            LightVolumeManager manager = target.LightVolumeManager;
+            if (manager == null) return;
+            if (directOutput) manager.UpdateVolumes();
+            else if (target.ShadowMapTexture != null || target.ShadowMapMaterial != null) manager.ReinitializeShadowTextures();
         }
 
         // Gives retained camera and blur scratch back when realtime baking stops or changes targets.
         private void ReleaseConfiguredTarget() {
             PointLightVolumeInstance target = _configuredTargetPointLightVolume;
             if (target != null) {
+                bool restoreStaticSource = target.RuntimeShadowDirectOutput && (target.ShadowMapTexture != null || target.ShadowMapMaterial != null);
                 target.RuntimeShadowDirectOutput = false;
+                LightVolumeManager manager = target.LightVolumeManager;
+                if (restoreStaticSource && target.IsActive && manager != null) manager.ReinitializeShadowTextures();
                 target._ReleaseRuntimeShadowBakeResources();
             }
             _configuredTargetPointLightVolume = null;

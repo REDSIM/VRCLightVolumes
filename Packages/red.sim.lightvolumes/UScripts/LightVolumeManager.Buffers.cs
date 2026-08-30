@@ -50,10 +50,7 @@ namespace VRCLightVolumes {
 
                 float packedShadowIdAbs = Mathf.Abs(_pointLightCustomId[shaderIndex].y);
                 bool hasActiveShadow = packedShadowIdAbs >= 1f && packedShadowIdAbs < DisabledShadingShadowId;
-                bool useBasicColorRangePack = updateFlags == PointLightUpdateColorRange
-                    && instance.LightType == 0
-                    && instance.ProjectionMode == 0
-                    && !hasActiveShadow;
+                bool useBasicColorRangePack = updateFlags == PointLightUpdateColorRange && instance.LightType == 0 && instance.ProjectionMode == 0 && !hasActiveShadow;
 
                 if (useBasicColorRangePack) {
                     Vector4 previousPosition = _pointLightPosition[shaderIndex];
@@ -79,7 +76,7 @@ namespace VRCLightVolumes {
                     Vector4 customId = _pointLightCustomId[shaderIndex];
                     customId.z = squaredRange;
                     _pointLightCustomId[shaderIndex] = customId;
-                    WriteClusteringLight(shaderIndex, squaredRange, 0, 0f, Vector3.forward);
+                    WriteClusteringLight(shaderIndex, squaredRange, 0, 0f, Vector3.forward, false);
 
                     int uploadMask = 0;
                     if (PackedVectorChanged(previousPosition, _pointLightPosition[shaderIndex])) uploadMask |= PointLightUploadPosition;
@@ -164,11 +161,14 @@ namespace VRCLightVolumes {
         // consumes the corresponding geometry; otherwise continuous Color/Intensity animation can leave _clusterGeometryUploadPending set and force the sequential-light fallback every frame.
         private void UpdateDynamicVolumeTransforms() {
             if (_isUpdatingVolumes || _volumeDataUpdateRequested) return;
+            int previousActiveShadowCullCount = _activeShadowCullCount;
 
             // Incremental packers below set exact per-array bits. Reset before flushing queued notifications so their tracked changes are not overwritten by frame setup.
             ResetPointLightArrayUploadState();
             bool flushedPointLightChanges = _dirtyPointLightCount != 0;
             if (flushedPointLightChanges && !FlushPendingPointLightChanges()) {
+                // The failed batch may already have packed earlier slots. Keep the published eligibility count transactional; the requested full rebuild will recalculate it.
+                _activeShadowCullCount = previousActiveShadowCullCount;
                 ResetPointLightArrayUploadState();
                 RequestUpdateVolumes();
                 return;
@@ -187,6 +187,7 @@ namespace VRCLightVolumes {
 
             if (hasDynamicTransforms) UpdateAutoUpdatedVolumeChanges();
             if (_updateNeedsVolumeRebuild) {
+                _activeShadowCullCount = previousActiveShadowCullCount;
                 _updateAllLightVolumeBuffers = false;
                 _updateLightVolumeBuffers = false;
                 _updateLightVolumeEdgeBuffer = false;
@@ -194,8 +195,8 @@ namespace VRCLightVolumes {
                 RequestUpdateVolumes();
                 return;
             }
-            if (_updateAllLightVolumeBuffers || _updateLightVolumeBuffers || _updateLightVolumeEdgeBuffer || _pointLightArrayUploadMask != 0 || _clusterGeometryUploadPending)
-                UploadAutoUpdatedVolumeChanges();
+            if (previousActiveShadowCullCount != _activeShadowCullCount) ApplyShadowCullEligibilityCountTransition(previousActiveShadowCullCount);
+            if (_updateAllLightVolumeBuffers || _updateLightVolumeBuffers || _updateLightVolumeEdgeBuffer || _pointLightArrayUploadMask != 0 || _clusterGeometryUploadPending) UploadAutoUpdatedVolumeChanges();
         }
 
         // Updates moved dynamic volumes in-place and marks which shader buffer groups need uploading.
@@ -259,21 +260,24 @@ namespace VRCLightVolumes {
                         if (instance.LightType != 2) { // 2: area keeps its cookie-mirror payload in CustomID.W
                             float nearClip = Mathf.Max(instance.NearClip, 0.0001f);
                             float requestedFarClip = instance.BakedFarClip > 0f ? instance.BakedFarClip : instance.FarClip;
-                            float resolvedFarClip = requestedFarClip > 0f
-                                ? Mathf.Max(requestedFarClip, nearClip + 0.0001f)
-                                : Mathf.Sqrt(Mathf.Max(instance.SquaredRange, 0.000001f));
+                            float resolvedFarClip = requestedFarClip > 0f ? Mathf.Max(requestedFarClip, nearClip + 0.0001f) : Mathf.Sqrt(Mathf.Max(instance.SquaredRange, 0.000001f));
                             float inverseDepthRange = 1f / Mathf.Max(resolvedFarClip - nearClip, 0.0001f);
                             Vector3 bakePosition = instance.ShadowBakePosition;
-                            bool reuseWorldShadowOrigin = instance.WorldSpaceShadows
-                                && bakePosition.x == position.x
-                                && bakePosition.y == position.y
-                                && bakePosition.z == position.z;
+                            bool reuseWorldShadowOrigin = instance.WorldSpaceShadows && bakePosition.x == position.x && bakePosition.y == position.y && bakePosition.z == position.z;
                             Vector4 customId = _pointLightCustomId[shaderIndex];
                             float customIdW = reuseWorldShadowOrigin ? -inverseDepthRange : inverseDepthRange;
                             if (customId.w != customIdW) {
                                 customId.w = customIdW;
                                 _pointLightCustomId[shaderIndex] = customId;
                                 MarkPointLightArrayUploads(PointLightUploadCustomId);
+                                Vector4 shadowMetadata = _froxelShadowMetadata[shaderIndex];
+                                if (shadowMetadata.x != 0f) {
+                                    float encodedInverseDepthRange = reuseWorldShadowOrigin ? -Mathf.Abs(shadowMetadata.z) : Mathf.Abs(shadowMetadata.z);
+                                    shadowMetadata.z = encodedInverseDepthRange;
+                                    _froxelShadowMetadata[shaderIndex] = shadowMetadata;
+                                    MarkPointLightArrayUploads(PointLightUploadFroxelShadowMetadata);
+                                    _clusterMaskDirty = true;
+                                }
                             }
                         }
                     }
@@ -301,20 +305,14 @@ namespace VRCLightVolumes {
             }
             int pointLightUploadMask = _pointLightArrayUploadMask;
             if (pointLightUploadMask != 0 && _pointLightCount != 0) {
-                if ((pointLightUploadMask & PointLightUploadPosition) != 0)
-                    VRCShader.SetGlobalVectorArray(_pointLightPositionID, _pointLightPosition);
-                if ((pointLightUploadMask & PointLightUploadColor) != 0)
-                    VRCShader.SetGlobalVectorArray(_pointLightColorID, _pointLightColor);
-                if ((pointLightUploadMask & PointLightUploadExtraData) != 0)
-                    VRCShader.SetGlobalVectorArray(_pointLightExtraDataID, _pointLightExtraData);
-                if ((pointLightUploadMask & PointLightUploadDirection) != 0)
-                    VRCShader.SetGlobalVectorArray(_pointLightDirectionID, _pointLightDirection);
-                if ((pointLightUploadMask & PointLightUploadCustomId) != 0)
-                    VRCShader.SetGlobalVectorArray(_pointLightCustomIdID, _pointLightCustomId);
-                if ((pointLightUploadMask & PointLightUploadShadowReprojection) != 0)
-                    VRCShader.SetGlobalVectorArray(_pointLightShadowReprojectionDataID, _pointLightShadowReprojectionData);
-                if ((pointLightUploadMask & PointLightUploadShadowRotation) != 0)
-                    VRCShader.SetGlobalVectorArray(_pointLightShadowRotationDataID, _pointLightShadowRotationData);
+                if ((pointLightUploadMask & PointLightUploadPosition) != 0) VRCShader.SetGlobalVectorArray(_pointLightPositionID, _pointLightPosition);
+                if ((pointLightUploadMask & PointLightUploadColor) != 0) VRCShader.SetGlobalVectorArray(_pointLightColorID, _pointLightColor);
+                if ((pointLightUploadMask & PointLightUploadExtraData) != 0) VRCShader.SetGlobalVectorArray(_pointLightExtraDataID, _pointLightExtraData);
+                if ((pointLightUploadMask & PointLightUploadDirection) != 0) VRCShader.SetGlobalVectorArray(_pointLightDirectionID, _pointLightDirection);
+                if ((pointLightUploadMask & PointLightUploadCustomId) != 0) VRCShader.SetGlobalVectorArray(_pointLightCustomIdID, _pointLightCustomId);
+                if ((pointLightUploadMask & PointLightUploadShadowReprojection) != 0) VRCShader.SetGlobalVectorArray(_pointLightShadowReprojectionDataID, _pointLightShadowReprojectionData);
+                if ((pointLightUploadMask & PointLightUploadShadowRotation) != 0) VRCShader.SetGlobalVectorArray(_pointLightShadowRotationDataID, _pointLightShadowRotationData);
+                if ((pointLightUploadMask & PointLightUploadFroxelShadowMetadata) != 0) VRCShader.SetGlobalVectorArray(_froxelShadowMetadataID, _froxelShadowMetadata);
             }
             if (_clusterGeometryUploadPending) _clusterMaskDirty = true;
             _clusterGeometryUploadPending = false;
@@ -435,8 +433,15 @@ namespace VRCLightVolumes {
             Vector4 previousCustomId = _pointLightCustomId[shaderIndex];
             Vector4 previousShadowReprojection = _pointLightShadowReprojectionData[shaderIndex];
             Vector4 previousShadowRotation = _pointLightShadowRotationData[shaderIndex];
+            Vector4 previousFroxelShadowMetadata = _froxelShadowMetadata[shaderIndex];
+            bool previousShadowCullEligible = previousFroxelShadowMetadata.x != 0f;
 
             WritePointLightShaderData(shaderIndex, sourceIndex, instance, instanceTransform, false);
+            bool shadowCullEligible = _froxelShadowMetadata[shaderIndex].x != 0f;
+            if (previousShadowCullEligible != shadowCullEligible) {
+                if (shadowCullEligible) _activeShadowCullCount++;
+                else if (_activeShadowCullCount > 0) _activeShadowCullCount--;
+            }
 
             int uploadMask = 0;
             if (PackedVectorChanged(previousPosition, _pointLightPosition[shaderIndex])) uploadMask |= PointLightUploadPosition;
@@ -446,7 +451,19 @@ namespace VRCLightVolumes {
             if (PackedVectorChanged(previousCustomId, _pointLightCustomId[shaderIndex])) uploadMask |= PointLightUploadCustomId;
             if (PackedVectorChanged(previousShadowReprojection, _pointLightShadowReprojectionData[shaderIndex])) uploadMask |= PointLightUploadShadowReprojection;
             if (PackedVectorChanged(previousShadowRotation, _pointLightShadowRotationData[shaderIndex])) uploadMask |= PointLightUploadShadowRotation;
+            if (PackedVectorChanged(previousFroxelShadowMetadata, _froxelShadowMetadata[shaderIndex])) uploadMask |= PointLightUploadFroxelShadowMetadata;
             MarkPointLightArrayUploads(uploadMask);
+        }
+
+        // Applies one aggregate resource transition after an incremental batch or full compact rebuild. This preserves a valid hierarchy when eligible lights merely exchange slots in the same frame and the batch's final count is unchanged.
+        private void ApplyShadowCullEligibilityCountTransition(int previousCount) {
+            if (previousCount == 0 && _activeShadowCullCount > 0) {
+                InvalidateShadowCullPyramid();
+            } else if (previousCount > 0 && _activeShadowCullCount == 0) {
+                ReleaseShadowCullPyramidTextures();
+                _shadowCullPyramidDirty = false;
+                _clusterMaskDirty = true;
+            }
         }
 
         // Writes one Point Light Volume into the compact shader upload buffers
@@ -492,7 +509,6 @@ namespace VRCLightVolumes {
                 directionData = new Vector4(rotation.x, rotation.y, rotation.z, rotation.w);
                 if (isArea) clusterAxis = rotation * Vector3.forward;
             }
-            WriteClusteringLight(shaderIndex, squaredRange, lightType, clusterOuterTangent, clusterAxis);
             _pointLightDirection[shaderIndex] = directionData;
             int resolvedCustomId = sourceIndex < _pointLightCustomIDs.Length ? _pointLightCustomIDs[sourceIndex] : -1;
             bool hasAreaCookie = isArea && isCustomCookie && resolvedCustomId >= 0;
@@ -513,6 +529,10 @@ namespace VRCLightVolumes {
                 else angleData = isSpot ? spotOuterCosine : instance.OuterAngleCos;
             }
             Vector4 previousPosition = _pointLightPosition[shaderIndex];
+            Vector4 previousExtraData = _pointLightExtraData[shaderIndex];
+            Vector4 previousShadowReprojection = _pointLightShadowReprojectionData[shaderIndex];
+            Vector4 previousShadowRotation = _pointLightShadowRotationData[shaderIndex];
+            Vector4 previousFroxelShadowMetadata = _froxelShadowMetadata[shaderIndex];
             if (previousPosition.x != pos.x || previousPosition.y != pos.y || previousPosition.z != pos.z) {
                 _clusterMaskDirty = true;
                 _clusterGeometryUploadPending = true;
@@ -541,12 +561,18 @@ namespace VRCLightVolumes {
                 else if (isCustomCookie) shaderCustomId = -resolvedCustomId - 1;
             }
             int resolvedShadowId = sourceIndex < _pointLightShadowIDs.Length ? _pointLightShadowIDs[sourceIndex] : -1;
+            int shadowSourceType = sourceIndex < _shadowSourceTypes.Length ? _shadowSourceTypes[sourceIndex] : 0;
             float shadingStrength = Mathf.Clamp01(instance.ShadingStrength);
             bool hasShading = shadingStrength > 0f;
             bool hasShadow = instance.Shadows && hasShading && ShadowTextures != null && !_shadowTextureAllocationFailed && ShadowMapsCount > 0 && resolvedShadowId >= 0 && resolvedShadowId < ShadowMapsCount;
-            if (countActiveShadow && hasShadow) _activeShadowCount++;
+            bool shadowCullEligible = hasShadow && shadowSourceType > 0 && shadowSourceType < 5 && !instance.RuntimeShadowDirectOutput && shadingStrength >= 1f && squaredRange > 0f;
+            if (countActiveShadow) {
+                if (hasShadow) _activeShadowCount++;
+                if (shadowCullEligible) _activeShadowCullCount++;
+            }
             float shadowNearClip = 0f;
             float shadowInvDepthRange = 0f;
+            float shadowDepthRange = 0f;
             bool useLocalSpaceShadows = false;
             if (hasShadow) {
                 shadowNearClip = Mathf.Max(instance.NearClip, 0.0001f);
@@ -554,7 +580,8 @@ namespace VRCLightVolumes {
                 float resolvedFarClip = requestedFarClip > 0f ? Mathf.Max(requestedFarClip, shadowNearClip + 0.0001f) : Mathf.Sqrt(Mathf.Max(squaredRange, 0.000001f));
                 if (shadowNearClip >= resolvedFarClip) resolvedFarClip = shadowNearClip + 0.0001f;
                 // Far is needed by the bake/encoder, but the receiver only needs its precomputed reciprocal range.
-                shadowInvDepthRange = 1f / Mathf.Max(resolvedFarClip - shadowNearClip, 0.0001f);
+                shadowDepthRange = Mathf.Max(resolvedFarClip - shadowNearClip, 0.0001f);
+                shadowInvDepthRange = 1f / shadowDepthRange;
                 useLocalSpaceShadows = !instance.WorldSpaceShadows;
             }
             extraData.w = shadowNearClip;
@@ -564,20 +591,24 @@ namespace VRCLightVolumes {
                 float shadingFade = 1f - shadingStrength;
                 if (shadingFade > 0f) shadowMapID += shadowMapID < 0f ? -shadingFade : shadingFade;
             }
+            WriteClusteringLight(shaderIndex, squaredRange, lightType, clusterOuterTangent, clusterAxis, shadowCullEligible);
 
             float customDataW = 0f;
+            bool usesCubemapShadow = false;
+            bool useCurrentLightOrigin = false;
+            Quaternion shadowRotation = Quaternion.identity;
             if (hasAreaCookie) {
                 float areaCookieMirror = instance.AreaCookieMirror;
                 customDataW = Mathf.Abs(areaCookieMirror) >= 0.5f ? areaCookieMirror : 1f;
             }
             if (hasShadow) {
-                bool usesCubemapShadow = resolvedShadowId < ShadowCubemapsCount;
+                usesCubemapShadow = resolvedShadowId < ShadowCubemapsCount;
                 Vector3 shadowBakePosition = instance.ShadowBakePosition;
                 // A negative reciprocal range is a v3-only fast-path marker: the baked world-space shadow origin exactly matches the current Point/Spot origin, so the receiver can
                 // reuse its raw light vector and distance. Compare components directly. Unity's Vector3 == is approximate and could incorrectly select this exact path.
                 bool reuseWorldShadowOrigin = !isArea && !useLocalSpaceShadows && shadowInvDepthRange > 0f && shadowBakePosition.x == pos.x && shadowBakePosition.y == pos.y && shadowBakePosition.z == pos.z;
-                // V2 declares CustomID as float3 and ignores W. Keep the full reciprocal range for
-                // every v3 Point/Spot shadow; abs(W) is the value and sign(W) is the fast-path marker.
+                useCurrentLightOrigin = useLocalSpaceShadows || reuseWorldShadowOrigin;
+                // V2 declares CustomID as float3 and ignores W. Keep the full reciprocal range for every v3 Point/Spot shadow; abs(W) is the value and sign(W) is the fast-path marker.
                 if (!isArea) customDataW = reuseWorldShadowOrigin ? -shadowInvDepthRange : shadowInvDepthRange;
 
                 float shadowTanAngle = spotOuterTangent;
@@ -586,7 +617,6 @@ namespace VRCLightVolumes {
                 float shadowReprojectionW = usesCubemapShadow ? -shadowInvDepthRange : shadowTanAngle;
                 _pointLightShadowReprojectionData[shaderIndex] = new Vector4(shadowBakePosition.x, shadowBakePosition.y, shadowBakePosition.z, shadowReprojectionW);
 
-                Quaternion shadowRotation;
                 if (useLocalSpaceShadows) {
                     Transform shadowTransform = instanceTransform;
                     if (shadowTransform == null) shadowTransform = instance.transform;
@@ -594,10 +624,41 @@ namespace VRCLightVolumes {
                 } else {
                     shadowRotation = Quaternion.Inverse(instance.ShadowBakeRotation);
                 }
+                // Both the receiver and conservative froxel projection use the quaternion-vector shortcut that assumes a unit quaternion. Normalize authored/scripted bake data once during upload so the shadow transform cannot stretch a froxel sphere.
+                float shadowRotationLengthSq = shadowRotation.x * shadowRotation.x + shadowRotation.y * shadowRotation.y + shadowRotation.z * shadowRotation.z + shadowRotation.w * shadowRotation.w;
+                if (shadowRotationLengthSq > 0.000000000001f && shadowRotationLengthSq < 1000000000000f) {
+                    float inverseShadowRotationLength = 1f / Mathf.Sqrt(shadowRotationLengthSq);
+                    shadowRotation = new Quaternion(shadowRotation.x * inverseShadowRotationLength, shadowRotation.y * inverseShadowRotationLength, shadowRotation.z * inverseShadowRotationLength, shadowRotation.w * inverseShadowRotationLength);
+                } else {
+                    shadowRotation = Quaternion.identity;
+                }
                 _pointLightShadowRotationData[shaderIndex] = new Vector4(shadowRotation.x, shadowRotation.y, shadowRotation.z, shadowRotation.w);
+            }
+            if (shadowCullEligible) {
+                int shadowBaseSlice = usesCubemapShadow ? resolvedShadowId * 6 : resolvedShadowId + ShadowCubemapsCount * 5;
+                float encodedShadowBaseSlice = shadowBaseSlice + 1f;
+                if (useLocalSpaceShadows) encodedShadowBaseSlice = -encodedShadowBaseSlice;
+                float encodedNearClip = usesCubemapShadow ? shadowNearClip : -shadowNearClip;
+                float encodedInverseDepthRange = useCurrentLightOrigin ? -shadowInvDepthRange : shadowInvDepthRange;
+                bool identityShadowRotation = shadowRotation.x == 0f && shadowRotation.y == 0f && shadowRotation.z == 0f;
+                float encodedDepthRange = identityShadowRotation ? -shadowDepthRange : shadowDepthRange;
+                _froxelShadowMetadata[shaderIndex] = new Vector4(encodedShadowBaseSlice, encodedNearClip, encodedInverseDepthRange, encodedDepthRange);
+            } else {
+                _froxelShadowMetadata[shaderIndex] = Vector4.zero;
             }
             _pointLightCustomId[shaderIndex] = new Vector4(shaderCustomId, shadowMapID, squaredRange, customDataW);
             _pointLightExtraData[shaderIndex] = extraData;
+
+            if (ShadowCulling) {
+                Vector4 currentFroxelShadowMetadata = _froxelShadowMetadata[shaderIndex];
+                bool shadowMetadataChanged = PackedVectorChanged(previousFroxelShadowMetadata, currentFroxelShadowMetadata);
+                if (!shadowMetadataChanged && currentFroxelShadowMetadata.x != 0f) {
+                    if (currentFroxelShadowMetadata.z > 0f) shadowMetadataChanged = PackedVectorChanged(previousShadowReprojection, _pointLightShadowReprojectionData[shaderIndex]);
+                    if (!shadowMetadataChanged && currentFroxelShadowMetadata.w > 0f) shadowMetadataChanged = PackedVectorChanged(previousShadowRotation, _pointLightShadowRotationData[shaderIndex]);
+                    if (!shadowMetadataChanged && currentFroxelShadowMetadata.y < 0f && currentFroxelShadowMetadata.z < 0f) shadowMetadataChanged = previousExtraData.y != extraData.y;
+                }
+                if (shadowMetadataChanged) _clusterMaskDirty = true;
+            }
 
         }
 
@@ -642,10 +703,8 @@ namespace VRCLightVolumes {
             ResetPendingPointLightChanges();
             int pointLightRegistryCount = PointLightVolumeInstances.Length;
             // This array is a reusable capacity buffer. Shrinking the public registry must not allocate a second exact-length map that will be discarded when lights are enabled again.
-            if (_pointLightRegistryToShaderIndex.Length < pointLightRegistryCount)
-                _pointLightRegistryToShaderIndex = new int[pointLightRegistryCount];
-            for (int i = 0; i < pointLightRegistryCount; i++)
-                _pointLightRegistryToShaderIndex[i] = -1;
+            if (_pointLightRegistryToShaderIndex.Length < pointLightRegistryCount) _pointLightRegistryToShaderIndex = new int[pointLightRegistryCount];
+            for (int i = 0; i < pointLightRegistryCount; i++) _pointLightRegistryToShaderIndex[i] = -1;
             TryInitialize();
 
             if (!enabled || !gameObject.activeInHierarchy) {
@@ -717,8 +776,10 @@ namespace VRCLightVolumes {
                 _isRangeDirty = true;
             }
             int previousPointLightCount = _pointLightCount;
+            int previousActiveShadowCullCount = _activeShadowCullCount;
             _pointLightCount = 0;
             _activeShadowCount = 0;
+            _activeShadowCullCount = 0;
             _dynamicPointLightVolumeCount = 0;
             for (int registryIndex = 0; registryIndex < pointLightRegistryCount && _pointLightCount < MaxPointLightCount; registryIndex++) {
                 PointLightVolumeInstance instance = PointLightVolumeInstances[registryIndex];
@@ -750,6 +811,8 @@ namespace VRCLightVolumes {
                 _pointLightCount++;
             }
             if (previousPointLightCount != _pointLightCount) _clusterMaskDirty = true;
+            // Only exact full-strength receivers can consume the proof. Avoid both a hierarchy build and its persistent allocation when every visible shadow is partially blended.
+            if (previousActiveShadowCullCount != _activeShadowCullCount) ApplyShadowCullEligibilityCountTransition(previousActiveShadowCullCount);
             _isRangeDirty = false;
 
             // Upload scalar shader globals and disable the system if no shader-visible data remains
@@ -794,6 +857,7 @@ namespace VRCLightVolumes {
                     if (_activeShadowCount > 0) {
                         VRCShader.SetGlobalVectorArray(_pointLightShadowReprojectionDataID, _pointLightShadowReprojectionData);
                         VRCShader.SetGlobalVectorArray(_pointLightShadowRotationDataID, _pointLightShadowRotationData);
+                        VRCShader.SetGlobalVectorArray(_froxelShadowMetadataID, _froxelShadowMetadata);
                     }
                     VRCShader.SetGlobalFloat(_lightBrightnessCutoffID, LightsBrightnessCutoff);
                 }

@@ -22,6 +22,7 @@ namespace VRCLightVolumes {
         private const string ShadowDepthEncodeShaderName = "Hidden/VRCLV/PointLightShadowDepthEncode";
         private const string ShadowBlurShaderName = "Hidden/VRCLV/PointLightShadowRuntimeBlur";
         private const string ClusteringShaderName = "Hidden/VRCLV/FroxelClusteringBuild";
+        private const string ShadowCullingShaderName = "Hidden/VRCLV/FroxelShadowCullPyramid";
 
         private static readonly List<LightVolumeInstance> _lightVolumeBuffer = new List<LightVolumeInstance>();
         private static readonly List<PointLightVolumeInstance> _pointLightBuffer = new List<PointLightVolumeInstance>();
@@ -110,7 +111,8 @@ namespace VRCLightVolumes {
                 Shader shadowDepthEncodeShader = Shader.Find(ShadowDepthEncodeShaderName);
                 Shader shadowBlurShader = Shader.Find(ShadowBlurShaderName);
                 Shader clusteringShader = Shader.Find(ClusteringShaderName);
-                PrepareManagerRuntimeDependencies(manager, cubemapFaceShader, shadowDepthEncodeShader, shadowBlurShader, clusteringShader, editorTemporary);
+                Shader shadowCullingShader = Shader.Find(ShadowCullingShaderName);
+                PrepareManagerRuntimeDependencies(manager, cubemapFaceShader, shadowDepthEncodeShader, shadowBlurShader, clusteringShader, shadowCullingShader, editorTemporary);
 
                 for (int i = 0; i < roots.Length; i++) {
                     GameObject root = roots[i];
@@ -197,7 +199,7 @@ namespace VRCLightVolumes {
         }
 
         // Creates all runtime materials and shadow-camera dependencies owned by one Manager.
-        private static void PrepareManagerRuntimeDependencies(LightVolumeManager manager, Shader cubemapFaceShader, Shader depthEncodeShader, Shader blurShader, Shader clusteringShader, bool editorTemporary) {
+        private static void PrepareManagerRuntimeDependencies(LightVolumeManager manager, Shader cubemapFaceShader, Shader depthEncodeShader, Shader blurShader, Shader clusteringShader, Shader shadowCullingShader, bool editorTemporary) {
             if (manager == null) return;
             manager.EnsureRuntimeShadowCamera();
             manager.RuntimeShadowDepthEncodeMaterial = CreateRuntimeMaterialInstance(depthEncodeShader, manager.RuntimeShadowDepthEncodeMaterial, manager.name + "_ShadowDepthEncodeRuntime", editorTemporary);
@@ -205,6 +207,7 @@ namespace VRCLightVolumes {
             ResetManagerRuntimeShadowBlurState(manager);
             manager.CubemapFaceMaterial = CreateRuntimeMaterialInstance(cubemapFaceShader, manager.CubemapFaceMaterial, manager.name + "_CubemapFaceRuntime", editorTemporary);
             manager.ClusteringMaterial = CreateRuntimeMaterialInstance(clusteringShader, manager.ClusteringMaterial, manager.name + "_ClusteringRuntime", editorTemporary);
+            manager.ShadowCullingMaterial = CreateRuntimeMaterialInstance(shadowCullingShader, manager.ShadowCullingMaterial, manager.name + "_ShadowCullingRuntime", editorTemporary);
         }
 
         // Recreates and republishes Manager-owned play-mode resources on demand. This is the
@@ -219,6 +222,7 @@ namespace VRCLightVolumes {
                 Shader.Find(ShadowDepthEncodeShaderName),
                 Shader.Find(ShadowBlurShaderName),
                 Shader.Find(ClusteringShaderName),
+                Shader.Find(ShadowCullingShaderName),
                 true);
             ApplyManagerRuntimeDependencies(manager);
         }
@@ -272,7 +276,9 @@ namespace VRCLightVolumes {
             SetUdonProgramVariable(udonBehaviour, "FroxelSlices", manager.FroxelSlices);
             SetUdonProgramVariable(udonBehaviour, "FroxelCoarse", manager.FroxelCoarse);
             SetUdonProgramVariable(udonBehaviour, "ClusteringMinLights", manager.ClusteringMinLights);
+            SetUdonProgramVariable(udonBehaviour, "ShadowCulling", manager.ShadowCulling);
             SetUdonProgramVariable(udonBehaviour, "ClusteringMaterial", manager.ClusteringMaterial);
+            SetUdonProgramVariable(udonBehaviour, "ShadowCullingMaterial", manager.ShadowCullingMaterial);
 #endif
         }
 
@@ -299,10 +305,12 @@ namespace VRCLightVolumes {
             DestroyRuntimeMaterialInstance(manager.RuntimeShadowDepthEncodeMaterial);
             DestroyRuntimeMaterialInstance(manager.RuntimeShadowBlurMaterial);
             DestroyRuntimeMaterialInstance(manager.ClusteringMaterial);
+            DestroyRuntimeMaterialInstance(manager.ShadowCullingMaterial);
             manager.CubemapFaceMaterial = null;
             manager.RuntimeShadowDepthEncodeMaterial = null;
             manager.RuntimeShadowBlurMaterial = null;
             manager.ClusteringMaterial = null;
+            manager.ShadowCullingMaterial = null;
             ResetManagerRuntimeShadowBlurState(manager);
 #if UDONSHARP
             UdonBehaviour udonBehaviour = GetBackingUdonBehaviour(manager);
@@ -311,6 +319,7 @@ namespace VRCLightVolumes {
             SetUdonProgramVariable(udonBehaviour, "RuntimeShadowDepthEncodeMaterial", null);
             SetUdonProgramVariable(udonBehaviour, "RuntimeShadowBlurMaterial", null);
             SetUdonProgramVariable(udonBehaviour, "ClusteringMaterial", null);
+            SetUdonProgramVariable(udonBehaviour, "ShadowCullingMaterial", null);
             SetUdonProgramVariable(udonBehaviour, "RuntimeShadowBlurQualityPreset", -1);
             SetUdonProgramVariable(udonBehaviour, "RuntimeShadowBlurUniformKeyword", -1);
             SetUdonProgramVariable(udonBehaviour, "RuntimeShadowBlurDirectKeyword", -1);

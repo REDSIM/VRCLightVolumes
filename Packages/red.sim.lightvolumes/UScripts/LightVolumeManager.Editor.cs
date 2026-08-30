@@ -38,6 +38,8 @@ namespace VRCLightVolumes {
             public int ShadowTextureHeight = -1;
             public int ShadowTextureFormat = -1;
             public Material GeneratedClusteringMaterial;
+            public Material GeneratedShadowCullingMaterial;
+            public RenderTexture ShadowCullPyramidSource;
             public Vector4 FroxelDepthParams;
             public AtlasPostProcessor[] AtlasPostProcessors;
             public RenderTexture[] PostProcessorProjectionTargets;
@@ -57,6 +59,16 @@ namespace VRCLightVolumes {
             set => EditorData.GeneratedClusteringMaterial = value;
         }
 
+        private Material _generatedShadowCullingMaterial {
+            get => EditorData.GeneratedShadowCullingMaterial;
+            set => EditorData.GeneratedShadowCullingMaterial = value;
+        }
+
+        private RenderTexture _shadowCullPyramidSource {
+            get => EditorData.ShadowCullPyramidSource;
+            set => EditorData.ShadowCullPyramidSource = value;
+        }
+
         private Vector4 _editorFroxelDepthParams {
             get => EditorData.FroxelDepthParams;
             set => EditorData.FroxelDepthParams = value;
@@ -65,12 +77,7 @@ namespace VRCLightVolumes {
         // Registers a Custom Render Texture post processor for the Light Volume 3D atlas.
         internal void EditorRegisterPostProcessorCRT(CustomRenderTexture texture) {
             if (texture == null) return;
-            EditorRegisterPostProcessor(new AtlasPostProcessor {
-                Target = texture,
-                Material = texture.material,
-                InputTextureProperty = "_MainTex",
-                Update = texture.Update
-            });
+            EditorRegisterPostProcessor(new AtlasPostProcessor { Target = texture, Material = texture.material, InputTextureProperty = "_MainTex", Update = texture.Update });
         }
 
         internal void EditorUnregisterPostProcessor(RenderTexture texture) {
@@ -468,9 +475,7 @@ namespace VRCLightVolumes {
                 pointLight.EditorApplyAuthoringData(customTexturesChanged, shadowTexturesChanged, false);
             }
 
-            // HideAndDontSave arrays may have been destroyed while their managed initialization
-            // flags survived a no-domain-reload Play Mode transition. Recovery never trusts either
-            // gate, even when source comparison happens to report no change.
+            // HideAndDontSave arrays may have been destroyed while their managed initialization flags survived a no-domain-reload Play Mode transition. Recovery never trusts either gate, even when source comparison happens to report no change.
             InvalidateTextureCaches(true, true);
             UpdateVolumes();
         }
@@ -488,14 +493,46 @@ namespace VRCLightVolumes {
         internal bool FroxelLayoutValidPreview => _froxelLayoutValid;
         internal Vector4 FineFroxelGridParamsPreview => _fineGridParams;
         internal Vector4 CoarseFroxelGridParamsPreview => _coarseGridParams;
-        internal Material ClusteringMaterialPreview => GetClusteringMaterial();
+        internal Material ClusteringMaterialPreview => ClusteringMaterial != null ? ClusteringMaterial : _generatedClusteringMaterial;
+        internal Material ShadowCullingMaterialPreview => GetShadowCullingMaterial();
         internal bool RuntimeInitializedPreview => _isInitialized;
         internal int ActivePointLightCountPreview => _pointLightCount;
         internal int ActiveShadowCountPreview => _activeShadowCount;
+        internal int ActiveShadowCullCountPreview => _activeShadowCullCount;
         internal bool ClusteringActivePreview => _clusteringActive;
         internal bool ClusteringUnsupportedPreview => _clusteringUnsupported;
         internal bool ClusteringAllocationFailedPreview => _clusteringAllocationFailed;
         internal bool ClusterMaskValidPreview => _clusterMaskValid;
+        internal RenderTexture ShadowCullPyramidPreview => _shadowCullPyramid;
+        internal int ShadowCullPyramidLevelCountPreview => _shadowCullPyramidLevelCount;
+        internal int ShadowCullPyramidFinestResolutionPreview => _shadowCullPyramidFirstLevel > 0 _shadowCullPyramidResolution >> _shadowCullPyramidFirstLevel : 0;
+        internal int ShadowCullPyramidSliceCountPreview => _shadowCullPyramidSliceCount;
+        internal int ShadowCullPyramidNodeCountPreview => _shadowCullPyramidNodeCount;
+        internal bool ShadowCullPyramidValidPreview => _shadowCullPyramidValid;
+        internal bool ShadowCullPyramidDirtyPreview => _shadowCullPyramidDirty;
+        internal bool ShadowCullPyramidSuspendedPreview => _shadowCullPyramidSuspendedForAutoUpdates;
+        internal bool ShadowCullPyramidUnsupportedPreview => _shadowCullPyramidUnsupported;
+        internal bool ShadowCullPyramidAllocationFailedPreview => _shadowCullPyramidAllocationFailed;
+
+        // Reuses the production packing rules so the Inspector can estimate the lazy Hi-Z allocation
+        // before a camera render has built it. Keeping the constants on the runtime side prevents the
+        // memory counter from drifting when the release resolution or 4K storage cap changes.
+        internal static bool TryGetShadowCullPyramidSizePreview(int resolution, int sliceCount, out int width, out int height) {
+            width = 0;
+            height = 0;
+            if (resolution < 2 || !IsShadowCullPowerOfTwo(resolution) || sliceCount <= 0) return false;
+
+            int lastStoredLevel = resolution > 2 ? IntegerLog2PowerOfTwo(resolution) - 1 : 1;
+            int firstStoredLevel = ResolveShadowCullFirstStoredLevel(resolution);
+            int ignoredNodeCount;
+            while (firstStoredLevel <= lastStoredLevel) {
+                if (ResolveShadowCullPackedAtlas(resolution, sliceCount, firstStoredLevel, out width, out height, out ignoredNodeCount)) return true;
+                firstStoredLevel++;
+            }
+            width = 0;
+            height = 0;
+            return false;
+        }
 
 #endregion
     }

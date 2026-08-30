@@ -505,7 +505,7 @@ namespace VRCLightVolumes {
         internal bool ClusterMaskValidPreview => _clusterMaskValid;
         internal RenderTexture ShadowCullPyramidPreview => _shadowCullPyramid;
         internal int ShadowCullPyramidLevelCountPreview => _shadowCullPyramidLevelCount;
-        internal int ShadowCullPyramidFinestResolutionPreview => _shadowCullPyramidFirstLevel > 0 _shadowCullPyramidResolution >> _shadowCullPyramidFirstLevel : 0;
+        internal int ShadowCullPyramidFinestResolutionPreview => _shadowCullPyramidFirstLevel > 0 ? _shadowCullPyramidResolution >> _shadowCullPyramidFirstLevel : 0;
         internal int ShadowCullPyramidSliceCountPreview => _shadowCullPyramidSliceCount;
         internal int ShadowCullPyramidNodeCountPreview => _shadowCullPyramidNodeCount;
         internal bool ShadowCullPyramidValidPreview => _shadowCullPyramidValid;

@@ -19,7 +19,7 @@ namespace VRCLightVolumes {
         private static readonly string _projectionSourceObjectPickerFilter = "t:Texture t:Material";
         private static readonly string[] _lightTypeNames = { "Point Light", "Spot Light", "Area Light" };
         private static readonly string[] _projectionNames = { "Parametric", "LUT", "Custom" };
-        private static readonly string[] _shadowBakeResolutionNames = { "Default (Manager)", "16 x 16", "32 x 32", "64 x 64", "128 x 128", "256 x 256", "512 x 512", "1024 x 1024", "2048 x 2048" };
+        private readonly string[] _shadowBakeResolutionNames = { "Manager", "16 x 16", "32 x 32", "64 x 64", "128 x 128", "256 x 256", "512 x 512", "1024 x 1024", "2048 x 2048" };
         private static readonly int[] _shadowBakeResolutionValues = { 0, 16, 32, 64, 128, 256, 512, 1024, 2048 };
         private static readonly string[] _bakeInGameQualityNames = { "Low", "Medium", "High" };
         private const float ObjectSelectorButtonWidth = 19f;
@@ -107,6 +107,7 @@ namespace VRCLightVolumes {
 
                 GUILayout.Space(ShadowGroupSpacing);
                 DrawTextureMaterialField("ShadowMap", _cubemapMaterialHint, true);
+                _shadowBakeResolutionNames[0] = GetManagerShadowResolutionName();
                 DrawIntPopup("ShadowBakeResolution", "Resolution", _shadowBakeResolutionNames, _shadowBakeResolutionValues);
                 DrawProperty("RebakeShadows");
 
@@ -288,6 +289,14 @@ namespace VRCLightVolumes {
             int value = EditorGUI.IntPopup(popupRect, property.intValue, names, values);
             if (EditorGUI.EndChangeCheck()) property.intValue = value;
             EditorGUI.showMixedValue = false;
+        }
+
+        // Returns the current Manager shadow resolution, or the base label before assignment.
+        private string GetManagerShadowResolutionName() {
+            LightVolumeManager manager = PointLightVolume != null ? PointLightVolume.LightVolumeManager : null;
+            if (manager == null) return "Manager";
+            int resolution = manager.ShadowTexturesWidth;
+            return $"Manager - {resolution} x {resolution}";
         }
 
         // Presents the runtime half-angle radians field as a full cone angle in degrees.

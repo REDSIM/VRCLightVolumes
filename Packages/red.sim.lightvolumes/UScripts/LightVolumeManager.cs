@@ -124,7 +124,7 @@ namespace VRCLightVolumes {
         [Tooltip("Uses the non-clustered loop below this active Point Light Volume count because building and sampling the cluster mask is unlikely to amortize.")]
         [Range(1, MaxPointLightCount)] public int ClusteringMinLights = 8;
         [Tooltip("Uses a hierarchical z-buffer (Hi-Z) built from the shadow maps to skip lights in froxels that are completely in shadow. It is most useful in heavily shadowed scenes; disable it when shadows rarely hide whole froxels or profiling shows no performance gain.")]
-        public bool ShadowCulling = true;
+        public bool ShadowCulling = false;
 
         [Tooltip("When enabled, areas outside Light Volumes fall back to light probes. Otherwise, the Light Volume with the smallest weight is used as fallback. It also improves performance.")]
         public bool LightProbesBlending = true;

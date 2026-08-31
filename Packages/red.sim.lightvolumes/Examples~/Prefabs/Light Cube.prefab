@@ -881,9 +881,7 @@ MonoBehaviour:
   IsActive: 1
   CustomTexture: {fileID: 0}
   CustomTextureMaterial: {fileID: 0}
-  ProjectionType: 0
   ProjectionMode: 0
-  AutoUpdateCustomTexture: 0
   ShadowMapTexture: {fileID: 0}
   ShadowMapMaterial: {fileID: 0}
   AutoUpdateShadowMap: 0
@@ -915,8 +913,6 @@ MonoBehaviour:
   DebugClipPlanes: 0
   ForceCubemapShadows: 0
   ShadowMap: {fileID: 8900000, guid: ba4c7c0b3c40d1d4883b3d6b1aa8cce7, type: 2}
-  CustomTextureIsCubemap: 0
-  CustomTextureHasDepthSlices: 0
   ShadowMapTextureIsCubemap: 0
   ShadowMapTextureHasDepthSlices: 0
   ShadowMapUsesCubemap: 0

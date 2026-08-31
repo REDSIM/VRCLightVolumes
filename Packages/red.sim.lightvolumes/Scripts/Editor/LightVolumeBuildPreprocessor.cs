@@ -412,6 +412,7 @@ namespace VRCLightVolumes {
             SetUdonProgramVariable(udonBehaviour, "CustomTexture", pointLight.CustomTexture);
             SetUdonProgramVariable(udonBehaviour, "CustomTextureMaterial", pointLight.CustomTextureMaterial);
             SetUdonProgramVariable(udonBehaviour, "ProjectionMode", pointLight.ProjectionMode);
+            SetUdonProgramVariable(udonBehaviour, "AutoUpdateCustomTexture", pointLight.AutoUpdateCustomTexture);
 #endif
         }
 

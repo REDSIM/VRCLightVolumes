@@ -170,6 +170,7 @@ namespace VRCLightVolumes {
                 LightVolumeDebugGUI.DrawText(serializedObject, nameof(PointLightVolumeInstance.ProjectionMode), GetProjectionModeName(PointLightVolume.ProjectionMode));
                 LightVolumeDebugGUI.DrawObject(serializedObject, nameof(PointLightVolumeInstance.CustomTexture), PointLightVolume.CustomTexture, typeof(Texture), "Texture");
                 LightVolumeDebugGUI.DrawObject(serializedObject, nameof(PointLightVolumeInstance.CustomTextureMaterial), PointLightVolume.CustomTextureMaterial, typeof(Material), "Material");
+                LightVolumeDebugGUI.DrawBool(serializedObject, nameof(PointLightVolumeInstance.AutoUpdateCustomTexture), PointLightVolume.AutoUpdateCustomTexture, "Dynamic Source");
 
                 if (PointLightVolume.LightType == 2) {
                     LightVolumeDebugGUI.DrawGroupHeader("Area Cookie", true, "Live fallback color and GPU readback state for an Area Light cookie.");

@@ -51,7 +51,7 @@ namespace VRCLightVolumes {
             if (AutoUpdateTextures && HasAutoCustomTextureUpdates) ScheduleUpdateProcess();
         }
 
-        // Updates animated render texture and material sources in the final cookie array
+        // Updates projection sources marked for automatic refresh in the final cookie array
         public void UpdateAutoCustomTextures() {
             if (CustomTextures == null) {
                 ReinitializeCustomTextures();
@@ -73,13 +73,15 @@ namespace VRCLightVolumes {
             int count = pointInstances.Length;
 
             // Prepare reusable custom texture source cache arrays for a full rebuild
-            if (_pointLightCustomIDs.Length < count || _customCubemapTextureAutoUpdates.Length < count || _customSingleTextureAutoUpdates.Length < count || _customSingleAreaCookieReceivers.Length < count || _customSingleAreaCookieReceiverIndices.Length < count || _pointLightAreaCookieAverageColors.Length < count) {
+            if (_pointLightCustomIDs.Length < count || _customCubemapTextureAutoUpdates.Length < count || _customCubemapMaterialAutoUpdates.Length < count || _customSingleTextureAutoUpdates.Length < count || _customSingleMaterialAutoUpdates.Length < count || _customSingleAreaCookieReceivers.Length < count || _customSingleAreaCookieReceiverIndices.Length < count || _pointLightAreaCookieAverageColors.Length < count) {
                 _customCubemapTextures = new Texture[count];
                 _customCubemapMaterials = new Material[count];
                 _customSingleTextures = new Texture[count];
                 _customSingleMaterials = new Material[count];
                 _customCubemapTextureAutoUpdates = new bool[count];
+                _customCubemapMaterialAutoUpdates = new bool[count];
                 _customSingleTextureAutoUpdates = new bool[count];
+                _customSingleMaterialAutoUpdates = new bool[count];
                 _customSingleAreaCookieReceivers = new PointLightVolumeInstance[count];
                 _customSingleAreaCookieReceiverIndices = new int[count];
                 _pointLightCustomIDs = new int[count];
@@ -130,19 +132,19 @@ namespace VRCLightVolumes {
                 Texture textureSource = instance.CustomTexture;
                 if (textureSource != null) { // STATIC OR ANIMATED TEXTURE PROJECTION
 
-                    bool autoUpdate = typeof(RenderTexture).IsInstanceOfType(textureSource); // RenderTexture and CustomRenderTexture sources update directly in the final array
+                    bool autoUpdate = instance.AutoUpdateCustomTexture;
                     if (usesAreaCookieProjection) _customTexturesUseMipMap = true;
 
                     if (usesCubemapProjection) { // TEXTURE CUBEMAP PROJECTION
 
                         int index = -1;
                         for (int j = 0; j < cubemapTextureCount; j++) {
-                            if (_customCubemapTextures[j] == textureSource) {
+                            if (_customCubemapTextures[j] == textureSource && _customCubemapTextureAutoUpdates[j] == autoUpdate) {
                                 index = j;
                                 break;
                             }
                         }
-                        if (index < 0) { // Append each unique source once so matching lights share the same texture ID
+                        if (index < 0) { // Append each unique source/update-mode pair once so live and snapshot users can diverge
                             index = cubemapTextureCount;
                             _customCubemapTextures[cubemapTextureCount] = textureSource;
                             _customCubemapTextureAutoUpdates[cubemapTextureCount] = autoUpdate;
@@ -154,12 +156,12 @@ namespace VRCLightVolumes {
 
                         int index = -1;
                         for (int j = 0; j < singleTextureCount; j++) {
-                            if (_customSingleTextures[j] == textureSource) {
+                            if (_customSingleTextures[j] == textureSource && _customSingleTextureAutoUpdates[j] == autoUpdate) {
                                 index = j;
                                 break;
                             }
                         }
-                        if (index < 0) { // Append each unique source once so matching lights share the same texture ID
+                        if (index < 0) { // Append each unique source/update-mode pair once so live and snapshot users can diverge
                             index = singleTextureCount;
                             _customSingleTextures[singleTextureCount] = textureSource;
                             _customSingleTextureAutoUpdates[singleTextureCount] = autoUpdate;
@@ -175,20 +177,22 @@ namespace VRCLightVolumes {
 
                     Material materialSource = instance.CustomTextureMaterial;
                     if (materialSource == null) continue;
+                    bool autoUpdate = instance.AutoUpdateCustomTexture;
                     if (usesAreaCookieProjection) _customTexturesUseMipMap = true;
 
                     if (usesCubemapProjection) { // MATERIAL CUBEMAP PROJECTION
 
                         int index = -1;
                         for (int j = 0; j < cubemapMaterialCount; j++) {
-                            if (_customCubemapMaterials[j] == materialSource) {
+                            if (_customCubemapMaterials[j] == materialSource && _customCubemapMaterialAutoUpdates[j] == autoUpdate) {
                                 index = j;
                                 break;
                             }
                         }
-                        if (index < 0) { // Append each unique material once so matching lights share the same texture ID
+                        if (index < 0) { // Append each unique source/update-mode pair once so live and snapshot users can diverge
                             index = cubemapMaterialCount;
                             _customCubemapMaterials[cubemapMaterialCount] = materialSource;
+                            _customCubemapMaterialAutoUpdates[cubemapMaterialCount] = autoUpdate;
                             cubemapMaterialCount++;
                         }
                         _pointLightCustomIDs[i] = index << 2 | 1;
@@ -197,21 +201,22 @@ namespace VRCLightVolumes {
 
                         int index = -1;
                         for (int j = 0; j < singleMaterialCount; j++) {
-                            if (_customSingleMaterials[j] == materialSource) {
+                            if (_customSingleMaterials[j] == materialSource && _customSingleMaterialAutoUpdates[j] == autoUpdate) {
                                 index = j;
                                 break;
                             }
                         }
-                        if (index < 0) { // Append each unique material once so matching lights share the same texture ID
+                        if (index < 0) { // Append each unique source/update-mode pair once so live and snapshot users can diverge
                             index = singleMaterialCount;
                             _customSingleMaterials[singleMaterialCount] = materialSource;
+                            _customSingleMaterialAutoUpdates[singleMaterialCount] = autoUpdate;
                             singleMaterialCount++;
                         }
                         if (usesPointLutProjection && index == 0) pointLutUsesFirstSingleMaterial = true;
                         _pointLightCustomIDs[i] = index << 2 | 3;
 
                     }
-                    HasAutoCustomTextureUpdates = true;
+                    if (autoUpdate) HasAutoCustomTextureUpdates = true;
 
                 }
 
@@ -268,7 +273,7 @@ namespace VRCLightVolumes {
 
         }
 
-        // Copies custom projection sources into the runtime array. Auto-update passes skip immutable texture assets; material and render texture sources always update.
+        // Copies custom projection sources into the runtime array. Auto-update passes skip sources configured as rebuild-time snapshots.
         private void BlitCustomTextures(bool autoUpdatePass) {
             RenderTexture destination = CustomTextures;
             // Blit each cubemap texture source into 6 array slices
@@ -282,6 +287,7 @@ namespace VRCLightVolumes {
             // Blit each cubemap material source into 6 array slices
             int cubemapMaterialCount = _customCubemapMaterialCount;
             for (int i = 0; i < cubemapMaterialCount; i++) {
+                if (autoUpdatePass && !_customCubemapMaterialAutoUpdates[i]) continue;
                 BlitCubemapMaterial(_customCubemapMaterials[i], (cubemapTextureCount + i) * 6, destination);
             }
 
@@ -299,6 +305,7 @@ namespace VRCLightVolumes {
 
             // Blit each 1-slice material source into 1 array slice after texture sources
             for (int i = 0; i < singleMaterialCount; i++) {
+                if (autoUpdatePass && !_customSingleMaterialAutoUpdates[i]) continue;
                 Material sourceMaterial = _customSingleMaterials[i];
                 if (sourceMaterial == null) continue;
                 int targetSlice = singleBaseSlice + singleTextureCount + i;
@@ -351,6 +358,7 @@ namespace VRCLightVolumes {
             }
 
             for (int i = 0; i < singleMaterialCount; i++) {
+                if (autoUpdatePass && !_customSingleMaterialAutoUpdates[i]) continue;
                 int sourceIndex = singleTextureCount + i;
                 PointLightVolumeInstance receiver = _customSingleAreaCookieReceivers[sourceIndex];
                 if (receiver != null) RequestAreaCookieAverageReadback(sourceIndex, receiver, _customSingleAreaCookieReceiverIndices[sourceIndex], autoUpdatePass);

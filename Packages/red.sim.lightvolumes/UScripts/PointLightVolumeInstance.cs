@@ -83,6 +83,8 @@ namespace VRCLightVolumes {
         public Material CustomTextureMaterial;
         [Tooltip("Projection mode used by this light. 0 = parametric, 1 = LUT, 2 = custom cookie or cubemap.")]
         public int ProjectionMode = 0; // 0: parametric, 1: LUT, 2: custom cookie or cubemap
+        [Tooltip("Updates this light's custom projection slice every frame while the Manager's Auto Update Textures option is enabled. Disable it to keep a snapshot captured during the last texture-array rebuild.")]
+        public bool AutoUpdateCustomTexture = false;
 
         [Header("Shadow Source")]
         [Tooltip("Texture source used by this light's shadow map.")]
@@ -420,10 +422,22 @@ namespace VRCLightVolumes {
             MarkRangeDirtyAndNotify(true, CustomTexture != null || CustomTextureMaterial != null, false);
         }
 
-        // Assigns a texture source and schedules a runtime texture cache refresh. RenderTexture and CustomRenderTexture sources are detected by the Manager and updated automatically in the final array.
+        // Selects custom projection mode after a source was assigned through the public fields.
+        public void SetCustomTexture() {
+            SetCustomProjectionMode();
+            MarkRangeDirtyAndNotify(true, CustomTexture != null || CustomTextureMaterial != null, false);
+        }
+
+        // Assigns a texture source and uses the dev.16 automatic update default: RenderTexture-derived sources are live, immutable Texture assets are snapshots.
         public void SetCustomTexture(Texture texture) {
+            SetCustomTexture(texture, false, texture != null && typeof(RenderTexture).IsInstanceOfType(texture));
+        }
+
+        // Backward-compatible dev.15 API. Source layout is now inferred from the Texture itself; isCubemap is retained so existing callers keep compiling.
+        public void SetCustomTexture(Texture texture, bool isCubemap, bool autoUpdate) {
             CustomTexture = texture;
             CustomTextureMaterial = null;
+            AutoUpdateCustomTexture = texture != null && autoUpdate;
             if (texture != null) {
                 SetCustomProjectionMode();
             } else {
@@ -432,10 +446,16 @@ namespace VRCLightVolumes {
             MarkRangeDirtyAndNotify(true, true, false);
         }
 
-        // Sets a material source for this light's custom projection and schedules manager runtime texture cache refresh
+        // Assigns a material source using the dev.16 live-source default.
         public void SetCustomMaterial(Material material) {
+            SetCustomMaterial(material, true);
+        }
+
+        // Assigns a material source and chooses whether its rendered projection stays live or remains a rebuild-time snapshot.
+        public void SetCustomMaterial(Material material, bool autoUpdate) {
             CustomTexture = null;
             CustomTextureMaterial = material;
+            AutoUpdateCustomTexture = material != null && autoUpdate;
             if (material != null) {
                 SetCustomProjectionMode();
             } else {

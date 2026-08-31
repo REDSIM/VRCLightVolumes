@@ -1287,6 +1287,7 @@ namespace VRCLightVolumes {
             }
             pointLight.CustomTexture = null;
             pointLight.CustomTextureMaterial = null;
+            pointLight.AutoUpdateCustomTexture = false;
             pointLight.ShadowMapID = -1f;
             pointLight.IsRangeDirty = true;
             RememberMigratedRuntimeComponent(pointLight);

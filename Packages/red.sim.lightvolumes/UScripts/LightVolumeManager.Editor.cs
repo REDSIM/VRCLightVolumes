@@ -329,7 +329,7 @@ namespace VRCLightVolumes {
                 if (instance != null && instance.IsActive && instance.ProjectionMode != 0) {
                     if (instance.CustomTexture != null) texture = instance.CustomTexture;
                     else if (instance.CustomTextureMaterial != null) material = instance.CustomTextureMaterial;
-                    if (texture != null || material != null) state = 1 | (instance.LightType & 3) << 1 | (instance.ProjectionMode & 3) << 3;
+                    if (texture != null || material != null) state = 1 | (instance.LightType & 3) << 1 | (instance.ProjectionMode & 3) << 3 | (instance.AutoUpdateCustomTexture ? 1 << 5 : 0);
                 }
                 if (editorState.CustomSourceOwners[i] != instance || editorState.CustomSourceTextures[i] != texture || editorState.CustomSourceMaterials[i] != material || editorState.CustomSourceStates[i] != state) changed = true;
                 editorState.CustomSourceOwners[i] = instance;

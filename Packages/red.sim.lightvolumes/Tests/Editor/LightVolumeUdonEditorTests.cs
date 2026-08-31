@@ -67,8 +67,12 @@ namespace VRCLightVolumes.Tests {
         private static readonly FieldInfo _customTexturesDepthField = typeof(LightVolumeManager).GetField("_customTextureArrayDepth", _lifecycleMethodFlags);
         private static readonly FieldInfo _shadowTexturesDepthField = typeof(LightVolumeManager).GetField("_shadowTextureArrayDepth", _lifecycleMethodFlags);
         private static readonly FieldInfo _customCubemapTextureCountField = typeof(LightVolumeManager).GetField("_customCubemapTextureCount", _lifecycleMethodFlags);
+        private static readonly FieldInfo _customCubemapMaterialCountField = typeof(LightVolumeManager).GetField("_customCubemapMaterialCount", _lifecycleMethodFlags);
+        private static readonly FieldInfo _customCubemapTextureAutoUpdatesField = typeof(LightVolumeManager).GetField("_customCubemapTextureAutoUpdates", _lifecycleMethodFlags);
+        private static readonly FieldInfo _customCubemapMaterialAutoUpdatesField = typeof(LightVolumeManager).GetField("_customCubemapMaterialAutoUpdates", _lifecycleMethodFlags);
         private static readonly FieldInfo _customSingleTextureCountField = typeof(LightVolumeManager).GetField("_customSingleTextureCount", _lifecycleMethodFlags);
         private static readonly FieldInfo _customSingleMaterialCountField = typeof(LightVolumeManager).GetField("_customSingleMaterialCount", _lifecycleMethodFlags);
+        private static readonly FieldInfo _customSingleMaterialAutoUpdatesField = typeof(LightVolumeManager).GetField("_customSingleMaterialAutoUpdates", _lifecycleMethodFlags);
         private static readonly FieldInfo _shadowCubemapTextureCountField = typeof(LightVolumeManager).GetField("_shadowCubemapTextureCount", _lifecycleMethodFlags);
         private static readonly FieldInfo _shadowSingleTextureCountField = typeof(LightVolumeManager).GetField("_shadowSingleTextureCount", _lifecycleMethodFlags);
         private static readonly FieldInfo _pointLightCustomIDsField = typeof(LightVolumeManager).GetField("_pointLightCustomIDs", _lifecycleMethodFlags);
@@ -244,25 +248,42 @@ namespace VRCLightVolumes.Tests {
             Assert.That(program.SerializedProgramAsset.RetrieveProgram(), Is.Not.Null);
         }
 
-        // Cookie source mutability is derived from the source object. Removed metadata and overloads
-        // must not silently restore the old per-light auto-update/snapshot split.
+        // The restored public field and overloads must also exist in the serialized Udon program shipped with the package.
         [Test]
-        public void RemovedCookieSnapshotLegacyContractDoesNotReturn() {
+        public void PointLightUdonProgramAssetIsCompiledAndRetrievable() {
+            UdonSharpProgramAsset program = UdonSharpEditorUtility.GetUdonSharpProgramAsset(typeof(PointLightVolumeInstance));
+            Assert.That(program, Is.Not.Null);
+            Assert.That(program.sourceCsScript, Is.Not.Null);
+            Assert.That(AssetDatabase.GetAssetPath(program), Is.EqualTo("Packages/red.sim.lightvolumes/UScripts/PointLightVolumeInstance.asset"));
+            Assert.That(program.AssemblyError, Is.Null.Or.Empty);
+            Assert.That(program.CompiledVersion, Is.Not.EqualTo(UdonSharpProgramVersion.Unknown));
+            Assert.That(program.CompiledVersion, Is.EqualTo(program.ScriptVersion));
+            Assert.That(program.SerializedProgramAsset, Is.Not.Null);
+            Assert.That(program.SerializedProgramAsset.RetrieveProgram(), Is.Not.Null);
+        }
+
+        // The dev.15 snapshot/live API remains available alongside the simplified dev.16 one-argument API.
+        [Test]
+        public void CookieSnapshotCompatibilityContractRemainsAvailable() {
             Type pointType = typeof(PointLightVolumeInstance);
-            Assert.That(pointType.GetField("AutoUpdateCustomTexture", PublicInstanceDeclared), Is.Null);
+            FieldInfo autoUpdateField = pointType.GetField("AutoUpdateCustomTexture", PublicInstanceDeclared);
+            Assert.That(autoUpdateField, Is.Not.Null);
+            Assert.That(autoUpdateField.FieldType, Is.EqualTo(typeof(bool)));
+
+            Assert.That(pointType.GetMethod("SetCustomTexture", PublicInstanceDeclared, null, Type.EmptyTypes, null), Is.Not.Null);
+            Assert.That(pointType.GetMethod("SetCustomTexture", PublicInstanceDeclared, null, new[] { typeof(Texture), typeof(bool), typeof(bool) }, null), Is.Not.Null);
+            Assert.That(pointType.GetMethod("SetCustomMaterial", PublicInstanceDeclared, null, new[] { typeof(Material), typeof(bool) }, null), Is.Not.Null);
+            Assert.That(pointType.GetMethod("SetCustomTexture", PublicInstanceDeclared, null, new[] { typeof(Texture) }, null), Is.Not.Null);
+            Assert.That(pointType.GetMethod("SetCustomMaterial", PublicInstanceDeclared, null, new[] { typeof(Material) }, null), Is.Not.Null);
+
+            // The source type and layout are still derived by the lean dev.16 cache instead of restoring stale metadata.
             Assert.That(pointType.GetField("ProjectionType", PublicInstanceDeclared), Is.Null);
             Assert.That(pointType.GetField("CustomTextureIsCubemap", PublicInstanceDeclared), Is.Null);
             Assert.That(pointType.GetField("CustomTextureHasDepthSlices", PublicInstanceDeclared), Is.Null);
-            Assert.That(pointType.GetMethod("SetCustomTexture", PublicInstanceDeclared, null, Type.EmptyTypes, null), Is.Null);
-            Assert.That(pointType.GetMethod("SetCustomTexture", PublicInstanceDeclared, null, new[] { typeof(Texture), typeof(bool), typeof(bool) }, null), Is.Null);
             Assert.That(pointType.GetMethod("SetCustomTexture", PublicInstanceDeclared, null, new[] { typeof(Texture), typeof(bool) }, null), Is.Null);
             Assert.That(pointType.GetMethod("SetCustomRenderTexture", PublicInstanceDeclared), Is.Null);
-            Assert.That(pointType.GetMethod("SetCustomMaterial", PublicInstanceDeclared, null, new[] { typeof(Material), typeof(bool) }, null), Is.Null);
             Assert.That(typeof(LightVolumeManager).GetField("HasLiveCustomTextureUpdates", PublicInstanceDeclared), Is.Null);
             Assert.That(typeof(LightVolumeManager).GetMethod("UpdateLiveCustomTextures", PublicInstanceDeclared), Is.Null);
-
-            Assert.That(pointType.GetMethod("SetCustomTexture", PublicInstanceDeclared, null, new[] { typeof(Texture) }, null), Is.Not.Null);
-            Assert.That(pointType.GetMethod("SetCustomMaterial", PublicInstanceDeclared, null, new[] { typeof(Material) }, null), Is.Not.Null);
         }
 
         // A default handle is intentionally usable by generic editor integrations before a Manager is assigned.
@@ -3906,9 +3927,9 @@ namespace VRCLightVolumes.Tests {
             AssertPointCustomData(point, -1, 0);
         }
 
-        // Verifies RenderTexture cookies always use the animated projection path without a snapshot mode.
+        // Verifies the one-argument API keeps the dev.16 animated default for RenderTexture cookies.
         [Test]
-        public void AreaRenderTextureCookieAlwaysUsesAnimatedPath() {
+        public void AreaRenderTextureCookieUsesAnimatedDefault() {
             LightVolumeManager manager = CreateManager("Area Render Texture Animated Manager", false);
             RenderTexture source = CreateRenderTexture("Area Render Texture Cookie Source", 4, 4, 1, TextureDimension.Tex2D);
             manager.CustomTexturesWidth = 4;
@@ -3923,7 +3944,28 @@ namespace VRCLightVolumes.Tests {
             manager.ReinitializeCustomTextures();
 
             Assert.That(point.CustomTexture, Is.SameAs(source));
+            Assert.That(point.AutoUpdateCustomTexture, Is.True);
             Assert.That(manager.HasAutoCustomTextureUpdates, Is.True);
+        }
+
+        // Verifies the restored dev.15 API can retain a RenderTexture cookie as a rebuild-time snapshot.
+        [Test]
+        public void AreaRenderTextureCookieRespectsManualAutoUpdateOverride() {
+            LightVolumeManager manager = CreateManager("Area Render Texture Manual Auto Update Manager", false);
+            RenderTexture source = CreateRenderTexture("Area Render Texture Manual Cookie Source", 4, 4, 1, TextureDimension.Tex2D);
+            manager.CustomTexturesWidth = 4;
+            manager.CustomTexturesHeight = 4;
+
+            PointLightVolumeInstance point = CreatePointLight(manager, "Area Render Texture Manual Cookie Light", true);
+            point.transform.localScale = new Vector3(2, 3, 1);
+            point.SetAreaLight();
+            point.SetCustomTexture(source, false, false);
+            manager.PointLightVolumeInstances = new[] { point };
+
+            manager.ReinitializeCustomTextures();
+
+            Assert.That(point.AutoUpdateCustomTexture, Is.False);
+            Assert.That(manager.HasAutoCustomTextureUpdates, Is.False);
         }
 
         // Verifies edit-mode animated cookie updates rebuild stale auto-mip arrays before manual mip generation.
@@ -4365,6 +4407,39 @@ namespace VRCLightVolumes.Tests {
             secondPoint.AreaCookieAverageCustomId = -1;
         }
 
+        // Verifies a shared material source is split when lights need different runtime auto-update behavior.
+        [Test]
+        public void AreaMaterialCookieAutoUpdateMismatchUsesSeparateRuntimeSlices() {
+            LightVolumeManager manager = CreateManager("Area Material Cookie Auto Update Split Manager", false);
+            Material material = CreateMaterial("Hidden/CubeFace");
+            manager.CustomTexturesWidth = 4;
+            manager.CustomTexturesHeight = 4;
+
+            PointLightVolumeInstance livePoint = CreatePointLight(manager, "Area Material Cookie Live", true);
+            livePoint.transform.localScale = new Vector3(2, 3, 1);
+            livePoint.SetCustomMaterial(material, true);
+            livePoint.SetAreaLight();
+
+            PointLightVolumeInstance snapshotPoint = CreatePointLight(manager, "Area Material Cookie Snapshot", true);
+            snapshotPoint.transform.localScale = new Vector3(2, 3, 1);
+            snapshotPoint.SetCustomMaterial(material, false);
+            snapshotPoint.SetAreaLight();
+
+            manager.PointLightVolumeInstances = new[] { livePoint, snapshotPoint };
+
+            manager.ReinitializeCustomTextures();
+            manager.UpdateVolumes();
+
+            Assert.That(GetManagerField<int>(manager, _customSingleMaterialCountField), Is.EqualTo(2));
+            Assert.That(manager.CustomTextures, Is.Not.Null);
+            Assert.That(manager.CustomTextures.volumeDepth, Is.EqualTo(2));
+            Assert.That(manager.HasAutoCustomTextureUpdates, Is.True);
+            Assert.That(GetManagerField<bool[]>(manager, _customSingleMaterialAutoUpdatesField), Is.EqualTo(new[] { true, false }));
+            Assert.That(GetManagerField<int[]>(manager, _pointLightCustomIDsField), Is.EqualTo(new[] { 0, 1 }));
+            AssertPointCustomData(0, livePoint, -1, 0);
+            AssertPointCustomData(1, snapshotPoint, -2, 0);
+        }
+
         // Verifies the runtime API assigns a texture source and refreshes manager-owned projection arrays
         [Test]
         public void CustomTextureApiAssignsTextureAndRefreshesRuntimeArray() {
@@ -4381,6 +4456,7 @@ namespace VRCLightVolumes.Tests {
             Assert.That(point.CustomTexture, Is.SameAs(source));
             Assert.That(point.CustomTextureMaterial, Is.Null);
             Assert.That(point.ProjectionMode, Is.EqualTo(2)); // 2: custom cookie or cubemap
+            Assert.That(point.AutoUpdateCustomTexture, Is.False);
             Assert.That(manager.HasAutoCustomTextureUpdates, Is.False);
             Assert.That(manager.CustomTextures, Is.Not.Null);
             Assert.That(Shader.GetGlobalTexture(_pointLightTextureID), Is.SameAs(manager.CustomTextures));
@@ -4392,10 +4468,11 @@ namespace VRCLightVolumes.Tests {
 
             Assert.That(point.CustomTexture, Is.Null);
             Assert.That(point.ProjectionMode, Is.EqualTo(0)); // 0: parametric
+            Assert.That(point.AutoUpdateCustomTexture, Is.False);
             Assert.That(manager.CustomTextures, Is.Null);
         }
 
-        // Verifies the unified texture API detects RenderTexture sources as always animated.
+        // Verifies the one-argument texture API defaults RenderTexture sources to live updates.
         [Test]
         public void CustomTextureApiAssignsRenderTextureAsAnimatedSource() {
             LightVolumeManager manager = CreateManager("Custom Render Texture API Manager", false);
@@ -4411,6 +4488,7 @@ namespace VRCLightVolumes.Tests {
             Assert.That(point.CustomTexture, Is.SameAs(source));
             Assert.That(point.CustomTextureMaterial, Is.Null);
             Assert.That(point.ProjectionMode, Is.EqualTo(2)); // 2: custom cookie or cubemap
+            Assert.That(point.AutoUpdateCustomTexture, Is.True);
             Assert.That(manager.HasAutoCustomTextureUpdates, Is.True);
             Assert.That(manager.CustomTextures, Is.Not.Null);
             Assert.That(Shader.GetGlobalTexture(_pointLightTextureID), Is.SameAs(manager.CustomTextures));
@@ -4458,6 +4536,41 @@ namespace VRCLightVolumes.Tests {
             Assert.That(after[1][0].b, Is.GreaterThan(0.9f));
         }
 
+        // A shared material used in live and snapshot modes needs separate slices, and only the live slice may change during an auto-update pass.
+        [Test]
+        public void AutoCustomTextureUpdateRefreshesLiveMaterialWithoutOverwritingSnapshot() {
+            LightVolumeManager manager = CreateManager("Mixed Live Snapshot Material Manager", false);
+            manager.CustomTexturesWidth = 4;
+            manager.CustomTexturesHeight = 4;
+            Texture2D initialTexture = CreateTexture2D("Initial Material Cookie");
+            Texture2D replacementTexture = CreateTexture2D("Replacement Material Cookie");
+            replacementTexture.SetPixel(0, 0, Color.blue);
+            replacementTexture.Apply(false);
+            Material material = CreateMaterial("Unlit/Texture");
+            material.SetTexture("_MainTex", initialTexture);
+
+            PointLightVolumeInstance liveSpot = CreatePointLight(manager, "Live Material Cookie Spot", true);
+            liveSpot.SetSpotLight(60f, 0.5f);
+            liveSpot.SetCustomMaterial(material, true);
+            PointLightVolumeInstance snapshotSpot = CreatePointLight(manager, "Snapshot Material Cookie Spot", true);
+            snapshotSpot.SetSpotLight(60f, 0.5f);
+            snapshotSpot.SetCustomMaterial(material, false);
+            manager.PointLightVolumeInstances = new[] { liveSpot, snapshotSpot };
+            manager.ReinitializeCustomTextures();
+
+            Color[][] before = ReadRenderTextureArrayPixels(manager.CustomTextures);
+            Assert.That(before.Length, Is.EqualTo(2));
+            AssertPixelArraysEqual(before[0], before[1], "Initial live and snapshot material slices differ.");
+            material.SetTexture("_MainTex", replacementTexture);
+
+            manager.UpdateAutoCustomTextures();
+
+            Color[][] after = ReadRenderTextureArrayPixels(manager.CustomTextures);
+            Assert.That(PixelArraysDiffer(before[0], after[0]), Is.True, "The live material slice was not refreshed.");
+            AssertPixelArraysEqual(before[1], after[1], "The snapshot material slice was overwritten by an auto-update pass.");
+            Assert.That(after[0][0].b, Is.GreaterThan(0.9f));
+        }
+
         // CustomRenderTexture inherits RenderTexture and must use the same animated path through the
         // unified Texture API without an explicit type or update flag.
         [Test]
@@ -4499,6 +4612,37 @@ namespace VRCLightVolumes.Tests {
             Assert.That(manager.CubemapsCount, Is.EqualTo(1));
             Assert.That(manager.CustomTextures.volumeDepth, Is.EqualTo(6));
             AssertPointCustomData(point, -1, 0);
+        }
+
+        // A shared cubemap source needs separate six-slice ranges when live and snapshot users coexist, for both Texture and Material inputs.
+        [Test]
+        public void PointCubemapAutoUpdateMismatchSplitsTextureAndMaterialRanges() {
+            LightVolumeManager manager = CreateManager("Point Cubemap Auto Update Split Manager", false);
+            RenderTexture texture = CreateRenderTexture("Point Cubemap Shared Texture", 4, 4, 6, TextureDimension.Tex2DArray);
+            Material material = CreateMaterial("Hidden/CubeFace");
+            manager.CustomTexturesWidth = 4;
+            manager.CustomTexturesHeight = 4;
+
+            PointLightVolumeInstance liveTexture = CreatePointLight(manager, "Live Cubemap Texture", true);
+            liveTexture.SetCustomTexture(texture, true, true);
+            PointLightVolumeInstance snapshotTexture = CreatePointLight(manager, "Snapshot Cubemap Texture", true);
+            snapshotTexture.SetCustomTexture(texture, true, false);
+            PointLightVolumeInstance liveMaterial = CreatePointLight(manager, "Live Cubemap Material", true);
+            liveMaterial.SetCustomMaterial(material, true);
+            PointLightVolumeInstance snapshotMaterial = CreatePointLight(manager, "Snapshot Cubemap Material", true);
+            snapshotMaterial.SetCustomMaterial(material, false);
+            manager.PointLightVolumeInstances = new[] { liveTexture, snapshotTexture, liveMaterial, snapshotMaterial };
+
+            manager.ReinitializeCustomTextures();
+            manager.UpdateVolumes();
+
+            Assert.That(GetManagerField<int>(manager, _customCubemapTextureCountField), Is.EqualTo(2));
+            Assert.That(GetManagerField<int>(manager, _customCubemapMaterialCountField), Is.EqualTo(2));
+            Assert.That(GetManagerField<bool[]>(manager, _customCubemapTextureAutoUpdatesField), Is.EqualTo(new[] { true, false, false, false }));
+            Assert.That(GetManagerField<bool[]>(manager, _customCubemapMaterialAutoUpdatesField), Is.EqualTo(new[] { true, false, false, false }));
+            Assert.That(manager.CubemapsCount, Is.EqualTo(4));
+            Assert.That(manager.CustomTextures.volumeDepth, Is.EqualTo(24));
+            Assert.That(GetManagerField<int[]>(manager, _pointLightCustomIDsField), Is.EqualTo(new[] { 0, 1, 2, 3 }));
         }
 
         // Runtime light-type setters must invalidate the cookie cache before the editor-only
@@ -4606,6 +4750,7 @@ namespace VRCLightVolumes.Tests {
             Assert.That(firstPoint.CustomTexture, Is.Null);
             Assert.That(firstPoint.CustomTextureMaterial, Is.SameAs(material));
             Assert.That(firstPoint.ProjectionMode, Is.EqualTo(2)); // 2: custom cookie or cubemap
+            Assert.That(firstPoint.AutoUpdateCustomTexture, Is.True);
             manager.UpdateVolumes();
 
             Assert.That(manager.CubemapsCount, Is.EqualTo(1));
@@ -4615,6 +4760,11 @@ namespace VRCLightVolumes.Tests {
             Assert.That(GetManagerField<int[]>(manager, _pointLightCustomIDsField), Is.EqualTo(new[] { 0, 0 }));
             AssertPointCustomData(0, firstPoint, -1, 0);
             AssertPointCustomData(1, duplicatePoint, -1, 0);
+
+            firstPoint.SetCustomMaterial(null);
+            Assert.That(firstPoint.CustomTextureMaterial, Is.Null);
+            Assert.That(firstPoint.ProjectionMode, Is.EqualTo(0));
+            Assert.That(firstPoint.AutoUpdateCustomTexture, Is.False);
         }
 
         // Verifies runtime cookie size comes from the manager setting, not from the source texture

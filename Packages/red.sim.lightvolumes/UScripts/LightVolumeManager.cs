@@ -132,7 +132,7 @@ namespace VRCLightVolumes {
         public bool SharpBounds = true;
         [Tooltip("Automatically updates most volume properties at runtime. Enabling/disabling, Color and Intensity update automatically even without this option enabled. Position, Rotation and Scale get updated only for volumes that are marked dynamic. It's more performant to keep it off.")]
         public bool AutoUpdateVolumes = true;
-        [Tooltip("Automatically refreshes animated RenderTexture, Custom Render Texture and Material projection sources, plus shadow sources marked for automatic updates. Regular Texture assets are copied only when the atlas is rebuilt. It's more performant to keep this off when all sources are static.")]
+        [Tooltip("Automatically refreshes projection and shadow sources marked for automatic updates. The one-argument projection APIs mark RenderTexture, Custom Render Texture and Material sources for updates by default, while regular Texture assets default to rebuild-only snapshots. It's more performant to keep this off when all sources are static.")]
         public bool AutoUpdateTextures = true;
         [Tooltip("Limits the maximum number of additive volumes and Point Light Volumes that can affect a single pixel. This also limits individual Point Light Volume speculars in modern compatible shaders. Lower values improve worst-case performance in overlap-heavy areas.")]
         public int AdditiveMaxOverdraw = 4;
@@ -227,10 +227,11 @@ namespace VRCLightVolumes {
         private Texture[] _customSingleTextures = new Texture[0];
         private Material[] _customSingleMaterials = new Material[0];
 
-        // Auto-update flags are derived from the source object type once during a cache rebuild.
-        // Materials always update, while immutable Texture assets need only the initial copy.
+        // Auto-update flags are cached once per unique source/update-mode pair during a rebuild.
         private bool[] _customCubemapTextureAutoUpdates = new bool[0];
+        private bool[] _customCubemapMaterialAutoUpdates = new bool[0];
         private bool[] _customSingleTextureAutoUpdates = new bool[0];
+        private bool[] _customSingleMaterialAutoUpdates = new bool[0];
         private PointLightVolumeInstance[] _customSingleAreaCookieReceivers = new PointLightVolumeInstance[0];
         private int[] _customSingleAreaCookieReceiverIndices = new int[0];
 

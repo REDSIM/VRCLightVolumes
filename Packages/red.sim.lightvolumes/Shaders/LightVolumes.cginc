@@ -1039,90 +1039,42 @@ void LV_LightVolumeRegularSH(float3 worldPos, inout float3 L0, inout float3 L1r,
     uint volumesCount = min((uint) _UdonLightVolumeCount, VRCLV_MAX_VOLUMES_COUNT);
     uint additiveCount = min((uint) _UdonLightVolumeAdditiveCount, volumesCount);
 
-    [branch] if (volumesCount <= additiveCount) {
-        LV_SampleLightProbe(L0, L1r, L1g, L1b);
-        return;
-    }
-
-    uint volumeID_A = -1; // Main, dominant volume ID
-    uint volumeID_B = -1; // Secondary volume ID to blend main with
-
-    float3 localUVW = 0; // Last local UVW to use in disabled Light Probes mode
-    float3 localUVW_A = 0; // Main local UVW
-    float3 localUVW_B = 0; // Secondary local UVW
-
-    // Are A and B volumes NOT found?
-    bool isNoA = true, isNoB = true;
+    float remainingWeight = 1.0;
+    float3 L0_LP = 0, L1r_LP = 0, L1g_LP = 0, L1b_LP = 0;
 
     // Iterating through regular light volumes with simplified algorithm requiring Light Volumes to be sorted by weight in descending order
-    VRCLV_DYNAMIC_LOOP for (uint id = additiveCount; id < volumesCount; id++) {
-        localUVW = LV_LocalFromVolume(id, worldPos);
-        [branch] if (LV_PointLocalAABB(localUVW)) { // Intersection test
-            [branch] if (isNoA) { // First, searching for volume A
-                volumeID_A = id;
-                localUVW_A = localUVW;
-                isNoA = false;
-            } else { // Next, searching for volume B if A found
-                volumeID_B = id;
-                localUVW_B = localUVW;
-                isNoB = false;
-                break;
-            }
+    VRCLV_DYNAMIC_LOOP for (uint id = additiveCount; id < volumesCount; ++id) {
+        float3 localUVW = LV_LocalFromVolume(id, worldPos);
+        [branch] if (LV_PointLocalAABB(localUVW)) {
+            L0_LP = 0; L1r_LP = 0; L1g_LP = 0; L1b_LP = 0;
+            LV_SampleVolume(id, localUVW, L0_LP, L1r_LP, L1g_LP, L1b_LP);
+            float mask = LV_BoundsMask(localUVW, _UdonLightVolumeInvLocalEdgeSmooth[id]);
+            float currentWeight = mask * remainingWeight;
+            L0  += currentWeight * L0_LP;
+            L1r += currentWeight * L1r_LP;
+            L1g += currentWeight * L1g_LP;
+            L1b += currentWeight * L1b_LP;
+
+            remainingWeight -= currentWeight;
+            if (remainingWeight <= 0.01f) return;
         }
     }
 
-    // If no containing volume was found, use probes or the lowest-weight fallback volume.
-    [branch] if (isNoA) {
-        [branch] if (_UdonLightVolumeProbesBlend) {
-            LV_SampleLightProbe(L0, L1r, L1g, L1b);
-            return;
-        }
-
-        // Fallback to the lowest weight light volume if outside every volume
-        volumeID_A = volumesCount - 1;
-        localUVW_A = localUVW;
-    }
-
-    // Sample dominant Volume A and compute its boundary blend mask.
-    float3 L0_A = 0, L1r_A = 0, L1g_A = 0, L1b_A = 0;
-    LV_SampleVolume(volumeID_A, localUVW_A, L0_A, L1r_A, L1g_A, L1b_A);
-
-    float mask = 1;
-    [branch] if (!isNoA) {
-        mask = LV_BoundsMask(localUVW_A, _UdonLightVolumeInvLocalEdgeSmooth[volumeID_A]);
-    }
-
-    // Return A directly in its interior or when sharp bounds suppress missing-B blending.
-    [branch] if (mask == 1 || (isNoB && _UdonLightVolumeSharpBounds)) {
-        L0  += L0_A;
-        L1r += L1r_A;
-        L1g += L1g_A;
-        L1b += L1b_A;
+    if (_UdonLightVolumeSharpBounds) 
+    {
+        L0  += remainingWeight * L0_LP;
+        L1r += remainingWeight * L1r_LP;
+        L1g += remainingWeight * L1g_LP;
+        L1b += remainingWeight * L1b_LP;
         return;
     }
 
-    // Resolve Volume B from an overlap, light probes, or the lowest-weight fallback.
-    float3 L0_B = 0, L1r_B = 0, L1g_B = 0, L1b_B = 0;
-    [branch] if (isNoB) {
-        [branch] if (_UdonLightVolumeProbesBlend) {
-            LV_SampleLightProbe(L0_B, L1r_B, L1g_B, L1b_B);
-            L0  += lerp(L0_B,  L0_A,  mask);
-            L1r += lerp(L1r_B, L1r_A, mask);
-            L1g += lerp(L1g_B, L1g_A, mask);
-            L1b += lerp(L1b_B, L1b_A, mask);
-            return;
-        }
-
-        volumeID_B = volumesCount - 1;
-        localUVW_B = localUVW;
-    }
-
-    // Sample the resolved Volume B and blend it across Volume A's boundary mask.
-    LV_SampleVolume(volumeID_B, localUVW_B, L0_B, L1r_B, L1g_B, L1b_B);
-    L0  += lerp(L0_B,  L0_A,  mask);
-    L1r += lerp(L1r_B, L1r_A, mask);
-    L1g += lerp(L1g_B, L1g_A, mask);
-    L1b += lerp(L1b_B, L1b_A, mask);
+    L0_LP = 0; L1r_LP = 0; L1g_LP = 0; L1b_LP = 0;
+    LV_SampleLightProbe(L0_LP, L1r_LP, L1g_LP, L1b_LP);
+    L0  += remainingWeight * L0_LP;
+    L1r += remainingWeight * L1r_LP;
+    L1g += remainingWeight * L1g_LP;
+    L1b += remainingWeight * L1b_LP;
 }
 
 // Calculates L1 SH based on the world position from additive volumes only.
@@ -1251,12 +1203,11 @@ void LightVolumeSHSpecular(float3 worldPos, out float3 L0, out float3 L1r, out f
     bool useFallback = _UdonLightVolumeEnabled == 0 || _UdonLightVolumeVersion < VRCLV_MIN_SUPPORTED_VERSION;
     [branch] if (useFallback) {
         LV_SampleLightProbe(L0, L1r, L1g, L1b);
+        specular = LV_Specular(f0, smoothness, worldNormal, viewDir, L0, L1r + L1g + L1b);
     } else {
         LV_LightVolumeRegularSH(worldPos + worldPosOffset, L0, L1r, L1g, L1b);
         LV_LightVolumeAdditiveSH(worldPos + worldPosOffset, L0, L1r, L1g, L1b);
-    }
-    specular = LV_Specular(f0, smoothness, worldNormal, viewDir, L0, L1r + L1g + L1b);
-    [branch] if (!useFallback) {
+        specular = LV_Specular(f0, smoothness, worldNormal, viewDir, L0, L1r + L1g + L1b);
         LV_PointLightVolumeSHSpecular(worldPos, worldNormal, viewDir, smoothness, f0, pointLightShading, L0, L1r, L1g, L1b, specular);
     }
 }

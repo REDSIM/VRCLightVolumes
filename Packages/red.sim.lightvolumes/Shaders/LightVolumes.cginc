@@ -1040,41 +1040,61 @@ void LV_LightVolumeRegularSH(float3 worldPos, inout float3 L0, inout float3 L1r,
     uint additiveCount = min((uint) _UdonLightVolumeAdditiveCount, volumesCount);
 
     float remainingWeight = 1.0f;
-    float3 L0_LP = 0, L1r_LP = 0, L1g_LP = 0, L1b_LP = 0;
+    float3 L0_add = 0, L1r_add = 0, L1g_add = 0, L1b_add = 0;
+    uint id = additiveCount;
+    
+    [branch] if (!(id < volumesCount)) 
+    {
+        LV_SampleLightProbe(L0, L1r, L1g, L1b);
+        return;
+    }
+
+    float3 localUVW;
 
     // Iterating through regular light volumes with simplified algorithm requiring Light Volumes to be sorted by weight in descending order
-    VRCLV_DYNAMIC_LOOP for (uint id = additiveCount; id < volumesCount; ++id) {
-        float3 localUVW = LV_LocalFromVolume(id, worldPos);
+    VRCLV_DYNAMIC_LOOP for (; id < volumesCount; ++id) {
+        localUVW = LV_LocalFromVolume(id, worldPos);
         [branch] if (LV_PointLocalAABB(localUVW)) {
-            L0_LP = 0; L1r_LP = 0; L1g_LP = 0; L1b_LP = 0;
-            LV_SampleVolume(id, localUVW, L0_LP, L1r_LP, L1g_LP, L1b_LP);
+            L0_add = 0; L1r_add = 0; L1g_add = 0; L1b_add = 0;
+            LV_SampleVolume(id, localUVW, L0_add, L1r_add, L1g_add, L1b_add);
             float mask = LV_BoundsMask(localUVW, _UdonLightVolumeInvLocalEdgeSmooth[id]);
             float currentWeight = mask * remainingWeight;
-            L0  += currentWeight * L0_LP;
-            L1r += currentWeight * L1r_LP;
-            L1g += currentWeight * L1g_LP;
-            L1b += currentWeight * L1b_LP;
+            if (remainingWeight != 1.0f)
+            {
+                currentWeight = remainingWeight;
+            }
+            L0  += currentWeight * L0_add;
+            L1r += currentWeight * L1r_add;
+            L1g += currentWeight * L1g_add;
+            L1b += currentWeight * L1b_add;
 
             remainingWeight -= currentWeight;
             if (remainingWeight <= 0.01f) return;
         }
     }
 
-    if (_UdonLightVolumeSharpBounds && remainingWeight != 1.0f) 
+    [branch] if (_UdonLightVolumeSharpBounds && remainingWeight != 1.0f) 
     {
-        L0  += remainingWeight * L0_LP;
-        L1r += remainingWeight * L1r_LP;
-        L1g += remainingWeight * L1g_LP;
-        L1b += remainingWeight * L1b_LP;
+        L0  += remainingWeight * L0_add;
+        L1r += remainingWeight * L1r_add;
+        L1g += remainingWeight * L1g_add;
+        L1b += remainingWeight * L1b_add;
         return;
     }
 
-    L0_LP = 0; L1r_LP = 0; L1g_LP = 0; L1b_LP = 0;
-    LV_SampleLightProbe(L0_LP, L1r_LP, L1g_LP, L1b_LP);
-    L0  += remainingWeight * L0_LP;
-    L1r += remainingWeight * L1r_LP;
-    L1g += remainingWeight * L1g_LP;
-    L1b += remainingWeight * L1b_LP;
+    L0_add = 0; L1r_add = 0; L1g_add = 0; L1b_add = 0;
+    [branch] if (_UdonLightVolumeProbesBlend)
+    {
+        LV_SampleLightProbe(L0_add, L1r_add, L1g_add, L1b_add);
+    }
+    else
+    {
+        LV_SampleVolume(volumesCount - 1, localUVW, L0_add, L1r_add, L1g_add, L1b_add);
+    }
+    L0  += remainingWeight * L0_add;
+    L1r += remainingWeight * L1r_add;
+    L1g += remainingWeight * L1g_add;
+    L1b += remainingWeight * L1b_add;
 }
 
 // Calculates L1 SH based on the world position from additive volumes only.

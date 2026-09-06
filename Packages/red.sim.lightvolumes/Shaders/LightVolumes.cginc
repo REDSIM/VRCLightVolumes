@@ -1084,11 +1084,12 @@ void LV_LightVolumeAdditiveSH(float3 worldPos, inout float3 L0, inout float3 L1r
     [branch] if (maxOverdraw == 0) return;
 
     uint addVolumesCount = 0;
-    VRCLV_DYNAMIC_LOOP for (uint id = 0; id < additiveCount && addVolumesCount < maxOverdraw; id++) {
+    VRCLV_DYNAMIC_LOOP for (uint id = 0; id < additiveCount; id++) {
         float3 localUVW = LV_LocalFromVolume(id, worldPos);
         [branch] if (LV_PointLocalAABB(localUVW)) {
             LV_SampleVolume(id, localUVW, L0, L1r, L1g, L1b);
             addVolumesCount++;
+            [branch] if (addVolumesCount >= maxOverdraw) return;
         }
     }
 }

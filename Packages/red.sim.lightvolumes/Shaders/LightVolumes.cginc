@@ -1039,7 +1039,7 @@ void LV_LightVolumeRegularSH(float3 worldPos, inout float3 L0, inout float3 L1r,
     uint volumesCount = min((uint) _UdonLightVolumeCount, VRCLV_MAX_VOLUMES_COUNT);
     uint additiveCount = min((uint) _UdonLightVolumeAdditiveCount, volumesCount);
 
-    float remainingWeight = 1.0;
+    float remainingWeight = 1.0f;
     float3 L0_LP = 0, L1r_LP = 0, L1g_LP = 0, L1b_LP = 0;
 
     // Iterating through regular light volumes with simplified algorithm requiring Light Volumes to be sorted by weight in descending order
@@ -1060,7 +1060,7 @@ void LV_LightVolumeRegularSH(float3 worldPos, inout float3 L0, inout float3 L1r,
         }
     }
 
-    if (_UdonLightVolumeSharpBounds) 
+    if (_UdonLightVolumeSharpBounds && remainingWeight != 1.0f) 
     {
         L0  += remainingWeight * L0_LP;
         L1r += remainingWeight * L1r_LP;

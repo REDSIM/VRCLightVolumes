@@ -35,6 +35,7 @@ namespace VRCLightVolumes {
         private Color _prevColor;
         private float _timePrev;
         private RenderTexture _downsampledTex;
+        private int _downsampledMipLevel;
         private bool _readbackPending;
 
         // Creates the mipmapped reduction texture used to estimate the video's average color.
@@ -53,7 +54,8 @@ namespace VRCLightVolumes {
             _downsampledTex = new RenderTexture(64, 32, 0, RenderTextureFormat.ARGB32, RenderTextureReadWrite.Linear);
             _downsampledTex.useMipMap = true;
             _downsampledTex.autoGenerateMips = true;
-            if (!_downsampledTex.Create()) ReleaseDownsampledTexture();
+            if (_downsampledTex.Create()) _downsampledMipLevel = _downsampledTex.mipmapCount - 1;
+            else ReleaseDownsampledTexture();
         }
 
         // Releases the runtime reduction texture when this component is destroyed.
@@ -83,7 +85,7 @@ namespace VRCLightVolumes {
             if (_readbackPending || TargetRenderTexture == null || _downsampledTex == null) return;
             VRCGraphics.Blit(TargetRenderTexture, _downsampledTex);
             _readbackPending = true;
-            VRCAsyncGPUReadback.Request(_downsampledTex, _downsampledTex.mipmapCount - 1, (IUdonEventReceiver)this);
+            VRCAsyncGPUReadback.Request(_downsampledTex, _downsampledMipLevel, (IUdonEventReceiver)this);
         }
 
         // Receives the reduced video color from the VRChat GPU readback request.
@@ -101,7 +103,7 @@ namespace VRCLightVolumes {
             if (_readbackPending || TargetRenderTexture == null || _downsampledTex == null) return;
             Graphics.Blit(TargetRenderTexture, _downsampledTex);
             _readbackPending = true;
-            UnityEngine.Rendering.AsyncGPUReadback.Request(_downsampledTex, _downsampledTex.mipmapCount - 1, OnUnityAsyncGpuReadbackComplete);
+            UnityEngine.Rendering.AsyncGPUReadback.Request(_downsampledTex, _downsampledMipLevel, OnUnityAsyncGpuReadbackComplete);
         }
 
         // Receives the reduced video color from Unity's GPU readback request.
@@ -117,8 +119,9 @@ namespace VRCLightVolumes {
         private void SetColor(Color color) {
 
             // Custom delta time for the async stuff 
-            float dTime = Time.time - _timePrev;
-            _timePrev = Time.time;
+            float time = Time.time;
+            float dTime = time - _timePrev;
+            _timePrev = time;
 
             if (AntiFlickering) {
                 float rmean = (color.r + _prevColor.r) * 0.5f;

@@ -257,7 +257,6 @@ namespace VRCLightVolumes {
         private Material[] _shadowCubemapMaterials = new Material[0];
         private Texture[] _shadowSingleTextures = new Texture[0];
         private Material[] _shadowSingleMaterials = new Material[0];
-        private int[] _shadowCubemapTextureModes = new int[0]; // Texture layouts: 0 = single 2D texture copied to all faces, 1 = Texture2DArray slices 0..5, 2 = native Cubemap faces
         private bool[] _shadowCubemapTextureAutoUpdates = new bool[0];
         private bool[] _shadowCubemapMaterialAutoUpdates = new bool[0];
         private bool[] _shadowSingleTextureAutoUpdates = new bool[0];

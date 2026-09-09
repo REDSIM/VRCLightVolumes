@@ -129,13 +129,15 @@ namespace VRCLightVolumes {
             LightVolumeInstance[] targetLightVolumes = TargetLightVolumes;
             int _count = targetLightVolumes != null ? targetLightVolumes.Length : 0;
             for (int i = 0; i < _count; i++) {
-                if (targetLightVolumes[i] != null) targetLightVolumes[i].SetColor(lightColor);
+                LightVolumeInstance targetLightVolume = targetLightVolumes[i];
+                if (targetLightVolume != null) targetLightVolume.SetColor(lightColor);
             }
 
             PointLightVolumeInstance[] targetPointLightVolumes = TargetPointLightVolumes;
             _count = targetPointLightVolumes != null ? targetPointLightVolumes.Length : 0;
             for (int i = 0; i < _count; i++) {
-                if (targetPointLightVolumes[i] != null) targetPointLightVolumes[i].SetColor(lightColor);
+                PointLightVolumeInstance targetPointLightVolume = targetPointLightVolumes[i];
+                if (targetPointLightVolume != null) targetPointLightVolume.SetColor(lightColor);
             }
 
             Color materialColor = lightColor * MaterialsIntensity;

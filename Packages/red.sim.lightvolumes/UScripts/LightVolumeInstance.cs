@@ -151,7 +151,7 @@ namespace VRCLightVolumes {
             bool runtimeEnabled = enabled && gameObject.activeInHierarchy;
             IsActive = runtimeEnabled && Intensity != 0 && Color != Color.black;
             if (!runtimeEnabled) return;
-            RegisterWithManager();
+            if (!_isRegisteredWithManager) RegisterWithManager();
             if (LightVolumeManager == null) return;
             LightVolumeManager.NotifyLightVolumeChanged(this, rebuildFinalData);
         }
@@ -169,8 +169,9 @@ namespace VRCLightVolumes {
         // Registers once with the world's single manager.
         private void RegisterWithManager() {
             if (_isRegisteredWithManager) return;
-            IsActive = enabled && gameObject.activeInHierarchy && Intensity != 0 && Color != Color.black;
-            if (LightVolumeManager == null || !gameObject.activeInHierarchy || !enabled) return;
+            bool runtimeEnabled = enabled && gameObject.activeInHierarchy;
+            IsActive = runtimeEnabled && Intensity != 0 && Color != Color.black;
+            if (LightVolumeManager == null || !runtimeEnabled) return;
             _isRegisteredWithManager = true;
             LightVolumeManager.InitializeLightVolume(this);
         }
@@ -250,7 +251,7 @@ namespace VRCLightVolumes {
         public void SetSmoothBlending(float radius) {
             Vector3 scl = transform.lossyScale;
             float safeRadius = Mathf.Max(radius, 0.00001f);
-            Vector4 invLocalEdgeSmoothing = new Vector4(scl.x / safeRadius, scl.y / safeRadius, scl.z / safeRadius, 0f);
+            Vector4 invLocalEdgeSmoothing = scl / safeRadius;
             if (SmoothBlending == radius && InvLocalEdgeSmoothing == invLocalEdgeSmoothing) return;
             SmoothBlending = radius;
             InvLocalEdgeSmoothing = invLocalEdgeSmoothing;
@@ -265,7 +266,7 @@ namespace VRCLightVolumes {
             InvWorldMatrix = localToWorldMatrix.inverse;
             Vector3 lossyScale = localToWorldMatrix.lossyScale;
             float safeSmoothing = Mathf.Max(SmoothBlending, 0.00001f);
-            InvLocalEdgeSmoothing = new Vector4(lossyScale.x / safeSmoothing, lossyScale.y / safeSmoothing, lossyScale.z / safeSmoothing, 0f);
+            InvLocalEdgeSmoothing = lossyScale / safeSmoothing;
             Quaternion rot = transformRot * InvBakedRotation;
             IsRotated = Mathf.Abs(Quaternion.Dot(rot, Quaternion.identity)) < 0.999999f;
             Matrix4x4 rotationMatrix = Matrix4x4.Rotate(rot);

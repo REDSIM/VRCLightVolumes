@@ -291,7 +291,7 @@ namespace VRCLightVolumes {
             if (!cameraOutsideAnchor) {
                 if (cameraGuardEnabled) {
                     Vector3 anchorOffset = position - _froxelCameraPosition;
-                    float rotationDot = Mathf.Abs(rotation.x * _froxelCameraRotation.x + rotation.y * _froxelCameraRotation.y + rotation.z * _froxelCameraRotation.z + rotation.w * _froxelCameraRotation.w);
+                    float rotationDot = Mathf.Abs(Quaternion.Dot(rotation, _froxelCameraRotation));
                     cameraOutsideAnchor = anchorOffset.sqrMagnitude > FroxelCameraGuardRadius * FroxelCameraGuardRadius || rotationDot < FroxelCameraGuardRotationDot;
                 } else {
                     cameraOutsideAnchor = !_froxelCameraPosition.Equals(position) || !_froxelCameraRight.Equals(right) || !_froxelCameraUp.Equals(up) || !_froxelCameraForward.Equals(forward);

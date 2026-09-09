@@ -137,8 +137,10 @@ namespace VRCLightVolumes {
             if (target != null) {
                 bool restoreStaticSource = target.RuntimeShadowDirectOutput && (target.ShadowMapTexture != null || target.ShadowMapMaterial != null);
                 target.RuntimeShadowDirectOutput = false;
-                LightVolumeManager manager = target.LightVolumeManager;
-                if (restoreStaticSource && target.IsActive && manager != null) manager.ReinitializeShadowTextures();
+                if (restoreStaticSource && target.IsActive) {
+                    LightVolumeManager manager = target.LightVolumeManager;
+                    if (manager != null) manager.ReinitializeShadowTextures();
+                }
                 target._ReleaseRuntimeShadowBakeResources();
             }
             _configuredTargetPointLightVolume = null;

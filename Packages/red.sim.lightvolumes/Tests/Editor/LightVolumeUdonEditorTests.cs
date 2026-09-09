@@ -658,6 +658,7 @@ namespace VRCLightVolumes.Tests {
             if (shader == null || !shader.isSupported) Assert.Ignore("The shadow-culling hierarchy shader is unavailable.");
 
             LightVolumeManager manager = CreateManager("Shadow Cull Pyramid Manager", false, false);
+            manager.ShadowCulling = true;
             RenderTexture shadows = CreateRenderTexture("Shadow Cull EVSM Source", 4, 4, 1, TextureDimension.Tex2DArray, RenderTextureFormat.ARGBFloat);
             RenderTexture blitSource = CreateRenderTexture("Shadow Cull Blit Source", 1, 1, 1, TextureDimension.Tex2D);
             float casterDepth = -0.5f;
@@ -778,6 +779,7 @@ namespace VRCLightVolumes.Tests {
             if (shader == null || !shader.isSupported) Assert.Ignore("The shadow-culling hierarchy shader is unavailable.");
 
             LightVolumeManager manager = CreateManager("Packed Shadow Cull Layout Manager", false, false);
+            manager.ShadowCulling = true;
             RenderTexture shadows = CreateRenderTexture("Packed Shadow Cull EVSM Source", 16, 16, 2,
                 TextureDimension.Tex2DArray, RenderTextureFormat.ARGBFloat);
             RenderTexture blitSource = CreateRenderTexture("Packed Shadow Cull Blit Source", 1, 1, 1, TextureDimension.Tex2D);
@@ -850,6 +852,7 @@ namespace VRCLightVolumes.Tests {
             if (shader == null || !shader.isSupported) Assert.Ignore("The shadow-culling hierarchy shader is unavailable.");
 
             LightVolumeManager manager = CreateManager("Capped Shadow Cull Layout Manager", false, false);
+            manager.ShadowCulling = true;
             RenderTexture shadows = CreateRenderTexture("Capped Shadow Cull EVSM Source", 512, 512, 2,
                 TextureDimension.Tex2DArray, RenderTextureFormat.ARGBFloat);
             RenderTexture blitSource = CreateRenderTexture("Capped Shadow Cull Blit Source", 1, 1, 1, TextureDimension.Tex2D);
@@ -980,6 +983,7 @@ namespace VRCLightVolumes.Tests {
             if (shader == null || !shader.isSupported) Assert.Ignore("The shadow-culling hierarchy shader is unavailable.");
 
             LightVolumeManager manager = CreateManager("Shrinking Shadow Cull Layout Manager", false);
+            manager.ShadowCulling = true;
             manager.ShadowTexturesWidth = 16;
             manager.ShadowTexturesHeight = 16;
             manager.ShadowBleedReduction = 0.2f;
@@ -1075,6 +1079,7 @@ namespace VRCLightVolumes.Tests {
         [Test]
         public void FroxelShadowCullSkipsPartialOnlyLightsAndRearmsForFirstEligibleShadow() {
             LightVolumeManager manager = CreateManager("Shadow Cull Rearm Manager", false);
+            manager.ShadowCulling = true;
             manager.ShadowTexturesWidth = 4;
             manager.ShadowTexturesHeight = 4;
             PointLightVolumeInstance point = CreatePointLight(manager, "Shadow Cull Rearm Point", true);
@@ -1276,6 +1281,7 @@ namespace VRCLightVolumes.Tests {
                 Assert.Ignore("The froxel clustering shaders are unavailable on the active graphics API.");
 
             LightVolumeManager manager = CreateManager("Pending Shadow Cull Retry Manager", false);
+            manager.ShadowCulling = true;
             manager.Clustering = true;
             manager.ClusteringMinLights = 1;
             manager.FroxelDensity = 0.1f;
@@ -2134,6 +2140,58 @@ namespace VRCLightVolumes.Tests {
             Assert.That(selectedCount, Is.EqualTo(expected.Length));
             for (int i = 0; i < expected.Length; i++)
                 Assert.That(selectedIDs[i], Is.EqualTo(expected[i]), "Selected ID mismatch at " + i);
+        }
+
+        // Compares the bounded search to the original insertion scan, including NaNs that invalidate binary ordering and public-key changes between rebuilds.
+        [Test]
+        public void LightVolumeSelectionMatchesLinearOracleAcrossRegistryDistributions() {
+            LightVolumeManager manager = CreateManager("Selection Oracle Manager", true);
+            LightVolumeInstance[] volumes = new LightVolumeInstance[96];
+            for (int i = 0; i < volumes.Length; i++)
+                volumes[i] = CreateUnregisteredLightVolume(manager, "Selection Oracle Volume " + i);
+            manager.LightVolumeInstances = volumes;
+            SetManagerField(manager, _selectionLightVolumeWeightsField, new float[volumes.Length]);
+            SetManagerField(manager, _selectionLightVolumeOrdersField, new int[volumes.Length]);
+            System.Random random = new System.Random(17092026);
+
+            for (int scenario = 0; scenario < 64; scenario++) {
+                for (int i = 0; i < volumes.Length; i++) {
+                    LightVolumeInstance volume = volumes[i];
+                    volume.IsActive = scenario < 3 || random.Next(5) != 0;
+                    volume.RegistryOrder = scenario < 3 ? i : random.Next(-4, 5);
+                    volume.RegistryWeight = scenario == 0 ? i : scenario == 1 ? -i : scenario == 2 ? 0f : random.Next(-8, 9);
+                    if (scenario >= 16) {
+                        int special = random.Next(16);
+                        if (special == 0) volume.RegistryWeight = float.NaN;
+                        else if (special == 1) volume.RegistryWeight = float.PositiveInfinity;
+                        else if (special == 2) volume.RegistryWeight = float.NegativeInfinity;
+                        else if (special == 3) volume.RegistryWeight = -0f;
+                    }
+                }
+
+                List<int> expected = new List<int>();
+                for (int i = 0; i < volumes.Length; i++) {
+                    LightVolumeInstance candidate = volumes[i];
+                    if (!candidate.IsActive) continue;
+                    int insertIndex = expected.Count;
+                    for (int j = 0; j < expected.Count; j++) {
+                        LightVolumeInstance selected = volumes[expected[j]];
+                        if (candidate.RegistryWeight > selected.RegistryWeight || (candidate.RegistryWeight == selected.RegistryWeight && candidate.RegistryOrder < selected.RegistryOrder)) {
+                            insertIndex = j;
+                            break;
+                        }
+                    }
+                    if (insertIndex >= 32) continue;
+                    expected.Insert(insertIndex, i);
+                    if (expected.Count > 32) expected.RemoveAt(32);
+                }
+
+                int count = (int)_selectLightVolumesByWeightMethod.Invoke(manager, null);
+                int[] actual = GetManagerField<int[]>(manager, _selectedLightVolumeIDsField);
+                Assert.That(count, Is.EqualTo(expected.Count), "Scenario " + scenario);
+                for (int i = 0; i < count; i++)
+                    Assert.That(actual[i], Is.EqualTo(expected[i]), "Scenario " + scenario + ", slot " + i);
+            }
         }
 
         // Verifies the shader cap is applied by weight before additive volumes are compacted into the prefix.
@@ -3307,6 +3365,65 @@ namespace VRCLightVolumes.Tests {
             Assert.That(Shader.GetGlobalVectorArray(_pointLightCustomIdID)[0].z, Is.EqualTo(point.SquaredRange).Within(Epsilon));
         }
 
+        // Exact dirty checks must publish changes below Unity's approximate Vector4 operator threshold in both packing paths.
+        [TestCase(false)]
+        [TestCase(true)]
+        public void PointPackedColorUploadDetectsSubEpsilonChangesInEveryComponent(bool narrowNotification) {
+            LightVolumeManager manager = CreateManager("Exact Packed Color Manager", false);
+            PointLightVolumeInstance point = CreatePointLight(manager, "Exact Packed Color Point", true);
+            manager.PointLightVolumeInstances = new[] { point };
+            manager.UpdateVolumes();
+            Vector4[] packedColors = GetManagerField<Vector4[]>(manager, typeof(LightVolumeManager).GetField("_pointLightColor", _lifecycleMethodFlags));
+            Vector4 expected = packedColors[0];
+
+            for (int component = 0; component < 4; component++) {
+                Vector4 previous = expected;
+                previous[component] += 0.0000005f;
+                Assert.That(previous == expected, Is.True, "The regression needs a change that the approximate operator would hide.");
+                packedColors[0] = previous;
+                SetManagerField(manager, _pointLightArrayUploadMaskField, 0);
+                SetManagerField(manager, _isUpdatingVolumesField, true);
+                if (narrowNotification) manager.NotifyPointLightColorRangeChanged(point);
+                else manager.NotifyPointLightVolumeChanged(point, false, false, false);
+                SetManagerField(manager, _isUpdatingVolumesField, false);
+
+                Assert.That((bool)_flushPendingPointLightChangesMethod.Invoke(manager, null), Is.True);
+                Assert.That(GetManagerField<int>(manager, _pointLightArrayUploadMaskField), Is.EqualTo(PointLightUploadColor), "Only the changed Color buffer should be uploaded.");
+                Assert.That(packedColors[0].Equals(expected), Is.True, "Packing must restore the exact source value.");
+            }
+        }
+
+        // Matching infinities and signed zeros stay clean; NaN stays dirty, matching the original component != comparisons.
+        [TestCase(false)]
+        [TestCase(true)]
+        public void PointPackedColorUploadPreservesSpecialFloatSemantics(bool narrowNotification) {
+            LightVolumeManager manager = CreateManager("Special Packed Color Manager", false);
+            PointLightVolumeInstance point = CreatePointLight(manager, "Special Packed Color Point", true);
+            manager.PointLightVolumeInstances = new[] { point };
+            manager.UpdateVolumes();
+            Vector4[] packedColors = GetManagerField<Vector4[]>(manager, typeof(LightVolumeManager).GetField("_pointLightColor", _lifecycleMethodFlags));
+            float[] values = { 0f, -0f, float.PositiveInfinity, float.NegativeInfinity, float.NaN };
+
+            for (int i = 0; i < values.Length; i++) {
+                float value = values[i];
+                point.OuterAngleCos = value;
+                Vector4 previous = packedColors[0];
+                previous.w = value == 0f ? -value : value;
+                packedColors[0] = previous;
+                SetManagerField(manager, _pointLightArrayUploadMaskField, 0);
+                SetManagerField(manager, _isUpdatingVolumesField, true);
+                if (narrowNotification) manager.NotifyPointLightColorRangeChanged(point);
+                else manager.NotifyPointLightVolumeChanged(point, false, false, false);
+                SetManagerField(manager, _isUpdatingVolumesField, false);
+
+                Assert.That((bool)_flushPendingPointLightChangesMethod.Invoke(manager, null), Is.True);
+                int expectedMask = float.IsNaN(value) ? PointLightUploadColor : 0;
+                Assert.That(GetManagerField<int>(manager, _pointLightArrayUploadMaskField), Is.EqualTo(expectedMask), "Unexpected dirty mask for " + value);
+                if (float.IsNaN(value)) Assert.That(float.IsNaN(packedColors[0].w), Is.True);
+                else Assert.That(packedColors[0].w, Is.EqualTo(value));
+            }
+        }
+
         // A shadow elsewhere in the scene must not turn an unrelated basic Point color change into
         // a position, direction, or shadow-array upload.
         [Test]
@@ -3336,6 +3453,88 @@ namespace VRCLightVolumes.Tests {
             _uploadAutoUpdatedVolumeChangesMethod.Invoke(manager, null);
             AssertVectorClose(ExpectedPointLightColor(basic), Shader.GetGlobalVectorArray(_pointLightColorID)[0]);
             Assert.That(GetManagerField<int>(manager, _pointLightArrayUploadMaskField), Is.Zero);
+        }
+
+        // Every rich profile must retain the full source pull and mark exactly the arrays whose final values changed, including untouched shadow payloads containing NaN.
+        [Test]
+        public void FullPointPackTracksExactArrayChangesAcrossProfiles([Values(0, 1, 2)] int lightType, [Values(0, 1, 2)] int projectionMode, [Values(0, 1, 2)] int shadowMode) {
+            LightVolumeManager manager = CreateManager("Full Pack Tracking Manager", false);
+            manager.AutoUpdateVolumes = false;
+            manager.ShadowCulling = true;
+            manager.ShadowTexturesWidth = 4;
+            manager.ShadowTexturesHeight = 4;
+            manager.CustomTexturesWidth = 4;
+            manager.CustomTexturesHeight = 4;
+            PointLightVolumeInstance point = CreatePointLight(manager, "Full Pack Tracking Light", true);
+            point.LightType = lightType;
+            point.ProjectionMode = projectionMode;
+            point.Direction = Vector3.forward;
+            point.Rotation = Quaternion.identity;
+            point.Width = 2f;
+            point.Height = 3f;
+            point.InverseSquaredRange = 0.25f;
+            point.OuterAngleCos = 0.75f;
+            point.OuterAngleTan = 0.5f;
+            point.ConeFalloff = 0.5f;
+            point.ShadingStrength = 1f;
+            if (projectionMode != 0) point.CustomTexture = CreateTexture2D("Full Pack Tracking Cookie");
+            if (shadowMode != 0) {
+                Texture shadowSource = lightType == 0 ? (Texture)CreateCubemap("Full Pack Tracking Shadow Cube") : CreateTexture2D("Full Pack Tracking Shadow Slice");
+                ConfigureShadowTexture(point, shadowSource, false, lightType == 0, false);
+                point.WorldSpaceShadows = shadowMode == 1;
+                point.ShadowBakePosition = new Vector3(1f, 2f, 3f);
+                point.ShadowBakeRotation = Quaternion.Euler(10f, 20f, 30f);
+            }
+            manager.PointLightVolumeInstances = new[] { point };
+            manager.ReinitializeCustomTextures();
+            manager.ReinitializeShadowTextures();
+            manager.UpdateVolumes();
+
+            string[] bufferNames = { "_pointLightPosition", "_pointLightColor", "_pointLightExtraData", "_pointLightDirection", "_pointLightCustomId", "_pointLightShadowReprojectionData", "_pointLightShadowRotationData", "_froxelShadowMetadata" };
+            Vector4[][] buffers = new Vector4[bufferNames.Length][];
+            for (int i = 0; i < buffers.Length; i++) buffers[i] = (Vector4[])typeof(LightVolumeManager).GetField(bufferNames[i], _lifecycleMethodFlags).GetValue(manager);
+            FieldInfo eligibleCountField = typeof(LightVolumeManager).GetField("_activeShadowCullCount", _lifecycleMethodFlags);
+
+            for (int step = 0; step < 5; step++) {
+                Vector4[] previous = new Vector4[buffers.Length];
+                if (step == 4 && shadowMode == 0) buffers[5][0] = new Vector4(float.NaN, 1f, 2f, 3f);
+                for (int i = 0; i < buffers.Length; i++) previous[i] = buffers[i][0];
+                int previousEligibleCount = (int)eligibleCountField.GetValue(manager);
+                if (step == 0) {
+                    point.Color = new Color(0.25f, 0.6f, 0.9f, 1f);
+                    point.Intensity = 3.5f;
+                    point.IsRangeDirty = true;
+                } else if (step == 1) {
+                    point.Direction = new Vector3(0.2f, 0.3f, 0.4f);
+                    point.Rotation = Quaternion.Euler(25f, 45f, 65f);
+                    point.SpotCookieAspect = 1.75f;
+                    point.ShadowBakeRotation = Quaternion.Euler(20f, 30f, 40f);
+                    point.ShadowBakePosition = new Vector3(3f, 2f, 1f);
+                    point.NearClip = 0.25f;
+                    point.BakedFarClip = 15f;
+                } else if (step == 2) {
+                    point.ShadingStrength = 0.5f;
+                }
+
+                SetManagerField(manager, _pointLightArrayUploadMaskField, PointLightUploadPosition);
+                SetManagerField(manager, _isUpdatingVolumesField, true);
+                manager.NotifyPointLightVolumeChanged(point, false, false, false);
+                SetManagerField(manager, _isUpdatingVolumesField, false);
+                Assert.That((bool)_flushPendingPointLightChangesMethod.Invoke(manager, null), Is.True);
+
+                int expectedMask = PointLightUploadPosition;
+                for (int i = 0; i < buffers.Length; i++) {
+                    Vector4 before = previous[i];
+                    Vector4 after = buffers[i][0];
+                    if (before.x != after.x || before.y != after.y || before.z != after.z || before.w != after.w) expectedMask |= 1 << i;
+                }
+                Assert.That(GetManagerField<int>(manager, _pointLightArrayUploadMaskField), Is.EqualTo(expectedMask), "Exact upload mask at step " + step);
+                int expectedEligibleCount = previousEligibleCount + (buffers[7][0].x != 0f ? 1 : 0) - (previous[7].x != 0f ? 1 : 0);
+                Assert.That((int)eligibleCountField.GetValue(manager), Is.EqualTo(expectedEligibleCount), "Eligibility transition at step " + step);
+                if (step == 1 && lightType == 1 && projectionMode != 2) AssertVectorClose(new Vector4(0.2f, 0.3f, 0.4f, point.ConeFalloff), buffers[3][0]);
+                if (step == 3) Assert.That(expectedMask, Is.EqualTo(PointLightUploadPosition), "An unchanged finite source must not add uploads.");
+                if (step == 4 && shadowMode == 0) Assert.That(float.IsNaN(buffers[5][0].x), Is.True, "An unused shadow payload must remain untouched.");
+            }
         }
 
         // The narrow pack is legal only for unshadowed parametric Point Lights; Spot data takes the full path.
@@ -3844,6 +4043,63 @@ namespace VRCLightVolumes.Tests {
                 AssertVectorClose(ExpectedPointLightPosition(points[i]), positions[i]);
                 AssertVectorClose(new Vector4(expectedRotation.x, expectedRotation.y, expectedRotation.z, expectedRotation.w), directions[i]);
                 AssertPointCustomData(i, points[i], -i - 1, 0);
+            }
+        }
+
+        // Verifies both Spot setters retain projection-specific data, type transitions and no-op behavior while deriving only the representation the projection uses.
+        [TestCase(0, false)]
+        [TestCase(0, true)]
+        [TestCase(1, false)]
+        [TestCase(1, true)]
+        [TestCase(2, false)]
+        [TestCase(2, true)]
+        public void SpotSettersPreserveProjectionDataAndNoOpState(int projectionMode, bool setFalloff) {
+            const float angleDegrees = 73f;
+            const float falloff = 0.35f;
+            const float initialOuterAngleCos = -0.25f;
+            const float initialConeFalloff = 17f;
+            Vector3 initialDirection = new Vector3(3f, -2f, 5f);
+            Quaternion initialRotation = Quaternion.Euler(11f, 23f, 37f);
+            float expectedAngle = angleDegrees * Mathf.Deg2Rad * 0.5f;
+            float expectedOuterAngleCos = Mathf.Cos(expectedAngle);
+            float expectedConeFalloff = 1f / (Mathf.Cos(expectedAngle * (1f - falloff)) - expectedOuterAngleCos);
+
+            for (int initialLightType = 0; initialLightType < 3; initialLightType++) {
+                PointLightVolumeInstance point = CreateManagerlessPointLight("Spot Setter Projection " + projectionMode + " From Type " + initialLightType);
+                point.LightType = initialLightType;
+                point.ProjectionMode = projectionMode;
+                point.Direction = initialDirection;
+                point.Rotation = initialRotation;
+                point.OuterAngleCos = initialOuterAngleCos;
+                point.ConeFalloff = initialConeFalloff;
+                point.transform.SetPositionAndRotation(new Vector3(2f, -4f, 6f), Quaternion.Euler(31f, -47f, 19f));
+
+                if (setFalloff) point.SetSpotLight(angleDegrees, falloff);
+                else point.SetSpotLight(angleDegrees);
+
+                Assert.That(point.LightType, Is.EqualTo(1));
+                Assert.That(point.ProjectionMode, Is.EqualTo(projectionMode));
+                Assert.That(point.Angle, Is.EqualTo(expectedAngle));
+                Assert.That(point.OuterAngleTan, Is.EqualTo(Mathf.Tan(expectedAngle)));
+                Assert.That(point.Position, Is.EqualTo(point.transform.position));
+                Assert.That(point.IsRangeDirty, Is.True);
+                Assert.That(point.OuterAngleCos, Is.EqualTo(projectionMode == 2 ? initialOuterAngleCos : expectedOuterAngleCos));
+                Assert.That(point.ConeFalloff, Is.EqualTo(projectionMode != 2 && setFalloff ? expectedConeFalloff : initialConeFalloff));
+                Assert.That(point.Direction, Is.EqualTo(projectionMode == 2 ? initialDirection : point.transform.rotation * Vector3.forward));
+                Assert.That(point.Rotation, Is.EqualTo(projectionMode == 2 ? Quaternion.Inverse(point.transform.rotation) : initialRotation));
+
+                point.IsRangeDirty = false;
+                if (setFalloff) point.SetSpotLight(angleDegrees, falloff);
+                else point.SetSpotLight(angleDegrees);
+                Assert.That(point.IsRangeDirty, Is.False, "An identical Spot setter must preserve its existing no-op path.");
+
+                if (projectionMode == 2) point.Rotation = initialRotation;
+                else point.Direction = initialDirection;
+                if (setFalloff) point.SetSpotLight(angleDegrees, falloff);
+                else point.SetSpotLight(angleDegrees);
+                Assert.That(point.IsRangeDirty, Is.True, "A stale projection mirror must still be repaired even when angle and Transform are unchanged.");
+                Assert.That(point.Direction, Is.EqualTo(projectionMode == 2 ? initialDirection : point.transform.rotation * Vector3.forward));
+                Assert.That(point.Rotation, Is.EqualTo(projectionMode == 2 ? Quaternion.Inverse(point.transform.rotation) : initialRotation));
             }
         }
 
@@ -6032,6 +6288,8 @@ namespace VRCLightVolumes.Tests {
         [Test]
         public void SurfaceShaderAnalysisUsesLoopInsteadOfFastopt() {
             string shaderSource = ReadLightVolumesIncludeSource().Replace("\r\n", "\n");
+            // Explanatory comments can name attributes without making them active shader syntax.
+            shaderSource = System.Text.RegularExpressions.Regex.Replace(shaderSource, @"/\*[\s\S]*?\*/|//[^\r\n]*", "");
 
             Assert.That(shaderSource, Does.Contain("#if defined(SHADER_TARGET_SURFACE_ANALYSIS)\n    #define VRCLV_DYNAMIC_LOOP [loop]\n#else\n    #define VRCLV_DYNAMIC_LOOP [fastopt]\n#endif"));
             Assert.That(shaderSource, Does.Contain("VRCLV_DYNAMIC_LOOP while"));
@@ -6438,6 +6696,7 @@ namespace VRCLightVolumes.Tests {
         [Test]
         public void RuntimeShadowDirectResolutionFallbackTransitionsHiZWithoutPerFrameRebuild() {
             LightVolumeManager manager = CreateManager("Runtime Shadow Direct Resolution Fallback Manager", false);
+            manager.ShadowCulling = true;
             manager.ShadowTexturesWidth = 16;
             manager.ShadowTexturesHeight = 16;
 

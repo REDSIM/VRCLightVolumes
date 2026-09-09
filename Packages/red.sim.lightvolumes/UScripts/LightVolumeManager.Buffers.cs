@@ -62,7 +62,7 @@ namespace VRCLightVolumes {
                     float squaredRange = instance.SquaredRange;
                     float lightSourceSize = instance.LightSourceSize;
 
-                    Vector4 position = _pointLightPosition[shaderIndex];
+                    Vector4 position = previousPosition;
                     position.w = lightSourceSize * lightSourceSize * squaredScale;
                     _pointLightPosition[shaderIndex] = position;
 
@@ -73,19 +73,19 @@ namespace VRCLightVolumes {
                     lightColor.w = 0f;
                     _pointLightExtraData[shaderIndex] = lightColor;
 
-                    Vector4 customId = _pointLightCustomId[shaderIndex];
+                    Vector4 customId = previousCustomId;
                     customId.z = squaredRange;
                     _pointLightCustomId[shaderIndex] = customId;
                     WriteClusteringLight(shaderIndex, squaredRange, 0, 0f, Vector3.forward, false);
 
                     int uploadMask = 0;
-                    if (PackedVectorChanged(previousPosition, _pointLightPosition[shaderIndex])) uploadMask |= PointLightUploadPosition;
-                    if (PackedVectorChanged(previousColor, _pointLightColor[shaderIndex])) uploadMask |= PointLightUploadColor;
-                    if (PackedVectorChanged(previousExtraData, _pointLightExtraData[shaderIndex])) uploadMask |= PointLightUploadExtraData;
-                    if (PackedVectorChanged(previousCustomId, _pointLightCustomId[shaderIndex])) uploadMask |= PointLightUploadCustomId;
+                    if (!previousPosition.Equals(position)) uploadMask |= PointLightUploadPosition;
+                    if (!previousColor.Equals(color)) uploadMask |= PointLightUploadColor;
+                    if (!previousExtraData.Equals(lightColor)) uploadMask |= PointLightUploadExtraData;
+                    if (!previousCustomId.Equals(customId)) uploadMask |= PointLightUploadCustomId;
                     MarkPointLightArrayUploads(uploadMask);
                 } else {
-                    WritePointLightShaderDataTracked(shaderIndex, registryIndex, instance, null);
+                    WritePointLightShaderData(shaderIndex, registryIndex, instance, null, true);
                 }
             }
 
@@ -239,15 +239,16 @@ namespace VRCLightVolumes {
 
                 float packedShadowIdAbs = Mathf.Abs(_pointLightCustomId[shaderIndex].y);
                 bool hasActiveShadow = packedShadowIdAbs >= 1f && packedShadowIdAbs < DisabledShadingShadowId;
-                bool basisUnchanged = localToWorldMatrix.m00 == previousMatrix.m00 && localToWorldMatrix.m01 == previousMatrix.m01 && localToWorldMatrix.m02 == previousMatrix.m02
-                    && localToWorldMatrix.m10 == previousMatrix.m10 && localToWorldMatrix.m11 == previousMatrix.m11 && localToWorldMatrix.m12 == previousMatrix.m12
-                    && localToWorldMatrix.m20 == previousMatrix.m20 && localToWorldMatrix.m21 == previousMatrix.m21 && localToWorldMatrix.m22 == previousMatrix.m22;
+                // Both matrices come from Transform.localToWorldMatrix, so the first three column W values are always zero. Exact native column comparisons cover the same 3x3 basis without Udon scalar reads or struct mutation.
+                bool basisUnchanged = localToWorldMatrix.GetColumn(0).Equals(previousMatrix.GetColumn(0))
+                    && localToWorldMatrix.GetColumn(1).Equals(previousMatrix.GetColumn(1))
+                    && localToWorldMatrix.GetColumn(2).Equals(previousMatrix.GetColumn(2));
                 if (basisUnchanged) {
                     // Translation-only motion is the common case. Preserve all static light data and avoid repeated cross-Udon reads. Shadowed Point/Spot lights only need the exact-origin marker in CustomID.W refreshed; their reprojection basis remains unchanged.
                     Vector3 position = localToWorldMatrix.GetPosition();
                     instance.Position = position;
                     Vector4 positionData = _pointLightPosition[shaderIndex];
-                    if (positionData.x != position.x || positionData.y != position.y || positionData.z != position.z) {
+                    if (!((Vector3)positionData).Equals(position)) {
                         positionData.x = position.x;
                         positionData.y = position.y;
                         positionData.z = position.z;
@@ -259,11 +260,12 @@ namespace VRCLightVolumes {
                     if (hasActiveShadow) {
                         if (instance.LightType != 2) { // 2: area keeps its cookie-mirror payload in CustomID.W
                             float nearClip = Mathf.Max(instance.NearClip, 0.0001f);
-                            float requestedFarClip = instance.BakedFarClip > 0f ? instance.BakedFarClip : instance.FarClip;
+                            float bakedFarClip = instance.BakedFarClip;
+                            float requestedFarClip = bakedFarClip > 0f ? bakedFarClip : instance.FarClip;
                             float resolvedFarClip = requestedFarClip > 0f ? Mathf.Max(requestedFarClip, nearClip + 0.0001f) : Mathf.Sqrt(Mathf.Max(instance.SquaredRange, 0.000001f));
                             float inverseDepthRange = 1f / Mathf.Max(resolvedFarClip - nearClip, 0.0001f);
                             Vector3 bakePosition = instance.ShadowBakePosition;
-                            bool reuseWorldShadowOrigin = instance.WorldSpaceShadows && bakePosition.x == position.x && bakePosition.y == position.y && bakePosition.z == position.z;
+                            bool reuseWorldShadowOrigin = instance.WorldSpaceShadows && bakePosition.Equals(position);
                             Vector4 customId = _pointLightCustomId[shaderIndex];
                             float customIdW = reuseWorldShadowOrigin ? -inverseDepthRange : inverseDepthRange;
                             if (customId.w != customIdW) {
@@ -283,7 +285,7 @@ namespace VRCLightVolumes {
                     }
                 } else {
                     UpdatePointLightTransformData(instance, instanceTransform, localToWorldMatrix, false);
-                    WritePointLightShaderDataTracked(shaderIndex, _enabledPointIDs[shaderIndex], instance, instanceTransform);
+                    WritePointLightShaderData(shaderIndex, _enabledPointIDs[shaderIndex], instance, instanceTransform, true);
                 }
                 _dynamicPointLightVolumeMatrices[i] = localToWorldMatrix;
             }
@@ -409,11 +411,6 @@ namespace VRCLightVolumes {
             _boundsUvw[i6 + 5] = uvwMin2 + uvwScale;
         }
 
-        // Uses exact component comparisons for packed GPU data. Unity's Vector4 == operator is approximate and could hide a small value change that still needs to reach the shader.
-        private static bool PackedVectorChanged(Vector4 previous, Vector4 current) {
-            return previous.x != current.x || previous.y != current.y || previous.z != current.z || previous.w != current.w;
-        }
-
         // One mask avoids redundant 128-element SetGlobal copies without adding parallel Udon state.
         private void MarkPointLightArrayUploads(int uploadMask) {
             if (uploadMask == 0) return;
@@ -422,37 +419,6 @@ namespace VRCLightVolumes {
 
         private void ResetPointLightArrayUploadState() {
             _pointLightArrayUploadMask = 0;
-        }
-
-        // Incremental updates compare the final packed slot and upload only arrays whose values changed. Full rebuilds call WritePointLightShaderData directly and avoid this bookkeeping.
-        private void WritePointLightShaderDataTracked(int shaderIndex, int sourceIndex, PointLightVolumeInstance instance, Transform instanceTransform) {
-            Vector4 previousPosition = _pointLightPosition[shaderIndex];
-            Vector4 previousColor = _pointLightColor[shaderIndex];
-            Vector4 previousExtraData = _pointLightExtraData[shaderIndex];
-            Vector4 previousDirection = _pointLightDirection[shaderIndex];
-            Vector4 previousCustomId = _pointLightCustomId[shaderIndex];
-            Vector4 previousShadowReprojection = _pointLightShadowReprojectionData[shaderIndex];
-            Vector4 previousShadowRotation = _pointLightShadowRotationData[shaderIndex];
-            Vector4 previousFroxelShadowMetadata = _froxelShadowMetadata[shaderIndex];
-            bool previousShadowCullEligible = previousFroxelShadowMetadata.x != 0f;
-
-            WritePointLightShaderData(shaderIndex, sourceIndex, instance, instanceTransform, false);
-            bool shadowCullEligible = _froxelShadowMetadata[shaderIndex].x != 0f;
-            if (previousShadowCullEligible != shadowCullEligible) {
-                if (shadowCullEligible) _activeShadowCullCount++;
-                else if (_activeShadowCullCount > 0) _activeShadowCullCount--;
-            }
-
-            int uploadMask = 0;
-            if (PackedVectorChanged(previousPosition, _pointLightPosition[shaderIndex])) uploadMask |= PointLightUploadPosition;
-            if (PackedVectorChanged(previousColor, _pointLightColor[shaderIndex])) uploadMask |= PointLightUploadColor;
-            if (PackedVectorChanged(previousExtraData, _pointLightExtraData[shaderIndex])) uploadMask |= PointLightUploadExtraData;
-            if (PackedVectorChanged(previousDirection, _pointLightDirection[shaderIndex])) uploadMask |= PointLightUploadDirection;
-            if (PackedVectorChanged(previousCustomId, _pointLightCustomId[shaderIndex])) uploadMask |= PointLightUploadCustomId;
-            if (PackedVectorChanged(previousShadowReprojection, _pointLightShadowReprojectionData[shaderIndex])) uploadMask |= PointLightUploadShadowReprojection;
-            if (PackedVectorChanged(previousShadowRotation, _pointLightShadowRotationData[shaderIndex])) uploadMask |= PointLightUploadShadowRotation;
-            if (PackedVectorChanged(previousFroxelShadowMetadata, _froxelShadowMetadata[shaderIndex])) uploadMask |= PointLightUploadFroxelShadowMetadata;
-            MarkPointLightArrayUploads(uploadMask);
         }
 
         // Applies one aggregate resource transition after an incremental batch or full compact rebuild. This preserves a valid hierarchy when eligible lights merely exchange slots in the same frame and the batch's final count is unchanged.
@@ -466,9 +432,25 @@ namespace VRCLightVolumes {
             }
         }
 
-        // Writes one Point Light Volume into the compact shader upload buffers
-        private void WritePointLightShaderData(int shaderIndex, int sourceIndex, PointLightVolumeInstance instance, Transform instanceTransform, bool countActiveShadow) {
-            if (instance.IsRangeDirty) ComputePointLightRange(instance);
+        // Writes one Point Light Volume from fresh source fields. Incremental calls also track exact changes from the same locals; full rebuilds count shadows and skip upload bookkeeping.
+        private void WritePointLightShaderData(int shaderIndex, int sourceIndex, PointLightVolumeInstance instance, Transform instanceTransform, bool trackChanges) {
+            // The full rebuild has already refreshed the range; only incremental callers may bring a dirty source.
+            if (trackChanges && instance.IsRangeDirty) ComputePointLightRange(instance);
+
+            Vector4 previousPosition = _pointLightPosition[shaderIndex];
+            Vector4 previousExtraData = _pointLightExtraData[shaderIndex];
+            Vector4 previousShadowReprojection = _pointLightShadowReprojectionData[shaderIndex];
+            Vector4 previousShadowRotation = _pointLightShadowRotationData[shaderIndex];
+            Vector4 previousFroxelShadowMetadata = _froxelShadowMetadata[shaderIndex];
+            // Full rebuilds do not use these three snapshots. Seed them from an existing local instead of issuing three Vector4.zero externs per light.
+            Vector4 previousColor = previousPosition;
+            Vector4 previousDirection = previousPosition;
+            Vector4 previousCustomId = previousPosition;
+            if (trackChanges) {
+                previousColor = _pointLightColor[shaderIndex];
+                previousDirection = _pointLightDirection[shaderIndex];
+                previousCustomId = _pointLightCustomId[shaderIndex];
+            }
 
             // Caching point light instance data
             int lightType = instance.LightType;
@@ -528,12 +510,9 @@ namespace VRCLightVolumes {
                 if (isSpot && isCustomCookie) angleData = spotOuterTangent;
                 else angleData = isSpot ? spotOuterCosine : instance.OuterAngleCos;
             }
-            Vector4 previousPosition = _pointLightPosition[shaderIndex];
-            Vector4 previousExtraData = _pointLightExtraData[shaderIndex];
-            Vector4 previousShadowReprojection = _pointLightShadowReprojectionData[shaderIndex];
-            Vector4 previousShadowRotation = _pointLightShadowRotationData[shaderIndex];
-            Vector4 previousFroxelShadowMetadata = _froxelShadowMetadata[shaderIndex];
-            if (previousPosition.x != pos.x || previousPosition.y != pos.y || previousPosition.z != pos.z) {
+            Vector4 shadowReprojectionData = previousShadowReprojection;
+            Vector4 shadowRotationData = previousShadowRotation;
+            if (!((Vector3)previousPosition).Equals((Vector3)pos)) {
                 _clusterMaskDirty = true;
                 _clusterGeometryUploadPending = true;
             }
@@ -566,17 +545,14 @@ namespace VRCLightVolumes {
             bool hasShading = shadingStrength > 0f;
             bool hasShadow = instance.Shadows && hasShading && ShadowTextures != null && !_shadowTextureAllocationFailed && ShadowMapsCount > 0 && resolvedShadowId >= 0 && resolvedShadowId < ShadowMapsCount;
             bool shadowCullEligible = hasShadow && shadowSourceType > 0 && shadowSourceType < 5 && !instance.RuntimeShadowDirectOutput && shadingStrength >= 1f && squaredRange > 0f;
-            if (countActiveShadow) {
-                if (hasShadow) _activeShadowCount++;
-                if (shadowCullEligible) _activeShadowCullCount++;
-            }
             float shadowNearClip = 0f;
             float shadowInvDepthRange = 0f;
             float shadowDepthRange = 0f;
             bool useLocalSpaceShadows = false;
             if (hasShadow) {
                 shadowNearClip = Mathf.Max(instance.NearClip, 0.0001f);
-                float requestedFarClip = instance.BakedFarClip > 0f ? instance.BakedFarClip : instance.FarClip;
+                float bakedFarClip = instance.BakedFarClip;
+                float requestedFarClip = bakedFarClip > 0f ? bakedFarClip : instance.FarClip;
                 float resolvedFarClip = requestedFarClip > 0f ? Mathf.Max(requestedFarClip, shadowNearClip + 0.0001f) : Mathf.Sqrt(Mathf.Max(squaredRange, 0.000001f));
                 if (shadowNearClip >= resolvedFarClip) resolvedFarClip = shadowNearClip + 0.0001f;
                 // Far is needed by the bake/encoder, but the receiver only needs its precomputed reciprocal range.
@@ -605,8 +581,8 @@ namespace VRCLightVolumes {
                 usesCubemapShadow = resolvedShadowId < ShadowCubemapsCount;
                 Vector3 shadowBakePosition = instance.ShadowBakePosition;
                 // A negative reciprocal range is a v3-only fast-path marker: the baked world-space shadow origin exactly matches the current Point/Spot origin, so the receiver can
-                // reuse its raw light vector and distance. Compare components directly. Unity's Vector3 == is approximate and could incorrectly select this exact path.
-                bool reuseWorldShadowOrigin = !isArea && !useLocalSpaceShadows && shadowInvDepthRange > 0f && shadowBakePosition.x == pos.x && shadowBakePosition.y == pos.y && shadowBakePosition.z == pos.z;
+                // reuse its raw light vector and distance. Vector3.Equals compares exactly; the approximate == operator could incorrectly select this path.
+                bool reuseWorldShadowOrigin = !isArea && !useLocalSpaceShadows && shadowInvDepthRange > 0f && shadowBakePosition.Equals((Vector3)pos);
                 useCurrentLightOrigin = useLocalSpaceShadows || reuseWorldShadowOrigin;
                 // V2 declares CustomID as float3 and ignores W. Keep the full reciprocal range for every v3 Point/Spot shadow; abs(W) is the value and sign(W) is the fast-path marker.
                 if (!isArea) customDataW = reuseWorldShadowOrigin ? -shadowInvDepthRange : shadowInvDepthRange;
@@ -615,7 +591,8 @@ namespace VRCLightVolumes {
                 // Local single-slice Spot receivers fetch the tangent from otherwise unused ExtraData.Y.
                 if (isSpot && !usesCubemapShadow) extraData.y = shadowTanAngle;
                 float shadowReprojectionW = usesCubemapShadow ? -shadowInvDepthRange : shadowTanAngle;
-                _pointLightShadowReprojectionData[shaderIndex] = new Vector4(shadowBakePosition.x, shadowBakePosition.y, shadowBakePosition.z, shadowReprojectionW);
+                shadowReprojectionData = new Vector4(shadowBakePosition.x, shadowBakePosition.y, shadowBakePosition.z, shadowReprojectionW);
+                _pointLightShadowReprojectionData[shaderIndex] = shadowReprojectionData;
 
                 if (useLocalSpaceShadows) {
                     Transform shadowTransform = instanceTransform;
@@ -625,41 +602,65 @@ namespace VRCLightVolumes {
                     shadowRotation = Quaternion.Inverse(instance.ShadowBakeRotation);
                 }
                 // Both the receiver and conservative froxel projection use the quaternion-vector shortcut that assumes a unit quaternion. Normalize authored/scripted bake data once during upload so the shadow transform cannot stretch a froxel sphere.
-                float shadowRotationLengthSq = shadowRotation.x * shadowRotation.x + shadowRotation.y * shadowRotation.y + shadowRotation.z * shadowRotation.z + shadowRotation.w * shadowRotation.w;
+                float shadowRotationLengthSq = Quaternion.Dot(shadowRotation, shadowRotation);
+                shadowRotationData = new Vector4(shadowRotation.x, shadowRotation.y, shadowRotation.z, shadowRotation.w);
                 if (shadowRotationLengthSq > 0.000000000001f && shadowRotationLengthSq < 1000000000000f) {
                     float inverseShadowRotationLength = 1f / Mathf.Sqrt(shadowRotationLengthSq);
-                    shadowRotation = new Quaternion(shadowRotation.x * inverseShadowRotationLength, shadowRotation.y * inverseShadowRotationLength, shadowRotation.z * inverseShadowRotationLength, shadowRotation.w * inverseShadowRotationLength);
+                    shadowRotationData *= inverseShadowRotationLength;
                 } else {
-                    shadowRotation = Quaternion.identity;
+                    shadowRotationData = new Vector4(0f, 0f, 0f, 1f);
                 }
-                _pointLightShadowRotationData[shaderIndex] = new Vector4(shadowRotation.x, shadowRotation.y, shadowRotation.z, shadowRotation.w);
+                _pointLightShadowRotationData[shaderIndex] = shadowRotationData;
             }
+            Vector4 froxelShadowMetadata = Vector4.zero;
             if (shadowCullEligible) {
                 int shadowBaseSlice = usesCubemapShadow ? resolvedShadowId * 6 : resolvedShadowId + ShadowCubemapsCount * 5;
                 float encodedShadowBaseSlice = shadowBaseSlice + 1f;
                 if (useLocalSpaceShadows) encodedShadowBaseSlice = -encodedShadowBaseSlice;
                 float encodedNearClip = usesCubemapShadow ? shadowNearClip : -shadowNearClip;
                 float encodedInverseDepthRange = useCurrentLightOrigin ? -shadowInvDepthRange : shadowInvDepthRange;
-                bool identityShadowRotation = shadowRotation.x == 0f && shadowRotation.y == 0f && shadowRotation.z == 0f;
+                bool identityShadowRotation = shadowRotationData.x == 0f && shadowRotationData.y == 0f && shadowRotationData.z == 0f;
                 float encodedDepthRange = identityShadowRotation ? -shadowDepthRange : shadowDepthRange;
-                _froxelShadowMetadata[shaderIndex] = new Vector4(encodedShadowBaseSlice, encodedNearClip, encodedInverseDepthRange, encodedDepthRange);
-            } else {
-                _froxelShadowMetadata[shaderIndex] = Vector4.zero;
+                froxelShadowMetadata = new Vector4(encodedShadowBaseSlice, encodedNearClip, encodedInverseDepthRange, encodedDepthRange);
             }
-            _pointLightCustomId[shaderIndex] = new Vector4(shaderCustomId, shadowMapID, squaredRange, customDataW);
+            _froxelShadowMetadata[shaderIndex] = froxelShadowMetadata;
+            Vector4 customId = new Vector4(shaderCustomId, shadowMapID, squaredRange, customDataW);
+            _pointLightCustomId[shaderIndex] = customId;
             _pointLightExtraData[shaderIndex] = extraData;
 
             if (ShadowCulling) {
-                Vector4 currentFroxelShadowMetadata = _froxelShadowMetadata[shaderIndex];
-                bool shadowMetadataChanged = PackedVectorChanged(previousFroxelShadowMetadata, currentFroxelShadowMetadata);
-                if (!shadowMetadataChanged && currentFroxelShadowMetadata.x != 0f) {
-                    if (currentFroxelShadowMetadata.z > 0f) shadowMetadataChanged = PackedVectorChanged(previousShadowReprojection, _pointLightShadowReprojectionData[shaderIndex]);
-                    if (!shadowMetadataChanged && currentFroxelShadowMetadata.w > 0f) shadowMetadataChanged = PackedVectorChanged(previousShadowRotation, _pointLightShadowRotationData[shaderIndex]);
-                    if (!shadowMetadataChanged && currentFroxelShadowMetadata.y < 0f && currentFroxelShadowMetadata.z < 0f) shadowMetadataChanged = previousExtraData.y != extraData.y;
+                bool shadowMetadataChanged = !previousFroxelShadowMetadata.Equals(froxelShadowMetadata);
+                if (!shadowMetadataChanged && froxelShadowMetadata.x != 0f) {
+                    if (froxelShadowMetadata.z > 0f) shadowMetadataChanged = !previousShadowReprojection.Equals(shadowReprojectionData);
+                    if (!shadowMetadataChanged && froxelShadowMetadata.w > 0f) shadowMetadataChanged = !previousShadowRotation.Equals(shadowRotationData);
+                    if (!shadowMetadataChanged && froxelShadowMetadata.y < 0f && froxelShadowMetadata.z < 0f) shadowMetadataChanged = previousExtraData.y != extraData.y;
                 }
                 if (shadowMetadataChanged) _clusterMaskDirty = true;
             }
 
+            if (trackChanges) {
+                bool previousShadowCullEligible = previousFroxelShadowMetadata.x != 0f;
+                bool packedShadowCullEligible = froxelShadowMetadata.x != 0f;
+                if (previousShadowCullEligible != packedShadowCullEligible) {
+                    if (packedShadowCullEligible) _activeShadowCullCount++;
+                    else if (_activeShadowCullCount > 0) _activeShadowCullCount--;
+                }
+
+                // Exact comparisons also preserve dirty NaN and clean signed-zero behavior. Reuse output locals instead of reading the eight arrays back through Udon.
+                int uploadMask = 0;
+                if (!previousPosition.Equals(pos)) uploadMask |= PointLightUploadPosition;
+                if (!previousColor.Equals(color)) uploadMask |= PointLightUploadColor;
+                if (!previousExtraData.Equals(extraData)) uploadMask |= PointLightUploadExtraData;
+                if (!previousDirection.Equals(directionData)) uploadMask |= PointLightUploadDirection;
+                if (!previousCustomId.Equals(customId)) uploadMask |= PointLightUploadCustomId;
+                if (!previousShadowReprojection.Equals(shadowReprojectionData)) uploadMask |= PointLightUploadShadowReprojection;
+                if (!previousShadowRotation.Equals(shadowRotationData)) uploadMask |= PointLightUploadShadowRotation;
+                if (!previousFroxelShadowMetadata.Equals(froxelShadowMetadata)) uploadMask |= PointLightUploadFroxelShadowMetadata;
+                MarkPointLightArrayUploads(uploadMask);
+            } else {
+                if (hasShadow) _activeShadowCount++;
+                if (shadowCullEligible) _activeShadowCullCount++;
+            }
         }
 
         // Reconciles serialized activity once when the Manager is enabled. Objects below an inactive parent do not receive an initial OnDisable callback.
@@ -804,10 +805,11 @@ namespace VRCLightVolumes {
                     UpdatePointLightTransformData(instance, instanceTransform, instanceTransform.localToWorldMatrix, true);
                 }
 #endif
-                if (_isRangeDirty || instance.IsRangeDirty) ComputePointLightRange(instance);
+                // Dynamic transforms force the same range calculation even when the global cutoff changed. Do not calculate it a second time for that rebuild.
+                else if (_isRangeDirty || instance.IsRangeDirty) ComputePointLightRange(instance);
                 _enabledPointIDs[_pointLightCount] = registryIndex;
                 _pointLightRegistryToShaderIndex[registryIndex] = _pointLightCount;
-                WritePointLightShaderData(_pointLightCount, registryIndex, instance, instanceTransform, true);
+                WritePointLightShaderData(_pointLightCount, registryIndex, instance, instanceTransform, false);
                 _pointLightCount++;
             }
             if (previousPointLightCount != _pointLightCount) _clusterMaskDirty = true;

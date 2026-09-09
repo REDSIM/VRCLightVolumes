@@ -272,7 +272,7 @@ namespace VRCLightVolumes {
             bool sourceChanged = ShadowMapID < 0 || ShadowMapTexture != sourceTexture || ShadowMapMaterial != null || AutoUpdateShadowMap || ShadowMapTextureIsCubemap || ShadowMapTextureHasDepthSlices != sourceHasSlices || ShadowMapUsesCubemap != useCubemapShadow;
             
             // Runtime shadow metadata must match the exact transform used by this bake. Unity's Vector3/Quaternion operators are approximate, which can otherwise retain a nearby stale origin/rotation and prevent the exact same-origin receiver path from engaging.
-            bool bakePositionChanged = ShadowBakePosition.x != bakePosition.x || ShadowBakePosition.y != bakePosition.y || ShadowBakePosition.z != bakePosition.z;
+            bool bakePositionChanged = !ShadowBakePosition.Equals(bakePosition);
             bool bakeRotationChanged = ShadowBakeRotation.x != bakeRotation.x || ShadowBakeRotation.y != bakeRotation.y || ShadowBakeRotation.z != bakeRotation.z || ShadowBakeRotation.w != bakeRotation.w;
             bool metadataChanged = sourceChanged || rangeChanged || (WorldSpaceShadows && (bakePositionChanged || bakeRotationChanged));
 

@@ -271,7 +271,7 @@ namespace VRCLightVolumes {
             if (_old_ShadingStrength != ShadingStrength) {
                 float oldStrength = _old_ShadingStrength;
                 _old_ShadingStrength = ShadingStrength;
-                NotifyManager((Mathf.Clamp01(oldStrength) <= 0) != (Mathf.Clamp01(ShadingStrength) <= 0), false, false);
+                NotifyManager((oldStrength <= 0) != (ShadingStrength <= 0), false, false);
             }
         }
 #endif
@@ -290,7 +290,7 @@ namespace VRCLightVolumes {
             IsActive = runtimeEnabled && Intensity != 0 && Color != Color.black;
             if (wasActive != IsActive && RuntimeShadowDirectOutput) _runtimeShadowSourceInitialized = false;
             if (!runtimeEnabled) return;
-            RegisterWithManager();
+            if (!_isRegisteredWithManager) RegisterWithManager();
             if (LightVolumeManager == null) return;
             if (wasActive != IsActive) {
                 if (CustomTexture != null || CustomTextureMaterial != null) customTexturesChanged = true;
@@ -302,8 +302,9 @@ namespace VRCLightVolumes {
         // Registers once with the world's single manager.
         private void RegisterWithManager() {
             if (_isRegisteredWithManager) return;
-            IsActive = enabled && gameObject.activeInHierarchy && Intensity != 0 && Color != Color.black;
-            if (LightVolumeManager == null || !gameObject.activeInHierarchy || !enabled) return;
+            bool runtimeEnabled = enabled && gameObject.activeInHierarchy;
+            IsActive = runtimeEnabled && Intensity != 0 && Color != Color.black;
+            if (LightVolumeManager == null || !runtimeEnabled) return;
             _isRegisteredWithManager = true;
             LightVolumeManager.InitializePointLightVolume(this);
         }
@@ -410,7 +411,8 @@ namespace VRCLightVolumes {
             if (LightSourceSize == safeSize && InverseSquaredRange == inverseSquaredRange) return;
             LightSourceSize = safeSize;
             InverseSquaredRange = inverseSquaredRange;
-            MarkRangeDirtyAndNotify(false, false, false);
+            IsRangeDirty = true;
+            NotifyManager(false, false, false);
         }
 
         // Sets LUT mode
@@ -419,13 +421,15 @@ namespace VRCLightVolumes {
             if (LightType == 1) OuterAngleTan = Mathf.Tan(Angle); // 1: spot
             OuterAngleCos = Mathf.Cos(Angle);
             UpdateRotationFromTransformCore();
-            MarkRangeDirtyAndNotify(true, CustomTexture != null || CustomTextureMaterial != null, false);
+            IsRangeDirty = true;
+            NotifyManager(true, CustomTexture != null || CustomTextureMaterial != null, false);
         }
 
         // Selects custom projection mode after a source was assigned through the public fields.
         public void SetCustomTexture() {
             SetCustomProjectionMode();
-            MarkRangeDirtyAndNotify(true, CustomTexture != null || CustomTextureMaterial != null, false);
+            IsRangeDirty = true;
+            NotifyManager(true, CustomTexture != null || CustomTextureMaterial != null, false);
         }
 
         // Assigns a texture source and uses the dev.16 automatic update default: RenderTexture-derived sources are live, immutable Texture assets are snapshots.
@@ -443,7 +447,8 @@ namespace VRCLightVolumes {
             } else {
                 SetParametricMode();
             }
-            MarkRangeDirtyAndNotify(true, true, false);
+            IsRangeDirty = true;
+            NotifyManager(true, true, false);
         }
 
         // Assigns a material source using the dev.16 live-source default.
@@ -461,14 +466,16 @@ namespace VRCLightVolumes {
             } else {
                 SetParametricMode();
             }
-            MarkRangeDirtyAndNotify(true, true, false);
+            IsRangeDirty = true;
+            NotifyManager(true, true, false);
         }
 
         // Sets the light into parametric mode
         public void SetParametric() {
             if (ProjectionMode == 0) return;
             SetParametricMode();
-            MarkRangeDirtyAndNotify(true, CustomTexture != null || CustomTextureMaterial != null, false);
+            IsRangeDirty = true;
+            NotifyManager(true, CustomTexture != null || CustomTextureMaterial != null, false);
         }
 
         // A custom Point cookie occupies six atlas slices; Spot and Area cookies occupy one.
@@ -486,54 +493,68 @@ namespace VRCLightVolumes {
             LightType = 0; // 0: point
             ShadowMapUsesCubemap = true;
             Position = position;
-            if (ProjectionMode != 0) UpdateRotationCore(instanceTransform.rotation, Matrix4x4.identity);
-            MarkRangeDirtyAndNotify(false, customTexturesChanged, shadowTexturesChanged);
+            if (ProjectionMode != 0) Rotation = Quaternion.Inverse(instanceTransform.rotation);
+            IsRangeDirty = true;
+            NotifyManager(false, customTexturesChanged, shadowTexturesChanged);
         }
 
         // Sets the light into the spotlight type with both angle and falloff because angle is required to determine falloff
         public void SetSpotLight(float angleDeg, float falloff) {
             float angle = angleDeg * Mathf.Deg2Rad * 0.5f;
             float outerAngleTan = Mathf.Tan(angle);
-            float outerAngleCos = Mathf.Cos(angle);
-            float coneFalloff = 1f / (Mathf.Cos(angle * (1.0f - Mathf.Clamp01(falloff))) - outerAngleCos);
             Transform instanceTransform = transform;
             Vector3 position = instanceTransform.position;
             Quaternion transformRotation = instanceTransform.rotation;
-            Vector3 direction = transformRotation * Vector3.forward;
-            Quaternion rotation = Quaternion.Inverse(transformRotation);
-            if (LightType == 1 && Angle == angle && OuterAngleTan == outerAngleTan && Position == position && (ProjectionMode == 2 ? Rotation == rotation : Direction == direction && OuterAngleCos == outerAngleCos && ConeFalloff == coneFalloff)) return;
+            bool unchangedSpot = LightType == 1 && Angle == angle && OuterAngleTan == outerAngleTan && Position == position;
+            // Custom cookies use inverse rotation; other Spot projections use direction and cone data. Derive only the selected representation and reuse it below.
+            if (ProjectionMode == 2) {
+                Quaternion rotation = Quaternion.Inverse(transformRotation);
+                if (unchangedSpot && Rotation == rotation) return;
+                Rotation = rotation;
+            } else {
+                float outerAngleCos = Mathf.Cos(angle);
+                float coneFalloff = 1f / (Mathf.Cos(angle * (1.0f - Mathf.Clamp01(falloff))) - outerAngleCos);
+                Vector3 direction = transformRotation * Vector3.forward;
+                if (unchangedSpot && Direction == direction && OuterAngleCos == outerAngleCos && ConeFalloff == coneFalloff) return;
+                Direction = direction;
+                OuterAngleCos = outerAngleCos;
+                ConeFalloff = coneFalloff;
+            }
             bool customTexturesChanged = CustomCookieStateChangesWithLightType(1);
             LightType = 1; // 1: spot
             Angle = angle;
             OuterAngleTan = outerAngleTan;
-            if (ProjectionMode != 2) { // 2: custom cookie or cubemap
-                OuterAngleCos = outerAngleCos;
-                ConeFalloff = coneFalloff;
-            }
             Position = position;
-            UpdateRotationCore(transformRotation, Matrix4x4.identity);
-            MarkRangeDirtyAndNotify(false, customTexturesChanged, false);
+            IsRangeDirty = true;
+            NotifyManager(false, customTexturesChanged, false);
         }
 
         // Sets the light into the spotlight type with a specified angle
         public void SetSpotLight(float angleDeg) {
             float angle = angleDeg * Mathf.Deg2Rad * 0.5f;
             float outerAngleTan = Mathf.Tan(angle);
-            float outerAngleCos = Mathf.Cos(angle);
             Transform instanceTransform = transform;
             Vector3 position = instanceTransform.position;
             Quaternion transformRotation = instanceTransform.rotation;
-            Vector3 direction = transformRotation * Vector3.forward;
-            Quaternion rotation = Quaternion.Inverse(transformRotation);
-            if (LightType == 1 && Angle == angle && OuterAngleTan == outerAngleTan && Position == position && (ProjectionMode == 2 ? Rotation == rotation : Direction == direction && OuterAngleCos == outerAngleCos)) return;
+            bool unchangedSpot = LightType == 1 && Angle == angle && OuterAngleTan == outerAngleTan && Position == position;
+            if (ProjectionMode == 2) {
+                Quaternion rotation = Quaternion.Inverse(transformRotation);
+                if (unchangedSpot && Rotation == rotation) return;
+                Rotation = rotation;
+            } else {
+                float outerAngleCos = Mathf.Cos(angle);
+                Vector3 direction = transformRotation * Vector3.forward;
+                if (unchangedSpot && Direction == direction && OuterAngleCos == outerAngleCos) return;
+                Direction = direction;
+                OuterAngleCos = outerAngleCos;
+            }
             bool customTexturesChanged = CustomCookieStateChangesWithLightType(1);
             LightType = 1; // 1: spot
             Angle = angle;
             OuterAngleTan = outerAngleTan;
-            if (ProjectionMode != 2) OuterAngleCos = outerAngleCos; // 2: custom cookie or cubemap
             Position = position;
-            UpdateRotationCore(transformRotation, Matrix4x4.identity);
-            MarkRangeDirtyAndNotify(false, customTexturesChanged, false);
+            IsRangeDirty = true;
+            NotifyManager(false, customTexturesChanged, false);
         }
 
         // Sets the light into the area light type
@@ -548,8 +569,10 @@ namespace VRCLightVolumes {
             Position = instanceTransform.position;
             Width = Mathf.Max(Mathf.Abs(lossyScale.x), 0.001f);
             Height = Mathf.Max(Mathf.Abs(lossyScale.y), 0.001f);
-            UpdateRotationCore(transformRotation, instanceTransform.localToWorldMatrix);
-            MarkRangeDirtyAndNotify(true, customTexturesChanged, shadowTexturesChanged);
+            Rotation = transformRotation;
+            RefreshAreaCookieMirror(transformRotation, instanceTransform.localToWorldMatrix);
+            IsRangeDirty = true;
+            NotifyManager(true, customTexturesChanged, shadowTexturesChanged);
         }
 
         // Sets light source color
@@ -585,7 +608,7 @@ namespace VRCLightVolumes {
             float oldStrength = ShadingStrength;
             ShadingStrength = strength;
             _old_ShadingStrength = strength;
-            NotifyManager((Mathf.Clamp01(oldStrength) <= 0) != (strength <= 0), false, false);
+            NotifyManager((oldStrength <= 0) != (strength <= 0), false, false);
         }
 
         // Sets custom spotlight cookie projection aspect
@@ -594,12 +617,6 @@ namespace VRCLightVolumes {
             if (SpotCookieAspect == safeAspect) return;
             SpotCookieAspect = safeAspect;
             NotifyManager(false, false, false);
-        }
-
-        // Marks this light range dirty and tells the manager which runtime data needs rebuilding.
-        private void MarkRangeDirtyAndNotify(bool rebuildFinalData, bool customTexturesChanged, bool shadowTexturesChanged) {
-            IsRangeDirty = true;
-            NotifyManager(rebuildFinalData, customTexturesChanged, shadowTexturesChanged);
         }
 
         // Color and intensity share a narrow notification; the manager coalesces repeated writes to this compact shader slot and widens unsupported Point profiles to a full record pack.
@@ -689,8 +706,8 @@ namespace VRCLightVolumes {
 
         // Resolves the Area Cookie X/Y reflection relative to the quaternion frame sent to shaders.
         private void RefreshAreaCookieMirror(Quaternion transformRotation, Matrix4x4 localToWorldMatrix) {
-            Vector3 matrixXAxis = new Vector3(localToWorldMatrix.m00, localToWorldMatrix.m10, localToWorldMatrix.m20);
-            Vector3 matrixYAxis = new Vector3(localToWorldMatrix.m01, localToWorldMatrix.m11, localToWorldMatrix.m21);
+            Vector3 matrixXAxis = localToWorldMatrix.GetColumn(0);
+            Vector3 matrixYAxis = localToWorldMatrix.GetColumn(1);
             bool flipCookieX = Vector3.Dot(matrixXAxis, transformRotation * Vector3.right) < 0f;
             bool flipCookieY = Vector3.Dot(matrixYAxis, transformRotation * Vector3.up) < 0f;
             AreaCookieMirror = (flipCookieY ? 2f : 1f) * (flipCookieX ? -1f : 1f);

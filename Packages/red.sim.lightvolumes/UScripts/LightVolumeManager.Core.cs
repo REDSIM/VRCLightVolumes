@@ -83,43 +83,42 @@ namespace VRCLightVolumes {
 
         // Resolves the Area Cookie X/Y reflection relative to the quaternion frame sent to shaders.
         private float GetAreaCookieMirror(Matrix4x4 localToWorldMatrix, Quaternion transformRotation) {
-            Vector3 matrixXAxis = new Vector3(localToWorldMatrix.m00, localToWorldMatrix.m10, localToWorldMatrix.m20);
-            Vector3 matrixYAxis = new Vector3(localToWorldMatrix.m01, localToWorldMatrix.m11, localToWorldMatrix.m21);
+            Vector3 matrixXAxis = localToWorldMatrix.GetColumn(0);
+            Vector3 matrixYAxis = localToWorldMatrix.GetColumn(1);
             bool flipCookieX = Vector3.Dot(matrixXAxis, transformRotation * Vector3.right) < 0f;
             bool flipCookieY = Vector3.Dot(matrixYAxis, transformRotation * Vector3.up) < 0f;
             return (flipCookieY ? 2f : 1f) * (flipCookieX ? -1f : 1f);
         }
 
-        // Computes a bounding sphere radius squared for area lights
-        private float ComputeAreaLightSquaredBoundingSphere(float width, float height, Color color, float intensity, float cutoff) {
-            float minSolidAngle = Mathf.Clamp(cutoff / (Mathf.Max(color.r, Mathf.Max(color.g, color.b)) * intensity), -Mathf.PI * 2f, Mathf.PI * 2);
-            float A = width * height;
-            float w2 = width * width;
-            float h2 = height * height;
-            float B = 0.25f * (w2 + h2);
-            float t = Mathf.Tan(0.25f * minSolidAngle);
-            float T = t * t;
-            float TB = T * B;
-            float discriminant = Mathf.Sqrt(TB * TB + 4.0f * T * A * A);
-            return (discriminant - TB) * 0.125f / T;
-        }
-
-        // Computes a bounding sphere radius squared for point and spot lights
-        private float ComputePointLightSquaredBoundingSphere(Color color, float intensity, float sqSize, float cutoff) {
-            float L = Mathf.Max(color.r, Mathf.Max(color.g, color.b));
-            return Mathf.Max(Mathf.PI * 2 * L * Mathf.Abs(intensity) / (cutoff * cutoff) - 1, 0) * sqSize;
-        }
-
-        // Recalculates point light culling range using manager-side math
+        // Recalculates the canonical culling range with the historical arithmetic order. Keep each profile in this method to avoid a second Udon call and repeated source reads.
         private void ComputePointLightRange(PointLightVolumeInstance instance) {
             if (instance == null) return;
             float cutoff = LightsBrightnessCutoff;
             if (instance.LightType == 2) { // 2: area
-                instance.SquaredRange = ComputeAreaLightSquaredBoundingSphere(Mathf.Abs(instance.SquaredScale / instance.Width), instance.Height, instance.Color, instance.Intensity * Mathf.PI, cutoff);
+                float width = Mathf.Abs(instance.SquaredScale / instance.Width);
+                float height = instance.Height;
+                Color color = instance.Color;
+                float intensity = instance.Intensity * Mathf.PI;
+                float minSolidAngle = Mathf.Clamp(cutoff / (Mathf.Max(color.r, Mathf.Max(color.g, color.b)) * intensity), -Mathf.PI * 2f, Mathf.PI * 2);
+                float area = width * height;
+                float widthSquared = width * width;
+                float heightSquared = height * height;
+                float diagonalTerm = 0.25f * (widthSquared + heightSquared);
+                float tangent = Mathf.Tan(0.25f * minSolidAngle);
+                float tangentSquared = tangent * tangent;
+                float tangentDiagonal = tangentSquared * diagonalTerm;
+                float discriminant = Mathf.Sqrt(tangentDiagonal * tangentDiagonal + 4.0f * tangentSquared * area * area);
+                instance.SquaredRange = (discriminant - tangentDiagonal) * 0.125f / tangentSquared;
             } else if (instance.ProjectionMode == 1) { // 1: LUT
                 instance.SquaredRange = Mathf.Abs(instance.SquaredScale / instance.InverseSquaredRange);
             } else {
-                instance.SquaredRange = ComputePointLightSquaredBoundingSphere(instance.Color, instance.Intensity, Mathf.Abs(instance.SquaredScale * instance.LightSourceSize * instance.LightSourceSize), cutoff);
+                Color color = instance.Color;
+                float intensity = instance.Intensity;
+                float squaredScale = instance.SquaredScale;
+                float lightSourceSize = instance.LightSourceSize;
+                float squaredSize = Mathf.Abs(squaredScale * lightSourceSize * lightSourceSize);
+                float luminance = Mathf.Max(color.r, Mathf.Max(color.g, color.b));
+                instance.SquaredRange = Mathf.Max(Mathf.PI * 2 * luminance * Mathf.Abs(intensity) / (cutoff * cutoff) - 1, 0) * squaredSize;
             }
             instance.IsRangeDirty = false;
         }
@@ -146,11 +145,7 @@ namespace VRCLightVolumes {
             bool isRotated = Mathf.Abs(relativeRotation.w) < 0.999999f;
             Vector3 lossyScale = localToWorldMatrix.lossyScale;
             float safeSmoothing = Mathf.Max(instance.SmoothBlending, 0.00001f);
-            Vector4 invLocalEdgeSmoothing = new Vector4(
-                lossyScale.x / safeSmoothing,
-                lossyScale.y / safeSmoothing,
-                lossyScale.z / safeSmoothing,
-                0f);
+            Vector4 invLocalEdgeSmoothing = lossyScale / safeSmoothing;
             Vector3 relativeRotationRow0 = new Vector3(1, 0, 0);
             Vector3 relativeRotationRow1 = new Vector3(0, 1, 0);
             if (isRotated) {
@@ -235,6 +230,7 @@ namespace VRCLightVolumes {
         private int SelectLightVolumesByWeight() {
             int selectedCount = 0;
             int registryCount = LightVolumeInstances.Length;
+            bool hasUnorderedWeight = false;
 
             // Read every active source once and insert it immediately. This keeps direct public field writes visible on the next rebuild without a persistent cache, active snapshot or second registry pass.
             for (int registryIndex = 0; registryIndex < registryCount; registryIndex++) {
@@ -244,18 +240,44 @@ namespace VRCLightVolumes {
                 int candidateOrder = instance.RegistryOrder;
 
                 int insertIndex = selectedCount;
-                for (int selectedIndex = 0; selectedIndex < selectedCount; selectedIndex++) {
-                    int selectedRegistryIndex = _selectedLightVolumeIDs[selectedIndex];
-                    float selectedWeight = _selectionLightVolumeWeights[selectedRegistryIndex];
-                    bool higherWeight = candidateWeight > selectedWeight;
-                    bool earlierEqualWeight = candidateWeight == selectedWeight && candidateOrder < _selectionLightVolumeOrders[selectedRegistryIndex];
-                    if (!higherWeight && !earlierEqualWeight) continue;
-                    insertIndex = selectedIndex;
-                    break;
+                if (selectedCount < 8 || hasUnorderedWeight) {
+                    // NaN is historically incomparable: preserve its insertion position with the original scan.
+                    for (int selectedIndex = 0; selectedIndex < selectedCount; selectedIndex++) {
+                        int selectedRegistryIndex = _selectedLightVolumeIDs[selectedIndex];
+                        float selectedWeight = _selectionLightVolumeWeights[selectedRegistryIndex];
+                        if (candidateWeight > selectedWeight || (candidateWeight == selectedWeight && candidateOrder < _selectionLightVolumeOrders[selectedRegistryIndex])) {
+                            insertIndex = selectedIndex;
+                            break;
+                        }
+                    }
+                } else {
+                    // The common ascending/descending/equal-weight registries need only endpoint checks. Search the interior logarithmically instead of scanning up to 32 Udon records.
+                    int firstRegistryIndex = _selectedLightVolumeIDs[0];
+                    float firstWeight = _selectionLightVolumeWeights[firstRegistryIndex];
+                    if (candidateWeight > firstWeight || (candidateWeight == firstWeight && candidateOrder < _selectionLightVolumeOrders[firstRegistryIndex])) {
+                        insertIndex = 0;
+                    } else {
+                        int lastIndex = selectedCount - 1;
+                        int lastRegistryIndex = _selectedLightVolumeIDs[lastIndex];
+                        float lastWeight = _selectionLightVolumeWeights[lastRegistryIndex];
+                        if (candidateWeight > lastWeight || (candidateWeight == lastWeight && candidateOrder < _selectionLightVolumeOrders[lastRegistryIndex])) {
+                            int lower = 1;
+                            int upper = lastIndex;
+                            while (lower < upper) {
+                                int middle = (lower + upper) >> 1;
+                                int middleRegistryIndex = _selectedLightVolumeIDs[middle];
+                                float middleWeight = _selectionLightVolumeWeights[middleRegistryIndex];
+                                if (candidateWeight > middleWeight || (candidateWeight == middleWeight && candidateOrder < _selectionLightVolumeOrders[middleRegistryIndex])) upper = middle;
+                                else lower = middle + 1;
+                            }
+                            insertIndex = lower;
+                        }
+                    }
                 }
                 if (insertIndex >= MaxLightVolumeCount) continue;
 
                 // Only accepted IDs can become selected records and be compared later.
+                if (float.IsNaN(candidateWeight)) hasUnorderedWeight = true;
                 _selectionLightVolumeWeights[registryIndex] = candidateWeight;
                 _selectionLightVolumeOrders[registryIndex] = candidateOrder;
                 int shiftStart = selectedCount < MaxLightVolumeCount ? selectedCount : MaxLightVolumeCount - 1;

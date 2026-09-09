@@ -37,6 +37,11 @@
             "name": "com.vrchat.worlds",
             "expression": "0.0.0",
             "define": "UDONSHARP"
+        },
+        {
+            "name": "com.vrchat.avatars",
+            "expression": "0.0.0",
+            "define": "VRCLV_AVATARS_SDK"
         }
     ],
     "noEngineReferences": false,

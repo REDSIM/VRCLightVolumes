@@ -9,6 +9,7 @@ namespace VRCLightVolumes {
     [CustomEditor(typeof(LightVolumeManager))]
     public sealed class LightVolumeManagerEditor : UnityEditor.Editor {
         private const string DebugFoldoutSessionKey = "VRCLightVolumes.LightVolumeManagerEditor.DebugFoldout";
+        private const string ShaderFeaturesFoldoutSessionKey = "VRCLightVolumes.LightVolumeManagerEditor.ShaderFeaturesFoldout";
         private const string SortLightVolumesMenu = "CONTEXT/LightVolumeManager/Sort Light Volumes";
         private const int VisibleRegistryRows = 12;
         private const float RegistryHeaderHeight = 20f;
@@ -38,6 +39,44 @@ namespace VRCLightVolumes {
         private static readonly int[] DownscaleValues = { 0, 1, 2, 3 };
         private static readonly string[] DownscaleLabels = { "None", "2x", "4x", "8x" };
         private static readonly string[] BakeryMaskLabels = { "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "29", "30" };
+        private static readonly LightVolumeShaderFeatures[] ShaderFeatureFlags = {
+            LightVolumeShaderFeatures.RegularVolumes,
+            LightVolumeShaderFeatures.AdditiveVolumes,
+            LightVolumeShaderFeatures.PointLights,
+            LightVolumeShaderFeatures.SpotLights,
+            LightVolumeShaderFeatures.AreaLights,
+            LightVolumeShaderFeatures.LightLuts,
+            LightVolumeShaderFeatures.PointCookies,
+            LightVolumeShaderFeatures.SpotCookies,
+            LightVolumeShaderFeatures.AreaCookies,
+            LightVolumeShaderFeatures.Shadows,
+            LightVolumeShaderFeatures.Clustering,
+            LightVolumeShaderFeatures.VolumeRotation,
+            LightVolumeShaderFeatures.WorldSpaceShadows,
+            LightVolumeShaderFeatures.CubemapShadows,
+            LightVolumeShaderFeatures.SingleSliceShadows,
+            LightVolumeShaderFeatures.LightProbesBlending,
+            LightVolumeShaderFeatures.SmoothBounds
+        };
+        private static readonly GUIContent[] ShaderFeatureLabels = {
+            new GUIContent("Regular Volumes", "Baked Light Volumes that provide the scene's base lighting."),
+            new GUIContent("Additive Volumes", "Baked Light Volumes that add lighting over the base lighting."),
+            new GUIContent("Point Lights", "Point Light Volume shading."),
+            new GUIContent("Spot Lights", "Spot Light Volume shading and cone falloff."),
+            new GUIContent("Area Lights", "Area Light Volume shading and specular highlights."),
+            new GUIContent("Light LUTs", "Texture-based falloff. Requires Point Lights or Spot Lights."),
+            new GUIContent("Point Cookies", "Cubemap projection for Point Light Volumes."),
+            new GUIContent("Spot Cookies", "Cookie projection for Spot Light Volumes."),
+            new GUIContent("Area Cookies", "Textured emission from Area Light Volumes."),
+            new GUIContent("Shadows", "Master switch for baked and runtime shadows from Point, Spot and Area Light Volumes. Requires at least one light type."),
+            new GUIContent("Froxel Clustering", "Camera-relative clustered light selection. Requires at least one light type; the sequential fallback remains available."),
+            new GUIContent("Volume Rotation", "Rotates baked directional lighting. Shared by Regular Volumes and Additive Volumes; requires at least one volume type."),
+            new GUIContent("World Space Shadows", "Keeps baked shadows fixed at their world-space bake origin while lights move. Requires an enabled shadow map type."),
+            new GUIContent("Cubemap Shadows", "Six-face shadow maps for Point, Area and wide-angle Spot Light Volumes."),
+            new GUIContent("Single-slice Shadows", "Single-slice shadow maps. Requires Spot Lights and Shadows."),
+            new GUIContent("Light Probes Blending", "Blends regular Light Volumes with light probes outside their bounds. Requires Regular Volumes."),
+            new GUIContent("Smooth Bounds", "Smoothly blends a regular volume's outer boundary when no second volume contains the sample. Requires Regular Volumes; overlapping volumes can still blend when disabled.")
+        };
         private static GUIContent _bakedShadowIndicatorContent;
         private static GUIContent _pendingShadowIndicatorContent;
         private static GUIContent _runtimeShadowIndicatorContent;
@@ -59,6 +98,10 @@ namespace VRCLightVolumes {
         private LightVolumeManager _manager;
         private SerializedProperty _lightVolumes;
         private SerializedProperty _pointLights;
+        private SerializedProperty _shaderStripping;
+        private SerializedProperty _autoShaderFeatures;
+        private SerializedProperty _shaderFeatures;
+        private SerializedProperty _shaderFeaturesSchema;
         private ReorderableList _lightVolumeList;
         private ReorderableList _pointLightList;
         private readonly RegistryScrollState _lightVolumeScroll = new RegistryScrollState();
@@ -74,6 +117,7 @@ namespace VRCLightVolumes {
         private bool _multipleManagers;
         private LightVolumeManager _primaryManager;
         private bool _debugExpanded;
+        private bool _shaderFeaturesExpanded;
         private readonly List<UnityEngine.Object> _textureDependencyRoots = new List<UnityEngine.Object>();
         private readonly HashSet<UnityEngine.Object> _textureDependencyRootSet = new HashSet<UnityEngine.Object>();
         private readonly HashSet<Texture> _directTextureRoots = new HashSet<Texture>();
@@ -105,6 +149,7 @@ namespace VRCLightVolumes {
         private void OnEnable() {
             _manager = (LightVolumeManager)target;
             _debugExpanded = SessionState.GetBool(DebugFoldoutSessionKey, false);
+            _shaderFeaturesExpanded = SessionState.GetBool(ShaderFeaturesFoldoutSessionKey, false);
             RefreshManagerCount();
             // UdonSharp creates a custom editor before its first Play Mode Udon-to-proxy copy.
             // Merely selecting the Manager late must therefore never repair and serialize the
@@ -117,6 +162,10 @@ namespace VRCLightVolumes {
             serializedObject.Update();
             _lightVolumes = serializedObject.FindProperty("LightVolumeInstances");
             _pointLights = serializedObject.FindProperty("PointLightVolumeInstances");
+            _shaderStripping = serializedObject.FindProperty(nameof(LightVolumeManager.ShaderStripping));
+            _autoShaderFeatures = serializedObject.FindProperty(nameof(LightVolumeManager.AutoShaderFeatures));
+            _shaderFeatures = serializedObject.FindProperty(nameof(LightVolumeManager.ShaderFeatures));
+            _shaderFeaturesSchema = serializedObject.FindProperty(nameof(LightVolumeManager.ShaderFeaturesSchema));
             _lightVolumeList = CreateRegistryList(_lightVolumes, false);
             _pointLightList = CreateRegistryList(_pointLights, true);
             Undo.undoRedoPerformed += OnUndoRedoPerformed;
@@ -212,9 +261,14 @@ namespace VRCLightVolumes {
             if (hasLightVolumes || hasPointLights) {
                 DrawActions(hasLightVolumes, hasPointLights);
             }
+            bool shaderFeaturesChanged = DrawShaderFeaturesSection();
             DrawDebugSection();
 
             bool managerChanged = serializedObject.ApplyModifiedProperties();
+            if (shaderFeaturesChanged) {
+                LightVolumeShaderFeatureConfig.NotifySettingsChanged(_manager);
+                Repaint();
+            }
             if (!managerChanged && !_registryChanged && !_pointRegistryChanged) return;
 
             bool cookieLayoutChanged = previousCookieResolution != _manager.CustomTexturesWidth || _pointRegistryChanged;
@@ -234,6 +288,7 @@ namespace VRCLightVolumes {
             _registryChanged = false;
             _pointRegistryChanged = false;
             _nextStatsRefresh = 0d;
+            if (!EditorApplication.isPlayingOrWillChangePlaymode && _manager.AutoShaderFeatures && !shaderFeaturesChanged) LightVolumeShaderFeatureConfig.QueueRefresh();
             EditorApplication.QueuePlayerLoopUpdate();
             SceneView.RepaintAll();
         }
@@ -545,6 +600,117 @@ namespace VRCLightVolumes {
                     }
                 }
             }
+        }
+
+        // Edits the next Play Mode/build profile and reports explicit changes for immediate application during Play Mode.
+        private bool DrawShaderFeaturesSection() {
+            GUILayout.Space(InspectorSectionSpacing);
+            bool settingsChanged = false;
+            bool strippingAllowed = !LightVolumeShaderFeatureConfig.HasAvatarSdk;
+            bool enteringPlayMode = EditorApplication.isPlayingOrWillChangePlaymode && !EditorApplication.isPlaying;
+            bool canEdit = strippingAllowed && !enteringPlayMode && !LightVolumeShaderFeatureConfig.IsBuilding && !LVUtils.IsInPrefabAsset(_manager);
+            using (new EditorGUI.DisabledScope(!canEdit)) {
+                settingsChanged = DrawShaderStrippingHeader(canEdit, strippingAllowed);
+                if (strippingAllowed && _shaderStripping.boolValue && _shaderFeaturesExpanded) {
+                    SerializedProperty auto = _autoShaderFeatures;
+                    SerializedProperty features = _shaderFeatures;
+                    SerializedProperty schema = _shaderFeaturesSchema;
+                    LightVolumeShaderFeatures detected = LightVolumeShaderFeatureConfig.GetDetectedFeatures(_manager);
+                    bool wasAuto = auto.boolValue;
+                    EditorGUI.BeginChangeCheck();
+                    EditorGUILayout.PropertyField(auto, new GUIContent("Auto", auto.tooltip));
+                    if (EditorGUI.EndChangeCheck() && canEdit && _shaderStripping.boolValue) {
+                        settingsChanged = true;
+                        if (wasAuto && !auto.boolValue) {
+                            features.intValue = (int)detected;
+                            schema.intValue = 1;
+                        }
+                    }
+
+                    EditorGUILayout.HelpBox("When Shader Stripping is enabled, play mode and world builds strips disabled features from LightVolumes.cginc", MessageType.Info);
+                    LightVolumeShaderFeatures selected = auto.boolValue ? detected : LightVolumeShaderFeatureConfig.GetManualFeatures(features.intValue, schema.intValue);
+                    EditorGUI.BeginChangeCheck();
+                    using (new EditorGUI.DisabledScope(auto.boolValue)) {
+                        LightVolumeDebugGUI.DrawGroupHeader("Volumes", false, "Regular and additive volumes share Volume Rotation.");
+                        DrawShaderFeatureToggle(ref selected, 0);
+                        DrawShaderFeatureToggle(ref selected, 15, 1);
+                        DrawShaderFeatureToggle(ref selected, 16, 1);
+                        DrawShaderFeatureToggle(ref selected, 1);
+                        DrawShaderFeatureToggle(ref selected, 11);
+
+                        LightVolumeDebugGUI.DrawGroupHeader("Lights", true, "Each cookie type requires its corresponding light type. LUTs and clustering are shared.");
+                        DrawShaderFeatureToggle(ref selected, 2);
+                        DrawShaderFeatureToggle(ref selected, 6, 1);
+                        DrawShaderFeatureToggle(ref selected, 3);
+                        DrawShaderFeatureToggle(ref selected, 7, 1);
+                        DrawShaderFeatureToggle(ref selected, 4);
+                        DrawShaderFeatureToggle(ref selected, 8, 1);
+                        DrawShaderFeatureToggle(ref selected, 5);
+                        DrawShaderFeatureToggle(ref selected, 10);
+
+                        GUILayout.Space(EditorGUIUtility.standardVerticalSpacing);
+                        DrawShaderFeatureToggle(ref selected, 9);
+                        DrawShaderFeatureToggle(ref selected, 13, 1);
+                        DrawShaderFeatureToggle(ref selected, 14, 1);
+                        DrawShaderFeatureToggle(ref selected, 12, 1);
+                    }
+                    if (EditorGUI.EndChangeCheck() && canEdit && _shaderStripping.boolValue && !auto.boolValue) {
+                        features.intValue = (int)selected;
+                        schema.intValue = 1;
+                        settingsChanged = true;
+                    }
+                    LightVolumeShaderFeatures effective = LightVolumeShaderFeatureConfig.NormalizeFeatures(selected);
+                    if (_shaderStripping.boolValue && !auto.boolValue && (detected & ~effective) != 0) {
+                        EditorGUILayout.HelpBox("Some detected scene features are disabled. Keep every feature that can be used during Play Mode or in the built world.", MessageType.Warning);
+                    }
+                }
+            }
+            return settingsChanged;
+        }
+
+        // Avatar SDK projects display a disabled unchecked row without overwriting the remembered selection; enabled projects add the foldout label.
+        private bool DrawShaderStrippingHeader(bool canEdit, bool strippingAllowed) {
+            Rect row = EditorGUILayout.GetControlRect();
+            GUIContent label = new GUIContent("Shader Stripping", _shaderStripping.tooltip);
+            if (!strippingAllowed) {
+                label.tooltip = "Disabled because the VRChat Avatars SDK is installed; all shader features stay available.";
+                using (new EditorGUI.DisabledScope(true)) EditorGUI.Toggle(row, label, false);
+                return false;
+            }
+            if (!_shaderStripping.boolValue) {
+                EditorGUI.BeginChangeCheck();
+                EditorGUI.PropertyField(row, _shaderStripping, label);
+                return EditorGUI.EndChangeCheck() && canEdit;
+            }
+
+            label = EditorGUI.BeginProperty(row, label, _shaderStripping);
+            Rect labelRect = row;
+            labelRect.width = EditorGUIUtility.labelWidth;
+            Rect toggleRect = row;
+            toggleRect.xMin += EditorGUIUtility.labelWidth;
+            bool expanded = EditorGUI.Foldout(labelRect, _shaderFeaturesExpanded, label, true);
+            if (expanded != _shaderFeaturesExpanded) {
+                _shaderFeaturesExpanded = expanded;
+                SessionState.SetBool(ShaderFeaturesFoldoutSessionKey, expanded);
+            }
+            EditorGUI.BeginChangeCheck();
+            bool enabled = EditorGUI.Toggle(toggleRect, _shaderStripping.boolValue);
+            bool changed = EditorGUI.EndChangeCheck() && canEdit;
+            if (changed) _shaderStripping.boolValue = enabled;
+            EditorGUI.EndProperty();
+            return changed;
+        }
+
+        // Shows unavailable children as disabled while retaining their manual selection for when their parents return.
+        private static void DrawShaderFeatureToggle(ref LightVolumeShaderFeatures selected, int index, int indent = 0) {
+            LightVolumeShaderFeatures flag = ShaderFeatureFlags[index];
+            bool available = LightVolumeShaderFeatureConfig.IsFeatureAvailable(flag, selected);
+            EditorGUI.indentLevel += indent;
+            using (new EditorGUI.DisabledScope(!available)) {
+                bool enabled = EditorGUILayout.Toggle(ShaderFeatureLabels[index], available && (selected & flag) != 0);
+                if (available) selected = enabled ? selected | flag : selected & ~flag;
+            }
+            EditorGUI.indentLevel -= indent;
         }
 
         // Draws read-only texture, clustering, count and runtime material diagnostics.

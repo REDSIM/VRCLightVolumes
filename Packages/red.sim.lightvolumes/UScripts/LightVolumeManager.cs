@@ -139,6 +139,16 @@ namespace VRCLightVolumes {
         [Tooltip("Enables the Force Scene Lighting shader override on startup, disabling min/max brightness limits in compatible avatar shaders. When disabled, the existing global override is left unchanged. Use SetForceSceneLighting for manual runtime control.")]
         public bool ForceSceneLighting = false;
 
+        // Shader authoring settings share the runtime schema so UdonSharp proxies and backing behaviours retain the same serialized fields.
+        [Tooltip("Strips unused shader features in Play Mode and world builds. Disable to keep every feature without changing the saved Auto or manual selection. Edit Mode always keeps all features.")]
+        [HideInInspector] public bool ShaderStripping = true;
+        [Tooltip("Automatically decides which shader features should be stripped based on the current scene config. You must manually enable required features if you dynamically toggle them in runtime via scripts.")]
+        [HideInInspector] public bool AutoShaderFeatures = true;
+        [Tooltip("Shader features retained in Play Mode and world builds when Auto is disabled. Changes take effect immediately in Play Mode. Edit Mode always keeps all features.")]
+        [HideInInspector] public int ShaderFeatures = 131071;
+        // Schema zero keeps newly introduced features for old manual masks until the user explicitly edits the expanded selection.
+        [HideInInspector] public int ShaderFeaturesSchema = 0;
+
         // Persistent authoring settings live on the Udon proxy as well. Keeping them here removes the editor-only Setup component without adding runtime work; heavy asset references are cleared from the temporary build scene by the build preprocessor.
         private const int BakingModeProgressive = 0;
         private const int BakingModeBakery = 1;

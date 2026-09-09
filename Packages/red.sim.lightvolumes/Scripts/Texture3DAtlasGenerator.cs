@@ -456,7 +456,7 @@ namespace VRCLightVolumes {
             }
         }
 
-        // Downscales texture pixels with the same 8-sample box filter as the previous implementation.
+        // Downscales texture pixels with an 8-sample box filter.
         private static DownscaleTextureResult DownscaleTexturePixels(Color[] sourcePixels, int sourceWidth, int sourceHeight, int sourceDepth, ThreadProgress progress, CancellationToken cancellationToken) {
             int newWidth = Math.Max(1, sourceWidth / 2);
             int newHeight = Math.Max(1, sourceHeight / 2);

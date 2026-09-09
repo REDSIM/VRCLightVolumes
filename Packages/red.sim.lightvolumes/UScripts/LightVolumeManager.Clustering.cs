@@ -972,10 +972,13 @@ namespace VRCLightVolumes {
             }
             if (!_shadowCullMaterialBindingDirty) return;
 
+            // Select the geometry-only variant when no shadow-culling hierarchy is available.
             if (shadowCullReady) {
+                clusteringMaterial.DisableKeyword("VRCLV_FROXEL_GEOMETRY_ONLY");
                 clusteringMaterial.SetTexture(_shadowCullHierarchyID, _shadowCullPyramid);
                 clusteringMaterial.SetVector(_froxelShadowCullID, new Vector4(IntegerLog2PowerOfTwo(_shadowCullPyramidResolution), _shadowCullPyramidFirstLevel, _shadowCullPyramidSliceCount, _shadowCullPyramidAtlasWidthShift));
             } else {
+                clusteringMaterial.EnableKeyword("VRCLV_FROXEL_GEOMETRY_ONLY");
                 clusteringMaterial.SetTexture(_shadowCullHierarchyID, _clusteringSource);
                 clusteringMaterial.SetVector(_froxelShadowCullID, Vector4.zero);
             }

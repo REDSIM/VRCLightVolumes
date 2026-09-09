@@ -15,6 +15,8 @@ Shader "Hidden/VRCLV/FroxelClusteringBuild" {
         CGINCLUDE
             #include "UnityCG.cginc"
 
+            // VRCLV_FROXEL_GEOMETRY_ONLY excludes shadow culling from both passes.
+            // Without this keyword, _UdonFroxelShadowCull controls shadow culling at runtime.
             #define VRCLV_MAX_POINT_LIGHTS 128
             #define VRCLV_FROXEL_AXIS_ERROR 0.02
             #define VRCLV_SHADOW_FACE_SQRT_TWO 1.4142135623730951
@@ -79,8 +81,8 @@ Shader "Hidden/VRCLV/FroxelClusteringBuild" {
                 return int2(tileX * (uint)gridParams.x + cell.x, tileY * (uint)gridParams.y + cell.z);
             }
 
-            // Reconstructs the ordinary broad-phase sphere and, only while shadow culling is enabled, the two exact near/far end rectangles. Perspective froxel edges are linear between those planes, so their convex hull is the complete froxel. 
-            // Keeping the rectangles avoids the artificial depth thickness and sqrt(2) transverse expansion introduced by circumscribed endpoint spheres. Fine boundaries keep a partial last Coarse cell nested.
+            // Builds a broad-phase sphere and optional near/far rectangles for shadow culling.
+            // Perspective froxel edges are linear between the rectangles, whose convex hull covers the complete froxel. Fine-grid boundaries keep a partial final Coarse cell nested.
             void BuildFroxelBounds(uint3 cell, uint childScale, bool buildShadowHull, out float3 center, out float radius, out float3 nearCenter, out float2 nearHalfSize, out float3 farCenter, out float2 farHalfSize) {
                 uint3 fineCount = uint3((uint)_UdonFroxelFineGrid.x, (uint)_UdonFroxelFineGrid.z, (uint)_UdonFroxelFineGrid.y);
                 uint3 firstFine = cell * childScale;
@@ -92,7 +94,7 @@ Shader "Hidden/VRCLV/FroxelClusteringBuild" {
                 float nearDepth = _UdonFroxelDepth.x * exp2(_UdonFroxelDepthStep.x * (float)firstFine.z);
                 float farDepth;
                 [branch] if (childScale == 1u) {
-                    // Fine is the large pass: reuse the precomputed one-slice ratio and save one SFU per froxel.
+                    // Fine slices share the precomputed one-slice depth ratio.
                     farDepth = nearDepth * _UdonFroxelDepthStep.y;
                 } else {
                     uint childDepthCount = endFine.z - firstFine.z;
@@ -142,6 +144,7 @@ Shader "Hidden/VRCLV/FroxelClusteringBuild" {
                 return axis * rsqrt(max(dot(axis, axis), 0.000001));
             }
 
+            #if !defined(VRCLV_FROXEL_GEOMETRY_ONLY)
             float3 RotateShadowVector(float3 value, float4 rotation) {
                 float3 doubledCross = 2.0 * cross(rotation.xyz, value);
                 return value + rotation.w * doubledCross + cross(rotation.xyz, doubledCross);
@@ -160,25 +163,12 @@ Shader "Hidden/VRCLV/FroxelClusteringBuild" {
 
             // Projects a direction through one already-selected cubemap face using the exact signed permutation from LV_CubemapUvFace.
             void ProjectShadowCubeFace(float3 direction, uint face, out float2 numerator, out float major) {
-                [flatten] if (face == 0u) {
-                    numerator = float2(-direction.z, -direction.y);
-                    major = direction.x;
-                } else [flatten] if (face == 1u) {
-                    numerator = float2(direction.z, -direction.y);
-                    major = -direction.x;
-                } else [flatten] if (face == 2u) {
-                    numerator = float2(direction.x, direction.z);
-                    major = direction.y;
-                } else [flatten] if (face == 3u) {
-                    numerator = float2(direction.x, -direction.z);
-                    major = -direction.y;
-                } else [flatten] if (face == 4u) {
-                    numerator = float2(direction.x, -direction.y);
-                    major = direction.z;
-                } else {
-                    numerator = float2(-direction.x, -direction.y);
-                    major = -direction.z;
-                }
+                // Select the unsigned axis once, then apply the face sign to its exact component permutation.
+                uint axis = face >> 1u;
+                float faceSign = (face & 1u) == 0u ? 1.0 : -1.0;
+                float3 projected = axis == 0u ? direction.zyx : (axis == 1u ? direction.xzy : direction.xyz);
+                major = projected.z * faceSign;
+                numerator = projected.xy * float2(axis == 0u ? -faceSign : (axis == 2u ? faceSign : 1.0), axis == 1u ? faceSign : -1.0);
             }
 
             // Exact perspective bounds of one oriented endpoint rectangle. With positive major, a projected ratio over a convex polygon is a denominator-weighted combination of its vertex ratios, so its extrema occur at these four vertices. 
@@ -220,22 +210,32 @@ Shader "Hidden/VRCLV/FroxelClusteringBuild" {
                 return all(uvMin <= uvMax);
             }
 
-            // Cheap necessary-condition probe for a point known to lie inside the froxel hull. Unlike the full rectangle projection this needs no endpoint basis transforms.
+            // Projects an interior froxel point for the early shadow probe; no rectangle-axis transforms are needed.
             bool BuildShadowPointUv(float3 shadowPoint, bool singleShadow, float shadowTangent, out float2 uv, out uint cubeFace) {
-                float tangent = max(shadowTangent, 0.0001);
-                cubeFace = singleShadow ? 0u : SelectShadowCubeFace(shadowPoint);
                 float2 numerator;
-                float major;
+                float denominator;
                 [branch] if (singleShadow) {
+                    cubeFace = 0u;
                     numerator = -shadowPoint.xy;
-                    major = -shadowPoint.z;
+                    denominator = -shadowPoint.z * max(shadowTangent, 0.0001);
                 } else {
-                    ProjectShadowCubeFace(shadowPoint, cubeFace, numerator, major);
+                    float3 magnitude = abs(shadowPoint);
+                    [flatten] if (magnitude.x >= magnitude.y && magnitude.x >= magnitude.z) {
+                        cubeFace = shadowPoint.x > 0.0 ? 0u : 1u;
+                        numerator = float2(shadowPoint.x > 0.0 ? -shadowPoint.z : shadowPoint.z, -shadowPoint.y);
+                        denominator = magnitude.x;
+                    } else [flatten] if (magnitude.y >= magnitude.z) {
+                        cubeFace = shadowPoint.y > 0.0 ? 2u : 3u;
+                        numerator = float2(shadowPoint.x, shadowPoint.y > 0.0 ? shadowPoint.z : -shadowPoint.z);
+                        denominator = magnitude.y;
+                    } else {
+                        cubeFace = shadowPoint.z > 0.0 ? 4u : 5u;
+                        numerator = float2(shadowPoint.z > 0.0 ? shadowPoint.x : -shadowPoint.x, -shadowPoint.y);
+                        denominator = magnitude.z;
+                    }
                 }
-                float projectionScale = singleShadow ? tangent : 1.0;
-                float projectionDenominator = major * projectionScale;
-                if (!(projectionDenominator > 0.0) || !(max(abs(numerator.x), abs(numerator.y)) <= projectionDenominator)) return false;
-                uv = numerator * rcp(projectionDenominator) * 0.5 + 0.5;
+                if (!(denominator > 0.0) || !(max(abs(numerator.x), abs(numerator.y)) <= denominator)) return false;
+                uv = numerator * rcp(denominator) * 0.5 + 0.5;
                 return all(uv >= 0.0) && all(uv <= 1.0);
             }
 
@@ -269,7 +269,7 @@ Shader "Hidden/VRCLV/FroxelClusteringBuild" {
                 baseMax = min(max(baseMax, 0), maximumBaseIndex);
 
                 uint2 contributorSpan = (uint2)(baseMax - baseMin + 1);
-                // The 1x1 root is redundant: a full face is exactly covered by the four 2x2 nodes. Clamp that one exceptional request instead of storing another level.
+                // Four 2x2 nodes cover an entire face, so the hierarchy omits the 1x1 root.
                 uint level = min(maximumStoredLevel, max(firstStoredLevel, CeilLog2Small(max(contributorSpan.x, contributorSpan.y))));
 
                 uint2 nodeMin = (uint2)baseMin >> level;
@@ -302,7 +302,7 @@ Shader "Hidden/VRCLV/FroxelClusteringBuild" {
                 }
                 if (levelPassed) return true;
 
-                // Fine already paid for a finest-node midpoint witness, so a failed parent is often just a max-reduction aliasing a nearby penumbra into the froxel. Retry at the finest level that still covers the exact footprint with at most six nodes.
+                // A failed parent node can include nearby penumbra outside this froxel. Refine its query to at most six finer nodes.
                 // This only subdivides the same conservative contributor set; it cannot remove a light that the full-resolution EVSM proof would keep.
                 [branch] if (!refineFailedFineQuery || level <= firstStoredLevel) return false;
                 uint refinedLevel = level - 1u;
@@ -345,8 +345,8 @@ Shader "Hidden/VRCLV/FroxelClusteringBuild" {
                 return true;
             }
 
-            // Fine candidates have already survived the coarse proof and are strongly biased toward lit/penumbra cells. A single finest-level necessary-condition lookup lets those cells stop before the two exact endpoint-rectangle projections.
-            // Coarse deliberately skips this extra read because deeply shadowed cells dominate its useful work. Invalid metadata returns the fail-open 2.0 depth consumed by the caller's existing range check.
+            // Fine candidates passed the coarse test. A finest-level point query rejects lit receivers before rectangle projection.
+            // Invalid metadata returns 2.0, which prevents shadow culling.
             float QueryShadowCullProbeDepth(float2 uv, uint shadowSlice) {
                 uint resolutionShift = (uint)_UdonFroxelShadowCull.x;
                 uint firstStoredLevel = min((uint)_UdonFroxelShadowCull.y, 12u);
@@ -367,7 +367,7 @@ Shader "Hidden/VRCLV/FroxelClusteringBuild" {
             // Returns true only after the convex hull of the two exact end rectangles is behind the conservative EVSM threshold for every mip-0 texel that bilinear filtering may consume.
             // The projection of a convex combination is a denominator-weighted combination of its endpoint projections, so combining the two rectangle bounds covers the complete hull.
             bool FroxelIsFullyShadowed(uint lightId, float3 lightPosition, float3 froxelNearCenter, float2 froxelNearHalfSize, float3 froxelFarCenter, float2 froxelFarHalfSize, float froxelCoordinateMagnitude, bool useEarlyProbe) {
-                // A negative clustering radius selects only entries written by the matching CPU encoder, so the inner loop needs one predecoded load instead of reconstructing these values from four unrelated receiver arrays for every froxel.
+                // Negative clustering radii mark lights with predecoded shadow metadata from the CPU encoder.
                 float4 shadowMetadata = _UdonFroxelShadowMetadata[lightId];
                 uint shadowBaseSlice = (uint)abs(shadowMetadata.x) - 1u;
                 bool localShadow = shadowMetadata.x < 0.0;
@@ -417,7 +417,7 @@ Shader "Hidden/VRCLV/FroxelClusteringBuild" {
                     if (!BuildShadowPointUv(shadowMidpoint, singleShadow, shadowTangent, probeUv, probeCubeFace)) return false;
                     uint probeShadowSlice = singleShadow ? shadowBaseSlice : shadowBaseSlice + probeCubeFace;
                     float probeCriticalDepth = QueryShadowCullProbeDepth(probeUv, probeShadowSlice);
-                    // Move the monotonic normalized-depth comparison back into physical distance and square it. This is exactly equivalent while criticalDepth < 1, and avoids an SFU square root in every Fine candidate that stops at the probe.
+                    // For criticalDepth < 1, squared physical distance gives the same monotonic test as normalized depth without a square root.
                     float criticalDepthWithEpsilon = probeCriticalDepth + VRCLV_SHADOW_DEPTH_EPSILON;
                     if (!(criticalDepthWithEpsilon < 1.0)) return false;
                     float requiredReceiverDistance = shadowNearClip + depthRange * saturate(criticalDepthWithEpsilon * 0.5 + 0.5) + distanceSafety;
@@ -431,10 +431,10 @@ Shader "Hidden/VRCLV/FroxelClusteringBuild" {
                 float3 supportDirection = closestCenterToOrigin * rsqrt(max(closestCenterDistanceSq, 1.0e-12));
                 float rightSupport = abs(dot(supportDirection, _UdonFroxelRight.xyz));
                 float upSupport = abs(dot(supportDirection, _UdonFroxelUp.xyz));
-                // Exact support of the two endpoint rectangles along the closest-centerline direction. This removes the fake longitudinal radius of the former spheres.
+                // Exact support of the two endpoint rectangles along the closest-centerline direction.
                 float supportDistanceLower = min( dot(supportDirection, nearReceiverToOrigin) - rightSupport * froxelNearHalfSize.x - upSupport * froxelNearHalfSize.y, dot(supportDirection, farReceiverToOrigin) - rightSupport * froxelFarHalfSize.x - upSupport * froxelFarHalfSize.y);
-                // The actual end rectangles have zero camera-depth thickness. This slab bound is the safe part of the intuitive "front plane" test: it tightens distance when the
-                // shadow origin is in front of the near plane or behind the far plane, while the hull still handles side directions and the complete UV footprint.
+                // The endpoint rectangles have zero camera-depth thickness. Their depth slab gives a distance lower bound
+                // when the shadow origin lies in front of the near plane or behind the far plane.
                 float depthSlabDistanceLower = max(-dot(nearReceiverToOrigin, _UdonFroxelForward.xyz), dot(farReceiverToOrigin, _UdonFroxelForward.xyz));
                 float geometricDistanceLower = max(supportDistanceLower, depthSlabDistanceLower);
                 if (geometricDistanceLower <= 0.0) return false;
@@ -472,14 +472,18 @@ Shader "Hidden/VRCLV/FroxelClusteringBuild" {
                     ProjectShadowCubeFace(shadowRight, cubeFace, rightNumerator, rightMajor);
                     ProjectShadowCubeFace(shadowUp, cubeFace, upNumerator, upMajor);
                 }
-                float2 nearUvMin;
-                float2 nearUvMax;
-                float2 farUvMin;
-                float2 farUvMax;
-                if (!BuildShadowRectangleUvBounds(shadowNearCenter, rightNumerator, rightMajor, upNumerator, upMajor, froxelNearHalfSize, singleShadow, projectionScale, planeNormalLength, cubeFace, worldEpsilon, nearUvMin, nearUvMax)) return false;
-                if (!BuildShadowRectangleUvBounds(shadowFarCenter, rightNumerator, rightMajor, upNumerator, upMajor, froxelFarHalfSize, singleShadow, projectionScale, planeNormalLength, cubeFace, worldEpsilon, farUvMin, farUvMax)) return false;
-                float2 uvMin = min(nearUvMin, farUvMin);
-                float2 uvMax = max(nearUvMax, farUvMax);
+                // Both endpoints share the projection basis and conservative error bounds.
+                float2 uvMin = 1.0e30;
+                float2 uvMax = -1.0e30;
+                [fastopt] for (uint endpoint = 0u; endpoint < 2u; endpoint++) {
+                    float3 endpointCenter = endpoint == 0u ? shadowNearCenter : shadowFarCenter;
+                    float2 endpointHalfSize = endpoint == 0u ? froxelNearHalfSize : froxelFarHalfSize;
+                    float2 endpointMin;
+                    float2 endpointMax;
+                    if (!BuildShadowRectangleUvBounds(endpointCenter, rightNumerator, rightMajor, upNumerator, upMajor, endpointHalfSize, singleShadow, projectionScale, planeNormalLength, cubeFace, worldEpsilon, endpointMin, endpointMax)) return false;
+                    uvMin = min(uvMin, endpointMin);
+                    uvMax = max(uvMax, endpointMax);
+                }
 
                 float nearestReceiverDistance = geometricDistanceLower - distanceSafety;
                 if (nearestReceiverDistance <= 0.0) return false;
@@ -489,6 +493,8 @@ Shader "Hidden/VRCLV/FroxelClusteringBuild" {
                 uint shadowSlice = singleShadow ? shadowBaseSlice : shadowBaseSlice + cubeFace;
                 return QueryShadowCullDepth(uvMin, uvMax, shadowSlice, nearestShadowDepth, useEarlyProbe);
             }
+
+            #endif
 
             // Range rejection is performed before this shape-specific path, so point lights pay none of this cost.
             bool IntersectsFroxelLightShape(float3 lightToFroxel, float lightDistanceSq, float froxelRadius, float combinedRadius, uint packedShape) {
@@ -525,14 +531,6 @@ Shader "Hidden/VRCLV/FroxelClusteringBuild" {
                 return intersects;
             }
 
-            uint SelectMaskWord(uint4 mask, uint wordIndex) {
-                uint value = mask.w;
-                [branch] if (wordIndex == 0u) value = mask.x;
-                else [branch] if (wordIndex == 1u) value = mask.y;
-                else [branch] if (wordIndex == 2u) value = mask.z;
-                return value;
-            }
-
             void StoreMaskWord(inout uint4 mask, uint wordIndex, uint value) {
                 [branch] if (wordIndex == 0u) mask.x = value;
                 else [branch] if (wordIndex == 1u) mask.y = value;
@@ -540,7 +538,7 @@ Shader "Hidden/VRCLV/FroxelClusteringBuild" {
                 else mask.w = value;
             }
 
-            // Coarse shadow rejection is a cheap hierarchical early-out: every removed light is absent from all child fine candidate lists, while ambiguous coarse cells still get the full-resolution proof below. One rolled call site avoids FXC graph cloning.
+            // Coarse shadow rejection removes a light from all child Fine candidate lists. A rolled loop avoids duplicating the EVSM proof in FXC.
             uint4 BuildClusterMask(uint pointLightCount, float3 froxelCenter, float froxelRadius, float3 froxelNearCenter, float2 froxelNearHalfSize, float3 froxelFarCenter, float2 froxelFarHalfSize, float froxelCoordinateMagnitude, bool shadowCullEnabled) {
                 uint4 result = 0u;
                 [fastopt] for (uint wordIndex = 0u; wordIndex < 4u; wordIndex++) {
@@ -554,8 +552,10 @@ Shader "Hidden/VRCLV/FroxelClusteringBuild" {
                         float3 lightPosition;
                         if (LightIntersectsFroxel(lightId, froxelCenter, froxelRadius, shadowCullEligible, lightPosition)) {
                             bool keepLight = true;
+                            #if !defined(VRCLV_FROXEL_GEOMETRY_ONLY)
                             [branch] if (shadowCullEnabled && shadowCullEligible)
                                 keepLight = !FroxelIsFullyShadowed(lightId, lightPosition, froxelNearCenter, froxelNearHalfSize, froxelFarCenter, froxelFarHalfSize, froxelCoordinateMagnitude, false);
+                            #endif
                             if (keepLight) resultWord |= 1u << bitIndex;
                         }
                     }
@@ -573,11 +573,13 @@ Shader "Hidden/VRCLV/FroxelClusteringBuild" {
                 #endif
             }
 
-            // Fine keeps the original bits and has one source call site for the complete Hi-Z proof.
+            // Refines the candidate mask using geometric intersection and conservative shadow bounds.
             uint4 RefineClusterMask(uint4 candidateWords, float3 froxelCenter, float froxelRadius, float3 froxelNearCenter, float2 froxelNearHalfSize, float3 froxelFarCenter, float2 froxelFarHalfSize, float froxelCoordinateMagnitude, bool shadowCullEnabled) {
                 uint4 result = 0u;
                 [fastopt] for (uint wordIndex = 0u; wordIndex < 4u; wordIndex++) {
-                    uint candidates = SelectMaskWord(candidateWords, wordIndex);
+                    // Four fixed word iterations rotate the source and append the result without dynamic vector indexing.
+                    uint candidates = candidateWords.x;
+                    candidateWords = candidateWords.yzwx;
                     uint resultWord = 0u;
                     [fastopt] while (candidates != 0u) {
                         uint lowestBit = candidates & (0u - candidates);
@@ -587,12 +589,14 @@ Shader "Hidden/VRCLV/FroxelClusteringBuild" {
                         float3 lightPosition;
                         [branch] if (LightIntersectsFroxel(lightId, froxelCenter, froxelRadius, shadowCullEligible, lightPosition)) {
                             bool keepLight = true;
+                            #if !defined(VRCLV_FROXEL_GEOMETRY_ONLY)
                             [branch] if (shadowCullEnabled && shadowCullEligible)
                                 keepLight = !FroxelIsFullyShadowed(lightId, lightPosition, froxelNearCenter, froxelNearHalfSize, froxelFarCenter, froxelFarHalfSize, froxelCoordinateMagnitude, true);
+                            #endif
                             if (keepLight) resultWord |= lowestBit;
                         }
                     }
-                    StoreMaskWord(result, wordIndex, resultWord);
+                    result = uint4(result.yzw, resultWord);
                 }
                 return result;
             }
@@ -601,7 +605,11 @@ Shader "Hidden/VRCLV/FroxelClusteringBuild" {
                 uint3 cell;
                 [branch] if (!DecodeAtlasCell(input.position.xy, _UdonFroxelCoarseGrid, _UdonFroxelGridInverse.zw, cell)) return int4(0, 0, 0, 0);
 
+                #if defined(VRCLV_FROXEL_GEOMETRY_ONLY)
+                const bool shadowCullEnabled = false;
+                #else
                 bool shadowCullEnabled = _UdonLightVolumeVersion >= 3.0 && _UdonFroxelShadowCull.x >= 1.0;
+                #endif
                 float3 froxelCenter;
                 float froxelRadius;
                 float3 froxelNearCenter;
@@ -624,7 +632,11 @@ Shader "Hidden/VRCLV/FroxelClusteringBuild" {
                 uint4 candidates = asuint(_UdonCoarseClusterMask.Load(int3(FroxelCellToAtlas(coarseCell, _UdonFroxelCoarseGrid), 0)));
                 [branch] if ((candidates.x | candidates.y | candidates.z | candidates.w) == 0u) return int4(0, 0, 0, 0);
 
+                #if defined(VRCLV_FROXEL_GEOMETRY_ONLY)
+                const bool shadowCullEnabled = false;
+                #else
                 bool shadowCullEnabled = _UdonLightVolumeVersion >= 3.0 && _UdonFroxelShadowCull.x >= 1.0;
+                #endif
                 float3 froxelCenter;
                 float froxelRadius;
                 float3 froxelNearCenter;
@@ -646,6 +658,7 @@ Shader "Hidden/VRCLV/FroxelClusteringBuild" {
             #pragma vertex Vertex
             #pragma fragment FragmentCoarse
             #pragma require integers
+            #pragma multi_compile_local_fragment __ VRCLV_FROXEL_GEOMETRY_ONLY
             ENDCG
         }
 
@@ -657,6 +670,7 @@ Shader "Hidden/VRCLV/FroxelClusteringBuild" {
             #pragma vertex Vertex
             #pragma fragment FragmentFine
             #pragma require integers
+            #pragma multi_compile_local_fragment __ VRCLV_FROXEL_GEOMETRY_ONLY
             ENDCG
         }
     }

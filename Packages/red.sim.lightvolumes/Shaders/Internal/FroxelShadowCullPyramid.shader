@@ -67,7 +67,7 @@ Shader "Hidden/VRCLV/FroxelShadowCullPyramid" {
                 return slice < sliceCount;
             }
 
-            // Each lane represents one of the four bilinear cells covered by an L1 hierarchy node. Vectorizing the proof keeps the nine source loads but removes four cloned scalar graphs.
+            // Each lane bounds an independent bilinear cell. Subdivision uses all four lanes; unsplit-cell bounds use only .x.
             void BuildWarpedCellBounds4(float4 means0, float4 means1, float4 means2, float4 means3,
                     float4 seconds0, float4 seconds1, float4 seconds2, float4 seconds3,
                     out float4 lowerMean, out float4 upperMean, out float4 upperVariance,
@@ -303,7 +303,7 @@ Shader "Hidden/VRCLV/FroxelShadowCullPyramid" {
                 return valid ? clamp(criticalDepth, -1.0f, VRCLV_SHADOW_CULL_SENTINEL) : float4(VRCLV_SHADOW_CULL_SENTINEL, VRCLV_SHADOW_CULL_SENTINEL, VRCLV_SHADOW_CULL_SENTINEL, VRCLV_SHADOW_CULL_SENTINEL);
             }
 
-            // Bounds one original hardware-bilinear cell as four exact bilinear subcells. The synthetic midpoint moments are valid because hardware filtering is bilinear in all
+            // Bounds one hardware-bilinear cell as four exact bilinear subcells. The synthetic midpoint moments are valid because hardware filtering is bilinear in all
             // four stored moments.  Taking positive/negative min inside each smaller domain,
             // followed by max across domains, preserves whichever EVSM warp is tighter locally;
             // bounding both warps over the complete cell first can lose that channel switch.
@@ -317,46 +317,36 @@ Shader "Hidden/VRCLV/FroxelShadowCullPyramid" {
                 return max(max(thresholds.x, thresholds.y), max(thresholds.z, thresholds.w));
             }
 
-            // Evaluates the exact four mip-0 bilinear cells represented by one ordinary L1 node.
-            float BuildFirstLevelBlock(uint slice, uint2 firstLevelPixel, uint sourceResolution, float probability, float inverseProbability, float k, float positiveDenominatorReciprocal, float negativeDenominatorReciprocal) {
-                uint2 source = firstLevelPixel * 2u;
-                uint maximumSourceIndex = sourceResolution - 1u;
-                uint2 source2 = min(source + 2u, maximumSourceIndex);
-
-                // Four bilinear cells start in this 2x2 core. Their right/top halo makes every possible hardware bilinear blend explicit without widening all nine samples into one unnecessarily loose statistical range.
-                uint2 p00 = source;
-                uint2 p10 = uint2(source.x + 1u, source.y);
-                uint2 p20 = uint2(source2.x, source.y);
-                uint2 p01 = uint2(source.x, source.y + 1u);
-                uint2 p11 = source + 1u;
-                uint2 p21 = uint2(source2.x, source.y + 1u);
-                uint2 p02 = uint2(source.x, source2.y);
-                uint2 p12 = uint2(source.x + 1u, source2.y);
-                uint2 p22 = source2;
-                float4 m00 = _UdonPointLightVolumeShadowTexture.Load(int4((int)p00.x, (int)p00.y, (int)slice, 0));
-                float4 m10 = _UdonPointLightVolumeShadowTexture.Load(int4((int)p10.x, (int)p10.y, (int)slice, 0));
-                float4 m20 = _UdonPointLightVolumeShadowTexture.Load(int4((int)p20.x, (int)p20.y, (int)slice, 0));
-                float4 m01 = _UdonPointLightVolumeShadowTexture.Load(int4((int)p01.x, (int)p01.y, (int)slice, 0));
-                float4 m11 = _UdonPointLightVolumeShadowTexture.Load(int4((int)p11.x, (int)p11.y, (int)slice, 0));
-                float4 m21 = _UdonPointLightVolumeShadowTexture.Load(int4((int)p21.x, (int)p21.y, (int)slice, 0));
-                float4 m02 = _UdonPointLightVolumeShadowTexture.Load(int4((int)p02.x, (int)p02.y, (int)slice, 0));
-                float4 m12 = _UdonPointLightVolumeShadowTexture.Load(int4((int)p12.x, (int)p12.y, (int)slice, 0));
-                float4 m22 = _UdonPointLightVolumeShadowTexture.Load(int4((int)p22.x, (int)p22.y, (int)slice, 0));
-
-                // Keep the unsplit upper bounds beside the tighter subdivision and joint proofs. All three are independently conservative, so their per-cell minimum is too.
-                float4 unsplitThresholds = CriticalShadowDepth4(m00, m10, m20, m01, m11, m21, m02, m12, m22, probability, inverseProbability, k, positiveDenominatorReciprocal, negativeDenominatorReciprocal);
-                float4 jointThresholds = JointCriticalDepth4(m00, m10, m20, m01, m11, m21, m02, m12, m22, k, positiveDenominatorReciprocal, negativeDenominatorReciprocal);
-                float4 originalCellThresholds = min(unsplitThresholds, jointThresholds);
-
-                // Process the four original cells sequentially so the compiler can reuse one running scalar maximum instead of keeping all sixteen subcell proofs live.
-                float maximumValue = min(originalCellThresholds.x, SubdividedCellCriticalDepth(m00, m10, m01, m11, probability, inverseProbability, k, positiveDenominatorReciprocal, negativeDenominatorReciprocal));
-                maximumValue = max(maximumValue, min(originalCellThresholds.y, SubdividedCellCriticalDepth(m10, m20, m11, m21, probability, inverseProbability, k, positiveDenominatorReciprocal, negativeDenominatorReciprocal)));
-                maximumValue = max(maximumValue, min(originalCellThresholds.z, SubdividedCellCriticalDepth(m01, m11, m02, m12, probability, inverseProbability, k, positiveDenominatorReciprocal, negativeDenominatorReciprocal)));
-                maximumValue = max(maximumValue, min(originalCellThresholds.w, SubdividedCellCriticalDepth(m11, m21, m12, m22, probability, inverseProbability, k, positiveDenominatorReciprocal, negativeDenominatorReciprocal)));
+            // Each bilinear cell contributes min(unsplit, subdivided, joint). Once any bound is <= the node maximum, the remaining proofs cannot affect the result.
+            // Requesting only .x lets the compiler discard the other independent lanes for the unsplit cell; subdivision evaluates all four children together.
+            float CellCriticalDepth(float maximumValue, float4 m00, float4 m10, float4 m01, float4 m11, float probability, float inverseProbability, float k, float positiveDenominatorReciprocal, float negativeDenominatorReciprocal) {
+                // Either warp alone bounds min(positive, negative). Positive-first works well with the positive-mean traversal order below.
+                float positive = PositiveCriticalDepth4(m00.r, m10.r, m01.r, m11.r, m00.b, m10.b, m01.b, m11.b, probability, inverseProbability, k, positiveDenominatorReciprocal).x;
+                [branch] if (positive > maximumValue) {
+                    float negative = NegativeCriticalDepth4(-m00.g, -m10.g, -m01.g, -m11.g, m00.a, m10.a, m01.a, m11.a, probability, k, negativeDenominatorReciprocal).x;
+                    float unsplit = min(positive, negative);
+                    [branch] if (unsplit > maximumValue) {
+                        float subdivided = SubdividedCellCriticalDepth(m00, m10, m01, m11, probability, inverseProbability, k, positiveDenominatorReciprocal, negativeDenominatorReciprocal);
+                        [branch] if (subdivided > maximumValue) {
+                            float joint = JointCriticalDepth4(m00, m10, 0.0f, m01, m11, 0.0f, 0.0f, 0.0f, 0.0f, k, positiveDenominatorReciprocal, negativeDenominatorReciprocal).x;
+                            maximumValue = max(maximumValue, min(min(unsplit, joint), subdivided));
+                        }
+                    }
+                }
                 return maximumValue;
             }
 
-            // Fuses up to five leading 2x2 max reductions into the expensive EVSM pass. Every ordinary L1 block is still evaluated exactly once; only intermediate writes vanish.
+            // Loads the four texels of a bilinear cell, clamping its +1-texel halo to the source boundary. Only four moment vectors remain live across the proofs.
+            float LoadCellCriticalDepth(float maximumValue, uint slice, uint2 source, uint sourceResolution, float probability, float inverseProbability, float k, float positiveDenominatorReciprocal, float negativeDenominatorReciprocal) {
+                uint2 next = min(source + 1u, sourceResolution - 1u);
+                float4 m00 = _UdonPointLightVolumeShadowTexture.Load(int4(source, slice, 0));
+                float4 m10 = _UdonPointLightVolumeShadowTexture.Load(int4(next.x, source.y, slice, 0));
+                float4 m01 = _UdonPointLightVolumeShadowTexture.Load(int4(source.x, next.y, slice, 0));
+                float4 m11 = _UdonPointLightVolumeShadowTexture.Load(int4(next, slice, 0));
+                return CellCriticalDepth(maximumValue, m00, m10, m01, m11, probability, inverseProbability, k, positiveDenominatorReciprocal, negativeDenominatorReciprocal);
+            }
+
+            // Builds a scratch node by taking the maximum over its constituent bilinear-cell bounds. A proof at or below the running maximum cannot change the node.
             float BuildFirstScratchLevel(uint slice, uint2 localPixel) {
                 uint firstBuildLevel = (uint)_UdonShadowCullReceiverParams.w;
                 if (firstBuildLevel < 1u || firstBuildLevel > 5u) return VRCLV_SHADOW_CULL_SENTINEL;
@@ -368,14 +358,22 @@ Shader "Hidden/VRCLV/FroxelShadowCullPyramid" {
                 float negativeDenominatorReciprocal = _UdonShadowCullPackParams.w;
                 if (!(probability > 0.0f && probability < 1.0f) || !(inverseProbability > 1.0f && k >= 0.0f) || !(positiveDenominatorReciprocal >= 0.0f && negativeDenominatorReciprocal > 0.0f)) return VRCLV_SHADOW_CULL_SENTINEL;
 
-                uint firstLevelBlockAxis = 1u << (firstBuildLevel - 1u);
+                uint cellAxis = 1u << firstBuildLevel;
                 uint tileSize = (uint)_UdonShadowCullBuildParams.x;
                 uint sourceResolution = tileSize << firstBuildLevel;
-                uint2 firstLevelBase = localPixel * firstLevelBlockAxis;
+                uint2 cellBase = localPixel * cellAxis;
+                // The positive mean only chooses traversal order, never a culling threshold. Starting near the likely maximum makes the exact early exits more useful.
+                uint2 opposite = min(cellBase + cellAxis, sourceResolution - 1u);
+                float referenceMean = _UdonPointLightVolumeShadowTexture.Load(int4(cellBase, slice, 0)).r;
+                bool reverseX = _UdonPointLightVolumeShadowTexture.Load(int4(opposite.x, cellBase.y, slice, 0)).r > referenceMean;
+                bool reverseY = _UdonPointLightVolumeShadowTexture.Load(int4(cellBase.x, opposite.y, slice, 0)).r > referenceMean;
                 float maximumValue = -1.0f;
-                [fastopt] for (uint offsetY = 0u; offsetY < firstLevelBlockAxis; offsetY++) {
-                    [fastopt] for (uint offsetX = 0u; offsetX < firstLevelBlockAxis; offsetX++) {
-                        maximumValue = max(maximumValue, BuildFirstLevelBlock(slice, firstLevelBase + uint2(offsetX, offsetY), sourceResolution, probability, inverseProbability, k, positiveDenominatorReciprocal, negativeDenominatorReciprocal));
+                [fastopt] for (uint offsetY = 0u; offsetY < cellAxis; offsetY++) {
+                    [fastopt] for (uint offsetX = 0u; offsetX < cellAxis; offsetX++) {
+                        uint2 cell = uint2(reverseX ? cellAxis - 1u - offsetX : offsetX, reverseY ? cellAxis - 1u - offsetY : offsetY);
+                        maximumValue = LoadCellCriticalDepth(maximumValue, slice, cellBase + cell, sourceResolution, probability, inverseProbability, k, positiveDenominatorReciprocal, negativeDenominatorReciprocal);
+                        // All proofs return finite values <= sentinel, so this node cannot increase further.
+                        if (maximumValue >= VRCLV_SHADOW_CULL_SENTINEL) return maximumValue;
                     }
                 }
                 return maximumValue;
@@ -425,7 +423,7 @@ Shader "Hidden/VRCLV/FroxelShadowCullPyramid" {
                 return value;
             }
 
-            // Flattens the useful hierarchy levels into one persistent level-major RFloat heap. It also finishes up to three coarse levels directly from a <=16x16 anchor, replacing three global reduction passes with at most 8x8 scalar loads.
+            // Packs the hierarchy into a level-major RFloat array. Up to three coarse levels are reduced directly from a <=16x16 anchor, using at most 8x8 scalar loads per node.
             float PackHierarchy(float2 pixelPosition) {
                 uint resolution = (uint)_UdonShadowCullPackParams.x;
                 uint firstStoredLevel = min((uint)_UdonShadowCullPackParams.y, 12u);
@@ -468,10 +466,15 @@ Shader "Hidden/VRCLV/FroxelShadowCullPyramid" {
                         uint reductionScale = 1u << (level - anchorLevel);
                         uint2 anchorBase = tile * anchorSize + uint2(localX, localY) * reductionScale;
                         float maximumValue = -1.0f;
-                        [fastopt] for (uint offsetY = 0u; offsetY < reductionScale; offsetY++) {
-                            [fastopt] for (uint offsetX = 0u; offsetX < reductionScale; offsetX++) {
-                                float value = _UdonShadowCullPrevious.Load(int3(int2(anchorBase + uint2(offsetX, offsetY)), 0));
-                                maximumValue = max(maximumValue, value);
+                        // Tail scales are 2, 4 or 8. Grouping four independent loads reduces loop overhead and the serial max dependency chain.
+                        [fastopt] for (uint offsetY = 0u; offsetY < reductionScale; offsetY += 2u) {
+                            [fastopt] for (uint offsetX = 0u; offsetX < reductionScale; offsetX += 2u) {
+                                int2 source = int2(anchorBase + uint2(offsetX, offsetY));
+                                float a = _UdonShadowCullPrevious.Load(int3(source, 0));
+                                float b = _UdonShadowCullPrevious.Load(int3(source + int2(1, 0), 0));
+                                float c = _UdonShadowCullPrevious.Load(int3(source + int2(0, 1), 0));
+                                float d = _UdonShadowCullPrevious.Load(int3(source + int2(1, 1), 0));
+                                maximumValue = max(maximumValue, max(max(a, b), max(c, d)));
                             }
                         }
                         return maximumValue;

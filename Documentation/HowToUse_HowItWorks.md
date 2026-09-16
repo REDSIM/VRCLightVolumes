@@ -1,150 +1,72 @@
-[VRC Light Volumes](../README.md) | **How to Use** | [Best Practices](../Documentation/BestPractices.md) | [Udon Sharp API](../Documentation/UdonSharpAPI.md) | [For Developers](../Documentation/ForDevelopers.md) | [Compatible Shaders](../Documentation/CompatibleShaders.md)
+[VRC Light Volumes](../README.md) | [How to Use](./HowToUse.md) | [Best Practices](./BestPractices.md) | [UdonSharp API](./UdonSharpAPI.md) | [Unity Editor API](./UnityEditorAPI.md) | [Shader Integration](./ForDevelopers.md) | [Compatible Shaders](./CompatibleShaders.md)
 
-# How to Use
+# How VRC Light Volumes Work
 
-| Menu |
-|--------------|
-| [VRC Light Volumes System](../Documentation/HowToUse.md) |
-| [Regular Light Volumes](../Documentation/HowToUse_RegularLightVolumes.md)|
-| [Point Light Volumes](../Documentation/HowToUse_PointLightVolumes.md)|
-| [Point Light Volume Shadows](../Documentation/HowToUse_Shadows.md)|
-| [Point Light Material Sources](../Documentation/HowToUse_PointLightMaterialSources.md)|
-| [Area Light Emission](../Documentation/HowToUse_AreaLightEmission.md)|
-| [Audio Link Integration](../Documentation/HowToUse_AudioLinkIntegration.md)|
-| [TV Screens Integration](../Documentation/HowToUse_TVScreensIntegration.md)|
-| **How Light Volumes Work?**<br />- [Spherical Harmonics](#Spherical-Harmonics)<br />- [Light Data](#Light-Data)<br />- [Light Data Storage](#Light-Data-Storage)<br />- [Light Volume Evaluation](#Light-Volume-Evaluation)<br />- [Specular Evaluation](#Specular-Evaluation)<br />- [Point Light Volumes](#Point-Light-Volumes)<br />- [Point Light Volume EVSM Shadows](#Point-Light-Volume-EVSM-Shadows)<br />- [Textured Area Light Emission](#Textured-Area-Light-Emission)<br />- [Animated Cookies And Material Sources](#Animated-Cookies-And-Material-Sources) |
+**Guides:** [Overview](./HowToUse.md) · [Regular Light Volumes](./HowToUse_RegularLightVolumes.md) · [Point Light Volumes](./HowToUse_PointLightVolumes.md) · [Froxel Clustering](./HowToUse_FroxelClustering.md) · [Shadows](./HowToUse_Shadows.md) · [Material Sources](./HowToUse_PointLightMaterialSources.md) · [Area Light Emission](./HowToUse_AreaLightEmission.md) · [AudioLink](./HowToUse_AudioLinkIntegration.md) · [TV Screens (Older Workflow)](./HowToUse_TVScreensIntegration.md) · [Debugging](./HowToUse_Debugging.md) · **How It Works**
 
-## How Do Light Volumes Work?
+A **Regular Light Volume** remembers the lighting at many points in a room. A **Point Light Volume** calculates light from a Point, Spot or Area source while the scene is rendered. Compatible shaders combine these contributions to shade a surface.
 
-This section is mainly for developers and curious users who want to understand how the Light Volumes system works under the hood. It's not necessary to read or learn this to use the system. Let's first look at how regular Light Volumes work!
+The **Light Volume Manager** shares that data with world and avatar shaders. An avatar needs a compatible shader, but no Light Volume component.
 
-## Spherical Harmonics
+## Why A Grid Helps
 
-Spherical Harmonics (SH) are used to represent how light affects a point in space. In the case of Light Volumes, **L1 Spherical Harmonics** are used - a very rough approximation, but efficient to compute and sufficient for real-time rendering.
+Unity Light Probes store baked lighting at scattered points. An ordinary probe-lit Renderer uses one interpolated set of lighting data for the whole object. A Regular Light Volume stores the lighting on a 3D grid instead; each cell is called a **voxel**. Its shader samples nearby voxels at the position of each shaded pixel, so a character can have one side in a brightly lit doorway and the other in a dark room.
 
-L1 Spherical Harmonics consist of:
+![A Light Volume's grid of lighting samples inside a room](./Preview_3.png)
 
-- **L0** - Ambient color. Represents the average light color at a point in space. It's just a flat color with no directional information.
-- **L1 Red** - Directional information for **Red** light. A vector representing the average direction the red light is coming from. The longer the vector, the brighter the light.
-- **L1 Green** - Directional information for **Green** light.
-- **L1 Blue** - Directional information for **Blue** light.
+More voxels capture smaller changes in lighting. They also take more memory and time to bake. A small, dense volume around a detailed area is usually more useful than increasing the density of the entire world. See [placement and resolution](./HowToUse_RegularLightVolumes.md).
 
-This is a simplified explanation of L1 SH, but much easier to understand than many technical descriptions you'll find elsewhere.
+Moving a baked volume moves its stored lighting. It does not calculate new light bouncing off the surroundings. Re-bake after changing the room, its lights or other objects that should affect the baked result.
 
-## Light Data
+## Remembering Color And Direction
 
-Light Volumes are 3D textures made of voxels - essentially 3D pixels, like blocks in Minecraft. Each voxel stores RGBA values, just like pixels in a 2D texture. However, in this system, each channel stores numerical data rather than actual color. Here's what a Light Volume voxel contains:
+Each voxel stores **spherical harmonics (SH)**: a compact approximation of the light arriving from different directions. Light Volumes uses first-order SH, often written **L0 + L1**.
 
-![](../Documentation/SH_01.png)
+- **L0** is the average light color. It looks the same from every surface direction.
+- **L1** records how that color changes with direction. It lets a surface facing the light look brighter than a surface facing away.
 
-The arrows illustrate the L1 vectors for the Red, Green, and Blue channels - they represent the average incoming light direction per color. It's important to remember that SH L1 only stores the average light direction, so you can't tell how many actual lights are contributing to a point.
+![Lighting represented as an ambient color and directional components](./SH_01.png)
 
-Each Light Volume holds light data for a 3D grid of world-space positions. The higher the resolution, the more accurately it represents lighting - just like with regular 2D textures.
+The same baked data in two [debug views](./HowToUse_Debugging.md):
 
-![](../Documentation/SH_02.png)
+| L0: average color | L0 + L1: color and direction |
+| --- | --- |
+| ![L0 debug view: spheres keep their local color but look flat without directional shading](./Images/debug-sh-l0.png) | ![L1 debug view: directional lighting gives the same spheres rounded shading](./Images/debug-sh-l1.png) |
 
-## Light Data Storage
+Look at the spheres: L0 keeps their local lighting color, while L1 adds the change in brightness around their surfaces. The black walls are outside this volume.
 
-A regular 3D texture supports only 4 channels per voxel (RGBA), but SH L1 needs 12 channels. Therefore, we can't store all the data in a single texture.
+This is an approximation. It cannot preserve every sharp shadow or reflection. Keep lightmaps for detailed static surfaces and reflection probes for reflections. The SH data can also provide a simple specular highlight, but it does not replace a reflection of the room.
 
-So, we split the data into **three** separate 3D textures, each containing part of the SH data. Since the data is numeric, each SH vector component can be stored across the RGBA channels of these textures.
+## Overlapping Volumes
 
-![](../Documentation/SH_03.png)
+At each surface position, the shader finds the containing Regular Light Volume with the highest **Weight**. Near its edge, **Smooth Blending** allows a transition to the next containing volume. This lets a small, detailed room volume take priority over a larger background volume.
 
-For better performance in shaders, all these textures are combined into a single 3D texture atlas, laid out next to each other. Some padding is added around each texture "island" to prevent light leaking between them.
+If no Regular Light Volume contains the surface, **Light Probes Blending** selects Unity Light Probes as the fallback. When it is off, the lowest-weight Regular Light Volume supplies the fallback instead. **Sharp Bounds** controls blending at edges without another containing volume; it does not disable all blending between overlapping volumes.
 
-![](../Documentation/SH_05.png)
+An **Additive Light Volume** adds its baked lighting on top. Use one for a separately baked lighting state, such as a lamp that can turn on and off. Regular and Additive volumes share the limit of 32 active volumes.
 
-Additionally, if you have multiple Light Volumes in a scene, their data is also combined into this atlas. The final result is a large 3D texture atlas that stores multiple SH volumes.
+## Point, Spot And Area Lights
 
-![](../Documentation/SH_04.png)
+Point Light Volumes do not use a voxel grid. A shader calculates their contribution from the surface position, light shape, size, color and intensity. That is why they can move without re-baking the room's lighting.
 
-## Light Volume Evaluation
+![Area, Point and Spot Light Volumes lighting nearby surfaces](./Preview_4.png)
 
-The process of sampling the atlas and evaluating the light happens entirely in the shader. That's why a material must support Light Volumes by including the appropriate shader code.
+Point and Spot lights in **Parametric** mode get dimmer with distance using inverse-square falloff. A **cookie** changes the emitted pattern: a cubemap for Point lights, or a 2D image for Spot and Area lights. An Area light emits from one side of a rectangle. Its textured emission keeps more detail close to the rectangle and blends toward the average color farther away.
 
-Besides the SH data atlas, the system also stores **3D UV (UVW)** information, which converts world space coordinates into positions in the SH atlas. For each pixel, the shader calculates the world position, then samples the SH data using interpolated values from nearby voxels.
+A moving light does not automatically update its shadows. Shadows are a separate capture of the objects around that light. Use an Editor bake for fixed surroundings, **Bake In Game** for a startup capture, or a [runtime shadow baker](./HowToUse_Shadows.md) when blockers need to move.
 
-Once the shader retrieves the L0 and L1 data, it computes the final color using a simple formula:
+## Why Overlap Costs Performance
 
-```glsl
-FinalColor = L0 + dot(L1, WorldNormal);
-```
+The shader must do work for every light that reaches a surface. Ten small lights spread across separate rooms can be cheaper than ten lights reaching the same wall.
 
-This is the fastest and simplest method of evaluating SH data. There are more advanced methods, such as Geomerics or ZH3, but they are more expensive.
+**Froxel Clustering** divides the camera's view into 3D cells, called froxels, and builds a list of possible lights for each cell. Surfaces then skip lights that cannot reach their cell. Exact light and shadow tests still decide the final result. Positions outside this grid use the ordinary light loop, which also keeps mirrors and other cameras working.
 
-## Specular Evaluation
+**Additive Max Overdraw** limits how many Additive Light Volumes and Point Light Volumes a pixel processes. Each group has its own counter with the same limit. Lower values can omit visible lights; this setting is a quality tradeoff. Clustering does not raise the active-light or overlap limits.
 
-The main high-quality specular path is `LightVolumeSHSpecular()`. It samples diffuse SH lighting and specular lighting in one call, so Point Light Volumes can be evaluated as real separate light sources instead of only as averaged SH data.
+Use [Best Practices](./BestPractices.md) for practical tuning and the [clustering guide](./HowToUse_FroxelClustering.md) for its settings.
 
-This path is more expensive, but it is more correct for glossy PBR materials. Each visible Point Light Volume gets its own specular highlight with its own direction, color, cookie, shadow mask, per-surface shading and source size. A small source gives a sharper highlight. A large source gives a broader, softer highlight. Shadowed or black lights can skip the expensive specular BRDF work.
+## For Developers
 
-Area Light specular is still an approximation. The diffuse/SH part uses a rectangular area-light approximation, but the specular broadening treats the Area Light more like a large spherical source with a size based on the rectangle. This is much cheaper than evaluating a true rectangular area-light reflection, and it still gives the important result: bigger Area Lights make softer highlights.
+The baked L0/L1 coefficients are stored across three 3D textures per volume, then packed into one shared atlas. Projection sources and shadows use separate texture arrays. The Manager uploads transforms and light settings to global shader data.
 
-Regular and additive voxel Light Volumes do not store individual lights, only SH data, so they still use the cheaper dominant-SH specular approximation. The older helpers `LightVolumeSpecular()` and `LightVolumeSpecularDominant()` also use already accumulated SH data. They are cheaper and useful when you only need a rough glossy response, but they cannot know which exact Point Light Volume created the light.
-
-`Additive Max Overdraw` caps how many Point Light Volumes can contribute to diffuse lighting and individual speculars per pixel. This keeps worst-case cost predictable when many dynamic lights overlap.
-
-## Point Light Volumes
-
-Point Light Volumes also use SH L1 to describe lighting - but they don't store it in voxels. Instead, it's computed analytically in real time using a mathematical formula.
-
-Each light type has its own way of computing SH coefficients. For point lights, we use an **inverse square attenuation** formula, which is much closer to real-life lighting behavior. It also considers the **physical size** of the light source.
-
-The attenuation formula is:
-
-```math
-Attenuation = \frac{1}{\text{LightSize}^2 + \text{DistanceToLight}^2}
-```
-
-The final color is calculated like this:
-
-```math
-FinalColor = \text{Attenuation} \times \text{Color} \times \text{Intensity} \times \text{LightSize}^2
-```
-
-In this formula, the light's **intensity** is multiplied by the square of its size, making it behave more like light emitted per unit surface area, rather than total emitted energy.
-
-To cull lights at a distance, we use a distance-based mask:
-
-```math
-Mask = \text{Saturate}\left(1 - \frac{\text{DistanceToLight}^2}{\text{CutoffDistance}^2}\right)
-```
-
-The `Saturate()` function clamps the value between 0 and 1. The final light color is multiplied by this squared mask.
-
-In Light Volumes 3.0, Point Light Volumes can also apply per-surface shading and shadows before their SH contribution is added.
-
-## Point Light Volume EVSM Shadows
-
-Point Light Volume shadows are a mix between baked shadows and realtime shadows.
-
-The expensive part of a shadow is finding what the light can see. In normal realtime shadows, Unity renders a shadow map from the light every frame or whenever the light updates. For a Point Light or Area Light, that usually means six directions, like a cubemap. That costs draw calls, CPU work and GPU rendering work.
-
-Point Light Volume baked shadows usually do that expensive camera rendering step ahead of time. The result is saved as a shadow texture. `Bake In Game` runs the same kind of bake once from `Start()` in runtime, while stripping the editor preview texture from the build or asset bundle. In runtime, the shader only asks a simple question: "Is this pixel behind something in the saved shadow texture?" Because the receiving object can move and the shader checks the shadow every frame, the result behaves realtime on receivers. But because the shadow texture itself was baked, moving objects do not cast new shadows unless you rebake in runtime.
-
-That is why baked Point Light Volume shadows are cheap compared to full realtime shadows. They do not render shadow cameras every frame. They only sample an already prepared texture and run the shadow visibility math in the material shader.
-
-They are still more expensive than the same Point Light Volume without shadows, because every shadowed light needs shadow texture memory and extra shader work. Full realtime mode through **Point Light Shadow Runtime Baker** is usually heavier than Unity's built-in realtime shadows, because it has to trigger runtime shadow camera renders, encode EVSM data, optionally blur it, and copy or write the result into the shared shadow texture array. It is a custom pipeline on top of the normal frame, not Unity's built-in optimized shadow path. Reserve it for heroic lights, single flashlights or other isolated lights that truly need moving casters.
-
-EVSM means **Exponential Variance Shadow Maps**. Instead of storing only one depth value and doing a hard depth comparison, EVSM stores filtered depth moments. This makes the shadow texture much easier to blur and filter. Compared to Unity's default Built-in Render Pipeline realtime shadows, EVSM can give smoother soft shadows and wider penumbra with fewer blocky PCF-looking steps. The tradeoff is that EVSM needs more channels, more math, and careful settings such as `Shadow Min Variance` and `Shadow Bleed Reduction` to control light bleeding and mobile precision artifacts.
-
-Point and Area lights usually use cubemap shadows, which take six texture slices. Spot Lights can use one projected shadow texture when the angle is below 180 degrees and `Force Cubemap Shadows` is disabled, so Spot Light shadows are usually much cheaper in memory and about six times cheaper to rebake in realtime. Keep realtime Spot Light angles around 120 degrees or lower when possible for better quality.
-
-## Textured Area Light Emission
-
-Area Lights can also use a Cookie source as a textured emitter. The Cookie is packed into the shared Point Light Volume texture array, and the array gets mipmaps when at least one Area Light cookie is present.
-
-The shader samples the local Cookie detail close to the Area Light and blends toward coarser mip levels as the receiver gets farther away or sees the emitter at a grazing angle. This keeps nearby high-frequency texture detail while still letting bright areas influence darker parts of the projection through the averaged mip levels.
-
-For old shaders that do not support Area Light cookies, the manager reads the final mip level from the packed texture array and uses it as an average-color fallback for that Area Light.
-
-## Animated Cookies And Material Sources
-
-Animated cookies are not a special lighting simulation. Under the hood, they are texture copies.
-
-Point Light Volume cookies, cubemaps, LUTs, Area Light cookies and shadow sources are packed into shared `Texture2DArray` render textures. Static sources are copied when the array is initialized or rebuilt. Animated RenderTexture and Material sources are copied again when `Auto Update Textures` is enabled.
-
-For a single-slice source, such as a Spot Light cookie or Area Light cookie, the manager blits one texture or Material pass into one array slice. For a cubemap source, it writes six slices, one for each face. A Material source simply renders pass `0` into the target slice, with `_CustomRenderTextureInfo` telling the shader which slice or cubemap face is being rendered.
-
-This keeps the shader side simple: receivers just sample the shared texture array. The cost is paid when the source is blitted, so animated cookies should use the lowest acceptable `Cookie Resolution`, and `Auto Update Textures` should stay disabled for sources that do not actually change.
+Shaders read that data through the functions in [Shader Integration](./ForDevelopers.md). Scripts should use the [UdonSharp API](./UdonSharpAPI.md) to change lights and the [Unity Editor API](./UnityEditorAPI.md) to bake or pack data.

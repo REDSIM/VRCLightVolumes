@@ -1,69 +1,44 @@
-[VRC Light Volumes](../README.md) | **How to Use** | [Best Practices](../Documentation/BestPractices.md) | [Udon Sharp API](../Documentation/UdonSharpAPI.md) | [For Developers](../Documentation/ForDevelopers.md) | [Compatible Shaders](../Documentation/CompatibleShaders.md)
+[VRC Light Volumes](../README.md) | [How to Use](./HowToUse.md) | [Best Practices](./BestPractices.md) | [UdonSharp API](./UdonSharpAPI.md) | [Unity Editor API](./UnityEditorAPI.md) | [Shader Integration](./ForDevelopers.md) | [Compatible Shaders](./CompatibleShaders.md)
 
-# How to Use
+# TV Screens Integration (Older Workflow)
 
-| Menu |
-|----|
-|[VRC Light Volumes System](../Documentation/HowToUse.md)|
-|[Regular Light Volumes](../Documentation/HowToUse_RegularLightVolumes.md)|
-| [Point Light Volumes](../Documentation/HowToUse_PointLightVolumes.md)|
-|[Point Light Volume Shadows](../Documentation/HowToUse_Shadows.md)|
-|[Point Light Material Sources](../Documentation/HowToUse_PointLightMaterialSources.md)|
-|[Area Light Emission](../Documentation/HowToUse_AreaLightEmission.md)|
-| [Audio Link Integration](../Documentation/HowToUse_AudioLinkIntegration.md)|
-| **TV Screens Integration**<br />• [TV Screen Quick Setup](#TV-Screen-Quick-Setup)<br />• [Light Volume TVGI Component Description](#Light-Volume-TVGI-Component-Description) |
-| [How Light Volumes Work?](../Documentation/HowToUse_HowItWorks.md) |
+**Guides:** [Overview](./HowToUse.md) · [Regular Light Volumes](./HowToUse_RegularLightVolumes.md) · [Point Light Volumes](./HowToUse_PointLightVolumes.md) · [Froxel Clustering](./HowToUse_FroxelClustering.md) · [Shadows](./HowToUse_Shadows.md) · [Material Sources](./HowToUse_PointLightMaterialSources.md) · [Area Light Emission](./HowToUse_AreaLightEmission.md) · [AudioLink](./HowToUse_AudioLinkIntegration.md) · **TV Screens (Older Workflow)** · [Debugging](./HowToUse_Debugging.md) · [How It Works](./HowToUse_HowItWorks.md)
 
-## TV Screens Integration
+**LightVolumeTVGI** reads one average color from a screen image and applies it to lights. Use it to recolor a pre-baked additive Light Volume, keeping its baked bounce and shadow pattern. The screen color changes at runtime; that lighting pattern does not.
 
-This package includes a simple Udon script for making realtime global illumination from TV screens.
+For a new screen that should cast different image colors onto nearby surfaces, use [Area Light Emission](./HowToUse_AreaLightEmission.md). TVGI keeps only one average color and does not create screen reflections.
 
-![](../Documentation/Preview_13.png)
+![A screen tinting baked additive lighting around it.](./Preview_13.png)
 
-It works visually similar to [LTCGI](https://github.com/PiMaker/ltcgi) in some cases, but it does **not** support real screen reflections. Instead, it works best with **matte** environment materials.
+## Tint Baked Lighting With A Video
 
-> [!IMPORTANT]
-> **LightVolumeTVGI** is mostly a legacy workflow now. For new TV screens, monitors and emissive panels, prefer [Area Light Emission](../Documentation/HowToUse_AreaLightEmission.md). It projects the screen texture itself, keeps local color detail near the screen, and has an average-color fallback for older VRC Light Volumes shaders.
+1. In a separate baking scene, prepare an [additive Light Volume](./HowToUse_RegularLightVolumes.md#additive-light-volumes) around the area the screen should illuminate.
+2. Bake using a **bright white emissive screen** as the light source. Remove unrelated lighting from this bake. White gives the runtime tint a neutral starting point; baking a colored image permanently colors the result.
+3. Bring the baked volume into the main scene, keep **Additive** enabled, and turn **Bake** off to preserve its screen-only lighting. Leave the screen's emissive lighting out of the main scene bake so it is not added twice.
+4. Check the volume with its **Color** set to white. It should add only the screen's baked lighting to the room. Connect TVGI after this test works.
+5. Add **LightVolumeTVGI** to a GameObject and assign the video player's output to **Target Render Texture**. Despite the field name, a static Texture can also be used.
+6. Add the additive volume to **Target Light Volumes**. Optionally add Point Light Volumes that should follow the same screen color.
+7. Enter Play Mode with video playing. Adjust each target light's own **Intensity** and leave **Anti Flickering** enabled for smoother changes.
 
-#### Advantages
+The source does **not** need mipmaps: TVGI makes its own small mipmapped texture to calculate the average. **Auto Update Volumes** is also unnecessary for this color update.
 
-- Good performance
-- Shadowmasks avatars and environment
+Keep both target lists initialized. Set an unused list's **Size** to `0` and remove any Missing/None entries from populated lists; TVGI does not skip missing targets.
 
-#### Limitations
-- Doesn't make screen reflections like LTCGI
-- Only projects a **single average screen color**
+## Practical Limits
 
-## TV Screen Quick Setup
+Use an additive volume dedicated to the screen. Assigning the room's main override volume would recolor the room's other baked lights as well.
 
-1. Create a **separate scene** and bake the area affected by the screen light as an **additive light volume**.
-   See the [Additive Volumes section](https://github.com/REDSIM/VRCLightVolumes/blob/main/Documentation/HowToUse_RegularLightVolumes.md#additive-light-volumes) for detailed steps.
+The receiver still needs a compatible shader. Moving props and avatars can sample the changing baked light, but TVGI does not capture new moving shadows or move the baked bounce pattern with a moving screen. Use a Dynamic Area Light when the emitter must move.
 
-> [!IMPORTANT]
-> Remove all unnecessary lights during baking. Keep only the screen mesh with a **bright emissive material**.
+Do not add the same screen contribution twice. If the main scene already includes its baked light, adding this additive result makes it brighter again. Also avoid driving one target with both TVGI and AudioLink: both replace its Color.
 
-2. In your main scene, add the **LightVolumeTVGI** component to a GameObject.
+## Component Settings
 
-3. Assign the `Target Render Texture` field with the **Render Texture used by your video player**.
-
-> [!WARNING]
-> Make sure that `Enable Mip Maps` and `Auto Generate Mip Maps` are **Enabled** in the texture’s import settings.
-
-4. Add all Light Volumes you want to control to the `Target Light Volumes` list. It's usually a one additive light volume.
-5. **Optionally:** Add all Point Light Volumes you want to control to the `Target Point Light Volumes` list. This can be useful to make other lights to inherit your screen's color.
-6. Tweak the `Intensity` of your additive light volumes in their own LightVolume components. Because sometimes GI from a screen can look too dim.
-7. Done! The system will now update the light color at runtime, even affecting avatars.
-
->[!TIP]
-> Enabling `Auto Update Volumes` for TVGI support is no more required in Light Volumes v.2.0.0 and newer.
-
-If you see unwanted **sharp color transitions** in your additive volume, try adjusting the **Color Correction** settings in the Light Volume component. Lowering `Shadows` in color correction section usually helps.
-
-## Light Volume TVGI Component Description
-
-| Parameter | Description |
+| Parameter | Meaning |
 | --- | --- |
-|`Target Render Texture` | Render Texture used by your video player. Can be just a static texture if you want it to be. Make sure that **Enable Mip Maps** and **Auto Generate Mip Maps** are **Enabled** in the texture’s import settings.|
-|`Anti Flickering` | Enables smoothing algorithm that tries to smooth out flickering that is usually a problem. Recommended to always be turned on.|
-|`Target Light Volumes` | List of the **Light Volumes** that should be affected by the Light Volume TVGI script.|
-|`Target Point Light Volumes` | List of the **Point Light Volumes** that should be affected by the Light Volume TVGI script. Usually you don't need it at all.|
+| **Target Render Texture** | Video output or static image to average. Source mipmaps are not required. |
+| **Anti Flickering** | Smooths rapid changes between sampled colors. |
+| **Target Light Volumes** | Usually one or more additive volumes containing only the screen's baked lighting. |
+| **Target Point Light Volumes** | Optional Point Light Volumes that should use the same average color. |
+
+If the light is too dim, first test the additive volume with a plain white Color to check the bake, then reconnect TVGI and adjust Intensity. If the image is moving but the light never changes, check the source assignment and target lists.

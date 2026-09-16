@@ -1,97 +1,137 @@
-[VRC Light Volumes](../README.md) | **How to Use** | [Best Practices](../Documentation/BestPractices.md) | [Udon Sharp API](../Documentation/UdonSharpAPI.md) | [For Developers](../Documentation/ForDevelopers.md) | [Compatible Shaders](../Documentation/CompatibleShaders.md)
+[VRC Light Volumes](../README.md) | **How to Use** | [Best Practices](./BestPractices.md) | [UdonSharp API](./UdonSharpAPI.md) | [Unity Editor API](./UnityEditorAPI.md) | [Shader Integration](./ForDevelopers.md) | [Compatible Shaders](./CompatibleShaders.md)
 
 # How to Use
 
-| Menu |
-|--------------|
-| **VRC Light Volumes System**<br />• [Light Volumes for Avatars](#Light-Volumes-for-Avatars)<br />• [Light Volumes Quick World Setup](#Light-Volumes-Quick-World-Setup)<br />• [Point Light Volumes Quick World Setup](#Point-Light-Volumes-Quick-World-Setup) |
-| [Regular Light Volumes](../Documentation/HowToUse_RegularLightVolumes.md)|
-| [Point Light Volumes](../Documentation/HowToUse_PointLightVolumes.md)|
-| [Point Light Volume Shadows](../Documentation/HowToUse_Shadows.md)|
-| [Point Light Material Sources](../Documentation/HowToUse_PointLightMaterialSources.md)|
-| [Area Light Emission](../Documentation/HowToUse_AreaLightEmission.md)|
-| [Audio Link Integration](../Documentation/HowToUse_AudioLinkIntegration.md)|
-| [TV Screens Integration](../Documentation/HowToUse_TVScreensIntegration.md)|
-| [Custom Lightmapper Integration](../Documentation/ForDevelopers.md#custom-lightmapper-integration)|
-| [How Light Volumes Work?](../Documentation/HowToUse_HowItWorks.md) |
+**Guides:** **Overview** · [Regular Light Volumes](./HowToUse_RegularLightVolumes.md) · [Point Light Volumes](./HowToUse_PointLightVolumes.md) · [Froxel Clustering](./HowToUse_FroxelClustering.md) · [Shadows](./HowToUse_Shadows.md) · [Material Sources](./HowToUse_PointLightMaterialSources.md) · [Area Light Emission](./HowToUse_AreaLightEmission.md) · [AudioLink](./HowToUse_AudioLinkIntegration.md) · [TV Screens (Older Workflow)](./HowToUse_TVScreensIntegration.md) · [Debugging](./HowToUse_Debugging.md) · [How It Works](./HowToUse_HowItWorks.md)
 
-## VRC Light Volumes System
+## Choose What You Need
 
-![](../Documentation/Preview_1.png)
+VRC Light Volumes lights avatars and world objects through compatible materials. There are two main tools:
 
-VRC Light Volumes is fast and optimized nextgen lighting solution for VRChat. It can also work without VRChat, but was mostly designed to work with VRChat SDK3 and Udon.
+| I want to… | Use |
+| --- | --- |
+| Make avatars and moving props match a room's baked lighting | A **Regular Light Volume**. It stores the lighting throughout a box in the scene. |
+| Add a light that can move, change color or turn on and off | A **Point Light Volume**, with Point, Spot or Area type. |
+| Toggle or move a whole group of baked lights together | An **Additive Light Volume**. Start with the regular-volume guide, then its additive example. |
+| Light my avatar in worlds that already use the system | Use a [compatible avatar shader](./CompatibleShaders.md). No avatar component is needed. |
 
-#### VRC Light Volumes system consists of two main parts:
+For a typical world, keep baked lightmaps for the walls and floor, and add Regular Light Volumes for avatars and moving props. Lightmaps store lighting on a surface; Light Volumes store it throughout an area. You can use both.
 
-[Regular **Light Volumes**](#Light-Volumes-Quick-World-Setup) is a fast and optimized solution that replaces Unity's light probes with a better per-pixel voxel based lighting. It's similar to Adaptive Probe Volumes (APV) in Unity 6, but with manual ReflectionProbe-like volumes placement and some other extra features.
+![Two workflows: bake stationary room lighting into volumes, or configure Point Light Volumes for changing lights](./Images/lighting-workflows.svg)
 
-[**Point Light Volumes**](#Point-Light-Volumes-Quick-World-Setup) is a fast and optimized custom lighting system that has it's own parametric Point Light, Spot Lights and Area Lights. Point Light Volumes are not voxel based, they forms the light parametrically, or based on special LUT textures (similar to IES). They can project light cookies or cubemaps and can use baked or runtime-updated shadow maps. Modern compatible shaders can also calculate individual size-aware Point Light Volume speculars. It can be up to 128 point lights visible in one scene at the same time.
+A receiving object needs a [compatible shader](./CompatibleShaders.md), with Light Volumes enabled if that shader has an option for it. Unity's built-in Standard shader does not support the system. Avatars receive the world's lighting; installing the package in an avatar project does not turn the avatar into a world light source.
 
-## Light Volumes for Avatars
+## Your First Baked Room
 
-You just need to use a [shader that has VRC Light Volumes support](/Documentation/CompatibleShaders.md) and that's it. Nothing else to do!
+Install the package using the [installation instructions](../README.md), then try this example with Unity's built-in Progressive lightmapper. If your scene already has baked lighting, start at step 2.
 
-> [!NOTE]
-> Unfortunately, there is no way to make avatars cast light volumes light, it can only be integrated into worlds.
+### 1. Prepare The Scene Lighting
 
-## Light Volumes Quick World Setup
+1. Place your room lights with `GameObject > Light > Point Light` or `Spot Light`. Use a Directional Light for sunlight. These are ordinary Unity Lights.
+2. Set their **Mode** to **Baked** if they will stay in place. Put the lights where the visible lamps are, outside solid walls and ceilings.
+3. Enable **Contribute GI** on the stationary walls, floor and other geometry that should participate in the bake. Keep **Receive Global Illumination** set to **Lightmaps** for surfaces that need lightmaps. Moving props should not be marked Contribute GI.
+4. Open `Window > Rendering > Lighting`. Create a **Lighting Settings** asset if needed, enable **Baked Global Illumination**, and choose **Progressive CPU** or **Progressive GPU** as the lightmapper.
+5. Save the scene.
 
-![](../Documentation/Preview_3.png)
+Imported meshes need suitable lightmap UVs. If yours do not have them, enable **Generate Lightmap UVs** in their model import settings. See Unity's [lightmapping setup guide](https://docs.unity3d.com/2022.3/Documentation/Manual/Lightmapping.html) for the full scene setup.
 
-1. Right-click in the **Hierarchy** and select `Light Volume`.
-   You can also do it clicking on a **Reflection Probe** object, and new **Light Volume** will inherit its bounds.
-2. Rename the new **Light Volume** to match the zone you're covering.
-   Each volume must have a **unique name**.
-3. In the **Light Volume** component, click `Edit Bounds` and resize the volume to fit your target area - similar to setting up a **Reflection Probe**. You can also just scale it with a scaling tool.
-4. With `Adaptive Resolution` enabled, adjust `Voxels Per Unit` to control voxel density.
-   Keep in mind: doubling the resolution of a 3D volume increases its file size by approximately **8x**. 
-   Click `Preview Voxels` to show voxel placement grid to check the density.
-5. Repeat this process to create as much volumes as you need to cover all of your areas.
-6. Find the **Light Volume Manager** in your scene.
-   It's automatically added when you create a **Light Volume** and lists all the volumes in your scene.
-7. Assign a `Weight` to each volume.
-   Volumes with higher weight have higher priority in overlapping areas.
-8. Select your `Baking Mode` based on the lightmapper you're using.
-   **Bakery** is highly recommended due to faster baking and better quality results.
-9. Bake the scene lighting with your lightmapper (Unity Progressive or Bakery).
-10. For reference, check out the `Example` scene in the `Assets/Samples/VRC Light Volumes/[version]/Examples` folder to see a working setup. You need to import the Samples through the Package Manager to see this folder. This process [described here](https://github.com/REDSIM/VRCLightVolumes/tree/main?tab=readme-ov-file#install-example-scenes-and-assets).
+### 2. Cover The Room With A Light Volume
 
-> [!IMPORTANT]
-> The number of active Light Volumes is limited to 32 per scene at a time. However, you can dynamically enable and disable volumes at runtime to work with more than 32 total, just not simultaneously.
+![A baked voxel grid covering the space around objects](./Preview_3.png)
 
-## Point Light Volumes Quick World Setup
+1. Choose `GameObject > Light Volume`, or right-click in the Hierarchy and choose **Light Volume**.
+2. Rename it after the area, such as `LV_LivingRoom`. Give each volume you bake a unique name.
+3. Click **Edit Bounds** in its Inspector and resize the box to cover the space where avatars and props will be. Include their full height, not just the floor.
+4. Leave **Bake** and **Adaptive Resolution** enabled. Start with the default **Voxels Per Unit** of `3`.
+5. Click **Preview Voxels** to see where lighting will be stored. A voxel is one cell in this 3D grid. Smaller cells capture smaller lighting changes.
 
-![](../Documentation/Preview_2.png)
+The first volume creates a **Light Volume Manager** automatically. Keep the Manager and its volumes in the same scene. Close other world scenes while setting up or baking: the system uses one Manager across the loaded scenes, and does not automatically assign volumes to a Manager in another scene.
 
-1. Right-click in the **Hierarchy** and select `Point Light Volume`.
-   It will add a Point Light Volume object on your scene. It's just a simple configurable light source.
+### 3. Keep Lighting For Other Avatars
 
-2. Select your desired Point Light Volume `Type`. It can be: `Point Light`, `Spot Light`, `Area Light`
+Before the first bake, create ordinary Unity Light Probes for avatars and materials that do not support Light Volumes. If the room already has a suitable Light Probe Group, keep it.
 
-> [!IMPORTANT]
->  Point and Spot Lights are still the cheapest, but Area Lights are no longer dramatically heavier than other light types. You can use them for movable and scalable soft boxes without special fear. Just avoid excessive overlaps, and still prefer baking a regular Light Volume when the light is fully static and doesn't need runtime control.
+Select a Light Volume and click **Generate Light Probes**. Start with the lower density already shown in the window, then click **Create Light Probe Group**. Inspect the new group's points and move any that are inside walls or floors into open space.
 
-3. In most of the cases you need to leave the `Projection` value as `Parametric` - it's the cheapest and the most useful mode. But if you want to project a light **cubemap** (Point Light), a **cookie** (Spot Light), or textured **Area Light Emission**, assign a projection source. See [Point Light Material Sources](../Documentation/HowToUse_PointLightMaterialSources.md) when the source is generated by a Material, and [Area Light Emission](../Documentation/HowToUse_AreaLightEmission.md) for TV screens, emissive panels and textured soft boxes.
+### 4. Bake And Check The Result
 
-4. **Point Light Volumes work differently compared to Unity’s built-in lights.** They use light attenuation that more closely resembles how light behaves in the real world.
+1. Select the **Light Volume Manager** and set **Baking Mode** to **Progressive**.
+2. In Unity's Lighting window, click **Generate Lighting**. Wait for the bake and the Light Volume processing to finish.
+3. Select the volume. Its **Texture 0**, **Texture 1** and **Texture 2** fields should now be filled.
+4. Create a material with `Assets > Create > Material`. In its **Shader** dropdown choose **Light Volume Samples > Light Volume PBR**, which comes with the package. Keep **Color** white and **Metallic** at `0`, and set **Smoothness** to `0` for this test.
+5. Create a sphere with `GameObject > 3D Object > Sphere`, place it inside the box, and assign the material. Move it between bright and dark parts of the room: its surface should change color and brightness. The sphere should not be marked Contribute GI.
+6. Test in Play Mode, then in a VRChat PC test build with a compatible avatar. For Android, test compatible world objects and ordinary probe lighting for avatars; see [PC And Android](./CompatibleShaders.md#pc-and-android). Check doorways and the edges of the volume as well as the center of the room.
+7. Save the scene again.
 
-   First, set the `Light Source Size`. This represents the physical radius of the light-emitting surface, like a light bulb for point lights, or a flashlight reflector for spotlights. Once that’s set, adjust the `Color` and `Intensity`.
+![Three matte test spheres receiving the baked blue and red room lighting](./Images/baked-room.png)
 
-   Note that `Intensity` can be very high (in the hundreds or even thousands) for small `Light Source Size` values. This is because intensity here represents the light emitted per unit of surface area. A smaller light source must emit more intense light to achieve a reasonable visible range.
+The three test spheres sample the baked lighting across the blue and red parts of the room.
 
-> [!TIP]
-> Scaling the light game object also scales the light source size!
+<details>
+<summary>Inspector after baking</summary>
 
-5. `Debug Range` shows the range in which point light volume affects meshes. Try not to overlap a lot of point light volumes. More overlaps means less performance.
-   You can configure the `Brightness Cutoff` value in the **Light Volume Setup** to limit the effective range of the light and improve performance. Higher values reduce the light's visible radius, which generally increases performance, but results in less realistic light attenuation.
+![Light Volume Inspector with Texture 0, Texture 1 and Texture 2 assigned after a successful bake](./Images/baked-volume-inspector.png)
 
-6. Enable `Dynamic` if your light can move in runtime. Otherwise it will be static, which is a tiny bit cheaper.
-   If you want to make `Dynamic` lights auto-update their positions and other parameters in runtime, enable `Auto Update Volumes` in **Light Volume Setup**. Otherwise, they will stay in one place in game.
+All three texture fields are filled. This example uses **3 Voxels Per Unit**, producing a **26 × 9 × 20** grid for this box size.
 
-7. If this light needs shadows, enable `Shadows`, configure the shadow source or press `Bake Shadows` in the Point Light Volume inspector. Enable `Bake In Game` if the light should bake its shadow once from `Start()` in VRChat instead of shipping the editor-baked shadow texture in the build or asset bundle. EVSM shadow maps are stored in the shared shadow texture array controlled by **Shadow Resolution**, automatic **Shadow Format**, **Shadow Bleed Reduction** and **Shadow Min Variance** in **Light Volume Setup**. See [Point Light Volume Shadows](../Documentation/HowToUse_Shadows.md) for baked shadows, `Bake In Game`, realtime shadows, stability tuning and runtime script control, or [Point Light Material Sources](../Documentation/HowToUse_PointLightMaterialSources.md) if the shadow source is generated by a Material.
+</details>
 
-> [!WARNING]
-> You must use materials with a [shader that has VRC Light Volumes support](/Documentation/CompatibleShaders.md) for your world surfaces and props to see Point Light Volumes! Default Unity's shader will not work!
+The bake saves the volume textures beside the scene and combines them into the Manager's **Light Volume Atlas**. You do not need to press **Pack Light Volumes** after a successful bake.
 
-> [!IMPORTANT]
-> The number of active Point Light Volumes is limited to 128 per scene at a time. However, you can dynamically enable and disable point light volumes at runtime to work with more than 128 total, just not simultaneously.
+With **Bakery**, prepare the scene with Bakery lights, set the Manager's **Baking Mode** to **Bakery**, and run a normal Bakery full render. Follow any compatibility warnings shown in the Manager.
+
+For more rooms, add volumes where needed. The [Regular Light Volumes guide](./HowToUse_RegularLightVolumes.md) explains density, overlap and room-to-room transitions.
+
+## Add A Movable Light
+
+![A Spot Light Volume illuminating the floor, with its cone shown in the Scene view](./Preview_2.png)
+
+Point Light Volumes work without a scene-lighting bake. Try one on a compatible material:
+
+1. Create `GameObject > Point Light Volume`.
+2. Set **Type** to **Point Light** for a bulb or **Spot Light** for a flashlight. Leave **Projection** set to **Parametric**.
+3. Place the light, set **Light Source Size** to the approximate radius of its emitter, then adjust **Color** and **Intensity**.
+4. Enable **Debug Range** and check that the light reaches only as far as needed.
+5. If the light will move in game, enable **Dynamic** on it and **Auto Update Volumes** on the Manager.
+6. If walls should block it, enable **Shadows > Enabled** and click **Bake Shadows**. This captures the light and geometry in their current positions. Moving the light or a blocker requires a new shadow capture; use a [runtime shadow baker](./HowToUse_Shadows.md#runtime-shadow-baker) if the shadows must follow movement in game.
+
+**Intensity uses a different scale from Unity Lights.** Small emitters may need values in the hundreds or thousands. Judge the result on a nearby object instead of copying a Unity Light's value.
+
+A light can change color or intensity without **Dynamic**. That setting controls movement. See [Point Light Volumes](./HowToUse_PointLightVolumes.md) for Area lights and projection, or [Shadows](./HowToUse_Shadows.md) for shadows that update in game.
+
+## If Something Looks Wrong
+
+Use the [debug views and avatar debugger](./HowToUse_Debugging.md) to inspect the lighting separately from a material's own appearance.
+
+| Symptom | Check first |
+| --- | --- |
+| The floor is baked, but the test prop ignores Light Volumes | Its material needs a compatible shader. Check the shader's Light Volume option and that the prop is inside the volume. |
+| A Regular Light Volume is dark or still shows old lighting | Confirm **Bake** is enabled, the Manager's **Baking Mode** matches your lightmapper, and the three texture fields are filled. Rebake after changing scene lights or volume bounds. |
+| Only some avatars look different | Their shaders may lack support or apply their own brightness limits. Keep ordinary Light Probes for fallback lighting. |
+| Lighting jumps in a doorway | Overlap the neighboring volumes and check their **Weight** and **Smooth Blending**. |
+| A Point Light passes through a wall | Bake its shadows. A collider alone does not block its light. |
+| A light moves in the Editor but stays still in game | Enable **Dynamic** and the Manager's **Auto Update Volumes**. |
+| A scripted feature works in Edit Mode but disappears in Play Mode or a build | Check [Shader Stripping](./ForDevelopers.md#shader-feature-stripping); automatic detection cannot predict every runtime change. |
+
+## Keep It Fast
+
+- Bake stationary room lighting into Regular Light Volumes. Add Point Light Volumes where you need individual control.
+- Start with a coarse grid and add smaller, denser volumes only where detail is missing. Doubling density on all three axes uses about eight times the data.
+- Keep Point Light ranges tight and avoid many lights overlapping the same area.
+- Prefer baked shadows. Continuous shadow baking is an extra rendering cost.
+- Check the Manager's memory estimates and test on the intended device, especially Quest.
+
+The active limits are **32 Light Volumes in total, including Additive volumes**, and **128 Point/Spot/Area Light Volumes**. You may have more in the scene if unused zones are disabled. See [Best Practices](./BestPractices.md) for tuning and [Froxel Clustering](./HowToUse_FroxelClustering.md) for scenes with many local lights.
+
+## Updating An Existing Scene
+
+Back up or commit the project before updating. Existing 2.x and earlier 3.0 development scenes migrate automatically when opened.
+
+1. Open a scene and wait for migration and Udon compilation to finish.
+2. Check the Console for warnings.
+3. Inspect the Manager's lists and test several volumes, including moved, additive and shadowed lights.
+4. Save the scene once the result is correct. Repeat for the other scenes you use.
+
+The new **Light Volume Manager**, **Light Volume** and **Point Light Volume** Inspectors contain the settings that previously lived on separate helper components. Follow the current guides when updating scripts or prefabs.
+
+If a migration warning says components were left unchanged, do not remove them to silence the warning. Keep the backup and resolve the reported missing or conflicting references before saving.

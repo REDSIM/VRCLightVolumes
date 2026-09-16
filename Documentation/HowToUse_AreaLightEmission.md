@@ -1,108 +1,85 @@
-[VRC Light Volumes](../README.md) | **How to Use** | [Best Practices](../Documentation/BestPractices.md) | [Udon Sharp API](../Documentation/UdonSharpAPI.md) | [For Developers](../Documentation/ForDevelopers.md) | [Compatible Shaders](../Documentation/CompatibleShaders.md)
+[VRC Light Volumes](../README.md) | [How to Use](./HowToUse.md) | [Best Practices](./BestPractices.md) | [UdonSharp API](./UdonSharpAPI.md) | [Unity Editor API](./UnityEditorAPI.md) | [Shader Integration](./ForDevelopers.md) | [Compatible Shaders](./CompatibleShaders.md)
 
-# How to Use
+# Area Light Emission
 
-| Menu |
-|----|
-|[VRC Light Volumes System](../Documentation/HowToUse.md)|
-|[Regular Light Volumes](../Documentation/HowToUse_RegularLightVolumes.md)|
-|[Point Light Volumes](../Documentation/HowToUse_PointLightVolumes.md)|
-|[Point Light Volume Shadows](../Documentation/HowToUse_Shadows.md)|
-|[Point Light Material Sources](../Documentation/HowToUse_PointLightMaterialSources.md)|
-|**Area Light Emission**<br />&bull; [What It Does](#What-It-Does)<br />&bull; [Quick Setup](#Quick-Setup)<br />&bull; [Texture Sources](#Texture-Sources)<br />&bull; [Runtime Updates](#Runtime-Updates)<br />&bull; [Old Shader Fallback](#Old-Shader-Fallback)<br />&bull; [Performance Notes](#Performance-Notes)<br />&bull; [TVGI Legacy](#TVGI-Legacy)|
-|[Audio Link Integration](../Documentation/HowToUse_AudioLinkIntegration.md)|
-|[TV Screens Integration](../Documentation/HowToUse_TVScreensIntegration.md)|
-|[How Light Volumes Work?](../Documentation/HowToUse_HowItWorks.md)|
+**Guides:** [Overview](./HowToUse.md) · [Regular Light Volumes](./HowToUse_RegularLightVolumes.md) · [Point Light Volumes](./HowToUse_PointLightVolumes.md) · [Froxel Clustering](./HowToUse_FroxelClustering.md) · [Shadows](./HowToUse_Shadows.md) · [Material Sources](./HowToUse_PointLightMaterialSources.md) · **Area Light Emission** · [AudioLink](./HowToUse_AudioLinkIntegration.md) · [TV Screens (Older Workflow)](./HowToUse_TVScreensIntegration.md) · [Debugging](./HowToUse_Debugging.md) · [How It Works](./HowToUse_HowItWorks.md)
 
-## Area Light Emission
+An **Area Light** can use an image as its emitting surface. Use this for a TV casting colored light onto the room, an animated LED panel, a sign or a window. A video screen can illuminate nearby surfaces without baking a separate additive Light Volume.
 
-Area Light Emission lets an **Area Light** use a texture, RenderTexture or Material as a textured emitter. It is intended for TV screens, emissive signs, windows, soft boxes, LED panels and any rectangular surface where the emitted color is not uniform.
+Near the emitter, different parts of the image contribute different colors. Farther away, the colors blend toward the image's average. This approximates the light from a rectangular surface. It does not reproduce the screen image as a mirror reflection or calculate multiple light bounces.
 
-Unlike the old TVGI workflow, this does not need a separately baked additive Light Volume just to follow a screen color. The Area Light projects the source texture directly through the Point Light Volumes system, so it can stay movable, scalable and runtime-updated.
+![A red and blue screen casting separate colors onto the nearby floor and mixed purple light farther away](./Images/area-screen.png)
 
-## What It Does
+Near the screen, the floor receives separate red and blue contributions. Farther away, they blend toward magenta.
 
-With a cookie assigned, an Area Light behaves like a textured rectangular emitter:
+## Make A Screen Light The Room
 
-- Close to the light, the projection follows the Area Light size, proportions and local texture detail.
-- Farther away, the shader samples coarser mip levels so the result gradually converges to the average emitted color.
-- Near grazing angles and projection edges, the shader blends toward blurrier mip levels to approximate color mixing from a visible area emitter.
-- Alpha is treated as an emission mask: the shader uses `RGB * Alpha`.
+1. Create a **Point Light Volume** and set **Type → Area Light**.
+2. Place its origin at the center of the screen. Set Transform X/Y scale to the screen's width/height in meters. With an unscaled parent, a 2 m by 1 m screen uses `(2, 1, 1)`.
+3. Point its blue local Z axis out of the screen toward the room. The light emits from this side only.
+4. Leave **Cookie** empty first. Set **Color** to white and adjust **Intensity** until a nearby wall or prop with a compatible shader is lit.
+5. Assign a static image to **Cookie** and check that its colors appear in the light. For video, replace it with the player's output Render Texture once this test works. Keep Color white to preserve the source colors.
+6. Leave **Auto Update Textures** enabled on the Manager for video or other animated sources, then enter Play Mode with the video playing. Nearby surfaces should change color with the image.
+7. Enable **Debug Range** and check the affected area. Add [shadows](./HowToUse_Shadows.md) if the light should be blocked by walls or furniture.
+8. Enable **Dynamic** and Manager **Auto Update Volumes** if the screen will move, rotate or resize in game.
 
-This is still an optimized diffuse lighting approximation, not full path-traced GI. It does not create real screen reflections, and it does not bounce light multiple times. For matte walls, floors, props and avatars using VRC Light Volumes compatible shaders, it is usually the better realtime option for screen-like emitters.
+The light does not create a visible screen mesh or configure the video player. Keep your normal screen material, and give the light the same image source. If the player has no directly usable Render Texture, a [Material source](./HowToUse_PointLightMaterialSources.md) can generate or copy the emission image.
 
-If an Area Light has no Cookie assigned, it keeps the original fast parametric Area Light path with no extra texture sampling.
+A Material source must read the player's actual image source. Assigning the screen's Material does not copy texture overrides stored on its Renderer through a Material Property Block. If the screen works but this source is blank or frozen, check how the player supplies its video texture.
 
-## Quick Setup
+<details>
+<summary>Inspector for the screen example</summary>
 
-1. Create a **Point Light Volume**.
-2. Set `Type` to `Area Light`.
-3. Scale the transform to match the physical size of the emitting surface.
-4. Rotate the Area Light so the rectangle faces the area you want to illuminate.
-5. Assign a source to the `Cookie` field. It can be a Texture, RenderTexture or Material.
-6. Set `Color` and `Intensity`. These multiply the emitted texture color and can be changed at runtime without rebuilding the texture array.
-7. Set `Cookie Resolution` in **Light Volume Setup** as low as acceptable for the visible result.
-8. Enable `Debug Range` to check how much scene area the light affects.
+![Area Light Inspector with a 4 by 2 metre Transform, white Color and a red-blue image assigned to Cookie](./Images/area-inspector.png)
 
-Negative scale is supported for Area Light cookies. Width and height are always sent to shaders as positive physical dimensions, while a negative local or parent X/Y axis mirrors the cookie on the corresponding axis. This mirror behavior is available in current v3 shaders; v2-compatible shaders receive the average-color fallback and ignore cookie orientation.
+The **Cookie** uses the same image as the visible screen. Transform X/Y scale matches the screen's **4 × 2 m** size; its blue local Z axis points toward the room.
 
-For static pictures, regular Texture assets are the cheapest source. For video screens, assign the same RenderTexture used by the video player, or use a Material that renders the desired emissive image.
+</details>
 
-> [!IMPORTANT]
-> World surfaces and props must use a shader with VRC Light Volumes support to receive Area Light Emission. Default Unity shaders will not show Point Light Volumes.
+## Choose A Source
 
-## Texture Sources
+| Cookie source | Use it for | Updates |
+| --- | --- | --- |
+| **Texture** | Static signs, windows, artwork. | Copied when the shared array is built. |
+| **Render Texture / Custom Render Texture** | Video players, cameras, animated textures. | Refreshed with Auto Update Textures. |
+| **Material** | Procedural animation or a composed image. | Pass 0 is rendered with Auto Update Textures. |
+| **None** | A plain soft box with one uniform color. | No cookie texture sampling. |
 
-The `Cookie` field accepts:
+RGB gives the emitted color; **alpha masks emission**. A bright image with zero alpha emits no light. This is a common reason for a Render Texture looking correct on the screen while the Area Light remains dark.
 
-- **Texture** - best for static emissive panels, signs, windows and baked graphics.
-- **RenderTexture** - best for video players, cameras or any other runtime-rendered image.
-- **Material** - useful when a shader generates the emission procedurally or combines textures before projection.
+Negative Transform X/Y scale mirrors the cookie on the corresponding axis, including mirrored parents. Match the light's orientation to the screen image if the colors appear reversed.
 
-Area Light cookies are packed into the shared Point Light Volume texture array. The manager creates a mip chain for that array when at least one Area Light cookie is present, and the shader uses that mip chain for the softened emitter approximation.
+## Quality And Performance
 
-Texture compression artifacts are still visible after packing. For important cookies, disable compression and prefer HDR-capable source formats when you need values above 1. The packed runtime array uses a linear half precision format.
+**Cookie Resolution** on the Manager controls all Point Light Volume projection textures, including Area cookies. Try a lower resolution first: a soft wash of screen light needs fewer pixels than the screen itself. The system creates the blurred, smaller texture levels it needs; the source does not need its own mipmaps.
 
-The same Texture, RenderTexture or Material source can be reused by several Area Lights. The source is uploaded once, while each light still keeps its own `Color`, `Intensity`, transform and range data.
+Avoid lossy compression when it creates visible blocks or color bands. HDR textures and Materials can supply colors above `1`; the runtime cookie array uses half precision and preserves HDR values within that format's range.
 
-## Runtime Updates
+Several Area Lights can share the same source. This saves texture storage, but every overlapping light still adds shading work. Use separate Material objects only when the generated images need different parameters.
 
-Changing `Color`, `Intensity`, enable state or transform data does not require rebuilding the texture array. The manager updates the light data separately.
+For steady, uniform light, leave Cookie empty. For lighting that never changes, [bake a Regular Light Volume](./HowToUse_RegularLightVolumes.md). Keep live textures and overlapping Area lights for emitters whose changing appearance matters.
 
-Changing Area Light scale, including crossing an X/Y axis through zero into negative scale, updates both the positive physical size and the cookie mirror metadata. With `Dynamic` and `Auto Update Volumes` enabled this happens automatically; otherwise call the instance's `UpdateScale()` after changing the transform from Udon.
+## If The Result Looks Wrong
 
-Changing the `Cookie` source, changing `Cookie Resolution`, or adding/removing a light that uses a new source requires the custom texture array to be rebuilt. The editor does this automatically from the authoring component. In runtime scripts, call `ReinitializeCustomTextures()` after changing projection sources manually.
+| Symptom | Check |
+| --- | --- |
+| No light | The receiving shader supports Light Volumes, the blue Z axis faces the room, Color/Intensity are nonzero, and cookie alpha is nonzero. |
+| Image is frozen | The source itself is updating and Manager Auto Update Textures is enabled. A runtime API snapshot stays fixed until the next rebuild. |
+| Everything gets one average color | Move closer to the emitter. Also check whether the receiving shader has only the older 2.x integration. |
+| Color is reversed | Match Transform orientation and X/Y scale signs to the screen. |
+| Light passes through walls | Enable and bake the light's shadows, or reduce its range if those surfaces should be outside it. |
+| Works in Edit Mode but disappears in game | Check the Manager's Shader Stripping settings if scripts introduce Area cookies at runtime. |
 
-RenderTexture and Material sources are treated as animated sources. To refresh them at runtime, enable `Auto Update Textures` in **Light Volume Setup**. Keep it disabled when all projection sources are static.
+## Older Shader Support
 
-When assigning Area Light cookies from Udon with `SetCustomMaterial()` or `SetCustomTexture()`, the manager shares one runtime texture-array slice only for matching source/update-mode pairs. Reusing the same Material with `autoUpdate = false` on one light and `autoUpdate = true` on another uses two separate slices, which prevents the auto-updated copy from leaking into the static light.
+Current integrations show textured Area emission. A **2.x-compatible shader that already supports Area Lights** receives one average cookie color instead. This keeps the screen light visible, but loses image detail and orientation. Default Unity shaders receive neither path.
 
-## Old Shader Fallback
+[LightVolumeTVGI](./HowToUse_TVScreensIntegration.md) remains useful for a different effect: tinting pre-baked additive lighting with one average screen color. Use that when the baked bounce pattern is part of the intended result.
 
-Modern shaders that include the current VRC Light Volumes code sample the textured Area Light directly.
+## Runtime Changes
 
-Here, old shaders means VRC Light Volumes `2.x.x` compatible shaders that support Point Light Volumes, but do not know about Area Light cookies. They still get a fallback: the manager reads the final mip level from the packed cookie texture array through GPU readback, multiplies it by the light `Color` and `Intensity`, and writes that average color into the regular Point Light Volume color data.
+Use `SetColor()` and `SetIntensity()` to change brightness or tint. For a moving screen, Dynamic plus Auto Update Volumes tracks its transform. If you manage transforms manually, call `UpdateTransform()` after moving or rotating and `UpdateScale()` after a scale-only change.
 
-The fallback cannot show texture detail, but it prevents old shaders from turning the light black. They receive a normal Area Light using the average emitted color instead.
+Use `SetCustomTexture(texture)` or `SetCustomMaterial(material)` to replace the Cookie and request the required array rebuild. To keep a snapshot, use `SetCustomTexture(texture, false, false)` or `SetCustomMaterial(material, false)`. Reuse an existing source and update its contents for continuous animation; repeatedly swapping sources causes array rebuilds.
 
-Default Unity shaders still do not receive Point Light Volumes or this fallback.
-
-## Performance Notes
-
-Area Light cookies are a little more expensive than no-cookie Area Lights because each visible light needs extra texture samples. In practice this is still a fairly cheap setup, and it is intended to be practical for normal use on important screen, sign, window and panel lights.
-
-For best performance:
-
-- Avoid many overlapping Area Light cookies.
-- Keep `Cookie Resolution` as low as the use case allows.
-- Disable `Auto Update Textures` unless a RenderTexture or Material source really changes at runtime.
-- Prefer static Texture sources for static emitters.
-- Use regular baked Light Volumes when the lighting is completely static and does not need runtime control.
-
-No-cookie Area Lights keep the faster attenuation path, so leaving the `Cookie` field empty is still the right choice for plain soft boxes.
-
-## TVGI Legacy
-
-The old **LightVolumeTVGI** tool is now mostly a legacy workflow. It is still useful for existing worlds and for setups that intentionally drive baked additive Light Volumes from a single average screen color.
-
-For new TV screens, monitors, emissive signs and other rectangular animated emitters, prefer **Area Light Emission**. It preserves local texture color near the emitter, blends toward the average color with distance, supports RenderTexture and Material sources, and has an old-shader average-color fallback built into the manager.
+See the [UdonSharp API](./UdonSharpAPI.md#pointlightvolumeinstance) for exact signatures.

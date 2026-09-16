@@ -1,142 +1,148 @@
-[VRC Light Volumes](../README.md) | **How to Use** | [Best Practices](../Documentation/BestPractices.md) | [Udon Sharp API](../Documentation/UdonSharpAPI.md) | [For Developers](../Documentation/ForDevelopers.md) | [Compatible Shaders](../Documentation/CompatibleShaders.md)
+[VRC Light Volumes](../README.md) | [How to Use](./HowToUse.md) | [Best Practices](./BestPractices.md) | [UdonSharp API](./UdonSharpAPI.md) | [Unity Editor API](./UnityEditorAPI.md) | [Shader Integration](./ForDevelopers.md) | [Compatible Shaders](./CompatibleShaders.md)
 
-# How to Use
-| Menu |
-| ------|
-|[VRC Light Volumes System](../Documentation/HowToUse.md)|
-|**Regular Light Volumes**<br />• [Light Volumes Placement](#Light-Volumes-Placement)<br />• [Auto Light Probes Placement](#Auto-Light-Probes-Placement)<br />• [Additive Light Volumes](#Additive-Light-Volumes)<br />• [Light Volumes Color Correction](#Light-Volumes-Color-Correction)<br />• [Light Volume Component Description](#Light-Volume-Component-Description)|
-|[Point Light Volumes](../Documentation/HowToUse_PointLightVolumes.md)|
-|[Point Light Volume Shadows](../Documentation/HowToUse_Shadows.md)|
-|[Point Light Material Sources](../Documentation/HowToUse_PointLightMaterialSources.md)|
-|[Area Light Emission](../Documentation/HowToUse_AreaLightEmission.md)|
-|[Audio Link Integration](../Documentation/HowToUse_AudioLinkIntegration.md)|
-|[TV Screens Integration](../Documentation/HowToUse_TVScreensIntegration.md)|
-|[How Light Volumes Work?](../Documentation/HowToUse_HowItWorks.md)|
+# Regular Light Volumes
 
-## Regular Light Volumes
+**Guides:** [Overview](./HowToUse.md) · **Regular Light Volumes** · [Point Light Volumes](./HowToUse_PointLightVolumes.md) · [Froxel Clustering](./HowToUse_FroxelClustering.md) · [Shadows](./HowToUse_Shadows.md) · [Material Sources](./HowToUse_PointLightMaterialSources.md) · [Area Light Emission](./HowToUse_AreaLightEmission.md) · [AudioLink](./HowToUse_AudioLinkIntegration.md) · [TV Screens (Older Workflow)](./HowToUse_TVScreensIntegration.md) · [Debugging](./HowToUse_Debugging.md) · [How It Works](./HowToUse_HowItWorks.md)
 
-![](../Documentation/Preview_3.png)
+![Light Volume cells showing the baked lighting around scene objects](./Preview_3.png)
 
-Light Volumes is a fast and optimized solution that replaces Unity's light probes with a better per-pixel voxel based lighting. It's similar to Adaptive Probe Volumes (APV) in Unity 6, but with manual ReflectionProbe-like volumes placement and some other extra features.
+A Regular Light Volume stores a baked lighting grid inside a box. A compatible shader reads the grid at each part of an avatar or object, so its feet, face and hands can receive different lighting.
 
-**Light Volumes** consist of two components in the editor: `Light Volume` and `Light Volume Instance`.
+Use regular volumes for rooms, outdoor areas and other stationary lighting. They do not create light on their own: set up your Unity or Bakery lights, then bake. If this is your first setup, follow [Your First Baked Room](./HowToUse.md#your-first-baked-room).
 
-The `Light Volume` component is an editor-only script that helps you configure the light volume more easily. It is not included in the VRChat upload. Its purpose is to set up the `Light Volume Instance` Udon script in a user-friendly way. It also stores the required 3D textures, which are used to be packed into the final 3D atlas.
+## Place Volumes Where Objects Need Lighting
 
-The `Light Volume Instance` component is a VRChat Udon script that stores all the data required by the Light Volumes system to render the volume. You generally shouldn’t modify its values manually in the editor - use the `Light Volume` script instead. However, if you’re writing game logic that changes volume parameters at runtime, you should reference the `Light Volume Instance` component, since it is the one that actually functions as the real volume in-game.
+Cover the space occupied by avatars and props, including head height, stairs, balconies and places where a player may jump. Covering only a thin layer above the floor leaves the rest of an avatar outside the volume.
 
-For runtime changes from Udon, prefer `Light Volume Instance` setter methods such as `SetColor()`, `SetIntensity()`, `SetDynamic()`, `SetAdditive()` and `SetSmoothBlending()` so the manager receives only the update it actually needs.
+![Several volumes covering different rooms and heights](./Preview_10.png)
 
-## Light Volumes Placement
+A practical starting layout is:
 
-**Light Volumes** should be placed to cover most of the walkable areas in your world. It's perfectly fine to leave some areas uncovered - in those cases, regular Unity Light Probes will be used as a fallback.
+1. One large, low-density volume for an open area with soft lighting.
+2. Smaller volumes for rooms with different lighting or stronger shadows.
+3. Slight overlaps at doorways and other transitions.
 
-![](../Documentation/Preview_10.png)
+For example, keep the large outdoor volume at **Weight** `0` and give the detailed room volume **Weight** `1`. Set these values in the Manager's **Light Volumes** list. Higher weight has priority wherever the boxes overlap.
 
-If your scene is mostly lit with soft, uniform diffuse lighting, you don’t need to use very high light volumes resolution. In this case `Voxels Per Unit` value can be from `1` to `3` approximately, or even less for big open worlds.
+![A higher-weight detail volume inside a broad background volume](./Images/volume-placement.svg)
 
-However, if your scene contains sharp shadows or high-contrast lighting, using higher density is strongly recommended! In this case `Voxels Per Unit` value can be from `3` to `15` approximately, depending on the world size itself.
+**Smooth Blending** controls the width of the transition at a volume's edges, in meters. Make the overlap wider than the blend region; for example, overlap by `0.5 m` with **Smooth Blending** set to `0.25`. Check the result on a moving prop.
 
-> [!WARNING]
-> Always keep an eye on the *size estimation* in your Light Volume component - increasing the density can quickly make the data size extremely large.
+To blend from a volume into an uncovered area, keep **Light Probes Blending** enabled and disable **Sharp Bounds** on the Manager. This softens all outer edges, so extend the volume beyond the area that needs its full lighting.
 
-A good practice is to place one large, low-resolution Light Volume to cover the entire world, and then add smaller, higher-density volumes in areas with sharp shadows or small, detailed light sources. Just make sure to extend the bounds slightly beyond the target area - some padding is needed to blend the volume edges smoothly. The `Smooth Blending` property in the Light Volume component controls the size of this padding.
+> [!TIP]
+> If you create a Light Volume as a child of a Reflection Probe, it starts with that probe's bounds. You can then resize it independently.
 
-If you already have **Reflection Probes** in your scene, you'll probably want your **Light Volumes** to match their bounds. To do this, right-click the Reflection Probe in the Hierarchy and create **Light Volume** as a child. Any volume created under any reflection probe will automatically inherit its bounds.
+### Edit The Bounds
 
-## Auto Light Probes Placement
+Use **Edit Bounds** and drag the face handles, or use Unity's Transform tools. While dragging a bounds handle:
 
-Even though **Light Volumes** are designed to replace **Light Probes**, you should still include **Light Probes** in your scene to ensure proper lighting for avatars that do not support **VRC Light Volumes**.
+- Hold **Alt** (Option on macOS) to resize both opposite faces.
+- Hold **Shift** to keep the box's proportions while resizing.
 
-Since Unity does not provide an easy way to automatically place **Light Probes**, doing it manually can be very time-consuming. **VRC Light Volumes** includes a built-in feature to generate **Light Probes** in just a few clicks.
+Moving or resizing a baked volume moves or stretches its stored lighting. Rebake after changing the bounds when the volume should still match the stationary room.
 
-Simply click the `Generate Light Probes` button in the Light Volume component. This will open a small configuration window and display a preview of the probes that will be placed in your scene. The probes will be arranged in a cuboid shape within the bounds of your Light Volume. The **Light Probe** density is usually much lower than the Light Volume density, but you can adjust it in the configuration window as needed.
+## Choose A Useful Resolution
 
-Once you're happy with the settings, click the `Create Light Probe Group` button. This will create a Light Probe Group as a child of the Light Volume. You can manually edit or remove any unwanted probes, and you can also move the Light Probe Group out of the Light Volume hierarchy if you prefer.
+A **voxel** is one cell in the lighting grid. With **Adaptive Resolution** enabled, **Voxels Per Unit** sets the number of cells along one meter.
+
+| Density | Approximate cell width | A starting use |
+| --- | --- | --- |
+| `1` | `1 m` | Large areas with very soft lighting |
+| `3` | `0.33 m` | First pass for a room |
+| `6` | `0.17 m` | A small area where the first bake loses important detail |
+
+These are starting points. Bake, move a test prop through the lighting, and increase density only where the result is too coarse.
+
+A `10 × 3 × 10 m` box at `3` voxels per unit has a `30 × 9 × 30` grid: `8,100` voxels. Raising the density to `6` produces `64,800` voxels—eight times as many.
+
+Use **Preview Voxels** to inspect the grid and watch **Size in VRAM** and **Size in bundle**. A smaller dense volume around a doorway or sharp shadow is usually more economical than increasing the resolution of the whole world.
+
+## Bake And Reuse The Data
+
+1. Save the scene and give each volume you will bake a unique GameObject name.
+2. Choose **Progressive** or **Bakery** under the Manager's **Baking Mode**.
+3. Enable **Bake** on each volume that should receive new lighting.
+4. Run **Generate Lighting** in Unity's Lighting window, or a normal Bakery full render.
+5. Wait for **Texture 0**, **Texture 1** and **Texture 2** to update, then inspect the result.
+
+The system packs the textures into a shared atlas automatically after a successful bake. **Pack Light Volumes** only combines existing data; it does not recalculate scene lighting. Use it after bringing already-baked volume data into another scene or when you need to rebuild the atlas manually.
+
+Disable **Bake** to preserve a volume's existing textures during later scene bakes. Keep those source assets in the project: future atlas rebuilds still need them.
+
+## Generate Fallback Light Probes
+
+Ordinary Unity Light Probes keep avatars and materials without Light Volume support lit. They also supply lighting outside volume bounds when **Light Probes Blending** is enabled.
+
+1. Select a volume and click **Generate Light Probes**.
+2. Start with the lower density offered in the window.
+3. Click **Create Light Probe Group**.
+4. Select the new child object and edit its points. Move points inside solid walls or floors into open space; add points around important changes in lighting.
+5. Bake the scene again.
+
+The button creates probe positions, not baked lighting. The generated group is a separate, editable Light Probe Group and does not automatically follow later changes to the volume's resolution. See Unity's [probe placement guide](https://docs.unity3d.com/2022.3/Documentation/Manual/LightProbes-Placing-Scripting.html) for placement principles.
 
 ## Additive Light Volumes
 
-Before diving into additive volumes, here’s how **regular** light volumes work:
+An **Additive** volume adds its baked lighting on top of the base lighting. It can also light static lightmapped surfaces when their shader supports additive volumes.
 
-They use baked lighting data from the volume that contains a mesh and has the **highest weight**. When multiple volumes overlap, lighting data is **blended smoothly** between them.
+Use one for a baked group of lights that should switch, change color or move together. For a single flashlight or lamp, a Point Light Volume is usually easier to set up.
 
-#### Additive light volumes work differently
+![An additive volume adding warm light to the room and props](./Preview_11.png)
 
-![](../Documentation/Preview_11.png)
+### Example: A Switchable Group Of Lamps
 
-They **add their light** on top of the regular volumes. Additive volumes can also affect **lightmapped static geometry**, making them ideal for dynamic lighting like toggleable or interactive lights, etc.
+Bake the lamps separately so their light is not already present in the main scene's lightmaps:
 
-#### How to Bake an Additive Light Volume
+1. Save a copy of the scene for the additive bake. Open it on its own.
+2. Keep the room geometry, but disable lights and emissive lighting that do not belong to the switchable group. Remove any unwanted environment lighting from this bake as well.
+3. Place a Light Volume around the area the lamps illuminate. Let the light fade before the box ends so the edge is not visible.
+4. Bake the lighting. Check that the volume contains only the lighting you want to toggle.
 
-Here will be explained how to bake a togglable light zone for your world. This is most useful when you have many lights that can be enabled and disabled together as one lighting setup, or when correct/colorful indirect lighting is important. If you only need to bake one or two local lights, it is usually easier and cheaper to use Point Light Volumes with shadows instead. For a point light, flashlight, or projector, use a Point Light Volume instead too.
+![An isolated light being baked for an additive volume](./Preview_12.png)
 
-1. Create a **separate scene** for baking. Usually, a copy of your main scene if you want to bake light for a room.
-2. **Disable or delete** all the lights that you don't want to bake into your additive light volume.
-3. Add a **light volume** and all the lights that you want to bake.
-4. Make sure the volume **fully contains the light's range**.
-5. **Optionally:** For all of the **lightmap static** meshes, choose `Receive Global Illumination: Light Probes` to exclude them from baking lightmaps. (**Bakery** will still require a mesh that bakes lightmaps to start a bake)
-6. Bake the scene.
+Then use that result in the main scene:
 
-![](../Documentation/Preview_12.png)
+1. Preserve the baked volume as a prefab, or copy its GameObject, and bring it into the main scene. Keep the generated texture assets.
+2. Enable **Additive** and disable **Bake** on this volume. Check that it appears in the main scene's Manager list.
+3. Bake the main scene with the switchable lamps' bake lights disabled. Otherwise their lighting will remain visible when the additive volume is off.
+4. Click **Pack Light Volumes** after importing the volume if the main scene has not been baked again.
+5. Toggle the additive volume's GameObject to test the off/on result.
 
-#### Once baking is done
+You can also use `SetColor()` and `SetIntensity()` through the [UdonSharp API](./UdonSharpAPI.md). Enable **Dynamic** and the Manager's **Auto Update Volumes** only if the volume itself will move.
 
-1. **Copy** the baked Light Volume into your main scene.
-2. **Enable** the `Additive` checkbox in the Light Volume component.
-4. **Uncheck** the `Bake` flag to prevent this volume to be rebaked in future lightmapper bakes.
-5. In **Light Volume Setup**, enable `Auto Update Volumes`.
-6. In **Light Volume Setup** press `Pack Light Volumes` to generate the 3D atlas needed for volumes to work.
-   
-> [!IMPORTANT]
-> If you see some sharp edges, it means that some undesirable light was baked into the volume.
-> You can increase the volume size or tweak the **Color Correction** to get rid of undesirable light. Lowering `Shadows` in color correction section usually helps.
+Moving an additive volume moves its stored light and shadows together. The bake will not learn about a wall that was not present when it was created. Use [Point Light Volume shadows](./HowToUse_Shadows.md) when you need a separate shadow workflow.
 
-Now you should see your additive volume lighting up the scene.
-If it doesn't work, make sure you’re using a [shader that has VRC Light Volumes support](/Documentation/CompatibleShaders.md) for all of your world surfaces and props.
+## Match Brightness Without Rebaking
 
-You can always change the color and it's intensity in runtime via udon script to animate the light. Turning on and off the light volume game object also toggles the baked light.
+Use **Color** and **Intensity** for a simple tint or brightness multiplier.
 
-You can control how many additive volumes affect a pixel using the `Additive Max Overdraw` parameter in the **Light Volume Setup** component.
+The **Color Correction** controls adjust the baked data:
 
-> [!NOTE]
-> `Additive Max Overdraw` parameter limits how many **additive volumes** are sampled **per pixel**, not how many can exist in the scene overall. The more additive volumes **intersect**, the higher the performance cost.
+- **Exposure** makes the whole result brighter or darker.
+- **Shadows** changes the darker values.
+- **Highlights** changes the brighter values.
 
-## Light Volumes Color Correction
+These can help match a volume to the room's lightmaps or remove a slight unwanted ambient glow from an additive bake. They do not fix missing light or shadows; correct the lights or bake settings when the source bake is wrong. Changing baked-data correction rebuilds the atlas.
 
-The Light Volume component includes a simple color correction section. It's mainly useful for adjusting the brightness of your baked data, since it sometimes won’t match exactly how it appears in baked lightmaps.
+## Inspector Reference
 
-Another common use case is reducing the `Shadows` brightness for baked additive Light Volumes to hide visible undesirable light at the edges.
-
-The `Exposure` property adjusts the overall brightness of the baked data, similar to exposure in photography.
-
-The `Shadows` and `Highlights` properties adjust the brightness of dark and bright regions, respectively. These settings are helpful for correcting underexposed or overexposed areas of the baked data.
-
-Each time you change a value in this section, the **Light Volumes Atlas** will be automatically repacked. This process can take a few seconds, or longer if your atlas is large.
-
-## Light Volume Component Description
-
-| Parameter | Description |
+| Parameter | What to use it for |
 | --- | --- |
-|`Edit Bounds` | button enables a cuboid editing tool to configure the Light Volume bounds. Be sure you have **Gizmos** enabled in your viewport to see the tool handles.|
-|`Preview Voxels` | button shows all the voxels to estimate the density of your Light Volume. If you have light volumes baked on your scene, voxels will be shaded in the baked color to preview the baked light.|
-|`Size in VRAM` and `Size in bundle` | indicators shows an estimated size of the baked data. Both sizes are estimated, and the final size will be shown in the **Light Volume Setup** component after the data is baked.|
-| **Volume Setup** | |
-|`Dynamic` | Defines whether this volume can be moved in runtime. Disabling this option slightly improves performance.|
-|`Additive` | Additive volumes apply their light on top of others as an overlay. Useful for movable and togglable lights. They can also project light onto static lightmapped objects if the surface shader supports it.|
-|`Color` | Multiplies the volume’s color by this value.|
-|`Intensity` | Brightness of the volume.|
-|`Smooth Blending` | Size in meters of this Light Volume's overlapping regions for smooth blending with other volumes.|
-| **Baked Data** | |
-|`Texture 0` | Texture3D with baked SH data required for future atlas packing. It won't be uploaded to VRChat. (L0r, L0g, L0b, L1r.z)|
-|`Texture 1` | Texture3D with baked SH data required for future atlas packing. It won't be uploaded to VRChat. (L1r.x, L1g.x, L1b.x, L1g.z)|
-|`Texture 2` | Texture3D with baked SH data required for future atlas packing. It won't be uploaded to VRChat. (L1r.y, L1g.y, L1b.y, L1b.z)|
-| **Color Correction** | |
-| `Exposure` | Makes volume brighter or darker.|
-| `Shadows` | Makes dark volume colors brighter or darker.|
-| `Highlights` | Makes bright volume colors brighter or darker.|
-| **Baking Setup** | |
-|`Bake` | Uncheck it if you don't want to rebake this volume's textures.|
-|`Reserve UV Space` | Reserves atlas space for this volume without baking new lighting data. This is useful for prefabs or runtime setups that need stable atlas UVW data but should not run a bake. Reserved voxels are written as white L0 and zero L1.|
-|`Adaptive Resolution` | Automatically sets the resolution based on the Voxels Per Unit value.|
-|`Voxels Per Unit` | Number of voxels used per meter, linearly. This value increases the Light Volume file size cubically.|
-|`Resolution` | Manual Light Volume resolution in voxel count.|
+| **Edit Bounds** | Resize the volume with face handles in the Scene view. |
+| **Preview Voxels** | Show the lighting grid and, after baking, its stored lighting. |
+| **Size in VRAM / Size in bundle** | Estimate texture memory and compressed build size. |
+| **Dynamic** | Allow the stored lighting to move with the Transform in game. Also enable the Manager's **Auto Update Volumes**, or update the Transform through the API. |
+| **Additive** | Add this lighting on top of the base lighting. |
+| **Color / Intensity** | Tint or scale the volume's lighting. |
+| **Weight** (Manager list) | Give higher values to volumes that should take priority in overlaps. |
+| **Smooth Blending** | Width of the edge transition, in meters. |
+| **Texture 0 / 1 / 2** | The three source textures produced by a bake. Keep them for future atlas rebuilds. |
+| **Exposure / Shadows / Highlights** | Adjust the brightness of the baked data. |
+| **Bake** | Include this volume in the next supported lightmapper bake. Disable it to preserve existing textures. |
+| **Reserve UV Space** | With **Bake** disabled, reserve a blank part of the atlas for a custom texture-processing setup. Leave off for normal baked volumes. |
+| **Adaptive Resolution** | Calculate grid resolution from box size and **Voxels Per Unit**. |
+| **Voxels Per Unit** | Set grid density along each meter. |
+| **Resolution** | X/Y/Z cell counts. Disable **Adaptive Resolution** to control these manually. |
+
+**Limits:** Regular and Additive Light Volumes share a limit of **32 active volumes**. Disable unused zones if the scene contains more. Froxel Clustering applies to Point Light Volumes and does not reduce regular-volume sampling cost.

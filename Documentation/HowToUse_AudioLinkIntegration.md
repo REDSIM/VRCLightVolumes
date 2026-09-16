@@ -1,62 +1,71 @@
-[VRC Light Volumes](../README.md) | **How to Use** | [Best Practices](../Documentation/BestPractices.md) | [Udon Sharp API](../Documentation/UdonSharpAPI.md) | [For Developers](../Documentation/ForDevelopers.md) | [Compatible Shaders](../Documentation/CompatibleShaders.md)
+[VRC Light Volumes](../README.md) | [How to Use](./HowToUse.md) | [Best Practices](./BestPractices.md) | [UdonSharp API](./UdonSharpAPI.md) | [Unity Editor API](./UnityEditorAPI.md) | [Shader Integration](./ForDevelopers.md) | [Compatible Shaders](./CompatibleShaders.md)
 
-# How to Use
+# AudioLink Integration
 
-| Menu |
-| ---|
-|[VRC Light Volumes System](../Documentation/HowToUse.md)|
-|[Regular Light Volumes](../Documentation/HowToUse_RegularLightVolumes.md)|
-| [Point Light Volumes](../Documentation/HowToUse_PointLightVolumes.md)|
-|[Point Light Volume Shadows](../Documentation/HowToUse_Shadows.md)|
-|[Point Light Material Sources](../Documentation/HowToUse_PointLightMaterialSources.md)|
-|[Area Light Emission](../Documentation/HowToUse_AreaLightEmission.md)|
-| **Audio Link Integration**<br />• [Audio Link Quick Setup](#Audio-Link-Quick-Setup)<br />• [Light Volume Audio Link Component Description](#Light-Volume-Audio-Link-Component-Description) |
-|[TV Screens Integration](../Documentation/HowToUse_TVScreensIntegration.md)|
-|[How Light Volumes Work?](../Documentation/HowToUse_HowItWorks.md)|
+**Guides:** [Overview](./HowToUse.md) · [Regular Light Volumes](./HowToUse_RegularLightVolumes.md) · [Point Light Volumes](./HowToUse_PointLightVolumes.md) · [Froxel Clustering](./HowToUse_FroxelClustering.md) · [Shadows](./HowToUse_Shadows.md) · [Material Sources](./HowToUse_PointLightMaterialSources.md) · [Area Light Emission](./HowToUse_AreaLightEmission.md) · **AudioLink** · [TV Screens (Older Workflow)](./HowToUse_TVScreensIntegration.md) · [Debugging](./HowToUse_Debugging.md) · [How It Works](./HowToUse_HowItWorks.md)
 
-## Audio Link Integration
+**LightVolumeAudioLink** makes lights and emissive objects react to music. It can control Regular Light Volumes, Point Light Volumes and renderer colors together. Use it for a glowing fixture whose light pulses with the bass, or baked additive lighting that follows AudioLink theme colors.
 
-This package includes a [AudioLink](https://github.com/llealloo/audiolink/) integration Udon script. 
+[AudioLink](https://github.com/llealloo/audiolink/) is optional. Install and configure it only if you need this feature. VRC Light Volumes imports without it; an unassigned AudioLink reference leaves this component inactive.
 
-![](../Documentation/Preview_14.gif)
+![Music-reactive light and emission.](./Preview_14.gif)
 
-**LightVolumeAudioLink** component can change Light Volumes, Point light Volumes and Mesh Renderers materials colors in runtime based on AudioLink.
+## Make A Lamp Pulse With The Bass
 
-## Audio Link Quick Setup
+First confirm that the lamp lights the scene with a fixed Color and Intensity. Add AudioLink control after this test works.
 
-1. Add the **LightVolumeAudioLink** component to a GameObject in your scene.
+1. Set up a working AudioLink component and audio source in your scene.
+2. Add **LightVolumeAudioLink** to a GameObject and assign the scene's AudioLink component to **Audio Link**. The integration enables AudioLink readback automatically.
+3. Add the lamp's light to **Target Point Light Volumes**.
+4. Choose **Audio Band → Bass**, **Color Mode → Override Color**, and your desired **Color**.
+5. Leave **Minimum Multiply** and **Maximum Multiply** at `1`, both **Add** values at `0`, and **Invert** off. The light now rises from dark with the sampled bass level.
+6. Leave **Smoothing Enabled** on. Start at `0.25`; increase Smoothing if the pulses are too abrupt.
+7. Enter Play Mode with audio playing. Adjust the light's own **Intensity** to set its peak brightness.
 
-2. One **LightVolumeAudioLink** can control Light Volumes, Point Light Volumes and material colors based on an `Audio Band` value you choose: `Bass`, `Low Mid`, `High Mid`, `Treble`
+To match the visible lamp to its light, also add its renderer to **Target Mesh Renderers**. The shader must have an enabled emission path using `_EmissionColor`. Adjust **Materials Intensity** to brighten the visible fixture without changing the light output.
 
-3. Assign your **Audio Link** object in the `Audio Link` field.
+**Auto Update Volumes is not needed for color animation.** The component uses the light setters directly. Keep Dynamic off unless the light also moves.
 
-4. Add all Light Volumes you want to control to the `Target Light Volumes` list and Point Light Volumes in the `Target Point Light Volumes` list.
+## Useful Variations
 
-5. Add all Mesh Renderers you want to change emission color by AudioLink to the `Target Mesh Renderers` list.
-
-> [!IMPORTANT]
-> These meshes should use materials with **emission enabled**. The shader must include a property named `_EmissionColor` (the **Standard** shader supports this).
-
-6. Adjust `Materials Intensity` to fine-tune the brightness of your materials. `Intensity` of Light Volumes and Point Light Volumes can be configured in their components.
-7. In your **AudioLink** component, make sure that **GPU Readback** is enabled. Click `Enable readback` if it’s not already active.
-8. Done! You should now see visual changes reacting to audio.
-   Add more **LightVolumeAudioLink** components to control other AudioLink bands.
-
->[!TIP]
->Enabling `Auto Update Volumes` for Audio-Link support is no more required in Light Volumes v.2.0.0 and newer.
-
-## Light Volume Audio Link Component Description
-
-| Parameter | Description |
+| Result | Settings |
 | --- | --- |
-|`Audio Link` | Reference to your Audio Link Manager that should control Light Volumes.|
-|`Audio Band` | Defines which audio band will be used to control Light Volumes. Four bands available: **Bass, Low Mid, High Mid, Treble**.|
-|`Delay` | Defines how many samples back in history we're getting data from. Can be a value from **0** to **127**. Zero means no delay at all.|
-|`Smoothing Enabled` | Enables smoothing algorithm that tries to smooth out flickering that can usually be a problem.|
-|`Smoothing` | Value from 0 to 1 that defines how much smoothing should be applied. **Zero** usually applies just a little bit of smoothing. **One** smoothes out almost all the fast blinks and makes intensity changing very slow.|
-|`ColorMode` | Auto uses Theme Colors 0, 1, 2, 3 for Bass, LowMid, HighMid, Treble. Override Color allows you to set the static color value. |
-|`Color` | Color that will be used when **Override Color** is enabled.|
-|`Target Light Volumes` | List of the **Light Volumes** that should be affected by AudioLink.|
-|`Target Point Light Volumes` | List of the **Point Light Volumes** that should be affected by AudioLink.|
-|`Target Mesh Renderers` | List of the **Mesh Renderers** that has materials that should change color based on AudioLink.|
-|`Materials Intensity` | Brightness multiplier of the materials that should change color based on AudioLink.|
+| Keep some light between beats | Set both Add values to `0.2` and both Multiply values to `0.8`. This maps a band level of 0 to 20% brightness and 1 to 100%. |
+| Follow AudioLink theme colors | Use **Color Mode → Auto**. Bass, Low Mid, High Mid and Treble select theme colors 0–3. Volume uses theme color 0. |
+| Dim on a beat | Enable **Invert**, keep both Multiply values at `1` and both Add values at `0`. |
+| Delay a second fixture | Use another LightVolumeAudioLink with a higher **Delay** and assign that fixture only to it. |
+| Animate baked bounce lighting | Assign a white-baked additive Regular Light Volume to **Target Light Volumes**. Its baked lighting pattern stays the same while its color changes. |
+
+A nonzero **Minimum Multiply** alone does not keep the light on in silence: it still multiplies the sampled band level. Use **Minimum Add** for an idle brightness floor.
+
+Avoid assigning the same light to multiple color-driving components. AudioLink and TVGI both replace the target's color; the last writer wins.
+
+## Component Settings
+
+| Parameter | Meaning |
+| --- | --- |
+| **Audio Link** | Scene AudioLink component to read. |
+| **Audio Band** | Bass, Low Mid, High Mid, Treble or Volume. Volume reads the current RMS left-channel level. |
+| **Delay** | History offset `0–127`, not a time in seconds. `0` is current data. Volume ignores Delay. |
+| **Smoothing Enabled / Smoothing** | Smooths brightness changes; larger values react more slowly. |
+| **Invert** | Replaces the sampled level with its inverse for the main brightness response. |
+| **Minimum / Maximum Multiply** | Scale factors interpolated as the sampled level rises. |
+| **Minimum / Maximum Add** | Added brightness interpolated as the sampled level rises. |
+| **Color Mode** | Auto, a selected theme color, Override Color, or No Change. **No Change stops all target updates**, including brightness. |
+| **Normalize Colors** | Makes sampled theme colors fully saturated and bright before the audio response. Does not modify Override Color. |
+| **Color** | Color used by Override Color. It replaces the target's color rather than multiplying its original tint. |
+| **Set Base Color** | Also writes `_Color` on target renderers. Leave off when only emission should change. |
+| **Materials Intensity** | Extra multiplier for renderer output; does not change Light Volume intensity. |
+| **Target Light Volumes / Target Point Light Volumes** | Lights to recolor. Unused lists and missing elements are skipped. |
+| **Target Mesh Renderers** | Renderers to update through a Material Property Block. |
+
+If a light responds but its visible mesh does not, check the material's emission setting and property names. If nothing responds, check the Audio Link reference, audio playback and Color Mode first.
+
+For precise response shaping, the component uses the smoothed band level `a` as follows:
+
+```text
+response = (Invert ? 1 - a : a) × lerp(MinimumMultiply, MaximumMultiply, a)
+         + lerp(MinimumAdd, MaximumAdd, a)
+```
+
+Invert changes the main response; the Multiply/Add interpolation still follows the original sampled level.

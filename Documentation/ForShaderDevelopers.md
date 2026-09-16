@@ -1,5 +1,5 @@
-[VRC Light Volumes](../README.md) | [For Developers](../Documentation/ForDevelopers.md)
+[VRC Light Volumes](../README.md) | [Shader Integration](./ForDevelopers.md)
 
-# For Developers
+# Shader Documentation Moved
 
-This documentation has moved to [For Developers](../Documentation/ForDevelopers.md).
+This documentation has moved to [Shader Integration](./ForDevelopers.md).

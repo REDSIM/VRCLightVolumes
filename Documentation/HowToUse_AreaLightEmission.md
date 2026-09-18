@@ -1,12 +1,22 @@
-[VRC Light Volumes](../README.md) | [How to Use](./HowToUse.md) | [Best Practices](./BestPractices.md) | [UdonSharp API](./UdonSharpAPI.md) | [Unity Editor API](./UnityEditorAPI.md) | [Shader Integration](./ForDevelopers.md) | [Compatible Shaders](./CompatibleShaders.md)
+[VRC Light Volumes](../README.md) | [How to Use](./HowToUse.md) | [Best Practices](./BestPractices.md) | [Scripting API](./ScriptingAPI.md) | [Shader Integration](./ForDevelopers.md) | [Compatible Shaders](./CompatibleShaders.md)
 
 # Area Light Emission
 
-**Guides:** [Overview](./HowToUse.md) · [Regular Light Volumes](./HowToUse_RegularLightVolumes.md) · [Point Light Volumes](./HowToUse_PointLightVolumes.md) · [Froxel Clustering](./HowToUse_FroxelClustering.md) · [Shadows](./HowToUse_Shadows.md) · [Material Sources](./HowToUse_PointLightMaterialSources.md) · **Area Light Emission** · [AudioLink](./HowToUse_AudioLinkIntegration.md) · [TV Screens (Older Workflow)](./HowToUse_TVScreensIntegration.md) · [Debugging](./HowToUse_Debugging.md) · [How It Works](./HowToUse_HowItWorks.md)
+| Menu |
+| --- |
+| [Overview](./HowToUse.md) |
+| [Regular Light Volumes](./HowToUse_RegularLightVolumes.md) |
+| [Point Light Volumes](./HowToUse_PointLightVolumes.md) |
+| [Froxel Clustering](./HowToUse_FroxelClustering.md) |
+| [Shadows](./HowToUse_Shadows.md) |
+| [Material Sources](./HowToUse_PointLightMaterialSources.md) |
+| **Area Light Emission**<br />• [Make A Screen Light The Room](#make-a-screen-light-the-room)<br />• [Choose A Source](#choose-a-source)<br />• [Quality And Performance](#quality-and-performance)<br />• [If The Result Looks Wrong](#if-the-result-looks-wrong)<br />• [Older Shader Support](#older-shader-support)<br />• [Runtime Changes](#runtime-changes) |
+| [AudioLink](./HowToUse_AudioLinkIntegration.md) |
+| [TV Screens (Older Workflow)](./HowToUse_TVScreensIntegration.md) |
+| [Debugging](./HowToUse_Debugging.md) |
+| [How It Works](./HowToUse_HowItWorks.md) |
 
-An **Area Light** can use an image as its emitting surface. Use this for a TV casting colored light onto the room, an animated LED panel, a sign or a window. A video screen can illuminate nearby surfaces without baking a separate additive Light Volume.
-
-Near the emitter, different parts of the image contribute different colors. Farther away, the colors blend toward the image's average. This approximates the light from a rectangular surface. It does not reproduce the screen image as a mirror reflection or calculate multiple light bounces.
+Use an **Area Light** to cast colored light from a TV, sign, window or LED panel. Assign its image to **Cookie**; no lighting bake is needed. This lights nearby surfaces, but doesn't create a mirror image or bounced lighting.
 
 ![A red and blue screen casting separate colors onto the nearby floor and mixed purple light farther away](./Images/area-screen.png)
 
@@ -23,9 +33,9 @@ Near the screen, the floor receives separate red and blue contributions. Farther
 7. Enable **Debug Range** and check the affected area. Add [shadows](./HowToUse_Shadows.md) if the light should be blocked by walls or furniture.
 8. Enable **Dynamic** and Manager **Auto Update Volumes** if the screen will move, rotate or resize in game.
 
-The light does not create a visible screen mesh or configure the video player. Keep your normal screen material, and give the light the same image source. If the player has no directly usable Render Texture, a [Material source](./HowToUse_PointLightMaterialSources.md) can generate or copy the emission image.
+Keep your screen mesh, material and video player. Give the light the same image source. If the player has no usable Render Texture, use a [Material source](./HowToUse_PointLightMaterialSources.md) that reads its video image.
 
-A Material source must read the player's actual image source. Assigning the screen's Material does not copy texture overrides stored on its Renderer through a Material Property Block. If the screen works but this source is blank or frozen, check how the player supplies its video texture.
+Copying the screen's Material won't copy video textures assigned through a Renderer Material Property Block. If the light is blank or frozen, check how the player supplies its image.
 
 <details>
 <summary>Inspector for the screen example</summary>
@@ -40,22 +50,22 @@ The **Cookie** uses the same image as the visible screen. Transform X/Y scale ma
 
 | Cookie source | Use it for | Updates |
 | --- | --- | --- |
-| **Texture** | Static signs, windows, artwork. | Copied when the shared array is built. |
+| **Texture** | Static signs, windows, artwork. | Fixed image. |
 | **Render Texture / Custom Render Texture** | Video players, cameras, animated textures. | Refreshed with Auto Update Textures. |
-| **Material** | Procedural animation or a composed image. | Pass 0 is rendered with Auto Update Textures. |
-| **None** | A plain soft box with one uniform color. | No cookie texture sampling. |
+| **Material** | Procedural animation or a composed image. | Refreshed with Auto Update Textures. |
+| **None** | A plain soft box with one uniform color. | Uses the light's Color. |
 
-RGB gives the emitted color; **alpha masks emission**. A bright image with zero alpha emits no light. This is a common reason for a Render Texture looking correct on the screen while the Area Light remains dark.
+RGB gives the emitted color; **alpha masks emission**. An image with zero alpha emits no light, even if it looks bright on the screen.
 
 Negative Transform X/Y scale mirrors the cookie on the corresponding axis, including mirrored parents. Match the light's orientation to the screen image if the colors appear reversed.
 
 ## Quality And Performance
 
-**Cookie Resolution** on the Manager controls all Point Light Volume projection textures, including Area cookies. Try a lower resolution first: a soft wash of screen light needs fewer pixels than the screen itself. The system creates the blurred, smaller texture levels it needs; the source does not need its own mipmaps.
+Start with a low Manager **Cookie Resolution** and increase it only if the light needs more detail. Screen glow needs fewer pixels than the screen itself. The source doesn't need mipmaps.
 
-Avoid lossy compression when it creates visible blocks or color bands. HDR textures and Materials can supply colors above `1`; the runtime cookie array uses half precision and preserves HDR values within that format's range.
+Disable lossy compression if it creates visible blocks or color bands. HDR textures and Materials are supported.
 
-Several Area Lights can share the same source. This saves texture storage, but every overlapping light still adds shading work. Use separate Material objects only when the generated images need different parameters.
+Reuse the same source for matching lights. Use separate Materials when their image settings need to differ, and keep the number of overlapping lights low.
 
 For steady, uniform light, leave Cookie empty. For lighting that never changes, [bake a Regular Light Volume](./HowToUse_RegularLightVolumes.md). Keep live textures and overlapping Area lights for emitters whose changing appearance matters.
 
@@ -64,7 +74,7 @@ For steady, uniform light, leave Cookie empty. For lighting that never changes, 
 | Symptom | Check |
 | --- | --- |
 | No light | The receiving shader supports Light Volumes, the blue Z axis faces the room, Color/Intensity are nonzero, and cookie alpha is nonzero. |
-| Image is frozen | The source itself is updating and Manager Auto Update Textures is enabled. A runtime API snapshot stays fixed until the next rebuild. |
+| Image is frozen | Check that the source is playing and Manager Auto Update Textures is enabled. For scripted sources, check that live updates are enabled. |
 | Everything gets one average color | Move closer to the emitter. Also check whether the receiving shader has only the older 2.x integration. |
 | Color is reversed | Match Transform orientation and X/Y scale signs to the screen. |
 | Light passes through walls | Enable and bake the light's shadows, or reduce its range if those surfaces should be outside it. |
@@ -72,14 +82,10 @@ For steady, uniform light, leave Cookie empty. For lighting that never changes, 
 
 ## Older Shader Support
 
-Current integrations show textured Area emission. A **2.x-compatible shader that already supports Area Lights** receives one average cookie color instead. This keeps the screen light visible, but loses image detail and orientation. Default Unity shaders receive neither path.
+Current integrations show the image's different colors. Older **2.x shaders with Area Light support** receive one average color instead. Check [shader support](./CompatibleShaders.md) if the detail is missing.
 
-[LightVolumeTVGI](./HowToUse_TVScreensIntegration.md) remains useful for a different effect: tinting pre-baked additive lighting with one average screen color. Use that when the baked bounce pattern is part of the intended result.
+Use [LightVolumeTVGI](./HowToUse_TVScreensIntegration.md) when you want to tint a baked bounce pattern with the screen's average color.
 
 ## Runtime Changes
 
-Use `SetColor()` and `SetIntensity()` to change brightness or tint. For a moving screen, Dynamic plus Auto Update Volumes tracks its transform. If you manage transforms manually, call `UpdateTransform()` after moving or rotating and `UpdateScale()` after a scale-only change.
-
-Use `SetCustomTexture(texture)` or `SetCustomMaterial(material)` to replace the Cookie and request the required array rebuild. To keep a snapshot, use `SetCustomTexture(texture, false, false)` or `SetCustomMaterial(material, false)`. Reuse an existing source and update its contents for continuous animation; repeatedly swapping sources causes array rebuilds.
-
-See the [UdonSharp API](./UdonSharpAPI.md#pointlightvolumeinstance) for exact signatures.
+Use `SetColor()` and `SetIntensity()` for tint and brightness, or `SetCustomTexture()` and `SetCustomMaterial()` to replace the Cookie. For animation, update the existing source instead of replacing it every frame. See the [UdonSharp API](./ScriptingAPI.md#pointlightvolumeinstance) for movement and snapshot options.

@@ -2,4 +2,4 @@
 
 # Shader Documentation Moved
 
-This documentation has moved to [Shader Integration](./ForDevelopers.md).
+Use [Shader Integration](./ForDevelopers.md) for examples and the shader function reference.

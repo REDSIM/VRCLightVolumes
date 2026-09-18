@@ -1,8 +1,20 @@
-[VRC Light Volumes](../README.md) | [How to Use](./HowToUse.md) | [Best Practices](./BestPractices.md) | [UdonSharp API](./UdonSharpAPI.md) | [Unity Editor API](./UnityEditorAPI.md) | [Shader Integration](./ForDevelopers.md) | [Compatible Shaders](./CompatibleShaders.md)
+[VRC Light Volumes](../README.md) | [How to Use](./HowToUse.md) | [Best Practices](./BestPractices.md) | [Scripting API](./ScriptingAPI.md) | [Shader Integration](./ForDevelopers.md) | [Compatible Shaders](./CompatibleShaders.md)
 
 # Debugging Light Volumes
 
-**Guides:** [Overview](./HowToUse.md) · [Regular Light Volumes](./HowToUse_RegularLightVolumes.md) · [Point Light Volumes](./HowToUse_PointLightVolumes.md) · [Froxel Clustering](./HowToUse_FroxelClustering.md) · [Shadows](./HowToUse_Shadows.md) · [Material Sources](./HowToUse_PointLightMaterialSources.md) · [Area Light Emission](./HowToUse_AreaLightEmission.md) · [AudioLink](./HowToUse_AudioLinkIntegration.md) · [TV Screens (Older Workflow)](./HowToUse_TVScreensIntegration.md) · **Debugging** · [How It Works](./HowToUse_HowItWorks.md)
+| Menu |
+| --- |
+| [Overview](./HowToUse.md) |
+| [Regular Light Volumes](./HowToUse_RegularLightVolumes.md) |
+| [Point Light Volumes](./HowToUse_PointLightVolumes.md) |
+| [Froxel Clustering](./HowToUse_FroxelClustering.md) |
+| [Shadows](./HowToUse_Shadows.md) |
+| [Material Sources](./HowToUse_PointLightMaterialSources.md) |
+| [Area Light Emission](./HowToUse_AreaLightEmission.md) |
+| [AudioLink](./HowToUse_AudioLinkIntegration.md) |
+| [TV Screens (Older Workflow)](./HowToUse_TVScreensIntegration.md) |
+| **Debugging**<br />• [Inspect The Lighting In Scene View](#inspect-the-lighting-in-scene-view)<br />• [Inspect A Baked Volume's Grid](#inspect-a-baked-volumes-grid)<br />• [Check Runtime State In The Inspector](#check-runtime-state-in-the-inspector)<br />• [Use The Optional Avatar Debugger](#use-the-optional-avatar-debugger) |
+| [How It Works](./HowToUse_HowItWorks.md) |
 
 Start with a test sphere using `Light Volume Samples/Light Volume PBR`. Keep **Color** white and **Metallic** at `0`, and set **Smoothness** to `0` so reflections do not distract from the lighting. Move it between bright and dark parts of the room: its surface should change color and brightness. If it looks correct but another object does not, check that object's [shader support and settings](./CompatibleShaders.md) before changing the bake.
 
@@ -14,18 +26,18 @@ Start with **VRCLV SH L1** and move your test sphere across the problem area. If
 
 | Mode | What it shows | Use it to check |
 | --- | --- | --- |
-| **VRCLV SH L1** | Light Volume lighting evaluated with the mesh's surface normals, including L0 and L1. | Directional lighting and transitions across surfaces. |
+| **VRCLV SH L1** | Light Volume lighting with surface direction. | Directional lighting and transitions across surfaces. |
 | **VRCLV SH L0** | The average lighting color without the directional part. | Color and brightness changes without surface direction affecting the result. |
-| **VRCLV Fine Clustering** | Colors identifying the possible-light sets in the final clustering grid. | Where the grid separates unrelated Point Light Volumes. |
-| **VRCLV Coarse Clustering** | The possible-light sets in the larger helper cells. | How the coarse and fine grids differ. |
+| **VRCLV Fine Clustering** | Groups of lights in the final grid, shown as colors. | Where the grid separates unrelated Point Light Volumes. |
+| **VRCLV Coarse Clustering** | Groups of lights in the larger cells. | How the coarse and fine grids differ. |
 
-These modes replace the materials in Scene view. They do not show your textures, normal maps or glossy highlights, and do not prove that an object's usual shader supports Light Volumes. Return to **Shaded** to inspect the actual materials.
+These views replace the materials. Return to **Shaded** to check the object's own textures, shading and Light Volume support.
 
 | Shaded: the usual materials | VRCLV SH L1: Light Volume lighting |
 | --- | --- |
 | ![Matte spheres receiving room lighting, with baked wall lightmaps visible behind them](./Images/debug-shaded.png) | ![The same spheres in the L1 debug view, with the outside walls black](./Images/debug-sh-l1.png) |
 
-Compare the spheres. Shaded also shows the walls' lightmaps. The debug view samples Light Volumes instead; these walls are outside the example volume, so they appear black.
+Compare the spheres. The walls have lightmaps in **Shaded**, but appear black in the debug view because they are outside this Light Volume.
 
 Clustering colors are identifiers, not a brightness or performance heat map. Black means an empty or unavailable light set; it does not necessarily mean broken lighting. Check **Clustering Enabled**, **Min Lights Count** and the Manager's **Debug** section. See [Froxel Clustering](./HowToUse_FroxelClustering.md) for the full workflow.
 
@@ -36,7 +48,7 @@ Clustering colors are identifiers, not a brightness or performance heat map. Bla
 3. Look for missing coverage, a grid too coarse for the shadow, or unexpected bright or dark samples.
 4. Click **Preview Voxels** again to turn it off.
 
-Before a bake, the spheres show placement. With all three baked texture fields assigned, they show that volume's stored lighting, tint and correction. This preview reads the selected volume's source textures; it does not combine every overlapping volume and Point Light.
+Before a bake, the spheres show placement. After baking, they show the selected volume's lighting, tint and correction. Other volumes and Point Lights do not affect this preview.
 
 For a gap or a sudden transition, check the bounds first, then **Weight** and **Smooth Blending**. For lost detail, adjust density in that area and rebake. See [Regular Light Volumes](./HowToUse_RegularLightVolumes.md).
 
@@ -44,7 +56,7 @@ For a gap or a sudden transition, check the bounds first, then **Weight** and **
 
 Enter Play Mode and expand **Debug** on the Manager or a light. These fields are read-only.
 
-- On a Regular Light Volume, check **Manager**, **Registered** and **Active**. They show whether it belongs to a Manager and is eligible to render.
+- On a Regular Light Volume, check **Manager**, **Registered** and **Active** to see whether it can contribute lighting.
 - On a Point Light Volume, check **Resolved Light Data**, **Resolved Projection** and **Resolved Shadows** for the data the shader receives.
 - On the Manager, check **Cookie Array**, **Shadow Array** and **Clustering Status** when one of those features is missing.
 
@@ -54,7 +66,7 @@ Some live fields are only populated in Play Mode. Read Console errors alongside 
 
 ## Use The Optional Avatar Debugger
 
-The package includes a debugger for a **PC test avatar**. It reads the lighting supplied by the current world; it does not add lights to the world.
+Use the optional **PC avatar debugger** to inspect the current world's lighting in VRChat.
 
 Install VRC Light Volumes in the avatar project, then choose the prefab matching your avatar tool:
 
@@ -63,7 +75,7 @@ Install VRC Light Volumes in the avatar project, then choose the prefab matching
 | [VRCFury](https://vrcfury.com/download/) | `Extra/Light Volume Debugger/VRCFury/Light Volume Debugger VRCFury.prefab` |
 | [Modular Avatar](https://modular-avatar.nadena.dev/docs/intro) | `Extra/Light Volume Debugger/ModularAvatar/Light Volume Debugger MA.prefab` |
 
-Only the chosen avatar tool is needed. The Modular Avatar prefab declares a minimum version of **1.18.0**. Neither tool is required for the world's Light Volume setup.
+Install the tool for your chosen prefab. The Modular Avatar version requires **1.18.0** or newer.
 
 1. Drag one prefab under the avatar's root object.
 2. Build the avatar using its normal VRChat Avatar SDK workflow.
@@ -86,4 +98,4 @@ The prefab may appear empty in the Editor: its activation animation assigns the 
 
 Modular Avatar places the three display modes under **Draw Mode**. VRCFury uses a **Mode** slider for the same displays. **Auto Volume ID** starts enabled in both prefabs.
 
-Turn the debugger off when comparing normal appearance or measuring performance. Its overlay adds rendering work. For lighting changes suggested by these views, use [Best Practices](./BestPractices.md).
+Turn the debugger off when comparing normal appearance or measuring frame rate. See [Best Practices](./BestPractices.md) for lighting adjustments.

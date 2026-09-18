@@ -1,12 +1,24 @@
-[VRC Light Volumes](../README.md) | [How to Use](./HowToUse.md) | [Best Practices](./BestPractices.md) | [UdonSharp API](./UdonSharpAPI.md) | [Unity Editor API](./UnityEditorAPI.md) | [Shader Integration](./ForDevelopers.md) | [Compatible Shaders](./CompatibleShaders.md)
+[VRC Light Volumes](../README.md) | [How to Use](./HowToUse.md) | [Best Practices](./BestPractices.md) | [Scripting API](./ScriptingAPI.md) | [Shader Integration](./ForDevelopers.md) | [Compatible Shaders](./CompatibleShaders.md)
 
 # Point Light Material Sources
 
-**Guides:** [Overview](./HowToUse.md) · [Regular Light Volumes](./HowToUse_RegularLightVolumes.md) · [Point Light Volumes](./HowToUse_PointLightVolumes.md) · [Froxel Clustering](./HowToUse_FroxelClustering.md) · [Shadows](./HowToUse_Shadows.md) · **Material Sources** · [Area Light Emission](./HowToUse_AreaLightEmission.md) · [AudioLink](./HowToUse_AudioLinkIntegration.md) · [TV Screens (Older Workflow)](./HowToUse_TVScreensIntegration.md) · [Debugging](./HowToUse_Debugging.md) · [How It Works](./HowToUse_HowItWorks.md)
+| Menu |
+| --- |
+| [Overview](./HowToUse.md) |
+| [Regular Light Volumes](./HowToUse_RegularLightVolumes.md) |
+| [Point Light Volumes](./HowToUse_PointLightVolumes.md) |
+| [Froxel Clustering](./HowToUse_FroxelClustering.md) |
+| [Shadows](./HowToUse_Shadows.md) |
+| **Material Sources**<br />• [Assign A Material](#assign-a-material)<br />• [Example: Animated Colored Stripes](#example-animated-colored-stripes)<br />• [Color And Alpha](#color-and-alpha)<br />• [Updates And Snapshots](#updates-and-snapshots)<br />• [Cubemap Sources](#cubemap-sources)<br />• [Shadow Map Materials](#shadow-map-materials) |
+| [Area Light Emission](./HowToUse_AreaLightEmission.md) |
+| [AudioLink](./HowToUse_AudioLinkIntegration.md) |
+| [TV Screens (Older Workflow)](./HowToUse_TVScreensIntegration.md) |
+| [Debugging](./HowToUse_Debugging.md) |
+| [How It Works](./HowToUse_HowItWorks.md) |
 
-A Material source generates the image used by a light. Use it for animated patterns, procedural emission or copying an image from another system. A static texture is simpler when the image never changes.
+A Material source generates a light's image. Use it for animated patterns or procedural effects. Use a texture for a fixed image.
 
-The Manager draws **pass 0** of the Material into the light's shared texture array. It does not render a screen mesh or reproduce the appearance of a lit world material. Start with an unlit shader that draws the intended emission image using `0..1` UVs.
+Start with an unlit image shader, such as the example below. A screen's usual lit material may not produce the same image when used as a light source.
 
 ## Assign A Material
 
@@ -23,7 +35,7 @@ The Manager draws **pass 0** of the Material into the light's shared texture arr
 3. Leave Manager **Auto Update Textures** enabled for animation.
 4. Check the light on a surface with a compatible shader. Adjust the light's Color and Intensity separately from the generated image.
 
-The same Material object can be shared by several lights. Its output is generated once per compatible shared entry, then each light applies its own brightness, color and transform. If two lights need different Material parameters, give them separate Material objects.
+Several lights can share one Material. Give them separate Materials when their image settings need to differ.
 
 ## Example: Animated Colored Stripes
 
@@ -67,11 +79,9 @@ Shader "Examples/Light Volume Stripes" {
 
 For your own source shader, draw the image in **pass 0** with `0..1` UVs and use `Cull Off`, `ZWrite Off` and `ZTest Always`, as in the example.
 
-The Material's own texture/color properties remain available, including an assigned `_MainTex`. The Manager does not automatically supply the light's Color, Intensity, position or shadow clip planes. Expose and set any such inputs yourself.
-
 ## Color And Alpha
 
-Cookie output is **linear color**. The light multiplies it by Color and Intensity. HDR values above `1` are supported within the half-precision cookie array's range.
+Output **linear color** from the source shader. The light applies its own Color and Intensity afterward. HDR colors are supported.
 
 | Light type | Output interpretation |
 | --- | --- |
@@ -81,81 +91,34 @@ Cookie output is **linear color**. The light multiplies it by Color and Intensit
 
 Write alpha `1` for a fully emitting Spot or Area image. A shader that returns zero alpha may look bright in an RGB preview but produce no light.
 
-**Cookie Resolution** controls the output resolution for projection sources. **Shadow Resolution** controls the shared shadow output. Cubemap output uses six slices, so each refresh draws pass 0 six times.
+Use the Manager's **Cookie Resolution** to choose image detail. Cubemap sources generate six images per update, so keep animated ones simple.
 
 ## Updates And Snapshots
 
-Material, Render Texture and Custom Render Texture sources default to live updates. Manager **Auto Update Textures** must also be enabled to refresh them. Static texture assets are copied only when the array is built or rebuilt.
+Keep Manager **Auto Update Textures** enabled for animated Material, Render Texture and Custom Render Texture sources.
 
-From Udon, `SetCustomMaterial(material)` enables live projection updates. `SetCustomMaterial(material, false)` keeps a snapshot from the latest rebuild. Equivalent texture overloads are listed in the [UdonSharp API](./UdonSharpAPI.md#pointlightvolumeinstance).
+In these Udon calls, `Lamp` is your assigned `PointLightVolumeInstance` and `cookieMaterial` is the source Material.
 
-Change parameters on the existing Material for continuous effects. Replacing the source requests an array rebuild. A source used with both live and snapshot modes needs separate entries.
+`SetCustomMaterial(Material material)` enables live projection updates:
 
-<details>
-<summary>Advanced: cubemap and shadow source shaders</summary>
+```csharp
+Lamp.SetCustomMaterial(cookieMaterial);
+```
+
+Alternatively, use `SetCustomMaterial(Material material, bool autoUpdate)` with `false` to keep a snapshot until the shared array is rebuilt:
+
+```csharp
+Lamp.SetCustomMaterial(cookieMaterial, false);
+```
+
+Equivalent texture overloads are listed in the [UdonSharp API](./ScriptingAPI.md#pointlightvolumeinstance).
+
+For animation, change the existing Material's parameters instead of assigning a new Material every frame.
 
 ## Cubemap Sources
 
-For Point cookies and cubemap shadows, the Manager renders the Material once for each face. It supplies:
-
-```hlsl
-float4 _CustomRenderTextureInfo;
-// x = output width, y = output height
-// Cubemap: z = 1, w = face index
-// Single slice: z = array depth, w = destination slice index
-```
-
-A single-slice cookie normally ignores this property. Do not use its destination slice index as a stable light ID; array rebuilds can change it.
-
-For cubemaps, `_CustomRenderTextureInfo.w` is `0: +X`, `1: -X`, `2: +Y`, `3: -Y`, `4: +Z`, `5: -Z`. Ignoring it writes the same image to all six faces. To generate a direction-based pattern, convert face UVs with:
-
-```hlsl
-float3 CubemapDirection(float2 uv01, float face) {
-    float2 uv = uv01 * 2.0 - 1.0;
-    if (face < 0.5) return normalize(float3(1.0, -uv.y, -uv.x));
-    if (face < 1.5) return normalize(float3(-1.0, -uv.y, uv.x));
-    if (face < 2.5) return normalize(float3(uv.x, 1.0, uv.y));
-    if (face < 3.5) return normalize(float3(uv.x, -1.0, -uv.y));
-    if (face < 4.5) return normalize(float3(uv.x, -uv.y, 1.0));
-    return normalize(float3(-uv.x, -uv.y, -1.0));
-}
-```
-
-For example, `abs(CubemapDirection(i.uv, _CustomRenderTextureInfo.w))` gives RGB colors based on direction. A procedural pattern based on this direction can cross face boundaries consistently.
+A Point Light Material draws six cubemap faces. For a direction-based image, use the [cubemap shader example](./TechnicalDetails.md#cubemap-material-sources).
 
 ## Shadow Map Materials
 
-Use a shadow Material only if you are implementing your own shadow source. For geometry-cast shadows, use the [built-in shadow baker](./HowToUse_Shadows.md).
-
-The shader must output **EVSM moments**, not a black-and-white visibility mask or raw depth:
-
-| Channel | Data |
-| --- | --- |
-| R | Positive warped depth. |
-| G | Negative warped depth. |
-| B | Square of R. |
-| A | Square of G. |
-
-The package's encoding is:
-
-```hlsl
-float4 EncodeVRCLVShadowEVSM(float depth01) {
-    float depth = saturate(depth01) * 2.0 - 1.0;
-    float positive = exp(5.54 * depth);
-    float negative = -exp(-5.0 * depth);
-    return float4(positive, negative, positive * positive, negative * negative);
-}
-```
-
-Use **radial distance from the light**, including for a projected Spot shadow:
-
-```hlsl
-float depth01 = (radialDistance - shadowNearClip)
-    / max(shadowFarClip - shadowNearClip, 0.0001);
-```
-
-The projection, bake pose and near/far range must match the light's shadow receiver. A raw perspective-camera depth value is not a radial distance and must be converted first. See [PointLightShadowDepthEncode.shader](../Packages/red.sim.lightvolumes/Shaders/Editor/PointLightShadowDepthEncode.shader) for the package's conversion and bias handling.
-
-For an external source, an explicit **Far Plane** is easiest to keep in sync. `0 (Auto)` resolves a range from the light, but that value is not automatically passed to your Material. Single-view Spot shadows must match the Spot shadow-camera projection; cubemap shadows must provide all six matching faces.
-
-</details>
+For shadows from scene objects, use the [shadow baker](./HowToUse_Shadows.md). A custom Shadow Map Material needs encoded depth data; a black-and-white image won't work. See the [shader requirements and example](./TechnicalDetails.md#shadow-map-materials).

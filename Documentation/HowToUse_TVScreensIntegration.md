@@ -1,12 +1,24 @@
-[VRC Light Volumes](../README.md) | [How to Use](./HowToUse.md) | [Best Practices](./BestPractices.md) | [UdonSharp API](./UdonSharpAPI.md) | [Unity Editor API](./UnityEditorAPI.md) | [Shader Integration](./ForDevelopers.md) | [Compatible Shaders](./CompatibleShaders.md)
+[VRC Light Volumes](../README.md) | [How to Use](./HowToUse.md) | [Best Practices](./BestPractices.md) | [Scripting API](./ScriptingAPI.md) | [Shader Integration](./ForDevelopers.md) | [Compatible Shaders](./CompatibleShaders.md)
 
 # TV Screens Integration (Older Workflow)
 
-**Guides:** [Overview](./HowToUse.md) · [Regular Light Volumes](./HowToUse_RegularLightVolumes.md) · [Point Light Volumes](./HowToUse_PointLightVolumes.md) · [Froxel Clustering](./HowToUse_FroxelClustering.md) · [Shadows](./HowToUse_Shadows.md) · [Material Sources](./HowToUse_PointLightMaterialSources.md) · [Area Light Emission](./HowToUse_AreaLightEmission.md) · [AudioLink](./HowToUse_AudioLinkIntegration.md) · **TV Screens (Older Workflow)** · [Debugging](./HowToUse_Debugging.md) · [How It Works](./HowToUse_HowItWorks.md)
+| Menu |
+| --- |
+| [Overview](./HowToUse.md) |
+| [Regular Light Volumes](./HowToUse_RegularLightVolumes.md) |
+| [Point Light Volumes](./HowToUse_PointLightVolumes.md) |
+| [Froxel Clustering](./HowToUse_FroxelClustering.md) |
+| [Shadows](./HowToUse_Shadows.md) |
+| [Material Sources](./HowToUse_PointLightMaterialSources.md) |
+| [Area Light Emission](./HowToUse_AreaLightEmission.md) |
+| [AudioLink](./HowToUse_AudioLinkIntegration.md) |
+| **TV Screens (Older Workflow)**<br />• [Tint Baked Lighting With A Video](#tint-baked-lighting-with-a-video)<br />• [Practical Limits](#practical-limits)<br />• [Component Settings](#component-settings) |
+| [Debugging](./HowToUse_Debugging.md) |
+| [How It Works](./HowToUse_HowItWorks.md) |
 
-**LightVolumeTVGI** reads one average color from a screen image and applies it to lights. Use it to recolor a pre-baked additive Light Volume, keeping its baked bounce and shadow pattern. The screen color changes at runtime; that lighting pattern does not.
+**LightVolumeTVGI** tints baked lighting with a screen's average color. Use it with an additive Light Volume to keep a baked bounce and shadow pattern while its color follows the video.
 
-For a new screen that should cast different image colors onto nearby surfaces, use [Area Light Emission](./HowToUse_AreaLightEmission.md). TVGI keeps only one average color and does not create screen reflections.
+For different image colors on nearby surfaces, use [Area Light Emission](./HowToUse_AreaLightEmission.md). TVGI uses one average color and doesn't create screen reflections.
 
 ![A screen tinting baked additive lighting around it.](./Preview_13.png)
 
@@ -20,17 +32,17 @@ For a new screen that should cast different image colors onto nearby surfaces, u
 6. Add the additive volume to **Target Light Volumes**. Optionally add Point Light Volumes that should follow the same screen color.
 7. Enter Play Mode with video playing. Adjust each target light's own **Intensity** and leave **Anti Flickering** enabled for smoother changes.
 
-The source does **not** need mipmaps: TVGI makes its own small mipmapped texture to calculate the average. **Auto Update Volumes** is also unnecessary for this color update.
+The source doesn't need mipmaps, and color updates don't need **Auto Update Volumes**.
 
-Keep both target lists initialized. Set an unused list's **Size** to `0` and remove any Missing/None entries from populated lists; TVGI does not skip missing targets.
+Set unused target lists to **Size = 0**. Remove any Missing/None entries from lists you use.
 
 ## Practical Limits
 
 Use an additive volume dedicated to the screen. Assigning the room's main override volume would recolor the room's other baked lights as well.
 
-The receiver still needs a compatible shader. Moving props and avatars can sample the changing baked light, but TVGI does not capture new moving shadows or move the baked bounce pattern with a moving screen. Use a Dynamic Area Light when the emitter must move.
+TVGI changes the bake's color, not its shape or shadows. Use a Dynamic Area Light for a moving screen.
 
-Do not add the same screen contribution twice. If the main scene already includes its baked light, adding this additive result makes it brighter again. Also avoid driving one target with both TVGI and AudioLink: both replace its Color.
+Use either TVGI or AudioLink on each target. Both change its Color, so they will conflict.
 
 ## Component Settings
 

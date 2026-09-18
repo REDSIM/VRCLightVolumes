@@ -1,12 +1,24 @@
-[VRC Light Volumes](../README.md) | [How to Use](./HowToUse.md) | [Best Practices](./BestPractices.md) | [UdonSharp API](./UdonSharpAPI.md) | [Unity Editor API](./UnityEditorAPI.md) | [Shader Integration](./ForDevelopers.md) | [Compatible Shaders](./CompatibleShaders.md)
+[VRC Light Volumes](../README.md) | [How to Use](./HowToUse.md) | [Best Practices](./BestPractices.md) | [Scripting API](./ScriptingAPI.md) | [Shader Integration](./ForDevelopers.md) | [Compatible Shaders](./CompatibleShaders.md)
 
 # Froxel Clustering
 
-**Guides:** [Overview](./HowToUse.md) · [Regular Light Volumes](./HowToUse_RegularLightVolumes.md) · [Point Light Volumes](./HowToUse_PointLightVolumes.md) · **Froxel Clustering** · [Shadows](./HowToUse_Shadows.md) · [Material Sources](./HowToUse_PointLightMaterialSources.md) · [Area Light Emission](./HowToUse_AreaLightEmission.md) · [AudioLink](./HowToUse_AudioLinkIntegration.md) · [TV Screens (Older Workflow)](./HowToUse_TVScreensIntegration.md) · [Debugging](./HowToUse_Debugging.md) · [How It Works](./HowToUse_HowItWorks.md)
+| Menu |
+| --- |
+| [Overview](./HowToUse.md) |
+| [Regular Light Volumes](./HowToUse_RegularLightVolumes.md) |
+| [Point Light Volumes](./HowToUse_PointLightVolumes.md) |
+| **Froxel Clustering**<br />• [Start With The Defaults](#start-with-the-defaults)<br />• [Tune The Lights Before The Grid](#tune-the-lights-before-the-grid)<br />• [Debug Views](#debug-views)<br />• [Shadow-Assisted Culling](#shadow-assisted-culling)<br />• [VR, Mirrors And Other Cameras](#vr-mirrors-and-other-cameras)<br />• [Limits And Fallbacks](#limits-and-fallbacks)<br />• [For Shader Developers](#for-shader-developers) |
+| [Shadows](./HowToUse_Shadows.md) |
+| [Material Sources](./HowToUse_PointLightMaterialSources.md) |
+| [Area Light Emission](./HowToUse_AreaLightEmission.md) |
+| [AudioLink](./HowToUse_AudioLinkIntegration.md) |
+| [TV Screens (Older Workflow)](./HowToUse_TVScreensIntegration.md) |
+| [Debugging](./HowToUse_Debugging.md) |
+| [How It Works](./HowToUse_HowItWorks.md) |
 
-Froxel Clustering helps shaders skip Point Light Volumes that cannot reach a surface. It divides the camera's view into small 3D cells, called **froxels**, and makes a light list for each cell. A material checks that short list instead of every active light.
+Froxel Clustering skips lights that can't reach a surface. It divides the view into small 3D cells called **froxels**.
 
-It helps most when you have many small lights spread across a scene. It helps less when only a few lights are active or most lights overlap the same area. Regular baked Light Volumes are unaffected.
+Use it for lights spread across different areas. It helps less when most lights overlap, and doesn't affect baked Regular Light Volumes.
 
 ## Start With The Defaults
 
@@ -15,42 +27,38 @@ On the **Light Volume Manager**, find the **Froxel Clustering** section. New Man
 | Setting | Default | What it changes |
 | --- | --- | --- |
 | **Clustering Enabled** | On | Enables the optimization. |
-| **Min Lights Count** | `8` | Below this many active Point Light Volumes, use the ordinary light loop. |
+| **Min Lights Count** | `8` | Start clustering at this many active Point Light Volumes. |
 | **Angular Density** | `1` | How finely the grid divides the view horizontally and vertically. |
 | **Slices Count** | `100` | How finely it divides near-to-far depth. |
 | **Coarse Reduction** | `4x` | Size of the simpler grid used to prepare the final grid. |
 | **Shadow Culling** | Off | Additionally skip lights in cells completely hidden by their shadows. |
 
-Current compatible shaders use clustering automatically. No material toggle is required. Test a perspective Scene view, then compare frame time with clustering on and off in a representative target build.
+Current compatible shaders use clustering automatically. Compare it on and off in the same view, then test a build on your target device.
 
-Open the Manager's **Debug** foldout and check **Clustering Status**. It should show **Active** in a supported perspective view once **Active Point Lights** reaches **Min Lights Count**. Below the default threshold of eight lights, the ordinary light loop is expected.
+In a perspective Scene view, open the Manager's **Debug** foldout. **Clustering Status** should show **Active** once **Active Point Lights** reaches **Min Lights Count**. Fewer than eight lights won't use clustering with the defaults.
 
-Turning clustering on should preserve the lighting. Judge the change by frame time; it does not make lights brighter or shadows more detailed.
-
-Keep one primary Light Volume Manager across the loaded world scenes. Its light lists and clustering textures are shared by the shaders.
+The lighting should look the same. Compare frame time to decide whether clustering helps your scene.
 
 ## Tune The Lights Before The Grid
 
 1. Inspect each light's **Debug Range**. Reduce unnecessary reach and overlap first.
 2. Profile a busy view with the default grid. Also check a quiet area; clustering has its own setup cost.
-3. Increase **Angular Density** only if finer horizontal/vertical separation is useful. Both dimensions grow, so doubling it uses roughly four times as many cells.
-4. Increase **Slices Count** only if lights at different depths need better separation. Doubling it roughly doubles grid memory and build work.
-5. Compare the new result with the original. A finer grid is only worthwhile when the skipped lighting work pays for it.
+3. Try a higher **Angular Density** to separate lights across the view more finely.
+4. Try a higher **Slices Count** to separate lights at different depths.
+5. Keep a change only if it improves frame time. A finer grid can also make the scene slower.
 
-**Coarse Reduction** is an advanced tuning control. `2x` spends more work preparing the grid but can give the final pass fewer candidate lights. `8x` makes preparation cheaper but leaves more candidates to check. Keep `4x` unless profiling shows a reason to change it.
-
-The Manager shows estimated **Fine** and **Coarse** grid dimensions. It also includes their allocations in **Data size in VRAM**. Avoid maximum settings: the maximum 256 × 256 × 256 Fine grid alone needs about 256 MiB, before the Coarse grid and shadow-culling data.
+Leave **Coarse Reduction** at `4x` unless a measured comparison shows another value works better.
 
 ## Debug Views
 
 In the Scene view draw-mode menu, open **Light Volumes Debug** and select:
 
-- **VRCLV Fine Clustering:** the final candidate-light lists used by materials.
-- **VRCLV Coarse Clustering:** the larger cells used to prepare those lists.
+- **VRCLV Fine Clustering:** groups of lights in the final grid.
+- **VRCLV Coarse Clustering:** groups of lights in the larger cells.
 
-The colors identify different light lists. **They are not a heat map:** red is not slower than blue, and brightness does not show the number of lights. Matching colors usually mean matching candidate lists. Black means an empty list, a point outside the grid, or unavailable clustering.
+Colors identify different groups of possible lights, **not their cost or brightness**. Black means no lights in the cell, a point outside the grid, or inactive clustering.
 
-If most surfaces have the same color, many of them may share the same candidates. Check light ranges before raising grid resolution. Coarse cells are deliberately larger; extra candidates in that view are expected. Shadow Culling changes only the Fine view.
+If most surfaces have the same color, check light ranges before increasing grid detail. Coarse cells are larger. **Shadow Culling** changes only the Fine view.
 
 The same view with 12 Point Light Volumes:
 
@@ -58,48 +66,26 @@ The same view with 12 Point Light Volumes:
 | --- | --- | --- |
 | ![Twelve separated lights on a floor in the normal Shaded view](./Images/clustering-shaded.png) | ![Fine clustering view showing smaller regions with different candidate-light lists](./Images/clustering-fine.png) | ![Coarse clustering view showing larger regions with different candidate-light lists](./Images/clustering-coarse.png) |
 
-Colors identify candidate lists, **not cost**. The Coarse view has larger blocks; the Fine pass narrows down the candidates. Click an image to inspect it at full size.
+Compare the larger Coarse blocks with the smaller Fine regions. Click an image to inspect it at full size.
 
 ## Shadow-Assisted Culling
 
-Try **Shadow Culling** for scenes where walls and other large blockers hide many shadowed lights. It uses existing shadow maps to remove a light from a cell only when the whole cell can be treated as shadowed. It does not bake extra shadows.
+Try **Shadow Culling** (Hi-Z) when shadows cover large parts of a light's range. It uses the shadow maps to skip light calculations in fully shadowed cells. Keep it on only if it improves frame time.
 
-This needs additional GPU work and texture memory. Leave it off when shadows rarely hide complete cells or profiling shows no gain.
-
-- The light needs a valid shadow map and **Shading Strength = 1**. Lower strengths keep some unshadowed light, so that light cannot be removed this way.
-- Baked and one-shot runtime shadows can use this optimization.
-- Continuously auto-updated shadow sources temporarily use geometry-only clustering, avoiding a new shadow hierarchy every frame.
-- **Shadow Bleed Reduction** affects both visible shadows and the culling threshold. Tune it for the image first.
-
-The shadow hierarchy's resolution is chosen automatically. There is no separate Hi-Z resolution setting.
+Use baked or one-shot runtime shadows with **Shading Strength = 1**. Continuously updated shadows don't use this extra optimization. Tune **Shadow Bleed Reduction** for the visible result first.
 
 ## VR, Mirrors And Other Cameras
 
-The runtime grid follows VRChat's primary screen camera, centered between the eyes in VR. Eye offsets are included automatically.
-
-Mirrors and other cameras can reuse the grid for positions inside it. For positions outside it, shaders fall back to the full light list. This keeps those views lit correctly, though they may get less speedup. Orthographic Scene views do not preview clustering.
-
-Masks are reused when the existing grid still covers the camera and lights safely. When a rebuild is needed, its Coarse and Fine passes finish in that frame; there is no intentionally delayed lighting update.
+VR needs no extra setup. Check mirrors and other cameras when comparing performance: they can get less benefit than the main view. Use a perspective Scene view to preview clustering.
 
 ## Limits And Fallbacks
 
-Clustering does not raise the **128 active Point Light Volumes** limit or **Additive Max Overdraw**. The latter still caps expensive light evaluation per pixel, including some lights whose sampled cookie or shadow ultimately contributes no visible light.
+Clustering doesn't raise the **128 active Point Light Volumes** limit or **Additive Max Overdraw**. Reduce overlap if lights disappear at those limits.
 
-Unsupported shaders/devices, a missing perspective camera, an unavailable grid or a point outside its bounds use the ordinary light loop. If only Shadow Culling is unavailable, geometry-based clustering can continue.
+Lights still work when clustering is unavailable. Check **Clustering Status** and your [shader's support](./CompatibleShaders.md) if it never becomes active.
 
 If a script enables clustering after startup, make sure the Manager's **Shader Stripping** settings retain it. Automatic stripping follows the authored scene settings.
 
 ## For Shader Developers
 
-The current integration supports clustering on shader target 3.5+ with its D3D11, GLCore, Vulkan, GLES3 and Metal capability guard. Target 3.5 consumers use a bit-iteration fallback; target 4.5+ can use `firstbitlow`. The build shader targets 3.5, including for Quest/GLES3.
-
-Each cell stores a 128-bit candidate mask. The Coarse pass finds possible lights; the Fine pass refines that result. Range, Spot cone and Area front-side tests are conservative: extra candidates are allowed, then normal per-pixel lighting rejects them precisely.
-
-A custom shader that never needs clustering can opt out before including the library:
-
-```hlsl
-#define VRCLV_DISABLE_CLUSTERING 1
-#include "Packages/red.sim.lightvolumes/Shaders/LightVolumes.cginc"
-```
-
-This is a compile-time choice for that shader. The Manager cannot turn clustering back on for it. Keep it as an include-time option, rather than adding a material keyword and extra variants. The public lighting API remains the same.
+See [Shader Integration](./ForDevelopers.md) for the public lighting calls and [clustering technical details](./TechnicalDetails.md#froxel-clustering) for shader requirements and opt-out settings.

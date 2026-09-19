@@ -117,7 +117,7 @@ The light needs **Shadows** enabled and a Manager assigned. See the [UdonSharp A
 > [!IMPORTANT]
 > If **Shader Stripping** is enabled and the scene has no authored lights with shadows, automatic detection can remove shadow support needed by your scripts. Before building, turn off **Auto** in the Manager's Shader Stripping settings and retain **Shadows**, the required light types, and **Single-slice Shadows** or **Cubemap Shadows** as needed. Retain **World Space Shadows** too if you use it.
 
-You can also supply animated shadows from a **Render Texture** or **Material** through **Shadow Map** for custom effects. Keep the Manager's **Auto Update Textures** enabled for live updates. The source must use the expected shadow data format; an ordinary black-and-white mask or camera-depth texture will not work. See the [shadow source requirements and example](./TechnicalDetails.md#shadow-map-materials).
+You can also supply animated shadows from a **Render Texture** or **Material** through **Shadow Map** for custom effects. Keep the Manager's **Auto Update Textures** enabled for live updates. The source must use the expected shadow data format; an ordinary black-and-white mask or camera-depth texture will not work. See the [shadow source requirements and example](./HowToUse_PointLightMaterialSources.md#shadow-map-materials).
 
 ## Keep It Performant
 

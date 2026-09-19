@@ -2,7 +2,7 @@
 
 # Technical Details
 
-Use this reference when writing custom light-source shaders or extending Light Volumes. It lists supported lightmappers and covers data formats, shader requirements and runtime shadow behavior.
+Use this reference when extending Light Volumes. It lists supported lightmappers and covers lighting data formats, clustering and runtime shadow behavior.
 
 For scene setup, use these guides:
 
@@ -19,110 +19,6 @@ For scene setup, use these guides:
 | [Bakery](https://geom.io/bakery/wiki/index.php?title=Main_Page) |
 | [Hikari](https://doc.suzufactory.com/Hikari/) |
 | [Glim](https://github.com/z3y/glim) |
-
-## Cubemap Material Sources
-
-The Manager renders a Material once per face for Point cookies and cubemap shadows.
-It supplies this property:
-
-```hlsl
-float4 _CustomRenderTextureInfo;
-// x = output width, y = output height
-// Cubemap: z = 1, w = face index
-// Single slice: z = array depth, w = destination slice index
-```
-
-A single-slice cookie usually ignores this property.
-The destination slice index can change after an array rebuild.
-Use a separate identifier when an integration needs a stable light ID.
-
-The cubemap face order is:
-
-| Index | Face |
-| --- | --- |
-| 0 | +X |
-| 1 | -X |
-| 2 | +Y |
-| 3 | -Y |
-| 4 | +Z |
-| 5 | -Z |
-
-A Material that ignores the face index writes the same image to all six faces.
-The `CubemapDirection()` helper below converts `0..1` UVs and a face index to a normalized direction.
-Copy it into your source shader before the fragment function:
-
-```hlsl
-float3 CubemapDirection(float2 uv01, float face) {
-    float2 uv = uv01 * 2.0 - 1.0;
-    if (face < 0.5) return normalize(float3(1.0, -uv.y, -uv.x));
-    if (face < 1.5) return normalize(float3(-1.0, -uv.y, uv.x));
-    if (face < 2.5) return normalize(float3(uv.x, 1.0, uv.y));
-    if (face < 3.5) return normalize(float3(uv.x, -1.0, -uv.y));
-    if (face < 4.5) return normalize(float3(uv.x, -uv.y, 1.0));
-    return normalize(float3(-uv.x, -uv.y, -1.0));
-}
-```
-
-In the pass-0 fragment function, use the direction to draw a pattern across all faces.
-For example, with `i.uv` in `0..1`:
-
-```hlsl
-float3 direction = CubemapDirection(i.uv, _CustomRenderTextureInfo.w);
-return float4(abs(direction), 1);
-```
-
-This produces RGB colors from the direction and remains continuous across face boundaries.
-
-Sources: [material output](../Packages/red.sim.lightvolumes/UScripts/LightVolumeManager.Textures.cs#L1092), [receiver face convention](../Packages/red.sim.lightvolumes/Shaders/LightVolumes.cginc#L422).
-
-## Shadow Map Materials
-
-A shadow Material supplies a custom shadow source.
-Use the [built-in shadow baker](./HowToUse_Shadows.md) for shadows cast by scene geometry.
-
-The shader output contains EVSM moments:
-
-| Channel | Data |
-| --- | --- |
-| R | Positive warped depth. |
-| G | Negative warped depth. |
-| B | Square of R. |
-| A | Square of G. |
-
-The `EncodeVRCLVShadowEVSM()` helper below converts normalized radial depth to these four channels.
-Define it before your source shader's fragment function:
-
-```hlsl
-float4 EncodeVRCLVShadowEVSM(float depth01) {
-    float depth = saturate(depth01) * 2.0 - 1.0;
-    float positive = exp(5.54 * depth);
-    float negative = -exp(-5.0 * depth);
-    return float4(positive, negative, positive * positive, negative * negative);
-}
-```
-
-The receiver requires these moments rather than a visibility mask or raw depth.
-In the fragment function, encode your radial distance from the light, including for projected Spot shadows:
-
-```hlsl
-float depth01 = (radialDistance - shadowNearClip)
-    / max(shadowFarClip - shadowNearClip, 0.0001);
-return EncodeVRCLVShadowEVSM(depth01);
-```
-
-Supply `radialDistance`, `shadowNearClip` and `shadowFarClip` in the same world units.
-The projection, bake pose and near/far range must match the light's shadow receiver.
-Convert perspective-camera depth to radial distance before this calculation.
-The package's [depth encoder](../Packages/red.sim.lightvolumes/Shaders/Editor/PointLightShadowDepthEncode.shader#L57) supplies the conversion and bake-bias calculation.
-
-Use an explicit **Far Plane** for an external source when possible.
-**0 (Auto)** resolves the range from the light.
-The Manager does not pass that resolved value to the source Material.
-
-A single-view Spot source must match the Spot shadow-camera projection.
-A cubemap source must supply all six matching faces.
-
-Sources: [depth encoder](../Packages/red.sim.lightvolumes/Shaders/Editor/PointLightShadowDepthEncode.shader#L28), [shadow receiver](../Packages/red.sim.lightvolumes/Shaders/LightVolumes.cginc#L481), [Material inputs](../Packages/red.sim.lightvolumes/UScripts/LightVolumeManager.Textures.cs#L1092).
 
 ## Froxel Clustering
 

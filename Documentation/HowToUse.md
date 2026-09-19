@@ -29,11 +29,11 @@ VRC Light Volumes has two main parts:
 [**Point Light Volumes**](#setup-point-light-volumes) are custom realtime Point, Spot and Area lights, similar to Unity's built-in lights. They work separately from Regular Light Volumes and do not store lighting in voxels. Use them for lamps, flashlights and screens that move or change in game.
 
 > [!IMPORTANT]
-> World surfaces and props need a [compatible shader](./CompatibleShaders.md), with Light Volumes enabled if the shader has an option for it. Unity's Standard shader does not support Light Volumes.
+> World surfaces and props need a [shader that supports VRC Light Volumes](./CompatibleShaders.md), with Light Volumes enabled if the shader has an option for it. Unity's Standard shader does not support Light Volumes.
 
 ## Light Volumes for Avatars
 
-Use a [compatible avatar shader](./CompatibleShaders.md) and enable its Light Volumes option if it has one. No avatar component is needed.
+Use an [avatar shader that supports VRC Light Volumes](./CompatibleShaders.md) and enable its Light Volumes option if it has one. No avatar component is needed.
 
 > [!NOTE]
 > Light Volumes are set up in worlds. Avatars can receive their lighting, but cannot act as Light Volume light sources.
@@ -72,7 +72,7 @@ Select a Light Volume and click **Generate Light Probes**. Choose the probe dens
 1. Save the scene and select the **Light Volume Manager**. Set **Baking Mode** to **Progressive** for Unity Progressive, **Bakery** for Bakery, or **Custom Lightmapper** for other supported lightmappers.
 2. Run a bake in your lightmapper. Wait for the bake and Light Volume processing to finish.
 3. Select the volume. Its **Texture 0**, **Texture 1** and **Texture 2** fields should now be filled.
-4. Check the baked lighting on objects using a compatible shader.
+4. Check the baked lighting on objects using a shader that supports VRC Light Volumes.
 5. Check the lighting in Play Mode and in a VRChat build on your target platform.
 6. Save the scene again.
 
@@ -99,7 +99,7 @@ See [Regular Light Volumes](./HowToUse_RegularLightVolumes.md) for density, over
 
 5. Enable **Debug Range** to see how far the light reaches. Raise **Brightness Cutoff** on the Manager to shorten light ranges and reduce overlap. Keep it low enough to avoid visible cutoffs.
 6. If the light will move, rotate or scale in game, enable **Dynamic** on it and **Auto Update Volumes** on the Manager.
-7. To add shadows, enable **Shadows > Enabled** and click **Bake Shadows**. Rebake after moving the light or shadow-casting geometry. Use a [runtime shadow baker](./HowToUse_Shadows.md#runtime-shadow-baker) for real-time shadow updates.
+7. To add shadows, enable **Shadows > Enabled** and click **Bake Shadows**. Rebake after moving the light or shadow-casting geometry. Use a [runtime shadow baker](./HowToUse_Shadows.md#realtime-shadows) for real-time shadow updates.
 
 A light can change color or intensity without **Dynamic**. That setting updates its position, rotation and scale. See [Point Light Volumes](./HowToUse_PointLightVolumes.md) for light types and projection settings.
 

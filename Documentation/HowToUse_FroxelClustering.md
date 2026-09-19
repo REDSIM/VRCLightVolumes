@@ -20,7 +20,7 @@ A **froxel** is a small 3D cell in the camera's viewing volume, called the **fru
 
 Clustering works best with many lights, especially dozens spread across a scene with little overlap. If many large lights cover the same area, clustering cannot solve that overlap: those lights still need to be calculated there.
 
-The lighting will look the same. Building the grid adds GPU work, so clustering can make some scenes slower. Compare frame time with it on and off on your target device.
+Clustering usually improves performance, and the lighting will look the same. It still takes GPU time to build the grid, so overly high **Angular Density** or **Slices Count**, or heavy light overlap, can outweigh the savings. Compare frame time with clustering on and off for each setup on the target device.
 
 ## Setup Froxel Clustering
 
@@ -33,7 +33,7 @@ Enable **Clustering Enabled** in the **Light Volume Manager's Froxel Clustering*
 | **Angular Density** | Grid resolution across the view. Higher values separate nearby lights more precisely, but take more time to process. |
 | **Slices Count** | Number of depth slices between the camera's near and far clipping planes. More slices separate lights at different distances more precisely. |
 | **Coarse Reduction** | Divides the final grid resolution along all three axes to build the Coarse grid. |
-| [**Shadow Culling** (Hi-Z)](#shadow-culling-hi-z) | Skips lights in cells fully covered by their shadows. |
+| [**Shadow&nbsp;Culling**&nbsp;(Hi&#8209;Z)](#shadow-culling-hi-z) | Skips lights in cells fully covered by their shadows. |
 
 **Coarse Reduction** of **2x** means about **8 times fewer froxels** in the Coarse grid; **4x** means **64 times fewer**, and **8x** means **512 times fewer**. A larger reduction makes the Coarse pass cheaper, but can leave more lights for the Final pass to check.
 
@@ -65,21 +65,13 @@ Colors identify groups of possible lights, not brightness or rendering cost.
 
 The same view with 12 Point Light Volumes:
 
-**Shaded**
-
-![Twelve lights in the normal Shaded view.](./Images/clustering-shaded.png)
-
-**Coarse**
-
-![Coarse clustering: large cells group possible lights.](./Images/clustering-coarse.png)
-
-**Fine**
-
-![Fine clustering: smaller cells narrow down the light groups.](./Images/clustering-fine.png)
+| Shaded | Coarse | Fine |
+| --- | --- | --- |
+| ![Twelve lights in the normal Shaded view.](./Images/clustering-shaded.png) | ![Coarse clustering: large cells group possible lights.](./Images/clustering-coarse.png) | ![Fine clustering: smaller cells narrow down the light groups.](./Images/clustering-fine.png) |
 
 ## Shadow Culling (Hi-Z)
 
-Enable **Shadow Culling** when shadows cover large parts of a light's range. Hi-Z uses several levels of shadow-map depth data to find fully shadowed cells. Clustering can then skip that light in those cells, saving lighting calculations. Compare frame time with it on and off to check the benefit.
+Enable **Shadow Culling** when shadows cover large parts of a light's range. Hi-Z stands for **Hierarchical Z Buffer**. It uses several levels of shadow-map depth data to find fully shadowed cells. Clustering can then skip that light in those cells, saving lighting calculations. Compare frame time with it on and off to check the benefit.
 
 > [!IMPORTANT]
 > A light's **Shading Strength** must be **1**; otherwise, Shadow Culling cannot skip that light. The runtime baker's **Realtime** mode also excludes its light from Hi-Z.

@@ -16,9 +16,9 @@
 | [Debugging](./HowToUse_Debugging.md) |
 | **How It Works**<br />• [Why A Grid Helps](#why-a-grid-helps)<br />• [Remembering Color And Direction](#remembering-color-and-direction)<br />• [Overlapping Volumes](#overlapping-volumes)<br />• [Point, Spot And Area Lights](#point-spot-and-area-lights)<br />• [Why Overlap Costs Performance](#why-overlap-costs-performance)<br />• [For Developers](#for-developers) |
 
-A **Regular Light Volume** stores baked lighting across a room. A **Point Light Volume** calculates light from a Point, Spot or Area source as the scene renders. A compatible shader uses both to light a surface.
+A **Regular Light Volume** stores baked lighting across a room. A **Point Light Volume** calculates light from a Point, Spot or Area source as the scene renders. A shader that supports VRC Light Volumes uses both to light a surface.
 
-The **Light Volume Manager** shares lighting with world and avatar shaders. To receive it, an avatar only needs a compatible shader.
+The **Light Volume Manager** shares lighting with world and avatar shaders. To receive it, an avatar only needs a shader that supports VRC Light Volumes.
 
 ## Why A Grid Helps
 

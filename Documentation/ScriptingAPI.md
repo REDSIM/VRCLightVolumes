@@ -389,7 +389,7 @@ Manager.SetForceSceneLighting(true);
 
 **`void SetClustering(bool enabled)`**
 
-Switch Froxel Clustering. Calling with `true` again permits a retry after a support or allocation failure. The shader must include clustering support.
+Switch Froxel Clustering. Calling with `true` again permits a retry after a support or allocation failure. Shaders using the VRC Light Volumes 3.x lighting functions support clustering without a separate integration.
 
 ```csharp
 Manager.SetClustering(true);

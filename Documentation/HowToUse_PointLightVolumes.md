@@ -23,7 +23,7 @@ Point Light Volumes are custom realtime Point, Spot and Area lights, similar to 
 They work separately from Regular Light Volumes and do not store lighting in voxels. You can move them, change their color, or switch them on and off in game.
 
 > [!WARNING]
-> Materials without a [compatible shader](./CompatibleShaders.md) do not receive this light directly. For static lights, [Bake Into Probes](#bake-into-probes) can store their lighting in ordinary Unity Light Probes. This requires enough probes in the lit areas and materials that use Light Probes.
+> Materials need a [shader that supports VRC Light Volumes](./CompatibleShaders.md) to receive this light directly. For static lights, [Bake Into Probes](#bake-into-probes) can store their lighting in ordinary Unity Light Probes. This requires enough probes in the lit areas and materials that use Light Probes.
 
 Use Point Light Volumes for flashlights, switchable lamps, video screens or music-reactive lights. For many lights that never change, use your lightmapper's lights and bake them into [Regular Light Volumes](./HowToUse_RegularLightVolumes.md) instead.
 
@@ -119,9 +119,9 @@ For a fixed image, use a static Texture asset or a [snapshot](./HowToUse_PointLi
 
 Under **Shadows**, turn on **Enabled**, then choose a workflow:
 
-- **[Bake In Editor](./HowToUse_Shadows.md#bake-a-fixed-lamp):** use **Bake Shadows** to capture stationary geometry. The baked shadow maps are included in the world build.
+- **[Bake In Editor](./HowToUse_Shadows.md#baked-shadows):** use **Bake Shadows** to capture stationary geometry. The baked shadow maps are included in the world build.
 - **[Bake In Game](./HowToUse_Shadows.md#bake-in-game):** bake once when the light first starts in game. You can still bake in the Editor for a preview, but those maps will not be in the world build. The runtime maps still use GPU memory, and baking may cause a brief stutter.
-- **[Bake In Realtime](./HowToUse_Shadows.md#runtime-shadow-baker):** add **Point Light Shadow Runtime Baker** and enable **Realtime** to update shadows continuously for moving lights or shadow casters. Use **Bake On Enable** instead for one bake each time the baker is activated. Continuous updates can be expensive, especially for six-view shadows.
+- **[Bake In Realtime](./HowToUse_Shadows.md#realtime-shadows):** add **Point Light Shadow Runtime Baker** and enable **Realtime** to update shadows continuously for moving lights or shadow casters. Use **Bake On Enable** instead for one bake each time the baker is activated. Continuous updates can be expensive, especially for six-view shadows.
 
 A normal Spot Light captures one shadow view. Point and Area lights capture six views, as does a Spot with **Force Cubemap Shadows** enabled. Consider Force Cubemap Shadows for wide Spot angles of around 120 degrees or more.
 

@@ -27,7 +27,7 @@ Near the screen, the floor receives separate red and blue contributions. Farther
 1. Create a **Point Light Volume** and set **Type → Area Light**.
 2. Place its origin at the center of the screen. Set Transform X/Y scale to the screen's width/height in meters. With an unscaled parent, a 2 m by 1 m screen uses `(2, 1, 1)`.
 3. Point its blue local Z axis out of the screen toward the room. The light emits from this side only.
-4. Leave **Cookie** empty first. Set **Color** to white and adjust **Intensity** until a nearby wall or prop with a compatible shader is lit.
+4. Leave **Cookie** empty first. Set **Color** to white and adjust **Intensity** until it lights a nearby wall or prop whose shader supports VRC Light Volumes.
 5. Assign a static image to **Cookie** and check that its colors appear in the light. For video, replace it with the player's output Render Texture once this test works. Keep Color white to preserve the source colors.
 6. Leave **Auto Update Textures** enabled on the Manager for video or other animated sources, then enter Play Mode with the video playing. Nearby surfaces should change color with the image.
 7. Enable **Debug Range** and check the affected area. Add [shadows](./HowToUse_Shadows.md) if the light should be blocked by walls or furniture.

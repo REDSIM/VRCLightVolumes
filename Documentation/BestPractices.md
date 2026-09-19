@@ -15,8 +15,8 @@ Keep Unity Light Probes alongside Light Volumes. They provide lighting for shade
 | Flashlight or projector | A **Spot Light Volume**. A narrow cone avoids lighting unrelated parts of the scene. |
 | Portable bulb or independently animated lamp | A **Point Light Volume**. |
 | Screen, sign or soft panel | An **Area Light Volume**; add a texture when its image should affect the light. |
-| Small props with visible lightmap seams | Try a compatible material lit by the regular volume instead of a lightmap. Check that the grid has enough detail for the prop. |
-| Lit particles or fog meshes | Use a compatible particle shader. Keep the number of overlapping transparent layers low. |
+| Small props with visible lightmap seams | Use a shader that supports VRC Light Volumes to light the prop from a Regular Light Volume instead of a lightmap. Check that the grid has enough detail for the prop. |
+| Lit particles or fog meshes | Use a particle shader that supports VRC Light Volumes. Keep the number of overlapping transparent layers low. |
 
 Regular Light Volumes store lighting baked from your lightmapper's lights. Use Point Light Volumes when you need to control each light separately in game.
 

@@ -47,7 +47,7 @@ This is a free and open-source asset. If it is useful to you, you can **[support
 
 ## Attribution
 
-Use the optional attribution prefab to tell visitors about compatible avatar shaders:
+Use the optional attribution prefab to tell visitors about avatar shaders that support VRC Light Volumes:
 
 ```text
 Packages/red.sim.lightvolumes/Attribution/
@@ -121,7 +121,7 @@ See [Point Light Volumes](./Documentation/HowToUse_PointLightVolumes.md), [Area 
 
 - [Froxel Clustering](./Documentation/HowToUse_FroxelClustering.md) skips lights that cannot reach a surface, with optional **Shadow Culling**.
 - [Shader Stripping](./Documentation/ForDevelopers.md#shader-feature-stripping) removes unused lighting features from world builds.
-- [PC and Quest/Android support](./Documentation/CompatibleShaders.md#pc-and-android) with compatible world shaders.
+- [PC and Quest/Android support](./Documentation/CompatibleShaders.md#pc-and-android) with world shaders that support VRC Light Volumes.
 - [AudioLink](./Documentation/HowToUse_AudioLinkIntegration.md) and [TV-screen integration](./Documentation/HowToUse_TVScreensIntegration.md).
 - [Scripting API](./Documentation/ScriptingAPI.md) for runtime light control, Editor tools, atlas processing and custom lightmappers.
 - [Shader Integration](./Documentation/ForDevelopers.md) through shader code or Amplify Shader Editor.

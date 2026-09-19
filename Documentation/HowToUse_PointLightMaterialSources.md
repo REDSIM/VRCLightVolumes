@@ -33,7 +33,7 @@ Start with an unlit image shader, such as the example below. A screen's usual li
 1. Create a Material with a shader that generates the required image. For a first test, follow [Animated Colored Stripes](#example-animated-colored-stripes) below.
 2. Assign it to the appropriate field above.
 3. Leave Manager **Auto Update Textures** enabled for animation.
-4. Check the light on a surface with a compatible shader. Adjust the light's Color and Intensity separately from the generated image.
+4. Check the light on a surface with a shader that supports VRC Light Volumes. Adjust the light's Color and Intensity separately from the generated image.
 
 Several lights can share one Material. Give them separate Materials when their image settings need to differ.
 

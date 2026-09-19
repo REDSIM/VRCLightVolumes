@@ -2,7 +2,7 @@
 
 # Compatible Shaders
 
-Install a shader that supports Light Volumes and enable its Light Volumes option if it has one. Updating the world package does not update the shader on an avatar or world material.
+Install a shader that supports VRC Light Volumes and enable its Light Volumes option if it has one. Updating the world package does not update the shader on an avatar or world material.
 
 For a quick world test, create a Material and select **Light Volume Samples > Light Volume PBR** in its Shader dropdown. It comes with the package. Assign it to a sphere to check the lighting before adjusting an avatar shader's brightness controls.
 
@@ -13,7 +13,7 @@ For a quick world test, create a Material and select **Light Volume Samples > Li
 | 2.x | Baked Regular/Additive lighting and the older Point Light Volume path. Textured Area lights use an average-color fallback. |
 | 3.x | Can also use Point Light Volume shadows, textured Area emission and individual specular highlights. The shader author decides which features to expose. |
 
-For Froxel Clustering, use a shader that specifically supports it. Older integrations still show the lighting, but do not use clustering.
+Shaders with VRC Light Volumes 3.x support use [Froxel Clustering](./HowToUse_FroxelClustering.md) automatically. Older integrations still show the lighting without this optimization.
 
 ## Shaders With 3.x Support
 
@@ -57,7 +57,7 @@ These entries record **2.x support**. Check the author's release notes for newer
 
 ## PC And Android
 
-Shader support for Light Volumes and shader support for Android are separate requirements. For an Android world, use a compatible world shader that also supports that platform. VRChat restricts Android avatars to its [allowed mobile avatar shaders](https://creators.vrchat.com/platforms/android/quest-content-limitations/#shaders); installing this world package does not change those restrictions.
+Shader support for Light Volumes and shader support for Android are separate requirements. For an Android world, use a world shader that supports both VRC Light Volumes and Android. VRChat restricts Android avatars to its [allowed mobile avatar shaders](https://creators.vrchat.com/platforms/android/quest-content-limitations/#shaders); installing this world package does not change those restrictions.
 
 If a material receives baked lighting but has no Point Light Volume shadows or textured Area detail, check its integration version before changing the lights. If only specular highlights are missing, also check whether the shader enables that feature.
 

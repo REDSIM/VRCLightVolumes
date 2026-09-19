@@ -11,7 +11,7 @@
 | [Shadows](./HowToUse_Shadows.md) |
 | [Material Sources](./HowToUse_PointLightMaterialSources.md) |
 | [AudioLink](./HowToUse_AudioLinkIntegration.md) |
-| [TV Screens (Older Workflow)](./HowToUse_TVScreensIntegration.md) |
+| [TV Screens](./HowToUse_TVScreensIntegration.md) |
 | **Debugging**<br />• [Inspect The Lighting In Scene View](#inspect-the-lighting-in-scene-view)<br />• [Inspect A Baked Volume's Grid](#inspect-a-baked-volumes-grid)<br />• [Check Runtime State In The Inspector](#check-runtime-state-in-the-inspector)<br />• [Use The Optional Avatar Debugger](#use-the-optional-avatar-debugger) |
 | [How It Works](./HowToUse_HowItWorks.md) |
 

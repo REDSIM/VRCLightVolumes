@@ -11,7 +11,7 @@
 | [Shadows](./HowToUse_Shadows.md) |
 | **Material Sources**<br />• [Assign A Material](#assign-a-material)<br />• [Cubemap Material Sources](#cubemap-material-sources)<br />• [Color And Alpha](#color-and-alpha)<br />• [Updates And Snapshots](#updates-and-snapshots)<br />• [Shadow Map Materials](#shadow-map-materials) |
 | [AudioLink](./HowToUse_AudioLinkIntegration.md) |
-| [TV Screens (Older Workflow)](./HowToUse_TVScreensIntegration.md) |
+| [TV Screens](./HowToUse_TVScreensIntegration.md) |
 | [Debugging](./HowToUse_Debugging.md) |
 | [How It Works](./HowToUse_HowItWorks.md) |
 

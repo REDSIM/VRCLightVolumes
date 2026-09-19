@@ -11,7 +11,7 @@
 | [Shadows](./HowToUse_Shadows.md) |
 | [Material Sources](./HowToUse_PointLightMaterialSources.md) |
 | [AudioLink](./HowToUse_AudioLinkIntegration.md) |
-| [TV Screens (Older Workflow)](./HowToUse_TVScreensIntegration.md) |
+| [TV Screens](./HowToUse_TVScreensIntegration.md) |
 | [Debugging](./HowToUse_Debugging.md) |
 | [How It Works](./HowToUse_HowItWorks.md) |
 
@@ -107,6 +107,8 @@ For video-screen lighting, this can be a simpler, lower-cost alternative to [LTC
 For a video player, assign its output **Render Texture** to **Cookie**, or use a [Material source](./HowToUse_PointLightMaterialSources.md) that reads the video image. Enable **Auto Update Textures** on the **Light Volume Manager**. Match the light's X/Y scale to the screen and point its blue local Z axis toward the room.
 
 Keep **Color** white to preserve the video colors. Cookie alpha masks emission, so an image with zero alpha produces no light. If the player supplies its texture through a **Material Property Block**, copying the screen Material alone will not include that texture.
+
+See [TV Screens Integration](./HowToUse_TVScreensIntegration.md#area-light-setup) for screen alignment and shadow baking.
 
 > [!NOTE]
 > Shaders with VRC Light Volumes **3.x support** receive the cookie's different colors. Older **2.x shaders with Area Light support** receive one average color instead.

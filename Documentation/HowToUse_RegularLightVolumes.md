@@ -11,7 +11,7 @@
 | [Shadows](./HowToUse_Shadows.md) |
 | [Material Sources](./HowToUse_PointLightMaterialSources.md) |
 | [AudioLink](./HowToUse_AudioLinkIntegration.md) |
-| [TV Screens (Older Workflow)](./HowToUse_TVScreensIntegration.md) |
+| [TV Screens](./HowToUse_TVScreensIntegration.md) |
 | [Debugging](./HowToUse_Debugging.md) |
 | [How It Works](./HowToUse_HowItWorks.md) |
 

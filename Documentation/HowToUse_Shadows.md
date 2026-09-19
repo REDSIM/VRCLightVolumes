@@ -11,7 +11,7 @@
 | **Shadows**<br />• [Baked Shadows](#baked-shadows)<br />• [Penumbra And Blur](#penumbra-and-blur)<br />• [PC And Quest](#pc-and-quest)<br />• [Bake In Game](#bake-in-game)<br />• [Realtime Shadows](#realtime-shadows)<br />• [Bake Shadows Via Script](#bake-shadows-via-script)<br />• [Keep It Performant](#keep-it-performant) |
 | [Material Sources](./HowToUse_PointLightMaterialSources.md) |
 | [AudioLink](./HowToUse_AudioLinkIntegration.md) |
-| [TV Screens (Older Workflow)](./HowToUse_TVScreensIntegration.md) |
+| [TV Screens](./HowToUse_TVScreensIntegration.md) |
 | [Debugging](./HowToUse_Debugging.md) |
 | [How It Works](./HowToUse_HowItWorks.md) |
 

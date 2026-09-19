@@ -11,7 +11,7 @@
 | [Shadows](./HowToUse_Shadows.md) |
 | [Material Sources](./HowToUse_PointLightMaterialSources.md) |
 | [AudioLink](./HowToUse_AudioLinkIntegration.md) |
-| [TV Screens (Older Workflow)](./HowToUse_TVScreensIntegration.md) |
+| [TV Screens](./HowToUse_TVScreensIntegration.md) |
 | [Debugging](./HowToUse_Debugging.md) |
 | **How It Works**<br />• [Why A Grid Helps](#why-a-grid-helps)<br />• [Remembering Color And Direction](#remembering-color-and-direction)<br />• [Overlapping Volumes](#overlapping-volumes)<br />• [Point, Spot And Area Lights](#point-spot-and-area-lights)<br />• [Why Overlap Costs Performance](#why-overlap-costs-performance)<br />• [For Developers](#for-developers) |
 

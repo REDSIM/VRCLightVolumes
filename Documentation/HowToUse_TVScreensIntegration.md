@@ -1,6 +1,6 @@
 [VRC Light Volumes](../README.md) | [How to Use](./HowToUse.md) | [Best Practices](./BestPractices.md) | [Scripting API](./ScriptingAPI.md) | [Shader Integration](./ForDevelopers.md) | [Compatible Shaders](./CompatibleShaders.md)
 
-# TV Screens Integration (Older Workflow)
+# TV Screens Integration
 
 | Menu |
 | --- |
@@ -11,45 +11,54 @@
 | [Shadows](./HowToUse_Shadows.md) |
 | [Material Sources](./HowToUse_PointLightMaterialSources.md) |
 | [AudioLink](./HowToUse_AudioLinkIntegration.md) |
-| **TV Screens (Older Workflow)**<br />• [Tint Baked Lighting With A Video](#tint-baked-lighting-with-a-video)<br />• [Practical Limits](#practical-limits)<br />• [Component Settings](#component-settings) |
+| **TV Screens**<br />• [Area Light Setup](#area-light-setup)<br />• [LTCGI Alternative](#ltcgi-alternative)<br />• [Older Workflow: LightVolumeTVGI](#older-workflow-lightvolumetvgi) |
 | [Debugging](./HowToUse_Debugging.md) |
 | [How It Works](./HowToUse_HowItWorks.md) |
 
-**LightVolumeTVGI** tints baked lighting with a screen's average color. Use it with an additive Light Volume to keep a baked bounce and shadow pattern while its color follows the video.
+Use an **Area Light** with the video player's **Render Texture** as its **Cookie** to light the surroundings with the screen's changing colors. For detailed screen reflections, consider [LTCGI](#ltcgi-alternative).
 
-For different image colors on nearby surfaces, use [Area Light Cookies](./HowToUse_PointLightVolumes.md#area-light-cookies). TVGI uses one average color and doesn't create screen reflections.
+## Area Light Setup
+
+1. Right-click in the Hierarchy, choose **Point Light Volume**, and set **Type → Area Light**.
+2. Align the light's center and plane with the screen. Set its Transform X/Y scale to match the screen's width and height in meters, and point the blue local Z axis toward the room.
+3. Assign the video player's output **Render Texture** to **Cookie**. Keep **Color** white and enable **Auto Update Textures** on the **Light Volume Manager**.
+4. Play the video and adjust the light's **Intensity** after setting its physical size.
+5. Enable **Shadows > Enabled** and click **Bake Shadows** so walls and furniture block the screen's light. If the emitting screen surface blocks the capture, add its Renderer to **Excluded Renderers**.
+
+Changing video frames does not require another shadow bake. For a stationary screen and room, the Cookie can animate while the shadows stay baked. See [Shadows](./HowToUse_Shadows.md) for capture and blur settings.
+
+If the player has no output Render Texture, a [Material source](./HowToUse_PointLightMaterialSources.md) can read its video image. It must receive the actual video texture; copying a screen Material alone may miss texture overrides supplied by the player.
+
+![A screen casting separate red and blue colors nearby and mixed light farther away.](./Images/area-screen.png)
+
+The light spreads and mixes the image's colors instead of projecting a sharp picture. See [Area Light Cookies](./HowToUse_PointLightVolumes.md#area-light-cookies) for shader support and how the emission works.
+
+## LTCGI Alternative
+
+**LTCGI** can provide detailed screen reflections on surfaces with LTCGI shaders. Its Light Volumes integration also supplies diffuse lighting to avatars and props with shaders that support VRC Light Volumes.
+
+| Feature | Area Light Cookie | LTCGI with Light Volumes |
+| --- | --- | --- |
+| **Reflections** | Simplified, blurred specular highlights. | Detailed reflections of the video on LTCGI-enabled materials. |
+| **Avatar lighting** | Calculated per pixel. Older 2.x shaders with Area Light support receive only the average color. | Stored in Light Volumes, including for older Light Volume shaders. Spatial detail depends on voxel density. |
+| **Setup and cost** | Direct Render Texture assignment and an optional shadow bake. Can be faster for simple screen lighting. | Requires LTCGI setup and a bake for its Light Volumes integration. Updating the volumes adds runtime work. |
+
+Follow the [LTCGI integration instructions for VRC Light Volumes](https://ltcgi.dev/Advanced/VRC_Light_Volumes) for setup. Choose Area cookies for simple screen lighting, or LTCGI when detailed reflections matter. Compare performance in your scene.
+
+## Older Workflow: LightVolumeTVGI
+
+**LightVolumeTVGI** tints an additive Light Volume with the screen's average color. It keeps the baked bounce lighting and shadows, but uses one color for the whole volume and creates no screen reflections.
+
+1. In a separate scene, bake an [additive Light Volume](./HowToUse_RegularLightVolumes.md#additive-light-volumes) using only the screen's bright white emission.
+2. Bring the volume into the main scene, enable **Additive**, disable **Bake**, then click **Pack Light Volumes**. Keep the screen's emission out of the main lighting bake to avoid adding it twice.
+3. Add **LightVolumeTVGI**, assign the player's output to **Target Render Texture**, and add the volume to **Target Light Volumes**.
+4. Adjust the volume's **Intensity**. **Anti Flickering** smooths rapid color changes.
+
+Keep unused target lists empty and remove Missing/None entries.
+
+<details>
+<summary>Older workflow example</summary>
 
 ![A screen tinting baked additive lighting around it.](./Preview_13.png)
 
-## Tint Baked Lighting With A Video
-
-1. In a separate baking scene, prepare an [additive Light Volume](./HowToUse_RegularLightVolumes.md#additive-light-volumes) around the area the screen should illuminate.
-2. Bake using a **bright white emissive screen** as the light source. Remove unrelated lighting from this bake. White gives the runtime tint a neutral starting point; baking a colored image permanently colors the result.
-3. Bring the baked volume into the main scene, keep **Additive** enabled, and turn **Bake** off to preserve its screen-only lighting. Leave the screen's emissive lighting out of the main scene bake so it is not added twice.
-4. Check the volume with its **Color** set to white. It should add only the screen's baked lighting to the room. Connect TVGI after this test works.
-5. Add **LightVolumeTVGI** to a GameObject and assign the video player's output to **Target Render Texture**. Despite the field name, a static Texture can also be used.
-6. Add the additive volume to **Target Light Volumes**. Optionally add Point Light Volumes that should follow the same screen color.
-7. Enter Play Mode with video playing. Adjust each target light's own **Intensity** and leave **Anti Flickering** enabled for smoother changes.
-
-The source doesn't need mipmaps, and color updates don't need **Auto Update Volumes**.
-
-Set unused target lists to **Size = 0**. Remove any Missing/None entries from lists you use.
-
-## Practical Limits
-
-Use an additive volume dedicated to the screen. Assigning the room's main override volume would recolor the room's other baked lights as well.
-
-TVGI changes the bake's color, not its shape or shadows. Use a Dynamic Area Light for a moving screen.
-
-Use either TVGI or AudioLink on each target. Both change its Color, so they will conflict.
-
-## Component Settings
-
-| Parameter | Meaning |
-| --- | --- |
-| **Target Render Texture** | Video output or static image to average. Source mipmaps are not required. |
-| **Anti Flickering** | Smooths rapid changes between sampled colors. |
-| **Target Light Volumes** | Usually one or more additive volumes containing only the screen's baked lighting. |
-| **Target Point Light Volumes** | Optional Point Light Volumes that should use the same average color. |
-
-If the light is too dim, first test the additive volume with a plain white Color to check the bake, then reconnect TVGI and adjust Intensity. If the image is moving but the light never changes, check the source assignment and target lists.
+</details>

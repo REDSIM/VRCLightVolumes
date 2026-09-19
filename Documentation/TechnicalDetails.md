@@ -55,23 +55,6 @@ A material keyword would add unnecessary shader variants.
 
 Sources: [capability guard](../Packages/red.sim.lightvolumes/Shaders/LightVolumes.cginc#L88), [mask iteration](../Packages/red.sim.lightvolumes/Shaders/LightVolumes.cginc#L319), [cluster construction](../Packages/red.sim.lightvolumes/Shaders/Internal/FroxelClusteringBuild.shader#L542), [camera setup](../Packages/red.sim.lightvolumes/UScripts/LightVolumeManager.Clustering.cs#L175).
 
-## AudioLink Response
-
-The component samples a band level and optionally smooths it.
-Let `a` denote that result.
-The response uses this formula:
-
-```text
-response = (Invert ? 1 - a : a) × lerp(MinimumMultiply, MaximumMultiply, a)
-         + lerp(MinimumAdd, MaximumAdd, a)
-```
-
-`Invert` changes the main response term.
-The Multiply and Add interpolation still uses the original `a`.
-The component multiplies its selected color by the response before it calls the target light setters.
-
-Sources: [response calculation](../Packages/red.sim.lightvolumes/Extra/Audio%20Link/LightVolumeAudioLink.cs#L124), [sample and smoothing](../Packages/red.sim.lightvolumes/Extra/Audio%20Link/LightVolumeAudioLink.cs#L210).
-
 ## Startup Shadow Bakes
 
 **Bake In Game** adds one request when the light reaches `Start` with a Manager assigned.

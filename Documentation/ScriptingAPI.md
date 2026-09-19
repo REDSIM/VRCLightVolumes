@@ -541,4 +541,4 @@ Leave registration callbacks, `_onVarChange_*`, `_RealtimeBakeLoop`, GPU callbac
 ## Optional integrations
 
 - [AudioLink Integration](./HowToUse_AudioLinkIntegration.md): `LightVolumeAudioLink`.
-- [TV Screens Integration](./HowToUse_TVScreensIntegration.md): `LightVolumeTVGI`.
+- [TV Screens Integration](./HowToUse_TVScreensIntegration.md#older-workflow-lightvolumetvgi): `LightVolumeTVGI`.

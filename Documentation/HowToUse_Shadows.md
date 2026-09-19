@@ -16,7 +16,7 @@
 | [Debugging](./HowToUse_Debugging.md) |
 | [How It Works](./HowToUse_HowItWorks.md) |
 
-Point, Spot and Area lights can cast shadows onto surfaces with a [shader that supports VRC Light Volumes](./CompatibleShaders.md). Baked shadows work on moving props and avatars. Bake again when the light or a shadow-casting object moves.
+Point, Spot and Area lights can cast shadows onto surfaces with a [shader that supports VRC Light Volumes](./CompatibleShaders.md). Baked shadows work on moving props and avatars.
 
 ![Point and Spot Light Volumes casting shadows from columns and a lamp frame.](./Preview_9.png)
 
@@ -32,19 +32,19 @@ The light's **Shadows** section contains these settings:
 | **Use World Space** | Keeps the shadow at its baked position and rotation. When off, the shadow moves with the light. Rebake when it needs to match changed geometry. |
 | **Layer Mask** | Selects which layers can cast shadows. Exclude layers that do not need to block the light. |
 | **Excluded Renderers** | Excludes specific Renderers from the bake, such as a lamp's emitting surface. Listing a parent does not exclude its children. |
-| **Force Cubemap Shadows** | Captures six directions for a Spot light. Consider it for wide angles around 120°; enable it at 180° or more to cover the full cone. |
+| **Force&nbsp;Cubemap&nbsp;Shadows** | Recommended for Spot angles above 120°: six faces preserve detail that a single wide-angle capture loses. Enable it manually at 180° or more; automatic switching currently starts at 360°. |
 | **Bias** | Offsets the captured depth to reduce self-shadowing artifacts. Too much makes shadows appear detached from objects. |
-| **Near Plane** | Closest distance included in the capture. Geometry closer to the light is excluded. |
-| **Far Plane** | Farthest distance included in the capture. `0 (Auto)` uses the light's range. Set it manually if the light starts at zero brightness. |
-| **Debug Clip Planes** | Shows the near and far capture limits in the Scene view. |
+| **Near Plane** | Closest capture distance. When the light is far from the scene, move this plane just before the nearest shadow caster to improve depth precision and shadow quality. Closer objects are excluded. |
+| **Far Plane** | Farthest capture distance. Bring it just beyond the farthest area needing shadows to improve depth precision. `0 (Auto)` uses the light's range; set it manually if the light starts at zero brightness. |
+| **Debug Clip Planes** | Shows the near and far capture limits in the Scene view while **Gizmos** are enabled. |
 | **Blur** | Softens shadow edges. See [Penumbra And Blur](#penumbra-and-blur). |
 | **Contact Hardening** | Approximates sharper shadows near contact with the object casting them. |
-| **Spherical Blur** | Blurs across cubemap face boundaries to reduce seams. |
+| **Spherical Blur** | Blurs across cubemap faces to reduce seams. Leave it off if no seams are visible: it can reduce blur quality. Compare both and keep the look you prefer. |
 | **Bake In Game** | Bakes once when the light first starts in game, instead of including its Editor-baked map in the world build. |
 | **Quality** | Blur and Contact Hardening quality for in-game bakes, including Realtime updates. Editor bakes use a separate, higher-quality preset. |
 | **Shadow Map** | The texture created by a bake. It can also accept a custom shadow texture or Material. |
-| **Resolution** | Resolution used to capture this light's shadow. **Manager** inherits the Manager's **Shadow Resolution**. |
-| **Rebake Shadows** | Includes this light when **Bake Shadows** is clicked on the Manager. Turn it off to preserve this map during a batch bake. |
+| **Resolution** | Source resolution for capturing and processing this shadow. The result is rescaled to the Manager's global **Shadow Resolution**. Choose **Manager** to use that resolution throughout. |
+| **Rebake Shadows** | Includes this light in **Bake Shadows** on the Manager. Turn it off to keep its current map. |
 
 Rebake after moving the light or shadow-casting geometry, or changing capture and blur settings. **Clear Shadows** removes the assigned map without deleting its source asset.
 
@@ -56,16 +56,18 @@ For bakes performed in game, **Quality** controls how thoroughly the blur is sam
 
 **Spherical Blur** can help when you see seams between cubemap faces. Its sampling pattern can produce a rougher-looking blur than the regular filter, so compare both and keep the result you prefer.
 
-**Contact Hardening** approximates a sharp shadow near the object casting it, with a softer edge farther away. This is a visual approximation, not a physically accurate penumbra. It can produce artifacts such as doubled edges or split penumbras. Use it where the result looks good; reduce it or set it to `0` where it does not. It also adds work to the bake.
+**Contact Hardening** approximates a sharp shadow near the object casting it, with a softer edge farther away. This is a visual approximation, not a physically accurate penumbra. It can produce artifacts such as doubled edges or split penumbras. Use it where the result looks good. Set it to `0` to disable Contact Hardening and skip its calculations.
 
 ## PC And Quest
 
-Quest and other mobile devices can show shadow artifacts that are not visible on PC. Two settings on the Manager help balance stability and light leaking:
+Quest and other mobile devices can show shadow artifacts that are not visible on PC. Two settings on the **Light Volume Manager** help balance stability and light leaking:
 
 | Setting | What it does |
 | --- | --- |
 | **Shadow Min Variance** | Reduces artifacts caused by limited numerical precision. Higher values can let light leak into shadowed areas. |
 | **Shadow Bleed Reduction** | Suppresses that light leaking. Higher values darken and sharpen shadows, but can remove soft detail. |
+
+**Shadow Min Variance** has separate values for PC and Android/iOS. Switch Unity's **Build Target** to see and edit the value for that platform. **Shadow Bleed Reduction** is shared across platforms.
 
 **Shadow Min Variance** at `1` and **Shadow Bleed Reduction** around `0.2–0.4` often fix mobile artifacts. Some light leaking may remain; adjust both to find a balance between stable shadows, soft edges and leaking that looks right in your scene. These settings update without rebaking.
 
@@ -73,13 +75,15 @@ Quest and other mobile devices can show shadow artifacts that are not visible on
 
 Enable **Bake In Game** on the light to bake once when it first starts or becomes active. Re-enabling it later does not bake again.
 
-You can still use **Bake Shadows** in the Editor for a preview. The Editor-baked map is left out of the world build, but the runtime map still uses GPU memory. The Manager processes one light per frame; a Point or Area light captures all six faces in that frame, so a bake can cause a brief stutter.
+You can still use **Bake Shadows** in the Editor for a preview. That preview map is not included in the uploaded world bundle. The map created in game still uses GPU memory.
+
+At startup, or when initially inactive lights are enabled for the first time, the Manager bakes one queued light per frame. A Point or Area light captures all six faces in that frame, so a bake can cause a brief stutter.
 
 Keep the light and Manager active until the bake finishes. For spawned lights, assign the Manager before their first activation. Use [Bake Shadows Via Script](#bake-shadows-via-script) for later changes or retries.
 
 ## Realtime Shadows
 
-**Point Light Shadow Runtime Baker** updates a light's shadow while the world runs. Use it when the light or objects casting its shadow move. Its **Realtime** mode captures a new shadow every frame; **Bake On Enable** captures one each time the baker is activated.
+**Point Light Shadow Runtime Baker** is a separate script component that updates a light's shadow while the world runs. Use it when the light or objects casting its shadow move. Its **Realtime** mode captures a new shadow every frame; **Bake On Enable** captures one each time the baker is activated.
 
 1. Add **Point Light Shadow Runtime Baker** and assign **Target Point Light Volume**.
 2. Enable shadows on the target light and set its capture and blur parameters.
@@ -96,7 +100,7 @@ After stopping automatic updates, you can refresh the shadow once by calling `Ba
 ShadowBaker.BakeShadows();
 ```
 
-This call does not restart automatic updates. To resume Realtime in VRChat, turn **Realtime** on, then disable and re-enable the baker component while its GameObject is active. Setting Realtime back on by itself does not restart a stopped Udon update loop.
+This call performs one bake; it does not restart a stopped Realtime loop. To resume automatic updates in VRChat, turn **Realtime** on, then disable and re-enable the baker component while its GameObject is active.
 
 ## Bake Shadows Via Script
 
@@ -108,7 +112,7 @@ With an active light assigned as `Lamp`, call its `PointLightVolumeInstance.Bake
 Lamp.BakeShadows();
 ```
 
-The light needs **Shadows** enabled and a Manager assigned. Before building, enable **Bake In Game** or assign the light to a **Point Light Shadow Runtime Baker** so its runtime bake resources are prepared. See the [UdonSharp API](./ScriptingAPI.md#runtime-shadow-baking) for the full contract.
+The light needs **Shadows** enabled and a Manager assigned. See the [UdonSharp API](./ScriptingAPI.md#runtime-shadow-baking) for the full contract.
 
 > [!IMPORTANT]
 > If **Shader Stripping** is enabled and the scene has no authored lights with shadows, automatic detection can remove shadow support needed by your scripts. Before building, turn off **Auto** in the Manager's Shader Stripping settings and retain **Shadows**, the required light types, and **Single-slice Shadows** or **Cubemap Shadows** as needed. Retain **World Space Shadows** too if you use it.

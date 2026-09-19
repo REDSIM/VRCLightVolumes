@@ -331,7 +331,7 @@ A texture replaces the material source, and a material replaces the texture sour
 
 ### Runtime shadow baking
 
-Follow [shadow setup](./HowToUse_Shadows.md) first. Enable **Shadows**, then enable **Bake In Game** or assign a **Point Light Shadow Runtime Baker**. This lets build preparation supply the camera and materials that `BakeShadows()` needs.
+Use an active light with **Shadows** enabled and a Manager assigned. See [shadow setup](./HowToUse_Shadows.md#bake-shadows-via-script), including Shader Stripping settings if scripts enable shadows absent from the authored scene.
 
 **`void BakeShadows()`** captures **one complete shadow** per call: one slice for a projected Spot, or six faces for a Point, Area or cubemap Spot. It returns no success value. Call it after an occasional light or geometry change; profile before using it every frame.
 

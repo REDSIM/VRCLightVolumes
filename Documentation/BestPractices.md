@@ -121,7 +121,7 @@ Use a simple Unlit Material for generated images.
 
 Enable the Manager's **Auto Update Textures** for live Render Textures and Materials. For a scripted source that should freeze, use the projection setter with `autoUpdate = false`.
 
-See [Material Sources](./HowToUse_PointLightMaterialSources.md) and [Area Light Emission](./HowToUse_AreaLightEmission.md) for setup.
+See [Material Sources](./HowToUse_PointLightMaterialSources.md) and [Area Light Cookies](./HowToUse_PointLightVolumes.md#area-light-cookies) for setup.
 
 ## Update Only What Changes
 

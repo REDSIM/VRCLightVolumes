@@ -10,7 +10,6 @@
 | [Froxel Clustering](./HowToUse_FroxelClustering.md) |
 | [Shadows](./HowToUse_Shadows.md) |
 | **Material Sources**<br />• [Assign A Material](#assign-a-material)<br />• [Cubemap Material Sources](#cubemap-material-sources)<br />• [Color And Alpha](#color-and-alpha)<br />• [Updates And Snapshots](#updates-and-snapshots)<br />• [Shadow Map Materials](#shadow-map-materials) |
-| [Area Light Emission](./HowToUse_AreaLightEmission.md) |
 | [AudioLink](./HowToUse_AudioLinkIntegration.md) |
 | [TV Screens (Older Workflow)](./HowToUse_TVScreensIntegration.md) |
 | [Debugging](./HowToUse_Debugging.md) |
@@ -32,12 +31,12 @@ The Manager renders **pass 0** of your shader with `0..1` UVs. For a cubemap, it
 
 ```hlsl
 float4 _CustomRenderTextureInfo;
-// x = output width, y = output height
+// x = output width in pixels, y = output height in pixels
 // Cubemap: z = 1, w = face index (0..5)
-// Single image: z = destination array depth, w = destination slice index
+// Single image: z/w are internal array data; ignore them.
 ```
 
-Face indices are `0 = +X`, `1 = -X`, `2 = +Y`, `3 = -Y`, `4 = +Z`, `5 = -Z`. Ignoring the face index repeats the same image on all six faces. For a single image, such as a Spot cookie or LUT, use the UVs directly. Its destination slice can change when the array is rebuilt, so do not use it as a stable light ID.
+Face indices are `0 = +X`, `1 = -X`, `2 = +Y`, `3 = -Y`, `4 = +Z`, `5 = -Z`. Ignoring the face index repeats the same image on all six faces. For a single image, such as a Spot cookie or LUT, use the UVs directly.
 
 Use this shader as a starting point for your own Point light cookies. `CubemapDirection()` converts each face's UVs into a shared direction. The fragment function uses its spherical latitude to draw animated bands that continue across face boundaries.
 

@@ -6,11 +6,10 @@
 | --- |
 | [Overview](./HowToUse.md) |
 | [Regular Light Volumes](./HowToUse_RegularLightVolumes.md) |
-| **Point Light Volumes**<br />• [Setup Point Light Volumes](#setup-point-light-volumes)<br />• [Size, Brightness And Range](#size-brightness-and-range)<br />• [Projection Modes](#projection-modes)<br />• [Animated Textures](#animated-textures)<br />• [Shadows](#shadows)<br />• [Bake Into Probes](#bake-into-probes)<br />• [Runtime Control](#runtime-control)<br />• [Keep It Performant](#keep-it-performant) |
+| **Point Light Volumes**<br />• [Setup Point Light Volumes](#setup-point-light-volumes)<br />• [Size, Brightness And Range](#size-brightness-and-range)<br />• [Projection Modes](#projection-modes)<br />• [Area Light Cookies](#area-light-cookies)<br />• [Animated Textures](#animated-textures)<br />• [Shadows](#shadows)<br />• [Bake Into Probes](#bake-into-probes)<br />• [Runtime Control](#runtime-control)<br />• [Keep It Performant](#keep-it-performant) |
 | [Froxel Clustering](./HowToUse_FroxelClustering.md) |
 | [Shadows](./HowToUse_Shadows.md) |
 | [Material Sources](./HowToUse_PointLightMaterialSources.md) |
-| [Area Light Emission](./HowToUse_AreaLightEmission.md) |
 | [AudioLink](./HowToUse_AudioLinkIntegration.md) |
 | [TV Screens (Older Workflow)](./HowToUse_TVScreensIntegration.md) |
 | [Debugging](./HowToUse_Debugging.md) |
@@ -95,7 +94,22 @@ Use **Custom** to project an image:
 
 - **Spot Light:** assign a 2D image to **Cookie**. RGB supplies the color and alpha masks the light. Set **Spot Cookie Aspect** to image width divided by height; `1` is square.
 - **Point Light:** assign a **Cubemap**, for example a star projector or disco-ball pattern. RGB supplies the color; alpha is ignored.
-- **Area Light:** assign **Cookie** directly; it has no Projection dropdown. See [Area Light Emission](./HowToUse_AreaLightEmission.md).
+- **Area Light:** assign **Cookie** directly; it has no Projection dropdown. See [Area Light Cookies](#area-light-cookies).
+
+## Area Light Cookies
+
+An Area Light's **Cookie** approximates light spreading from a screen. Nearby surfaces receive different colors from the image; farther away, those colors blend together. It lights the surroundings instead of projecting a sharp picture.
+
+For video-screen lighting, this can be a simpler, lower-cost alternative to [LTCGI](https://ltcgi.dev/) or [AreaLit](https://booth.pm/en/items/3661829). It provides only simplified, blurred specular highlights in shaders that support them, without detailed reflections of the screen image.
+
+![A red and blue screen casting separate colors nearby and mixed purple light farther away.](./Images/area-screen.png)
+
+For a video player, assign its output **Render Texture** to **Cookie**, or use a [Material source](./HowToUse_PointLightMaterialSources.md) that reads the video image. Enable **Auto Update Textures** on the **Light Volume Manager**. Match the light's X/Y scale to the screen and point its blue local Z axis toward the room.
+
+Keep **Color** white to preserve the video colors. Cookie alpha masks emission, so an image with zero alpha produces no light. If the player supplies its texture through a **Material Property Block**, copying the screen Material alone will not include that texture.
+
+> [!NOTE]
+> Shaders with VRC Light Volumes **3.x support** receive the cookie's different colors. Older **2.x shaders with Area Light support** receive one average color instead.
 
 ## Animated Textures
 

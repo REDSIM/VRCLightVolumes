@@ -10,7 +10,6 @@
 | [Froxel Clustering](./HowToUse_FroxelClustering.md) |
 | [Shadows](./HowToUse_Shadows.md) |
 | [Material Sources](./HowToUse_PointLightMaterialSources.md) |
-| [Area Light Emission](./HowToUse_AreaLightEmission.md) |
 | [AudioLink](./HowToUse_AudioLinkIntegration.md) |
 | [TV Screens (Older Workflow)](./HowToUse_TVScreensIntegration.md) |
 | [Debugging](./HowToUse_Debugging.md) |

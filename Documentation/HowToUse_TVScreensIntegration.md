@@ -10,7 +10,6 @@
 | [Froxel Clustering](./HowToUse_FroxelClustering.md) |
 | [Shadows](./HowToUse_Shadows.md) |
 | [Material Sources](./HowToUse_PointLightMaterialSources.md) |
-| [Area Light Emission](./HowToUse_AreaLightEmission.md) |
 | [AudioLink](./HowToUse_AudioLinkIntegration.md) |
 | **TV Screens (Older Workflow)**<br />• [Tint Baked Lighting With A Video](#tint-baked-lighting-with-a-video)<br />• [Practical Limits](#practical-limits)<br />• [Component Settings](#component-settings) |
 | [Debugging](./HowToUse_Debugging.md) |
@@ -18,7 +17,7 @@
 
 **LightVolumeTVGI** tints baked lighting with a screen's average color. Use it with an additive Light Volume to keep a baked bounce and shadow pattern while its color follows the video.
 
-For different image colors on nearby surfaces, use [Area Light Emission](./HowToUse_AreaLightEmission.md). TVGI uses one average color and doesn't create screen reflections.
+For different image colors on nearby surfaces, use [Area Light Cookies](./HowToUse_PointLightVolumes.md#area-light-cookies). TVGI uses one average color and doesn't create screen reflections.
 
 ![A screen tinting baked additive lighting around it.](./Preview_13.png)
 

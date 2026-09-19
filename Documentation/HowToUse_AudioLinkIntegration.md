@@ -10,7 +10,6 @@
 | [Froxel Clustering](./HowToUse_FroxelClustering.md) |
 | [Shadows](./HowToUse_Shadows.md) |
 | [Material Sources](./HowToUse_PointLightMaterialSources.md) |
-| [Area Light Emission](./HowToUse_AreaLightEmission.md) |
 | **AudioLink**<br />• [Make A Lamp Pulse With The Bass](#make-a-lamp-pulse-with-the-bass)<br />• [Useful Variations](#useful-variations)<br />• [Component Settings](#component-settings) |
 | [TV Screens (Older Workflow)](./HowToUse_TVScreensIntegration.md) |
 | [Debugging](./HowToUse_Debugging.md) |

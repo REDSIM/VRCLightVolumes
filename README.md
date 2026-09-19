@@ -115,7 +115,7 @@ See [Regular Light Volumes](./Documentation/HowToUse_RegularLightVolumes.md).
 - Individual specular highlights that respond to each light's size.
 - Shadows baked in the Editor, captured at startup or updated in game.
 
-See [Point Light Volumes](./Documentation/HowToUse_PointLightVolumes.md), [Area Light Emission](./Documentation/HowToUse_AreaLightEmission.md) and [Shadows](./Documentation/HowToUse_Shadows.md).
+See [Point Light Volumes](./Documentation/HowToUse_PointLightVolumes.md), [Area Light Cookies](./Documentation/HowToUse_PointLightVolumes.md#area-light-cookies) and [Shadows](./Documentation/HowToUse_Shadows.md).
 
 ### Performance And Integration
 

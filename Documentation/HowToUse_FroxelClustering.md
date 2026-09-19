@@ -10,7 +10,6 @@
 | **Froxel Clustering**<br />• [Setup Froxel Clustering](#setup-froxel-clustering)<br />• [How Froxel Clustering Works](#how-froxel-clustering-works)<br />• [Debug Views](#debug-views)<br />• [Shadow Culling (Hi-Z)](#shadow-culling-hi-z) |
 | [Shadows](./HowToUse_Shadows.md) |
 | [Material Sources](./HowToUse_PointLightMaterialSources.md) |
-| [Area Light Emission](./HowToUse_AreaLightEmission.md) |
 | [AudioLink](./HowToUse_AudioLinkIntegration.md) |
 | [TV Screens (Older Workflow)](./HowToUse_TVScreensIntegration.md) |
 | [Debugging](./HowToUse_Debugging.md) |

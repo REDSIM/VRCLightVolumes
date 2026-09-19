@@ -152,4 +152,4 @@ Prefer baked shadows for stationary lights. And better use realtime shadows for 
 
 [Froxel Clustering](./HowToUse_FroxelClustering.md) helps scenes with many lights in different places. It does less for many large lights covering the same surface. Keep ranges tight and profile the busiest view on the target device.
 
-If shadows cover large parts of a light's range, try [**Shadow Culling** (Hi-Z)](./HowToUse_FroxelClustering.md#shadow-assisted-culling) in the Manager's **Froxel Clustering** settings. It skips that light in fully shadowed cells. Use it with baked or one-shot runtime shadows, and compare frame time with the option on and off.
+If shadows cover large parts of a light's range, try [**Shadow Culling** (Hi-Z)](./HowToUse_FroxelClustering.md#shadow-culling-hi-z) in the Manager's **Froxel Clustering** settings. It skips that light in fully shadowed cells. Use it with baked or one-shot runtime shadows, and compare frame time with the option on and off.

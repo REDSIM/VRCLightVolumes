@@ -7,7 +7,7 @@
 | [Overview](./HowToUse.md) |
 | [Regular Light Volumes](./HowToUse_RegularLightVolumes.md) |
 | [Point Light Volumes](./HowToUse_PointLightVolumes.md) |
-| **Froxel Clustering**<br />• [Start With The Defaults](#start-with-the-defaults)<br />• [Tune The Lights Before The Grid](#tune-the-lights-before-the-grid)<br />• [Debug Views](#debug-views)<br />• [Shadow-Assisted Culling](#shadow-assisted-culling)<br />• [VR, Mirrors And Other Cameras](#vr-mirrors-and-other-cameras)<br />• [Limits And Fallbacks](#limits-and-fallbacks)<br />• [For Shader Developers](#for-shader-developers) |
+| **Froxel Clustering**<br />• [Setup Froxel Clustering](#setup-froxel-clustering)<br />• [How Froxel Clustering Works](#how-froxel-clustering-works)<br />• [Debug Views](#debug-views)<br />• [Shadow Culling (Hi-Z)](#shadow-culling-hi-z) |
 | [Shadows](./HowToUse_Shadows.md) |
 | [Material Sources](./HowToUse_PointLightMaterialSources.md) |
 | [Area Light Emission](./HowToUse_AreaLightEmission.md) |
@@ -16,76 +16,70 @@
 | [Debugging](./HowToUse_Debugging.md) |
 | [How It Works](./HowToUse_HowItWorks.md) |
 
-Froxel Clustering skips lights that can't reach a surface. It divides the view into small 3D cells called **froxels**.
+A **froxel** is a small 3D cell in the camera's viewing volume, called the **frustum**. Froxel Clustering divides this volume into a grid and records which Point, Spot and Area lights can affect each cell.
 
-Use it for lights spread across different areas. It helps less when most lights overlap, and doesn't affect baked Regular Light Volumes.
+Clustering works best with many lights, especially dozens spread across a scene with little overlap. If many large lights cover the same area, clustering cannot solve that overlap: those lights still need to be calculated there.
 
-## Start With The Defaults
+The lighting will look the same. Building the grid adds GPU work, so clustering can make some scenes slower. Compare frame time with it on and off on your target device.
 
-On the **Light Volume Manager**, find the **Froxel Clustering** section. New Managers use:
+## Setup Froxel Clustering
 
-| Setting | Default | What it changes |
-| --- | --- | --- |
-| **Clustering Enabled** | On | Enables the optimization. |
-| **Min Lights Count** | `8` | Start clustering at this many active Point Light Volumes. |
-| **Angular Density** | `1` | How finely the grid divides the view horizontally and vertically. |
-| **Slices Count** | `100` | How finely it divides near-to-far depth. |
-| **Coarse Reduction** | `4x` | Size of the simpler grid used to prepare the final grid. |
-| **Shadow Culling** | Off | Additionally skip lights in cells completely hidden by their shadows. |
+Enable **Clustering Enabled** in the **Light Volume Manager's Froxel Clustering** section. Its settings control when clustering runs and how detailed the grid is:
 
-Current compatible shaders use clustering automatically. Compare it on and off in the same view, then test a build on your target device.
+| Setting | What it does |
+| --- | --- |
+| **Clustering Enabled** | Enables Froxel Clustering. |
+| **Min Lights Count** | Minimum active Point Light Volumes needed for clustering to run. |
+| **Angular Density** | Grid resolution across the view. Higher values separate nearby lights more precisely, but take more time to process. |
+| **Slices Count** | Number of depth slices between the camera's near and far clipping planes. More slices separate lights at different distances more precisely. |
+| **Coarse Reduction** | Divides the final grid resolution along all three axes to build the Coarse grid. |
+| [**Shadow Culling** (Hi-Z)](#shadow-culling-hi-z) | Skips lights in cells fully covered by their shadows. |
 
-In a perspective Scene view, open the Manager's **Debug** foldout. **Clustering Status** should show **Active** once **Active Point Lights** reaches **Min Lights Count**. Fewer than eight lights won't use clustering with the defaults.
+**Coarse Reduction** of **2x** means about **8 times fewer froxels** in the Coarse grid; **4x** means **64 times fewer**, and **8x** means **512 times fewer**. A larger reduction makes the Coarse pass cheaper, but can leave more lights for the Final pass to check.
 
-The lighting should look the same. Compare frame time to decide whether clustering helps your scene.
+The Manager's **Debug** foldout shows **Clustering Status** and **Active Point Lights**, so you can check whether clustering is active.
 
-## Tune The Lights Before The Grid
+## How Froxel Clustering Works
 
-1. Inspect each light's **Debug Range**. Reduce unnecessary reach and overlap first.
-2. Profile a busy view with the default grid. Also check a quiet area; clustering has its own setup cost.
-3. Try a higher **Angular Density** to separate lights across the view more finely.
-4. Try a higher **Slices Count** to separate lights at different depths.
-5. Keep a change only if it improves frame time. A finer grid can also make the scene slower.
+Instead of checking every light at every shaded pixel, clustering prepares a list of possible lights for each froxel:
 
-Leave **Coarse Reduction** at `4x` unless a measured comparison shows another value works better.
+1. **Coarse:** checks light ranges and shapes against a grid of large cells. Each cell keeps only the lights that could reach it.
+2. **Final (Fine):** checks the smaller cells inside each Coarse cell, using only the lights kept by the Coarse pass.
+3. **Surface shading:** finds the pixel's froxel and calculates lighting only from its final list.
+
+The two passes avoid checking every light against every cell in the full-resolution grid. A finer grid can exclude more lights, but also takes more work to build.
+
+Shaders supporting **VRC Light Volumes 3.x or later** use clustering automatically through the standard lighting functions. No separate shader integration is needed.
+
+> [!NOTE]
+> Mirrors, VRChat cameras and other cameras do not get a separate clustering grid. They can reuse the player's grid only for parts of the world inside the player's frustum. Outside it, lights remain visible and correct, but use the normal light list without clustering.
 
 ## Debug Views
 
-In the Scene view draw-mode menu, open **Light Volumes Debug** and select:
+To view the clustering grids, use **Light Volumes Debug** in the Scene view's draw-mode menu:
 
-- **VRCLV Fine Clustering:** groups of lights in the final grid.
-- **VRCLV Coarse Clustering:** groups of lights in the larger cells.
+- **VRCLV Coarse Clustering:** light groups in the Coarse grid.
+- **VRCLV Fine Clustering:** light groups in the Final grid.
 
-Colors identify different groups of possible lights, **not their cost or brightness**. Black means no lights in the cell, a point outside the grid, or inactive clustering.
-
-If most surfaces have the same color, check light ranges before increasing grid detail. Coarse cells are larger. **Shadow Culling** changes only the Fine view.
+Colors identify groups of possible lights, not brightness or rendering cost.
 
 The same view with 12 Point Light Volumes:
 
-| Shaded | Fine Clustering | Coarse Clustering |
-| --- | --- | --- |
-| ![Twelve separated lights on a floor in the normal Shaded view](./Images/clustering-shaded.png) | ![Fine clustering view showing smaller regions with different candidate-light lists](./Images/clustering-fine.png) | ![Coarse clustering view showing larger regions with different candidate-light lists](./Images/clustering-coarse.png) |
+**Shaded**
 
-Compare the larger Coarse blocks with the smaller Fine regions. Click an image to inspect it at full size.
+![Twelve lights in the normal Shaded view.](./Images/clustering-shaded.png)
 
-## Shadow-Assisted Culling
+**Coarse**
 
-Try **Shadow Culling** (Hi-Z) when shadows cover large parts of a light's range. It uses the shadow maps to skip light calculations in fully shadowed cells. Keep it on only if it improves frame time.
+![Coarse clustering: large cells group possible lights.](./Images/clustering-coarse.png)
 
-Use baked or one-shot runtime shadows with **Shading Strength = 1**. Continuously updated shadows don't use this extra optimization. Tune **Shadow Bleed Reduction** for the visible result first.
+**Fine**
 
-## VR, Mirrors And Other Cameras
+![Fine clustering: smaller cells narrow down the light groups.](./Images/clustering-fine.png)
 
-VR needs no extra setup. Check mirrors and other cameras when comparing performance: they can get less benefit than the main view. Use a perspective Scene view to preview clustering.
+## Shadow Culling (Hi-Z)
 
-## Limits And Fallbacks
+Enable **Shadow Culling** when shadows cover large parts of a light's range. Hi-Z uses several levels of shadow-map depth data to find fully shadowed cells. Clustering can then skip that light in those cells, saving lighting calculations. Compare frame time with it on and off to check the benefit.
 
-Clustering doesn't raise the **128 active Point Light Volumes** limit or **Additive Max Overdraw**. Reduce overlap if lights disappear at those limits.
-
-Lights still work when clustering is unavailable. Check **Clustering Status** and your [shader's support](./CompatibleShaders.md) if it never becomes active.
-
-If a script enables clustering after startup, make sure the Manager's **Shader Stripping** settings retain it. Automatic stripping follows the authored scene settings.
-
-## For Shader Developers
-
-See [Shader Integration](./ForDevelopers.md) for the public lighting calls and [clustering technical details](./TechnicalDetails.md#froxel-clustering) for shader requirements and opt-out settings.
+> [!IMPORTANT]
+> A light's **Shading Strength** must be **1**; otherwise, Shadow Culling cannot skip that light. The runtime baker's **Realtime** mode also excludes its light from Hi-Z.

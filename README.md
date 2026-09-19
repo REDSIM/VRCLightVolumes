@@ -35,6 +35,7 @@ This is a free and open-source asset. If it is useful to you, you can **[support
 - Very easy and fast to setup
 - Lots of shaders already support VRC Light Volumes
 - It just looks beautiful!
+
 [See the full feature list](#full-feature-list).
 
 ## VRChat Worlds To Test It

@@ -29,7 +29,7 @@ Changing video frames does not require another shadow bake. For a stationary scr
 
 If the player has no output Render Texture, a [Material source](./HowToUse_PointLightMaterialSources.md) can read its video image. It must receive the actual video texture; copying a screen Material alone may miss texture overrides supplied by the player.
 
-![A screen casting separate red and blue colors nearby and mixed light farther away.](./Images/area-screen.png)
+![A video screen lighting the surrounding scene.](./Preview_13.png)
 
 The light spreads and mixes the image's colors instead of projecting a sharp picture. See [Area Light Cookies](./HowToUse_PointLightVolumes.md#area-light-cookies) for shader support and how the emission works.
 
@@ -55,10 +55,3 @@ Follow the [LTCGI integration instructions for VRC Light Volumes](https://ltcgi.
 4. Adjust the volume's **Intensity**. **Anti Flickering** smooths rapid color changes.
 
 Keep unused target lists empty and remove Missing/None entries.
-
-<details>
-<summary>Older workflow example</summary>
-
-![A screen tinting baked additive lighting around it.](./Preview_13.png)
-
-</details>

@@ -15,53 +15,34 @@
 | **Debugging**<br />• [Inspect The Lighting In Scene View](#inspect-the-lighting-in-scene-view)<br />• [Inspect A Baked Volume's Grid](#inspect-a-baked-volumes-grid)<br />• [Check Runtime State In The Inspector](#check-runtime-state-in-the-inspector)<br />• [Use The Optional Avatar Debugger](#use-the-optional-avatar-debugger) |
 | [How It Works](./HowToUse_HowItWorks.md) |
 
-Start with a test sphere using `Light Volume Samples/Light Volume PBR`. Keep **Color** white and **Metallic** at `0`, and set **Smoothness** to `0` so reflections do not distract from the lighting. Move it between bright and dark parts of the room: its surface should change color and brightness. If it looks correct but another object does not, check that object's [shader support and settings](./CompatibleShaders.md) before changing the bake.
-
 ## Inspect The Lighting In Scene View
 
-Open the Scene view's shading-mode menu, normally showing **Shaded**, and find **Light Volumes Debug**.
+The Scene view's shading-mode menu, normally showing **Shaded**, contains the **Light Volumes Debug** modes. They show lighting and clustering across the scene independently of its materials.
 
-Start with **VRCLV SH L1** and move your test sphere across the problem area. If the lighting changes correctly here but looks wrong in **Shaded**, check the object's material. If the problem appears in both views, inspect the volume's bounds and baked grid below.
-
-| Mode | What it shows | Use it to check |
+| Mode | What it shows | Useful for |
 | --- | --- | --- |
 | **VRCLV SH L1** | Light Volume lighting with surface direction. | Directional lighting and transitions across surfaces. |
 | **VRCLV SH L0** | The average lighting color without the directional part. | Color and brightness changes without surface direction affecting the result. |
 | **VRCLV Fine Clustering** | Groups of lights in the final grid, shown as colors. | Where the grid separates unrelated Point Light Volumes. |
 | **VRCLV Coarse Clustering** | Groups of lights in the larger cells. | How the coarse and fine grids differ. |
 
-These views replace the materials. Return to **Shaded** to check the object's own textures, shading and Light Volume support.
+The SH views include both baked volumes and Point Light Volumes. Select **Shaded** to return to the scene's usual materials.
 
 | Shaded: the usual materials | VRCLV SH L1: Light Volume lighting |
 | --- | --- |
-| ![Matte spheres receiving room lighting, with baked wall lightmaps visible behind them](./Images/debug-shaded.png) | ![The same spheres in the L1 debug view, with the outside walls black](./Images/debug-sh-l1.png) |
+| ![A lantern-lit alley with textured storefronts, barrels and a red scooter](./Images/debug-shaded.jpg) | ![The same alley in VRCLV SH L1, showing lighting and shadows without material colors or textures](./Images/debug-sh-l1.jpg) |
 
-Compare the spheres. The walls have lightmaps in **Shaded**, but appear black in the debug view because they are outside this Light Volume.
+In **Shaded**, the wood, fabric and red scooter retain their material colors and textures. **VRCLV SH L1** shows the lighting on the same geometry without those material details, making its color, direction and shadows easier to see.
 
-Clustering colors are identifiers, not a brightness or performance heat map. Black means an empty or unavailable light set; it does not necessarily mean broken lighting. Check **Clustering Enabled**, **Min Lights Count** and the Manager's **Debug** section. See [Froxel Clustering](./HowToUse_FroxelClustering.md) for the full workflow.
+Clustering colors identify groups of lights; they do not represent brightness or performance. See [Froxel Clustering](./HowToUse_FroxelClustering.md) for the Coarse and Fine views in more detail.
 
 ## Inspect A Baked Volume's Grid
 
-1. Select the Light Volume and click **Preview Voxels** in its Inspector.
-2. Move the Scene camera close enough to inspect the area with the problem.
-3. Look for missing coverage, a grid too coarse for the shadow, or unexpected bright or dark samples.
-4. Click **Preview Voxels** again to turn it off.
-
-Before a bake, the spheres show placement. After baking, they show the selected volume's lighting, tint and correction. Other volumes and Point Lights do not affect this preview.
-
-For a gap or a sudden transition, check the bounds first, then **Weight** and **Smooth Blending**. For lost detail, adjust density in that area and rebake. See [Regular Light Volumes](./HowToUse_RegularLightVolumes.md).
+Click **Preview Voxels** in a Regular Light Volume's Inspector to display its baked lighting as a grid of spheres in the Scene view. This previews only that volume's data. Other volumes and **Point Light Volumes** do not affect it.
 
 ## Check Runtime State In The Inspector
 
-Enter Play Mode and expand **Debug** on the Manager or a light. These fields are read-only.
-
-- On a Regular Light Volume, check **Manager**, **Registered** and **Active** to see whether it can contribute lighting.
-- On a Point Light Volume, check **Resolved Light Data**, **Resolved Projection** and **Resolved Shadows** for the data the shader receives.
-- On the Manager, check **Cookie Array**, **Shadow Array** and **Clustering Status** when one of those features is missing.
-
-If a Regular Light Volume's **Active** field is false, check that the GameObject and component are enabled, **Intensity** is above zero, and **Color** is not black.
-
-Some live fields are only populated in Play Mode. Read Console errors alongside these values. If an effect works in Edit Mode but disappears in Play Mode, also check [Shader Stripping](./ForDevelopers.md#shader-feature-stripping).
+The **Light Volume**, **Point Light Volume** and **Light Volume Manager** components have a collapsible **Debug** section at the bottom of their Inspectors. It shows internal state, such as registration and active lighting data, and includes previews of textures and texture arrays where relevant. All displayed values are read-only. Some runtime values are available only in Play Mode.
 
 ## Use The Optional Avatar Debugger
 

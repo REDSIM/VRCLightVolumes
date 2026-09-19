@@ -19,12 +19,12 @@
 
 The Scene view's shading-mode menu, normally showing **Shaded**, contains the **Light Volumes Debug** modes. They show lighting and clustering across the scene independently of its materials.
 
-| Mode | What it shows | Useful for |
-| --- | --- | --- |
-| **VRCLV SH L1** | Light Volume lighting with surface direction. | Directional lighting and transitions across surfaces. |
-| **VRCLV SH L0** | The average lighting color without the directional part. | Color and brightness changes without surface direction affecting the result. |
-| **VRCLV Fine Clustering** | Groups of lights in the final grid, shown as colors. | Where the grid separates unrelated Point Light Volumes. |
-| **VRCLV Coarse Clustering** | Groups of lights in the larger cells. | How the coarse and fine grids differ. |
+| Mode | Description |
+| --- | --- |
+| **VRCLV&nbsp;SH&nbsp;L1** | Directional Light Volume lighting, for inspecting how light falls across surfaces. |
+| **VRCLV&nbsp;SH&nbsp;L0** | Lighting color and brightness without directional shading. |
+| **VRCLV&nbsp;Fine&nbsp;Clustering** | Groups of Point Light Volumes in the final clustering grid, shown as colors. |
+| **VRCLV&nbsp;Coarse&nbsp;Clustering** | Light groups in the larger coarse cells, shown as colors for comparison with the Fine view. |
 
 The SH views include both baked volumes and Point Light Volumes. Select **Shaded** to return to the scene's usual materials.
 
@@ -32,7 +32,11 @@ The SH views include both baked volumes and Point Light Volumes. Select **Shaded
 | --- | --- |
 | ![A lantern-lit alley with textured storefronts, barrels and a red scooter](./Images/debug-shaded.jpg) | ![The same alley in VRCLV SH L1, showing lighting and shadows without material colors or textures](./Images/debug-sh-l1.jpg) |
 
-In **Shaded**, the wood, fabric and red scooter retain their material colors and textures. **VRCLV SH L1** shows the lighting on the same geometry without those material details, making its color, direction and shadows easier to see.
+**VRCLV SH L1** applies Light Volume lighting to all surfaces, including those that normally use lightmaps. This lets you inspect baked volume lighting throughout the scene, even though the result can differ from the scene's usual appearance.
+
+| **Shaded** | **VRCLV&nbsp;Fine&nbsp;Clustering** |
+| --- | --- |
+| ![The alley in Shaded view](./Images/debug-clustering-shaded.jpg) | ![The same view with colored Fine Clustering regions](./Images/debug-clustering-fine.jpg) |
 
 Clustering colors identify groups of lights; they do not represent brightness or performance. See [Froxel Clustering](./HowToUse_FroxelClustering.md) for the Coarse and Fine views in more detail.
 

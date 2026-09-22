@@ -23,6 +23,11 @@ namespace VRCLightVolumes {
         public Texture TargetRenderTexture;
         [Tooltip("Smooths changes in the video color to reduce flicker.")]
         public bool AntiFlickering = true;
+        [Tooltip("Clamp the sampled color's lightness to a minimum so dark scenes don't fade the light to black. Off by default.")]
+        public bool ClampSampleLightness;
+        [Tooltip("Lightness clamp range. Left value is the near-black cutoff. Right value is the minimum lightness. Frames whose lightness falls inside this range are boosted to the right-side value.")]
+        [MinMaxSlider(0f, 1f)]
+        public Vector2 SampleLightnessRange = new Vector2(0.003f, 0.3f);
         [Space]
         [Tooltip("Baked volumes to tint with the video color.")]
         public LightVolumeInstance[] TargetLightVolumes;
@@ -122,6 +127,16 @@ namespace VRCLightVolumes {
             float time = Time.time;
             float dTime = time - _timePrev;
             _timePrev = time;
+
+            // Raise the sampled color to the range's top when it's dim but not near-black.
+            // Bright and near-black frames are left alone.
+            if (ClampSampleLightness) {
+                float h, s, v;
+                Color.RGBToHSV(color, out h, out s, out v);
+                if (v > SampleLightnessRange.x && v < SampleLightnessRange.y) {
+                    color = Color.HSVToRGB(h, s, SampleLightnessRange.y);
+                }
+            }
 
             if (AntiFlickering) {
                 float rmean = (color.r + _prevColor.r) * 0.5f;

@@ -49,6 +49,7 @@ namespace VRCLightVolumes.Tests {
             PrefabUtility.RecordPrefabInstancePropertyModifications(legacy);
 
             CreateManager(out LightVolumeSetup setup, out LightVolumeManager manager);
+            manager.ShadowCulling = false;
             setup.PointLightVolumes.Add(legacy);
             manager.PointLightVolumeInstances = new[] { point };
             point.LightVolumeManager = manager;
@@ -60,6 +61,7 @@ namespace VRCLightVolumes.Tests {
             Assert.That(instanceRoot.GetComponent<PointLightVolume>(), Is.Null);
             Assert.That(instanceRoot.GetComponent<PointLightVolumeInstance>(), Is.SameAs(point));
             Assert.That(point.Intensity, Is.EqualTo(654f));
+            Assert.That(manager.ShadowCulling, Is.True);
             Assert.That(PrefabUtility.GetPrefabInstanceStatus(instanceRoot), Is.EqualTo(PrefabInstanceStatus.Connected));
 
             var removedComponents = PrefabUtility.GetRemovedComponents(instanceRoot);

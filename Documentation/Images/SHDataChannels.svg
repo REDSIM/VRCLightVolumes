@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="680" viewBox="0 0 1200 680" role="img" aria-labelledby="title desc">
+<title id="title">One voxel’s SH data across three textures</title>
+<desc id="desc">One large voxel contains three colored blocks that represent its data in three textures. Arrows connect each block to its RGBA channel mapping. Texture 0 stores L0 ambient red, green and blue in RGB, and the L1 red direction Z component in A. Texture 1 stores the L1 red, green and blue direction X components in RGB, and the L1 green direction Z component in A. Texture 2 stores the L1 red, green and blue direction Y components in RGB, and the L1 blue direction Z component in A.</desc>
+<defs>
+<style>text{font-family:Arial,Helvetica,sans-serif}.heading{font-size:30px;font-weight:700}.body{font-size:24px;fill:#f4f6f9}.channel{font-size:24px;fill:#c4ced8}.caption{font-size:26px;fill:#f4f6f9}</style>
+<marker id="data-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#f4f6f9"/></marker>
+</defs>
+<rect width="1200" height="680" rx="12" fill="#30343b"/>
+<!-- Equal world-space cube edges; orthographic camera elevation 18 degrees, azimuth 45 degrees. -->
+<g stroke="#b29a87" stroke-width="1.4" stroke-linejoin="round">
+<polygon points="776.78,546.63 600.00,601.25 600.00,363.49 776.78,308.86" fill="#62554d"/>
+<polygon points="423.22,546.63 600.00,601.25 600.00,363.49 423.22,308.86" fill="#7c6b60"/>
+<polygon points="600.00,254.24 776.78,308.86 600.00,363.49 423.22,308.86" fill="#a38a79"/>
+</g>
+<g stroke="#e1c991" stroke-width="1.4" stroke-linejoin="round">
+<polygon points="662.23,412.22 600.00,431.45 600.00,347.76 662.23,328.53" fill="#8b764d"/>
+<polygon points="537.77,412.22 600.00,431.45 600.00,347.76 537.77,328.53" fill="#af945f"/>
+<polygon points="600.00,309.30 662.23,328.53 600.00,347.76 537.77,328.53" fill="#d6b879"/>
+</g>
+<g stroke="#d6acdf" stroke-width="1.4" stroke-linejoin="round">
+<polygon points="580.20,519.69 517.98,538.92 517.98,455.23 580.20,436.00" fill="#785881"/>
+<polygon points="455.75,519.69 517.98,538.92 517.98,455.23 455.75,436.00" fill="#9b73a8"/>
+<polygon points="517.98,416.77 580.20,436.00 517.98,455.23 455.75,436.00" fill="#bc8fca"/>
+</g>
+<g stroke="#a1cce1" stroke-width="1.4" stroke-linejoin="round">
+<polygon points="744.25,519.69 682.02,538.92 682.02,455.23 744.25,436.00" fill="#497286"/>
+<polygon points="619.80,519.69 682.02,538.92 682.02,455.23 619.80,436.00" fill="#5e93ad"/>
+<polygon points="682.02,416.77 744.25,436.00 682.02,455.23 619.80,436.00" fill="#78b5d4"/>
+</g>
+<g fill="none" stroke="#f4f6f9" stroke-width="3" stroke-linecap="round" marker-end="url(#data-arrow)">
+<path d="M600 365V222"/>
+<path d="M504 479L354 408"/>
+<path d="M696 479L846 408"/>
+</g>
+<g aria-label="Texture 0 channel mapping">
+<text x="600" y="43" class="heading" text-anchor="middle" fill="#d6b879">Texture 0</text>
+<text x="456" y="88" class="channel">R</text><text x="498" y="88" class="body">L0 <tspan fill="#f2d28b">Ambient</tspan> color · R</text>
+<text x="456" y="124" class="channel">G</text><text x="498" y="124" class="body">L0 <tspan fill="#f2d28b">Ambient</tspan> color · G</text>
+<text x="456" y="160" class="channel">B</text><text x="498" y="160" class="body">L0 <tspan fill="#f2d28b">Ambient</tspan> color · B</text>
+<text x="456" y="196" class="channel">A</text><text x="498" y="196" class="body">L1 <tspan fill="#ff7b80">Red</tspan> direction · Z</text>
+</g>
+<g aria-label="Texture 1 channel mapping">
+<text x="181" y="337" class="heading" text-anchor="middle" fill="#bc8fca">Texture 1</text>
+<text x="32" y="382" class="channel">R</text><text x="74" y="382" class="body">L1 <tspan fill="#ff7b80">Red</tspan> direction · X</text>
+<text x="32" y="421" class="channel">G</text><text x="74" y="421" class="body">L1 <tspan fill="#a9dc76">Green</tspan> direction · X</text>
+<text x="32" y="460" class="channel">B</text><text x="74" y="460" class="body">L1 <tspan fill="#77baff">Blue</tspan> direction · X</text>
+<text x="32" y="499" class="channel">A</text><text x="74" y="499" class="body">L1 <tspan fill="#a9dc76">Green</tspan> direction · Z</text>
+</g>
+<g aria-label="Texture 2 channel mapping">
+<text x="1019" y="337" class="heading" text-anchor="middle" fill="#78b5d4">Texture 2</text>
+<text x="870" y="382" class="channel">R</text><text x="912" y="382" class="body">L1 <tspan fill="#ff7b80">Red</tspan> direction · Y</text>
+<text x="870" y="421" class="channel">G</text><text x="912" y="421" class="body">L1 <tspan fill="#a9dc76">Green</tspan> direction · Y</text>
+<text x="870" y="460" class="channel">B</text><text x="912" y="460" class="body">L1 <tspan fill="#77baff">Blue</tspan> direction · Y</text>
+<text x="870" y="499" class="channel">A</text><text x="912" y="499" class="body">L1 <tspan fill="#77baff">Blue</tspan> direction · Z</text>
+</g>
+<text x="600" y="650" class="caption" text-anchor="middle">One voxel’s data</text>
+</svg>
+

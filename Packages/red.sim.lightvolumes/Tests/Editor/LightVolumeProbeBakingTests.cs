@@ -487,7 +487,7 @@ namespace VRCLightVolumes.Tests {
             }
         }
 
-        // Verifies the threaded bilateral implementation matches the former sequential algorithm across depth slices.
+        // Verifies that threaded and sequential bilateral filters match across depth slices.
         [Test]
         public void BilateralDenoise3DMatchesSequentialReference() {
             Vector3[] source = new Vector3[24];

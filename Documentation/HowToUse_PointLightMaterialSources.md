@@ -1,156 +1,167 @@
-[VRC Light Volumes](../README.md) | **How to Use** | [Best Practices](../Documentation/BestPractices.md) | [Udon Sharp API](../Documentation/UdonSharpAPI.md) | [For Developers](../Documentation/ForDevelopers.md) | [Compatible Shaders](../Documentation/CompatibleShaders.md)
+[VRC Light Volumes](../README.md) | **How to Use** | [Best Practices](./BestPractices.md) | [Scripting API](./ScriptingAPI.md) | [Shader Integration](./ForDevelopers.md) | [Compatible Shaders](./CompatibleShaders.md)
 
-# How to Use
+# Point Light Material Sources
 
 | Menu |
-|----|
-|[VRC Light Volumes System](../Documentation/HowToUse.md)|
-|[Regular Light Volumes](../Documentation/HowToUse_RegularLightVolumes.md)|
-|[Point Light Volumes](../Documentation/HowToUse_PointLightVolumes.md)|
-|[Point Light Volume Shadows](../Documentation/HowToUse_Shadows.md)|
-|**Point Light Material Sources**<br />&bull; [What This Material Does](#What-This-Material-Does)<br />&bull; [Quick Setup](#Quick-Setup)<br />&bull; [Material Rendering Contract](#Material-Rendering-Contract)<br />&bull; [Shadow Map Materials](#Shadow-Map-Materials)<br />&bull; [Cubemap Sources](#Cubemap-Sources)<br />&bull; [Single-Slice Sources](#Single-Slice-Sources)|
-|[Area Light Emission](../Documentation/HowToUse_AreaLightEmission.md)|
-|[Audio Link Integration](../Documentation/HowToUse_AudioLinkIntegration.md)|
-|[TV Screens Integration](../Documentation/HowToUse_TVScreensIntegration.md)|
-|[How Light Volumes Work?](../Documentation/HowToUse_HowItWorks.md)|
+| --- |
+| [Overview](./HowToUse.md) |
+| [Regular Light Volumes](./HowToUse_RegularLightVolumes.md) |
+| [Point Light Volumes](./HowToUse_PointLightVolumes.md) |
+| [Froxel Clustering](./HowToUse_FroxelClustering.md) |
+| [Shadows](./HowToUse_Shadows.md) |
+| **Material Sources**<br />• [Assign A Material](#assign-a-material)<br />• [Cubemap Material Sources](#cubemap-material-sources)<br />• [Color And Alpha](#color-and-alpha)<br />• [Updates And Snapshots](#updates-and-snapshots)<br />• [Shadow Map Materials](#shadow-map-materials) |
+| [AudioLink](./HowToUse_AudioLinkIntegration.md) |
+| [TV Screens](./HowToUse_TVScreensIntegration.md) |
+| [Debugging](./HowToUse_Debugging.md) |
+| [How It Works](./HowToUse_HowItWorks.md) |
 
-## Point Light Material Sources
+A Material can generate a cookie for any Point Light Volume type, including animated patterns and procedural effects. A **Spot Light** projects one 2D image. An **Area Light** emits light from one 2D image like a screen, spreading its colors into the surroundings. A **Point Light** projects a cubemap around itself.
 
-A `Material` assigned to a Point Light Volume projection or shadow field is used as a texture generator. It is not rendered as a normal world material. The Light Volume Manager renders pass `0` of that material into one or more slices of the shared Point Light Volume texture arrays, and compatible shaders later sample those arrays while lighting the scene.
+## Assign A Material
 
-Use a Material source when the texture must be generated procedurally, combined from several inputs, copied from another runtime system, or updated every frame. For static images, regular Texture, Cubemap or Texture2DArray assets are cheaper and easier to debug.
+Assign a Material directly to **Cookie** for a Spot or Area light, or **Cubemap** for a Point light. Point and Spot lights need **Projection → Custom** for these fields.
 
-## What This Material Does
+With **Projection → LUT**, a Material in **Falloff LUT** controls distance falloff; Spot lights also use horizontal cone falloff. Materials are also accepted in **Shadow Map** for [custom shadows](#shadow-map-materials).
 
-Material sources are supported in these places:
+Several lights can share one Material. Give them separate Materials when their image settings need to differ.
 
-- `Projection = Custom` on a **Point Light** uses the `Cubemap` field. A Material here generates a six-face cubemap cookie for point-light projection.
-- `Projection = Custom` on a **Spot Light** uses the `Cookie` field. A Material here generates one projected cookie slice.
-- **Area Light** `Cookie` can also use a Material source. It follows the same single-slice texture contract, but the lighting behavior is described in [Area Light Emission](../Documentation/HowToUse_AreaLightEmission.md).
-- `Shadow Map` can use a Material source when `Shadows` is enabled. A Material here must generate EVSM shadow moments, not a regular black and white mask.
+## Cubemap Material Sources
 
-The same Material object is shared between lights when possible. If two lights need different generated output, create separate Material instances. Do not reuse one Material object for different outputs, because the manager deduplicates it into one generated texture source.
+The Manager renders **pass 0** of your shader with `0..1` UVs. For a cubemap, it renders that pass six times, once per face. It supplies this shader property:
 
-## Quick Setup
+```hlsl
+float4 _CustomRenderTextureInfo;
+// x = output width in pixels, y = output height in pixels
+// Cubemap: z = 1, w = face index (0..5)
+// Single image: z/w are internal array data; ignore them.
+```
 
-1. Create or pick a Material that draws the picture you want using regular `0..1` UVs, exactly as it would look on a simple quad.
-2. Make sure the shader writes the result in pass `0`. Additional passes are ignored by the Light Volume Manager.
-3. For a custom shader, use the usual blit setup: `Cull Off`, `ZWrite Off` and `ZTest Always`.
-4. Assign the Material to the `Cubemap`, `Cookie` or `Shadow Map` field on the **Point Light Volume** authoring component.
-5. For animated Materials or RenderTextures, enable `Auto Update Textures` in **Light Volume Setup**.
-6. Use the lowest acceptable `Cookie Resolution` or `Shadow Resolution`, because cubemap sources consume six slices.
+Face indices are `0 = +X`, `1 = -X`, `2 = +Y`, `3 = -Y`, `4 = +Z`, `5 = -Z`. Ignoring the face index repeats the same image on all six faces. For a single image, such as a Spot cookie or LUT, use the UVs directly.
 
-> [!IMPORTANT]
-> A shadow Material is advanced. It must output the same EVSM data layout used by VRC Light Volumes. If you only need normal geometry-cast shadows, use `Bake Shadows` or `Bake In Game` instead. Use `Point Light Shadow Runtime Baker` only for `OnEnable` rebakes or full realtime shadows.
+Use this shader as a starting point for your own Point light cookies. `CubemapDirection()` converts each face's UVs into a shared direction. The fragment function uses its spherical latitude to draw animated bands that continue across face boundaries.
 
-## Material Rendering Contract
+```hlsl
+Shader "Examples/Light Volume Spherical Bands" {
+    Properties {
+        _ColorA ("Color A", Color) = (1, 0.1, 0.05, 1)
+        _ColorB ("Color B", Color) = (0.05, 0.2, 1, 1)
+        _Speed ("Speed", Float) = 1
+    }
+    SubShader {
+        Cull Off ZWrite Off ZTest Always
+        Pass {
+            CGPROGRAM
+            #pragma target 3.0
+            #pragma vertex vert_img
+            #pragma fragment frag
+            #include "UnityCG.cginc"
 
-The manager renders the Material into a shared `Texture2DArray`. Think of it as drawing the Material into a small render texture, then using that texture as the light cookie or shadow source.
+            float4 _ColorA, _ColorB;
+            float _Speed;
+            float4 _CustomRenderTextureInfo;
 
-The shader gets regular `0..1` UVs from the blit, so pass `0` is rendered as if the Material was drawn on a simple quad.
+            // Convert this face's 0..1 UVs into the lookup direction.
+            float3 CubemapDirection(float2 uv01, float face) {
+                float2 uv = uv01 * 2.0 - 1.0;
+                if (face < 0.5) return normalize(float3(1.0, -uv.y, -uv.x));
+                if (face < 1.5) return normalize(float3(-1.0, -uv.y, uv.x));
+                if (face < 2.5) return normalize(float3(uv.x, 1.0, uv.y));
+                if (face < 3.5) return normalize(float3(uv.x, -1.0, -uv.y));
+                if (face < 4.5) return normalize(float3(uv.x, -uv.y, 1.0));
+                return normalize(float3(-uv.x, -uv.y, -1.0));
+            }
 
-The manager provides this extra shader property before rendering each Material source:
+            float4 frag(v2f_img i) : SV_Target {
+                // The Manager sets w to the face being drawn.
+                float3 direction = CubemapDirection(i.uv, _CustomRenderTextureInfo.w);
+                // Latitude gives every face the same spherical pattern.
+                float latitude = asin(clamp(direction.y, -1.0, 1.0));
+                // Unity's time animates the bands.
+                float bands = 0.5 + 0.5 * sin(latitude * 8.0 - _Time.y * _Speed);
+                return float4(lerp(_ColorA.rgb, _ColorB.rgb, bands), 1.0);
+            }
+            ENDCG
+        }
+    }
+}
+```
 
-| Shader property | Meaning |
-|----|----|
-|`float4 _CustomRenderTextureInfo` | `x` = output width, `y` = output height, `z` = output array depth or `1` for cubemap face updates, `w` = output slice index or cubemap face index. |
+Keep `Cull Off`, `ZWrite Off` and `ZTest Always` for material sources. For a Spot or Area cookie, replace the direction-based pattern with one drawn directly from `i.uv`.
 
-Any other textures, colors or parameters must be normal Material properties declared by your shader and assigned on that Material.
+## Color And Alpha
 
-The manager does not automatically pass the Point Light Volume color, intensity, transform, near plane or far clip to the Material. If your shader needs those values, expose normal Material properties such as `_Tint`, `_ShadowNearClip` or `_ShadowFarClip` and set them yourself.
+Output **linear color** from the source shader. The light applies its own Color and Intensity afterward. HDR colors are supported.
 
-For cookie projection, pass `0` should output regular linear color. The result is multiplied by the Point Light Volume `Color` and `Intensity` during lighting. Values above `1` are allowed for bright cookie areas, but keep the final light intensity under control to avoid clipping and banding on low precision targets.
+| Light type | Output interpretation |
+| --- | --- |
+| Point custom cubemap | RGB lights the scene; alpha is ignored. |
+| Spot custom cookie | RGB lights the scene; alpha masks the contribution. |
+| Area cookie | Emission is `RGB × Alpha`. |
 
-Cookie alpha behavior depends on the light type:
+Write alpha `1` for a fully emitting Spot or Area image. A shader that returns zero alpha may look bright in an RGB preview but produce no light.
 
-| Light type | Cookie output |
-|----|----|
-| **Point Light** custom cubemap | RGB is used by lighting. Alpha is currently ignored, so write `1` unless you use it for your own intermediate workflow. |
-| **Spot Light** custom cookie | RGB tints the light and alpha masks it. A transparent cookie pixel contributes no light. |
-| **Area Light** cookie | Alpha is treated as an emission mask and the receiver uses `RGB * Alpha`. Keep alpha meaningful if the source has transparent parts. |
+Use the Manager's **Cookie Resolution** to choose image detail. Cubemap sources generate six images per update, so keep animated ones simple.
+
+## Updates And Snapshots
+
+Keep Manager **Auto Update Textures** enabled for animated Material, Render Texture and Custom Render Texture sources.
+
+In these Udon calls, `Lamp` is your assigned `PointLightVolumeInstance` and `cookieMaterial` is the source Material.
+
+`SetCustomMaterial(Material material)` enables live projection updates:
+
+```csharp
+Lamp.SetCustomMaterial(cookieMaterial);
+```
+
+Alternatively, use `SetCustomMaterial(Material material, bool autoUpdate)` with `false` to keep a snapshot until the shared array is rebuilt:
+
+```csharp
+Lamp.SetCustomMaterial(cookieMaterial, false);
+```
+
+Equivalent texture overloads are listed in the [UdonSharp API](./ScriptingAPI.md#pointlightvolumeinstance).
+
+For animation, change the existing Material's parameters instead of assigning a new Material every frame.
 
 ## Shadow Map Materials
 
-VRC Light Volumes shadows are Exponential Variance Shadow Maps (EVSM). A shadow Material must output four channels:
+A custom **Shadow Map** Material describes the distance from the light to a shadow caster in each direction. It can generate animated or procedural shadows. For shadows cast by scene geometry, use the [built-in shadow baker](./HowToUse_Shadows.md).
 
-| Channel | Required data |
-|----|----|
-|`R` | Positive warped depth moment. |
-|`G` | Negative warped depth moment. |
-|`B` | Square of the positive warped depth moment. |
-|`A` | Square of the negative warped depth moment. |
+The shader must output **EVSM (Exponential Variance Shadow Maps) moments**:
 
-The receiver compares these moments against the runtime fragment distance normalized by the Point Light Volume `Near Plane` and `Far Clip Plane`. A plain white/black shadow mask will not work correctly in the `Shadow Map` field.
+| Channel | Data |
+| --- | --- |
+| R | Positive warped depth. |
+| G | Negative warped depth. |
+| B | Square of R. |
+| A | Square of G. |
 
-Use the same EVSM encoding constants as the package:
+Use this helper in your source shader to convert normalized radial depth into those four channels:
 
 ```hlsl
 float4 EncodeVRCLVShadowEVSM(float depth01) {
-    depth01 = saturate(depth01) * 2.0 - 1.0;
-    float positive = exp(5.54 * depth01);
-    float negative = -exp(-5.0 * depth01);
+    float depth = saturate(depth01) * 2.0 - 1.0;
+    float positive = exp(5.54 * depth);
+    float negative = -exp(-5.0 * depth);
     return float4(positive, negative, positive * positive, negative * negative);
 }
 ```
 
-`depth01` must be normalized with the same near/far range that the receiver uses:
+In the pass-0 fragment function, encode the distance from the light to your shadow caster, including for projected Spot shadows:
 
 ```hlsl
-float depth01 = (radialDistance - shadowNearClip) / max(shadowFarClip - shadowNearClip, 0.0001);
+// All distances use the same world units.
+float depth01 = (radialDistance - shadowNearClip)
+    / max(shadowFarClip - shadowNearClip, 0.0001);
+return EncodeVRCLVShadowEVSM(depth01);
 ```
 
-If the Point Light Volume `Far Clip Plane` is `0`, the authoring component resolves it from the light's current culling range. The Material does not receive that resolved value automatically, so either keep your Material's far clip property in sync manually or use a fixed manual `Far Clip Plane` for that light.
+Supply `radialDistance`, `shadowNearClip` and `shadowFarClip` through your own shader calculations or Material properties. The Manager supplies `_CustomRenderTextureInfo`, but does not pass the light's position, rotation or near/far range to the Material.
 
-For a code reference, see `Packages/red.sim.lightvolumes/Shaders/Editor/PointLightShadowDepthEncode.shader`. It is the editor/runtime depth encoder used by the built-in shadow baker path.
+Match the light's shadow projection, pose and depth range. A previous built-in bake can retain its far distance in `BakedFarClip`; use the range the shadow receiver actually uses. Convert perspective-camera depth to radial distance before encoding it. The package's [depth encoder](../Packages/red.sim.lightvolumes/Shaders/Editor/PointLightShadowDepthEncode.shader#L53) shows that conversion and the bake-bias calculation. A black-and-white mask or raw camera-depth texture will not work.
 
-## Cubemap Sources
+Point and Area shadows need six faces. Spot shadows use a single projected image, or six faces with **Force Cubemap Shadows**. For six-face Materials, use the same face indices and `CubemapDirection()` helper described above. The shadow layout is separate from the light's cookie layout.
 
-Cubemap Material sources are rendered six times, once per cubemap face. If your shader ignores `_CustomRenderTextureInfo.w`, the same UV pattern is written to every face. That is fine for many stylized cookies.
-
-Use `_CustomRenderTextureInfo.w` only when the shader needs different output per face, for example a procedural cubemap, a direction-based mask or a cubemap shadow source.
-
-Cubemap face ID is stored in `_CustomRenderTextureInfo.w`:
-
-| ID | Face |
-|----|----|
-|`0` | `+X` |
-|`1` | `-X` |
-|`2` | `+Y` |
-|`3` | `-Y` |
-|`4` | `+Z` |
-|`5` | `-Z` |
-
-For direction-based cubemap shaders, convert the UV and face index into a direction:
-
-```hlsl
-float3 CubemapDirection(float2 uv01, float face) {
-    float2 uv = uv01 * 2.0 - 1.0;
-
-    if (face < 0.5) return normalize(float3(1.0, -uv.y, -uv.x));
-    if (face < 1.5) return normalize(float3(-1.0, -uv.y, uv.x));
-    if (face < 2.5) return normalize(float3(uv.x, 1.0, uv.y));
-    if (face < 3.5) return normalize(float3(uv.x, -1.0, -uv.y));
-    if (face < 4.5) return normalize(float3(uv.x, -uv.y, 1.0));
-    return normalize(float3(-uv.x, -uv.y, -1.0));
-}
-```
-
-Then use that direction for your procedural math:
-
-```hlsl
-float face = floor(_CustomRenderTextureInfo.w + 0.5);
-float3 direction = CubemapDirection(i.uv, face);
-float3 cookieColor = abs(direction);
-```
-
-Cubemap projection is used by Point Light custom cookies and by cubemap shadow sources. Cubemap shadows are six times more expensive in texture slices than single-slice shadows, so keep their resolution conservative.
-
-## Single-Slice Sources
-
-Single-slice Material sources are rendered once into one texture-array slice. This is the simplest mode: normal `0..1` UVs become the cookie texture.
-
-Single-slice projection is used by Spot Light cookies and Area Light cookies. For Spot Lights, the center of the texture is the light forward direction, and the visible cone maps to the texture rectangle.
-
-`_CustomRenderTextureInfo.w` contains the final destination slice index. Most cookie shaders can ignore it.
-
-Single-slice shadows are projected like a spotlight shadow camera. If a shadow Material writes EVSM data into one slice, the encoded depth must match the same projection, near plane and far clip used by the Point Light Volume.
+> [!IMPORTANT]
+> Use `float4` output for shadow data: it contains negative values and values above `1`. If an external Render Texture supplies the shadow, it must preserve linear floating-point data, such as **ARGBHalf** or **ARGBFloat**.

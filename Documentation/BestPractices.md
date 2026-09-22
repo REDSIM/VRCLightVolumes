@@ -1,167 +1,189 @@
-[VRC Light Volumes](../README.md) | [How to Use](../Documentation/HowToUse.md) | **Best Practices** | [Udon Sharp API](../Documentation/UdonSharpAPI.md) | [For Developers](../Documentation/ForDevelopers.md) | [Compatible Shaders](../Documentation/CompatibleShaders.md)
+[VRC Light Volumes](../README.md) | [How to Use](./HowToUse.md) | **Best Practices** | [Scripting API](./ScriptingAPI.md) | [Shader Integration](./ForDevelopers.md) | [Compatible Shaders](./CompatibleShaders.md)
 
 # Best Practices
 
 | Menu |
-| ----|
-| **Best Practices**<br />- [Regular Light Volumes Use Cases](#Regular-Light-Volumes-Use-Cases)<br />- [Point Light Volumes Use Cases](#Point-Light-Volumes-Use-Cases)<br />- [Tuning Point Light Volume Size](#Tuning-Point-Light-Volume-Size)<br />- [Area Light Cookie Emission](#Area-Light-Cookie-Emission)<br />- [Additive Volumes](#Additive-Volumes)<br />- [Point Light Volume Baked Realtime Shadows](#Point-Light-Volume-Baked-Realtime-Shadows)<br />- [Quest And Mobile Shadow Artifacts](#Quest-And-Mobile-Shadow-Artifacts)<br />- [Point Light Volume Realtime Shadows](#Point-Light-Volume-Realtime-Shadows)<br />- [Custom Render Textures Projections](#Custom-Render-Textures-Projections)<br />- [Naming Light Volumes](#Naming-Light-Volumes)<br />- [Volume Bounds Smoothing](#Volume-Bounds-Smoothing)<br />- [Culling Light Volumes](#Culling-Light-Volumes)<br />- [Moving Light Volumes](#Moving-Light-Volumes)<br />- [Spawning New Light Volumes In Runtime](#Spawning-New-Light-Volumes-In-Runtime)<br />- [Bakery Volume Rotation](#Bakery-Volume-Rotation)<br />- [Fixing Bakery Light Probes](#Fixing-Bakery-Light-Probes)<br />- [Shader Path Choices](#Shader-Path-Choices) |
+| --- |
+| **Best Practices**<br />• [Support Avatars With Light Probes And Light Volumes](#support-avatars-with-light-probes-and-light-volumes)<br />• [Choose The Lighting Type For The Job](#choose-the-lighting-type-for-the-job)<br />• [Place Volumes For Your World](#place-volumes-for-your-world)<br />• [Name Baked Volumes Uniquely](#name-baked-volumes-uniquely)<br />• [Batch Small Moving Props](#batch-small-moving-props)<br />• [Blend Between Volumes](#blend-between-volumes)<br />• [Keep Point Light Ranges Tight](#keep-point-light-ranges-tight)<br />• [Use Clustering For Many Local Lights](#use-clustering-for-many-local-lights)<br />• [Limit Excessive Overlap](#limit-excessive-overlap)<br />• [Choose How Shadows Update](#choose-how-shadows-update)<br />• [Check Mobile Shadow Quality Separately](#check-mobile-shadow-quality-separately)<br />• [Keep Animated Sources Affordable](#keep-animated-sources-affordable)<br />• [Update Only What Changes](#update-only-what-changes)<br />• [Preserve Features Used By Scripts](#preserve-features-used-by-scripts)<br />• [Spawn Lights From Prefabs](#spawn-lights-from-prefabs)<br />• [Bakery Tips](#bakery-tips)<br />• [Match Avatar Brightness To The World](#match-avatar-brightness-to-the-world)<br />• [Check Before Release](#check-before-release)<br />• [Migrating from 2.x.x to 3.x.x](#migrating-from-2xx-to-3xx) |
 
-## Regular Light Volumes Use Cases
+## Support Avatars With Light Probes And Light Volumes
 
-- Use them with small static props that usually require very high lightmap resolution to avoid visible seams. Light Volumes produce no seams because they are voxel-based.
-- Dynamic batching support: if you have many low-poly dynamic props using the same material, and their Mesh Renderers have Light Probes and Reflection Probes disabled, they can be dynamically batched at runtime.
-- Combine Light Volumes with particles to create volumetric fog effects.
-- Switch between two Light Volumes at runtime to create toggleable lighting for rooms or other areas in your scene.
-- TV screens dynamic Global Illumination.
-- Audio Link dynamic lights.
+Keep both **Unity Light Probes** and **Light Volumes** in your world. Light Volumes light avatars whose shaders support them; ordinary probes light avatars with other shaders. Probes also provide fallback lighting outside your volumes.
 
-## Point Light Volumes Use Cases
+## Choose The Lighting Type For The Job
 
-- Spot Lights as portable flashlights.
-- Point Lights as other dynamic light sources.
-- Area Lights as studio light soft boxes.
-- Area Lights with Cookie as textured emissive panels, TV screens, windows and signs.
-- Moving blinking lighting for clubs.
-- Image and cubemap projectors.
-- TV screens dynamic Global Illumination.
-- Audio Link dynamic lights.
+| Situation | A useful starting point |
+| --- | --- |
+| Room lighting, sunlight and many stationary lamps | Use your lightmapper's lights and bake them into **Regular Light Volumes**. Keep lightmaps for surfaces that need detailed baked shadows. |
+| A group of lamps that switches as one | Bake an **Additive Light Volume** separately from the base lighting. |
+| Two lighting states for the same room | Bake a **Regular Light Volume** for each state, then enable only the one you need. This does not switch the room's lightmaps. |
+| Flashlight or projector | A **Spot Light Volume**. A narrow cone avoids lighting unrelated parts of the scene. |
+| Portable bulb or independently animated lamp | A **Point Light Volume**. |
+| Screen, sign or soft panel | An **Area Light Volume**; add a texture when its image should affect the light. |
+| Music-reactive club lighting | Control Point, Spot or Area lights with [AudioLink](./HowToUse_AudioLinkIntegration.md). |
+| Small props with visible lightmap seams | Use a shader that supports VRC Light Volumes to light the prop from a Regular Light Volume instead of a lightmap. Check that the grid has enough detail for the prop. |
+| Lit particles or fog meshes | Use a particle shader that supports VRC Light Volumes. Keep the number of overlapping transparent layers low. |
 
-## Tuning Point Light Volume Size
+Regular Light Volumes store lighting baked from your lightmapper's lights. Use Point Light Volumes when you need to control each light separately in game.
 
-Tune Point Light Volume source size intentionally. For Point and Spot Lights, `Light Source Size` affects calculated range and size-aware specular highlights. For Area Lights, `Width` and `Height` are the visible source size.
+Use an **Additive Light Volume** for a baked lighting layer that you need to move or change in game. It adds to the surrounding lighting and can also light lightmapped surfaces when their shader supports that combination.
 
-For glossy PBR materials in modern compatible shaders, larger Point, Spot and Area Light sources create broader and softer specular highlights, while smaller sources create sharper highlights. Do not use `Light Source Size` only as a range control when the light is visible in reflections. Set the physical source size first, then adjust `Intensity`, `Brightness Cutoff` and culling behavior.
+Use a Point Light Volume's **Bake Into Probes** only for lights that should remain in the ordinary probe lighting. Switching that light off in game does not remove its already-baked contribution from Unity Light Probes.
 
-## Area Light Cookie Emission
+## Place Volumes For Your World
 
-Use **Area Light Cookie Emission** when a rectangular source needs to emit non-uniform color in runtime: TV screens, monitors, windows with colored patterns, animated signs, LED walls or soft boxes with texture detail.
+In worlds with separate rooms, give each room its own volume. Overlap neighboring volumes at doorways and connecting passages.
 
-For new screen-light setups, prefer Area Light Cookie Emission over the old **LightVolumeTVGI** script. TVGI only drives lighting from a single average screen color and is mostly a legacy workflow now. Area Light Cookie Emission projects the actual texture near the screen and gradually blends toward the average color with distance.
+For open worlds, use one large volume with very low resolution for broad lighting. Add smaller volumes with higher resolution where detailed lighting matters.
 
-For runtime screens, keep `Cookie Resolution` as low as acceptable and enable `Auto Update Textures` only for RenderTexture or Material sources that actually change. See [Area Light Emission](../Documentation/HowToUse_AreaLightEmission.md) for the full setup workflow.
+## Name Baked Volumes Uniquely
 
-## Additive Volumes
+Give each volume you bake a unique GameObject name: its source textures use that name and can overwrite each other. Copies with **Bake** disabled can share the same baked textures.
 
-For dynamic lighting, set the volume to **Additive** so it layers on top of others and also affects lightmapped static meshes with a compatible shader. Minimize overlapping additive volumes to reduce overhead.
+## Batch Small Moving Props
 
-Lower `Additive Max Overdraw` when overlap-heavy areas become expensive. It caps additive Light Volume accumulation, Point Light Volume diffuse contribution and individual Point Light Volume specular evaluation. Lower values improve worst-case performance, but can hide lower-priority overlapping lights.
+For many small moving props that share a material, test [Unity's dynamic batching](https://docs.unity3d.com/2022.3/Documentation/Manual/dynamic-batching.html). Light Volumes can still light these props with **Light Probes** disabled on their Mesh Renderers. Compare frame time before keeping the change; batching also takes CPU time.
 
-## Point Light Volume Baked Realtime Shadows
+## Blend Between Volumes
 
-Point Light Volume Shadows are shadows similar to Unity's realtime point light shadows, but they are intended to work mostly in baked mode, which is much more optimized. You usually prebake depth shadow maps in the editor, or enable `Bake In Game` to bake them once from `Start()` in runtime, and use this data to project shadows even on movable dynamic objects. Dynamic objects will not cast shadows themselves in that mode. This is usually enough for most cases and gives much more performant behavior than a regular realtime approach.
+Keep the overlap between neighboring volumes at least as wide as their **Smooth Blending** region. For example, use at least `0.25 m` of overlap with a `0.25 m` blend region.
 
-Point Light Volume Shadows use **Exponential Variance Shadow Maps (EVSM)**. They are cheap to filter, support wide blur kernels well, and keep the same shadow pipeline on PC and Quest.
+Set **Weight** in the Manager's **Light Volumes** list. Keep a broad fallback volume at a low weight and detailed room volumes at higher weights.
 
-Editor-baked shadow blur uses the spherical shadow-space blur path, so larger `Blur` values stay more consistent across cubemap faces and single-slice Spot Light projections. `Bake In Game` also uses high-quality runtime baking and spherical blur, but the baked shadow asset assigned for editor preview is removed from the build/upload runtime state, saving bundle memory.
+The Manager's three-dot menu contains **Sort Light Volumes**. It sorts equal-weight volumes by resolution settings: manual resolution first, then higher **Voxels Per Unit**. Set different weights when an overlap needs a specific priority.
 
-Use shadows only where they visibly matter. Shadowed Point Light Volumes need extra texture memory and extra shader work, so they are heavier, especially for Quest and Mobile.
+For edges adjoining uncovered areas, enable **Light Probes Blending** and disable **Sharp Bounds**. Extend the volume beyond the area that needs its full lighting, because the outer edge now fades toward the ordinary probes.
 
-Spot Lights with shadows are usually the most memory-efficient shadowed Point Light Volume type. With `Force Cubemap Shadows` disabled and an angle below 180 degrees, a Spot Light uses one projected shadow texture instead of six cubemap faces. Point Lights, Area Lights and Spot Lights with `Force Cubemap Shadows` enabled use cubemap shadows, which cost six texture slices.
+See [Regular Light Volumes](./HowToUse_RegularLightVolumes.md) for blending controls and Additive baking.
 
-For Spot Lights with shadows, keep the angle around 120 degrees or lower when possible. As the angle approaches 180 degrees, the single projected shadow texture has worse effective resolution. A 180 degree Spot Light is not efficient, and angles above 180 degrees automatically use cubemap shadows, which are about six times more expensive in shadow texture memory.
+## Keep Point Light Ranges Tight
 
-Keep `Shadow Resolution` as low as acceptable. Shadow precision is selected automatically from the active build target: Android/Quest/iOS uses `Half`, while PC uses `Float`. Increase `Bias` only enough to hide self-shadow artifacts, because large bias detaches contact shadows.
+Enable **Debug Range** and look at the whole affected area, not just the bright patch beside the lamp.
 
-See [Point Light Volume Shadows](../Documentation/HowToUse_Shadows.md) for the full setup workflow.
+For **Parametric** and **Custom** Point/Spot lights, effective range depends on **Light Source Size**, Transform scale, **Color**, **Intensity** and the Manager's **Brightness Cutoff**. **LUT** lights have an explicit **Range**.
 
-## Quest And Mobile Shadow Artifacts
+Tune a light in this order:
 
-Mobile and Quest EVSM shadows can show noisy or glitchy bright artifacts on shadow edges, in mesh corners, and near the first contact area where the shadow starts next to the occluder. This mostly comes from mobile precision limits; Android/Quest/iOS uses `Half` precision shadow textures under the hood, while PC uses `Float`.
+1. Set **Light Source Size** to a sensible emitter radius.
+2. Set color and intensity for the desired appearance.
+3. Check **Debug Range** for unnecessary overlap.
+4. Raise the Manager's **Brightness Cutoff** a little if imperceptibly dim light extends too far. This affects all lights that use the calculated cutoff.
+5. Disable lights in zones that cannot contribute to the current view.
 
-**Light Volume Setup** stores `Shadow Min Variance` separately for PC and Android/Quest/iOS and shows only the value for the active Unity build target. Tune the mobile value while the project is switched to Android or iOS. Tune the PC value while the project is switched to a desktop target.
+Light Source Size also changes the width of glossy highlights in shaders with individual-light specular support. Shrinking it and compensating with much higher intensity may change the look without solving the overlap.
 
-For Quest and Mobile shadow edge noise, corner glitches or contact-start artifacts, start from `Shadow Min Variance = 1` on the Android/Quest/iOS setting. This is the default mobile-oriented value and often the correct value for Half precision. PC usually works best with `Shadow Min Variance = 0` or another very low value for cleaner contact shadows.
+## Use Clustering For Many Local Lights
 
-Then increase `Shadow Bleed Reduction` if bright speckles or small halo artifacts remain; `0.2..0.4` is usually a reasonable Quest range. Do not fix these artifacts mostly with `Bias`. Bias is for self-shadow acne, and large values quickly detach contact shadows. If stronger variance or bleed reduction makes the shadow too thin, add a little more per-light `Blur` instead.
+Keep **Clustering Enabled** on in the **Light Volume Manager's Froxel Clustering** section. [Froxel Clustering](./HowToUse_FroxelClustering.md) builds a short light list for each part of the player's view. Each visible surface checks lights from that list instead of every active light in the scene.
 
-On mobile, it may be impossible to remove every artifact completely, but good `Shadow Min Variance`, `Shadow Bleed Reduction`, `Bias`, `Blur`, `Near Plane` and `Far Clip Plane` tuning can reduce them heavily.
+The default settings usually work best. Change them only when you understand the grid settings and want to tune performance for a specific scene. Clustering helps most when many lights occupy separate areas; heavy overlap still costs time.
 
-See [Point Light Volume Shadows](../Documentation/HowToUse_Shadows.md) for the full setup workflow.
+Enable [Shadow Culling (Hi-Z)](./HowToUse_FroxelClustering.md#shadow-culling-hi-z) when walls, floors or ceilings put large parts of a light's range in shadow. This lets clustering skip that light in fully shadowed cells.
 
-## Point Light Volume Realtime Shadows
+## Limit Excessive Overlap
 
-Realtime shadow baking is available through the extra **Point Light Shadow Runtime Baker** Udon script with `Realtime` mode enabled there. For one-shot startup baking, use the Point Light Volume `Bake In Game` checkbox instead. Use the extra baker for rebaking on `OnEnable` or for full realtime shadow updates.
+**Additive Max Overdraw** on the Manager limits overlapping Additive volumes and Point Light Volumes separately.
 
-Point Light Volume Realtime Shadows are **not cheaper than Unity's realtime shadows**. They are heavier. Under the hood, the target Point Light Volume renders cameras, encodes EVSM depth, optionally runs blur passes and updates the shared shadow array in runtime. Use full realtime only for heroic lights, single flashlights or other isolated important lights, and choose culling layers carefully.
+For example, `4` allows up to four Additive volumes and up to four Point Light contributions per pixel.
 
-Prefer realtime Spot Lights. With `Force Cubemap Shadows` disabled and an angle below 180 degrees, a Spot Light uses one shadow slice and is about six times cheaper than Point Light or Area Light cubemap shadows. Keep the angle around 120 degrees or lower when possible for better quality. Full realtime Point Light shadows are very expensive.
+Lowering it may improve frame rate, but lights can disappear where the limit is reached. Test the most crowded overlap and use the smallest value that keeps the lighting you need.
 
-Keep `Spherical Blur` disabled for realtime shadows unless the cheaper `Planar Blur` produces visible cubemap seams or Spot Light projection-edge artifacts. Spherical blur reduces those artifacts but adds more expensive shadow-space samples.
+## Choose How Shadows Update
 
-It is not recommended to use **Point Light Shadow Runtime Baker** in realtime mode for Quest and Mobile. It is much heavier than Unity's default realtime shadows, especially on CPU side.
+**Bake In Game** is usually best for shadows from static world geometry. It generates shadow maps after joining instead of including them in the world's asset bundle, reducing download size.
 
-See [Point Light Volume Shadows](../Documentation/HowToUse_Shadows.md) for the full setup workflow.
+Keep shadows baked in the Editor when you cannot bake them in game or the runtime result does not meet your quality needs.
 
-## Custom Render Textures Projections
+**Realtime** shadows are very expensive. Reserve them mainly for a few Spot-light flashlights that need soft moving shadows, such as in horror worlds. See [Shadows](./HowToUse_Shadows.md) for the available workflows.
 
-In Point Light Volume `Custom` projection mode, you can use regular **Textures**, **Render Textures**, **Custom Render Textures** and **Materials** to render dynamic animated cookies and cubemaps. They will be auto-updated every frame if `Auto Update Textures` is enabled in **Light Volume Manager**. Use the smallest **Cookie Resolution** that still gives acceptable quality. Larger resolutions are more expensive with dynamic animated sources such as **Render Textures**, **Custom Render Textures** and **Materials**.
+## Check Mobile Shadow Quality Separately
 
-Prefer using **Material** instead of **Custom Render Texture** when possible. It is cheaper because it needs fewer **Blit()** operations.
+Test shadows with the intended build target selected, then verify them on the device.
 
-Cookie source Materials are rendered as texture generators, not as normal world materials. A simple Unlit material is usually enough for cookies. Non-Unlit materials can add lighting and shading into the cookie texture itself, which is usually not what you want. See [Point Light Material Sources](../Documentation/HowToUse_PointLightMaterialSources.md) for compatible Material setup rules.
+For mobile speckles or noisy shadow edges, start with the Manager's mobile **Shadow Min Variance** at `1` and try **Shadow Bleed Reduction** around `0.2–0.4`. Compare against the defaults in the same view: stronger settings can change thin shadows and contact edges.
 
-With `Auto Update Textures` disabled in **Light Volume Manager**, projection sources are copied when the custom texture array is initialized or rebuilt. Use `ReinitializeCustomTextures()` after advanced manual source replacement, or keep `autoUpdate = true` and use `UpdateAutoCustomTextures()` when you intentionally manage the update call yourself.
+Use per-light **Bias** for self-shadow artifacts and **Blur** for softness. These are bake settings, so rebake after changing them.
 
-For Point Light Volume Shadows, `PointLightVolumeInstance.BakeShadows()` can publish completed runtime-baked slices into the managed shadow array.
+## Keep Animated Sources Affordable
 
-Runtime projection sources are shared by source object and auto-update mode. Several lights using the same Texture, RenderTexture, Cubemap or Material with the same `autoUpdate` value share one runtime texture-array entry. The same source used once with `autoUpdate = false` and once with `autoUpdate = true` gets separate entries, so an auto-updated copy cannot overwrite a static captured copy.
+Use the smallest acceptable **Cookie Resolution**. A Point light's cubemap needs six images; a Spot cookie or an Area emitter texture uses one.
 
-## Naming Light Volumes
+Use a [custom Material shader](./HowToUse_PointLightMaterialSources.md) for animated patterns and special effects. Keep its calculations affordable at the chosen resolution.
 
-Ensure every Light Volume you bake has a unique game object name. The generated 3D textures inherit these names and can conflict. If you duplicate baked volumes or use prefab instances with the `Bake` flag disabled, you do not need to rename them.
+Enable the Manager's **Auto Update Textures** for live Render Textures and Materials. For a scripted source that should freeze, use the projection setter with `autoUpdate = false`.
 
-Also give shadowed Point Light Volumes unique game object names before baking shadows. Baked shadow assets use the Point Light Volume game object name too, so two lights with the same name can overwrite each other's shadow files.
+See [Material Sources](./HowToUse_PointLightMaterialSources.md) and [Area Light Cookies](./HowToUse_PointLightVolumes.md#area-light-cookies) for setup.
 
-## Volume Bounds Smoothing
+## Update Only What Changes
 
-Overlap intersecting volumes slightly, about 0.25 m, to hide seams. The `Smooth Blending` parameter controls edge falloff, so keep it smaller than your overlap.
+Enable **Dynamic** for volumes whose position, rotation or scale changes in game, and enable the Manager's **Auto Update Volumes** to follow those changes automatically. Leave **Dynamic** off for stationary objects. If nothing moves, you can disable **Auto Update Volumes** too.
 
-To smooth between a volume and uncovered areas, disable `Sharp Bounds` in Light Volume Setup. This applies smoothing to all edges, so you might need to scale up your volumes to keep the softened edges outside of the intended area.
+Color and intensity changes do not need **Dynamic**. Use the [UdonSharp setters](./ScriptingAPI.md#udonsharp-api), such as `SetColor()` and `SetIntensity()`, when controlling lights from scripts.
 
-## Culling Light Volumes
+When the player moves between large, separate zones, disable the previous zone's Light Volume and Point Light Volume GameObjects and enable the new zone's lights. This also works for volumes with **Dynamic** off.
 
-At runtime, you can disable any Light Volume to exclude it from rendering. This works even on non-dynamic volumes. Manually culling unused volumes can significantly boost performance in large scenes.
+For frequently blinking lights, animate intensity and keep it slightly above zero. Disabling a light or setting its intensity to zero makes the CPU rebuild the active light list. Use GameObject toggles for zone changes, where those updates happen less often.
 
-Disabling **Light Volumes Manager** object disables the whole Light Volumes system and makes shaders fall back to light probes.
+> [!NOTE]
+> A scene can contain more than **32 Regular/Additive volumes** and **128 Point/Spot/Area lights** if unused zones stay disabled. These limits apply to objects active at the same time. Enabled lights outside the camera's view still count.
 
-## Moving Light Volumes
+Disabling the **Light Volume Manager** turns off Light Volumes and returns supporting shaders to Unity Light Probes.
 
-To update a volume's transform in runtime, enable **Dynamic** on its component and enable **Auto Update Volumes** in Light Volume Setup. Otherwise, you must manually update positions of Dynamic volumes from an Udon script. Color, Intensity, enabling and disabling update without **Auto Update Volumes**. If you do not need runtime transform updates, leave both options off for better performance.
+## Preserve Features Used By Scripts
 
-When changing Light Volume or Point Light Volume data from Udon, prefer the instance setter methods such as `SetColor()`, `SetIntensity()`, `SetDynamic()`, `SetAdditive()` and `SetLightSourceSize()` where they exist. For runtime shadow baking, assign public shadow bake fields directly and call `BakeShadows()`.
+The Manager's **Shader Stripping** removes unused features from Play Mode and world builds. **Auto** detects features configured in the scene, including disabled lights.
 
-## Spawning New Light Volumes In Runtime
+It cannot predict every change your scripts make. For example, a script might change a Point light to an Area light, add a cookie or turn on shadows that were not configured in the scene.
 
-You can spawn and auto-register both Light Volumes and Point Light Volumes in runtime.
+For those setups, open **Shader Stripping**, disable **Auto**, and enable every feature your scripts need. Or disable **Shader Stripping** to keep all features. Test the interaction in Play Mode; the Edit Mode preview keeps all features.
 
-The usual VRChat/Udon path is to make the light part of a Player Object. In that setup, each player's object creates its own Light Volume instance and it registers with the scene **Light Volume Manager** automatically when the object becomes active.
+Stripping is disabled in projects with the VRChat Avatar SDK. See [Shader Feature Stripping](./ForDevelopers.md#shader-feature-stripping) for the complete controls.
 
-If you use a prefab workflow instead, first set up the light in the editor and configure it as needed. Then remove the C# Unity helper component, `Light Volume` or `Point Light Volume`, from the prefab and leave only the **Udon Sharp Instance** component there. The helper component is for authoring and editor sync; the Udon instance is the runtime component that registers with the manager.
+## Spawn Lights From Prefabs
 
-Make sure the instance has a reference to the scene **Light Volume Manager**. On `Start()` or `OnEnable()`, the instance registers itself with the manager automatically. If you instantiate a prefab from Udon, that prefab may not have a valid manager reference yet. In that case, set `LightVolumeManager` from another script after spawning; the instance registers itself when that variable changes.
+Configure the light as a prefab with its normal **Light Volume** or **Point Light Volume** component.
 
-If you create or modify instances manually from another Udon script, you can use `InitializeLightVolume()` / `InitializePointLightVolume()` and `DeinitializeLightVolume()` / `DeinitializePointLightVolume()` in the **Light Volume Manager** when needed.
+A spawned light needs the scene's **Light Volume Manager** reference to register. Assign it before activation where possible. If the prefab uses **Bake In Game**, make sure the reference is ready before its first `Start`; assigning it later does not replay the startup bake.
 
-When a spawned Point Light Volume with a cookie, cubemap, LUT, Material, RenderTexture or shadow source is registered through the manager, the manager marks the shared texture arrays dirty and rebuilds them automatically before the updated shader data is uploaded. Use `ReinitializeCustomTextures()` or `ReinitializeShadowTextures()` only for advanced manual workflows where you replace texture sources directly without going through the normal registration or setter path.
+For Regular Light Volumes, prepare their baked data in the scene's atlas before runtime. Instantiating a prefab does not pack new 3D textures in game. Keep any runtime-only shader features enabled as described above.
 
-When assigning projection sources at runtime with `SetCustomTexture()` or `SetCustomMaterial()`, pass `autoUpdate = true` only for sources that need per-frame refresh and keep **Auto Update Textures** enabled on the manager. Static sources should use `autoUpdate = false`. If you mix both modes on the same source object, the manager intentionally stores them in separate runtime slices.
+See the [UdonSharp API](./ScriptingAPI.md#udonsharp-api) for spawning and registration details.
 
-## Bakery Volume Rotation
+## Bakery Tips
 
-Bakery lightmapper offers high quality with Light Volumes but may not support rotation during baking in some older versions. Upgrade to the latest Bakery Patch through **Bakery > Utilities > Check for Patches** to support full rotation. Runtime rotation is still always supported.
+Select **Bakery** on the Manager before the Bakery full render. Check the Manager for warnings if automatic import or bitmask controls are unavailable in your Bakery version.
 
-## Fixing Bakery Light Probes
+Use **Volume Bitmask** and **Probe Bitmask** when different Bakery light groups should contribute to Light Volumes and ordinary probes. Keep the masks consistent with the Bakery lights' masks.
 
-Bakery bakes L1 probes to work with "Geometrics SH Evaluation", which can cause overexposure and underexposure issues. Enable **Fix Light Probes L1** in Light Volume Setup to correct the probes after each bake. This may reduce overall contrast slightly but prevents over or underexposure.
+Enable **Fix Light Probes L1** if Bakery's ordinary probes look burned out or excessively dark. It reduces ringing at the cost of some contrast. This affects fallback probes, not your volume texture resolution.
 
-## Shader Path Choices
+If the Light Volume Inspector reports limited rotation support, update Bakery. Runtime movement rotates the stored lighting, while baking rotation support depends on the installed Bakery version.
 
-Use `LightVolumeSHSpecular()` or the ASE **Light Volume SH Specular** node for the most correct glossy PBR surface shaders where individual Point Light Volume highlights are visible. This path gives Point Light Volumes their own source-size aware speculars, shadows, cookies and per-surface shading, but it is more expensive than regular `LightVolumeSH()` when several Point Light Volumes overlap.
+## Match Avatar Brightness To The World
 
-Use `LightVolumeSH()` for regular avatar shaders, toon shaders and surfaces where individual Point Light Volume speculars are not needed. It is also the better default when the material has no specular response at all.
+**Poiyomi** and **lilToon** can limit an avatar's minimum and maximum brightness. Enable **Force Scene Lighting** on the **Light Volume Manager** when you want avatars to follow your scene's lighting without those limits.
 
-Use `LightVolumeSH_L0()` when directionality is not important, for example particles or sometimes plant foliage. It is cheaper because it only returns the L0 ambient term.
+This uses the shared `_UdonForceSceneLighting` standard supported by these shaders; see [lil's original proposal](https://x.com/lil_xyzw/status/1961487430256922928). Use it when your scene lighting is ready to determine avatar brightness, including in dark areas.
 
-If you only need a cheap glossy response from already accumulated SH data, use `LightVolumeSpecularDominant()` or `LightVolumeSpecular()` instead of the full `LightVolumeSHSpecular()` path.
+## Check Before Release
 
-Choose the shader stage intentionally. If the material has heavy overdraw, such as particles or foliage, calculate Light Volumes in the vertex stage when the quality tradeoff is acceptable. For normal surface shaders and avatar shaders, calculate Light Volumes in the fragment stage for better local detail and fewer interpolation artifacts.
+Walk through the busiest lit areas in a test build. Check the same views with mirrors on, with the intended number of active lights, and on each target platform.
+
+Use [Debugging Light Volumes](./HowToUse_Debugging.md) to inspect coverage, stored lighting and the data reaching shaders.
+
+- Move a compatible avatar or prop through volume edges and lighting changes.
+- Check an avatar without Light Volume support to verify ordinary probe lighting.
+- Toggle lights, spawn prefabs, change projections and test other scripted lighting features.
+
+## Migrating from 2.x.x to 3.x.x
+
+Back up or commit your project before updating the package.
+
+In projects with UdonSharp, old scene components migrate automatically when you open the scene. Components with missing or conflicting references are left unchanged and reported in the Console.
+
+1. Open a scene and wait for migration and Udon compilation to finish.
+2. Check the Console. If a migration warning says components were left unchanged, resolve the reported references before saving. Do not delete those components to clear the warning.
+3. Inspect the **Light Volume Manager**'s volume and light lists. Test the lighting, including any moved volumes, Additive volumes and shadowed lights you use.
+4. Save the scene once the result is correct. Repeat for the other scenes you use.
+
+The **Light Volume Manager**, **Light Volume** and **Point Light Volume** Inspectors now contain the settings that previously lived on separate helper components.

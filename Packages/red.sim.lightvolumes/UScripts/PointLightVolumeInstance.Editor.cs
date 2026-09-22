@@ -250,8 +250,11 @@ namespace VRCLightVolumes {
 
             Texture customTexture = GetCustomTexture();
             Material customMaterial = GetCustomTextureMaterial();
+            bool customSourceChanged = CustomTexture != customTexture || CustomTextureMaterial != customMaterial;
             CustomTexture = customTexture;
             CustomTextureMaterial = customMaterial;
+            // Layout-only invalidations (for example Point -> Spot) must not overwrite a manual snapshot/live choice.
+            if (customSourceChanged) AutoUpdateCustomTexture = IsAnimatedEditorSource(GetProjectionSource());
 
             bool preserveRuntimeShadow = PreserveRuntimeShadowSourceInEditor();
             if (!preserveRuntimeShadow && Application.isPlaying && _runtimeShadowSourceInitialized)

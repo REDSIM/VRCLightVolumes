@@ -8,7 +8,7 @@ namespace VRCLightVolumes {
             if (volume == null || volume.transform.parent == null) return;
             if (!volume.transform.parent.TryGetComponent(out ReflectionProbe probe)) return;
 
-            Undo.RecordObject(volume.transform, "Initialize Light Volume Bounds");
+            Undo.RecordObject(volume.transform, "Set Light Volume Bounds");
             volume.transform.SetPositionAndRotation(probe.bounds.center, Quaternion.identity);
             LVUtils.SetLossyScale(volume.transform, probe.bounds.size);
             ApplyRuntimeState(volume, true);

@@ -405,7 +405,6 @@ MonoBehaviour:
   RuntimeShadowBlurDirectKeyword: -1
   RuntimeShadowBlurSphericalKeyword: -1
   ClusteringMaterial: {fileID: 0}
-  HasAutoCustomTextureUpdates: 0
   HasAutoShadowTextureUpdates: 0
 --- !u!4 &425625848
 Transform:

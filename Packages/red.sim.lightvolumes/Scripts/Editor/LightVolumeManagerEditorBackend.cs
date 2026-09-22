@@ -22,7 +22,7 @@ namespace VRCLightVolumes {
         private const float ShadowMinVarianceValueMin = 0.0001f;
         private const float ShadowMinVarianceValueMax = 1f;
 
-        private static EditorCoroutine _atlasCoroutine;
+        private static Unity.EditorCoroutines.Editor.EditorCoroutine _atlasCoroutine;
         private static IEnumerator _atlasRoutine;
         private static LightVolumeManager _atlasCoroutineOwner;
         private static int _atlasGenerationVersion;
@@ -424,7 +424,7 @@ namespace VRCLightVolumes {
             _atlasCoroutineOwner = manager;
             IEnumerator routine = RunAtlasGeneration(manager, volumes, strategy, generationVersion);
             _atlasRoutine = routine;
-            EditorCoroutine coroutine = EditorCoroutineUtility.StartCoroutine(routine, manager);
+            Unity.EditorCoroutines.Editor.EditorCoroutine coroutine = EditorCoroutineUtility.StartCoroutine(routine, manager);
             // Editor Coroutines 1.0.0 starts on the next update, but keep the assignment correct if a future implementation advances and completes the iterator inside StartCoroutine.
             if (ReferenceEquals(_atlasRoutine, routine)) _atlasCoroutine = coroutine;
         }
@@ -459,7 +459,7 @@ namespace VRCLightVolumes {
         // Invalidates the current generation before stopping it so its finally block cannot clear a subsequently-started coroutine handle.
         private static void StopActiveAtlasCoroutine() {
             _atlasGenerationVersion++;
-            EditorCoroutine coroutine = _atlasCoroutine;
+            Unity.EditorCoroutines.Editor.EditorCoroutine coroutine = _atlasCoroutine;
             IEnumerator routine = _atlasRoutine;
             _atlasCoroutine = null;
             _atlasRoutine = null;

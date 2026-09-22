@@ -51,9 +51,21 @@ namespace VRCLightVolumes {
         private const int PointLightUploadCustomId = 16;
         private const int PointLightUploadShadowReprojection = 32;
         private const int PointLightUploadShadowRotation = 64;
+        private const int PointLightUploadFroxelShadowMetadata = 128;
         private const int ShadowTextureFormatHalf = 0;
         private const string RuntimeShadowCameraName = "Runtime Shadow Camera";
         private const string ClusteringShaderName = "Hidden/VRCLV/FroxelClusteringBuild";
+        private const string ShadowCullingShaderName = "Hidden/VRCLV/FroxelShadowCullPyramid";
+        private const RenderTextureFormat ShadowCullPyramidFormat = RenderTextureFormat.RFloat;
+        private const int MaxShadowCullMipCount = 12;
+        // Leading reductions are fused into the EVSM pass and the final three into packing. Five
+        // scratch levels cover the automatic 128 cap even for a 4096 source shadow map.
+        private const int MaxShadowCullBuildLevelCount = 5;
+        private const int MaxShadowCullAtlasSize = 4096;
+        private const int MaxFroxelShadowCullResolution = 128;
+        // Keeps the conservative EVSM proof useful when receiver bleed reduction is zero without
+        // exposing a second, visually ambiguous threshold in the Manager UI.
+        private const float ShadowCullProbabilityFloor = 0.00390625f; // 1 / 256
         private const int MaxFroxelTileShift = 4;
         private const int MaxFroxelSize = 256;
         private const int MaxFroxelAtlasSize = 4096;
@@ -61,6 +73,13 @@ namespace VRCLightVolumes {
         private const int MaxFroxelCoarse = 8;
         private const float DefaultFroxelFov = 90f;
         private const float DefaultFroxelAspect = 1.7777778f;
+        // Hi-Z masks are built for a small conservative sweep around the current camera. The
+        // published grid remains valid throughout that sweep, so normal VR head motion does not
+        // force two full-screen clustering draws every frame.
+        private const float FroxelCameraGuardAngleDegrees = 1.5f;
+        private const float FroxelCameraGuardRotationDot = 0.999914328f; // cos(1.5 degrees / 2)
+        private const float FroxelCameraGuardRadius = 0.1f;
+        private const float FroxelCameraGuardCoordinateEpsilon = 0.0005f;
         private const int ClusterAxisScale = 255;
         private const int ClusterAxisStride = 256;
         private const int ClusterShapeStride = 65536;
@@ -71,78 +90,90 @@ namespace VRCLightVolumes {
 #region Inspector And Runtime References
 
         [Header("Light Volume Atlas")]
-        [Tooltip("Combined Texture3D containing all baked Light Volume data. This field is not used at runtime, see LightVolumeAtlas instead. It specifies the base for the post process chain, if given.")]
+        [Tooltip("Packed baked lighting before atlas post-processors. Runtime rendering uses Light Volume Atlas.")]
         public Texture3D LightVolumeAtlasBase;
-        [Tooltip("Combined texture containing all Light Volumes' textures.")]
+        [Tooltip("Final lighting atlas used by materials. Filled when the baked volumes are packed.")]
         public Texture LightVolumeAtlas;
 
         [Header("Point Light Volumes")]
-        [Tooltip("Resolution used for Point Light cookie, LUT and cubemap projection textures.")]
+        [Tooltip("Resolution used for projected cookies, LUTs and cubemaps.")]
         public int CustomTexturesWidth = 512;
-        [Tooltip("Height of each runtime point light projection texture slice.")]
+        [Tooltip("Height of each projected image in the shared texture array.")]
         public int CustomTexturesHeight = 512;
-        [Tooltip("The minimum brightness at a point due to lighting from a Point Light Volume, before the light is culled. Larger values will result in better performance, but light attenuation will be less physically correct.")]
+        [Tooltip("Higher values shorten light ranges and reduce overlap. Keep low enough to avoid visible light cutoffs.")]
         public float LightsBrightnessCutoff = 0.35f;
-        [Tooltip("Resolution used for each shadow map face. A cubemap shadow uses six faces at this resolution.")]
+        [Tooltip("Resolution of each shadow image. Increase it for sharper shadow detail.")]
         public int ShadowTexturesWidth = 256;
-        [Tooltip("Height of each runtime shadow cubemap face.")]
+        [Tooltip("Height of each shadow image in the shared texture array.")]
         public int ShadowTexturesHeight = 256;
-        [Tooltip("Precision used for baked EVSM shadow maps and the runtime shadow texture array. 0 = ARGBHalf, 1 = ARGBFloat.")]
+        [Tooltip("Shadow precision: 0 = ARGBHalf, 1 = ARGBFloat. Use Float if Half produces artifacts.")]
         public int ShadowTextureFormat = 1;
-        [Tooltip("EVSM light bleed reduction applied by the shadow receiver shader. 0 disables reduction, 1 is strongest.")]
+        [Tooltip("Reduces light leaking through shadows. Higher values make shadows darker and sharper.")]
         public float ShadowBleedReduction = 0.2f;
-        [Tooltip("EVSM variance bias used by the shadow receiver shader. Authoring setup stores this as a 0..1 logarithmic slider.")]
+        [Tooltip("Raw shadow stability value. Use Shadow Min Variance in the Manager Inspector for normal setup.")]
         public float ShadowMinVariance = 0.0001f;
 
-        [Tooltip("Builds camera-relative Coarse-to-Fine froxel clusters so shaders only evaluate Point Light Volumes that can affect the current pixel.")]
+        [Tooltip("Skips lights that cannot reach the visible surface. Try it when many lights are active and compare the frame rate.")]
         public bool Clustering = true;
-        [Tooltip("Fine froxels per camera degree on each screen axis. 1.0 = one froxel per degree; total count is multiplied by Slices Count.")]
+        [Tooltip("Clustering grid detail across the view. Higher values separate nearby lights more precisely but take more time to process.")]
         [Range(0.05f, 3f)] public float FroxelDensity = 1f;
-        [Tooltip("Count of exponentially distributed depth slices between the main camera near and far clip planes. This does not change the angular resolution; memory and build cost scale with the slice count.")]
+        [Tooltip("Clustering grid detail with distance. Increase if lights at different depths are grouped too broadly.")]
         [Range(8, MaxFroxelSize)] public int FroxelSlices = 100;
-        [Tooltip("Power-of-two reduction of the intermediate Coarse grid relative to the Fine grid on every axis. Values are resolved to 2, 4 or 8 so every Fine froxel has one exact parent and the shader can use bit shifts instead of integer division.")]
+        [Tooltip("Size of the coarse grid cells relative to the fine grid. Uses 2, 4 or 8. Start with 4.")]
         [Range(MinFroxelCoarse, MaxFroxelCoarse)] public int FroxelCoarse = 4;
-        [Tooltip("Uses the non-clustered loop below this active Point Light Volume count because building and sampling the cluster mask is unlikely to amortize.")]
+        [Tooltip("Clustering starts when this many Point Light Volumes are active. Below this count, shaders use the normal light list.")]
         [Range(1, MaxPointLightCount)] public int ClusteringMinLights = 8;
+        [Tooltip("Skips lights where their shadows fully cover a grid cell. Try it in rooms with large blockers and compare the frame rate.")]
+        public bool ShadowCulling = false;
 
-        [Tooltip("When enabled, areas outside Light Volumes fall back to light probes. Otherwise, the Light Volume with the smallest weight is used as fallback. It also improves performance.")]
+        [Tooltip("Uses Unity Light Probes outside the volumes. When off, the lowest-weight Regular volume supplies the lighting there.")]
         public bool LightProbesBlending = true;
-        [Tooltip("Disables smooth blending with areas outside Light Volumes. Use it if your entire scene's play area is covered by Light Volumes. It also improves performance.")]
+        [Tooltip("Keeps outer volume edges sharp. Turn off for a smooth transition where no other volume overlaps.")]
         public bool SharpBounds = true;
-        [Tooltip("Automatically updates most volume properties at runtime. Enabling/disabling, Color and Intensity update automatically even without this option enabled. Position, Rotation and Scale get updated only for volumes that are marked dynamic. It's more performant to keep it off.")]
+        [Tooltip("Follows moving volumes marked Dynamic. Color, intensity and enabled state update without this option.")]
         public bool AutoUpdateVolumes = true;
-        [Tooltip("Automatically refreshes animated RenderTexture, Custom Render Texture and Material projection sources, plus shadow sources marked for automatic updates. Regular Texture assets are copied only when the atlas is rebuilt. It's more performant to keep this off when all sources are static.")]
+        [Tooltip("Refreshes projection and shadow sources marked for automatic updates. Turn off when all sources are static.")]
         public bool AutoUpdateTextures = true;
-        [Tooltip("Limits the maximum number of additive volumes and Point Light Volumes that can affect a single pixel. This also limits individual Point Light Volume speculars in modern compatible shaders. Lower values improve worst-case performance in overlap-heavy areas.")]
+        [Tooltip("Maximum Additive volumes and Point lights per pixel, counted separately. Lower values can improve the frame rate but may hide lights.")]
         public int AdditiveMaxOverdraw = 4;
-        [Tooltip("Enables the Force Scene Lighting shader override on startup, disabling min/max brightness limits in compatible avatar shaders. When disabled, the existing global override is left unchanged. Use SetForceSceneLighting for manual runtime control.")]
+        [Tooltip("Removes avatar shader brightness limits at startup where supported. Use when avatar lighting should match the scene.")]
         public bool ForceSceneLighting = false;
+
+        // Shader authoring settings share the runtime schema so UdonSharp proxies and backing behaviours retain the same serialized fields.
+        [Tooltip("Removes unused shader features in Play Mode and builds. Turn off to keep all features. Edit Mode always keeps all features.")]
+        [HideInInspector] public bool ShaderStripping = true;
+        [Tooltip("Chooses shader features from the current scene. Turn off and keep extra features if scripts enable them in game.")]
+        [HideInInspector] public bool AutoShaderFeatures = true;
+        [Tooltip("Features to keep when Auto is off. Include anything your scripts may enable in game.")]
+        [HideInInspector] public int ShaderFeatures = 131071;
+        // Schema zero keeps newly introduced features for old manual masks until the user explicitly edits the expanded selection.
+        [HideInInspector] public int ShaderFeaturesSchema = 0;
 
         // Persistent authoring settings live on the Udon proxy as well. Keeping them here removes the editor-only Setup component without adding runtime work; heavy asset references are cleared from the temporary build scene by the build preprocessor.
         private const int BakingModeProgressive = 0;
         private const int BakingModeBakery = 1;
-        [Tooltip("Selects the lightmapper used to bake Light Volumes. Bakery usually gives better results and works faster.")]
+        [Tooltip("Choose the lightmapper you use for this scene.")]
         [HideInInspector] public int BakingMode = BakingModeProgressive; // 0 = Progressive, 1 = Bakery, 2 = Custom Lightmapper
-        [Tooltip("Light from Bakery light sources with this bitmask will affect Light Volumes.")]
+        [Tooltip("Bakery lights with a matching bitmask affect the volumes.")]
         [HideInInspector] public int VolumeBitmask = 1;
-        [Tooltip("Light from Bakery light sources with this bitmask will affect light probes.")]
+        [Tooltip("Bakery lights with a matching bitmask affect Light Probes.")]
         [HideInInspector] public int ProbeBitmask = 1;
-        [Tooltip("Removes baked noise in Light Volumes, but may slightly reduce sharpness. Recommended to keep enabled.")]
+        [Tooltip("Smooths noise in the baked lighting. Turn off if it removes detail you need.")]
         [HideInInspector] public bool Denoise = true;
-        [Tooltip("Dilates valid probe data into invalid probes, such as probes inside geometry, to reduce light leaking.")]
+        [Tooltip("Fills invalid samples, such as those inside walls, from nearby valid samples to reduce light leaks.")]
         [HideInInspector] public bool DilateInvalidProbes = true;
-        [Tooltip("Number of dilation passes. More passes can reduce leaking, but increase bake time.")]
+        [Tooltip("How far valid lighting spreads into invalid samples. More passes take longer to bake.")]
         [HideInInspector] public int DilationIterations = 1;
-        [Tooltip("Fraction of backface hits required to mark a probe invalid for dilation. 0 marks every probe invalid; 1 keeps every probe valid.")]
+        [Tooltip("Threshold for filling invalid lighting samples. Lower values mark more samples as invalid.")]
         [HideInInspector] public float DilationBackfaceBias = 0.1f;
-        [Tooltip("Reduces ringing and burned-looking Bakery light probes, at the cost of slightly lower contrast.")]
+        [Tooltip("Reduces harsh, burned-looking Bakery Light Probes. May slightly reduce contrast.")]
         [HideInInspector] public bool FixLightProbesL1 = true;
-        [Tooltip("Downscales each Light Volume before atlas packing. Useful for lower-resolution mobile atlases or reducing aliasing.")]
+        [Tooltip("Uses a smaller baked grid in the atlas. Useful for a lower-detail mobile version.")]
         [HideInInspector] public int DownscaleVolumes = 0; // 0 = None, 1 = x2, 2 = x4, 3 = x8
         // The mobile slider is authoring-only. ShadowMinVariance remains the resolved raw runtime value.
-        [Tooltip("Reduces shadow noise and flickering. Higher values make shadows more stable, but can make them look less attached to objects. This value is configured separately for PC and Mobile.")]
+        [Tooltip("Reduces shadow noise on PC. Higher values can make shadows look less attached to objects.")]
         [HideInInspector] public float ShadowMinVarianceDesktop = 0f;
-        [Tooltip("Reduces shadow noise and flickering. Higher values make shadows more stable, but can make them look less attached to objects. This value is configured separately for PC and Mobile.")]
+        [Tooltip("Reduces shadow noise on mobile. Higher values can make shadows look less attached to objects.")]
         [HideInInspector] public float ShadowMinVarianceMobile = 1f;
         // Serializable RT/material/name projection for editor atlas processors. Delegate callbacks remain in transient editor state and must re-register after reload.
         [HideInInspector] public RenderTexture[] AtlasPostProcessorTargets = new RenderTexture[0];
@@ -150,20 +181,20 @@ namespace VRCLightVolumes {
         [HideInInspector] public string[] AtlasPostProcessorTextureNames = new string[0];
 
         [Header("Runtime Registries")]
-        [Tooltip("All Light Volume instances in stable registration order. The Manager selects the highest-priority active volumes for shader upload. You can disable unnecessary volume GameObjects at runtime to improve performance.")]
+        [Tooltip("Registered baked volumes. Disable unneeded volume GameObjects to reduce work in game.")]
         public LightVolumeInstance[] LightVolumeInstances = new LightVolumeInstance[0];
-        [Tooltip("All Point Light Volume instances. You can enable or disable point light volume GameObjects at runtime. Manually disabling unnecessary point light volumes improves performance.")]
+        [Tooltip("Registered Point, Spot and Area lights. Disable unneeded light GameObjects to reduce work in game.")]
         public PointLightVolumeInstance[] PointLightVolumeInstances = new PointLightVolumeInstance[0];
 
-        [Tooltip("Runtime texture array used for point light cubemaps, LUTs and cookies.")]
+        [Tooltip("Shared texture array for active cookies, LUTs and cubemaps.")]
         public RenderTexture CustomTextures;
-        [Tooltip("Cubemap count stored in CustomTextures. Cubemap array elements start from the beginning, 6 elements each.")]
+        [Tooltip("Number of cubemaps in the projection texture array.")]
         public int CubemapsCount = 0;
-        [Tooltip("Runtime texture array that stores per-light shadow maps.")]
+        [Tooltip("Shared texture array for active shadow maps.")]
         public RenderTexture ShadowTextures;
-        [Tooltip("Cubemap shadow maps count stored in ShadowTextures. Cubemap array elements start from the beginning, 6 elements each.")]
+        [Tooltip("Number of cubemap shadows in the shadow texture array.")]
         public int ShadowCubemapsCount = 0;
-        [Tooltip("Shadow maps count stored in ShadowTextures. Cubemaps use 6 array elements, single projected shadows use 1 array element.")]
+        [Tooltip("Number of shadow maps. Each cubemap counts as one map.")]
         public int ShadowMapsCount = 0;
 
         // Material used to copy cubemap source faces into the shared projection texture array
@@ -184,6 +215,8 @@ namespace VRCLightVolumes {
         [HideInInspector] public int RuntimeShadowBlurSphericalKeyword = -1;
         // Shared material used to build the Coarse and Fine clustered-light masks in packed 2D integer atlases
         [HideInInspector] public Material ClusteringMaterial;
+        // Shared material used to build the conservative EVSM zero-reach max pyramid consumed by Fine clustering
+        [HideInInspector] public Material ShadowCullingMaterial;
 #endregion
 
 #region Runtime Texture Cache
@@ -204,10 +237,11 @@ namespace VRCLightVolumes {
         private Texture[] _customSingleTextures = new Texture[0];
         private Material[] _customSingleMaterials = new Material[0];
 
-        // Auto-update flags are derived from the source object type once during a cache rebuild.
-        // Materials always update, while immutable Texture assets need only the initial copy.
+        // Auto-update flags are cached once per unique source/update-mode pair during a rebuild.
         private bool[] _customCubemapTextureAutoUpdates = new bool[0];
+        private bool[] _customCubemapMaterialAutoUpdates = new bool[0];
         private bool[] _customSingleTextureAutoUpdates = new bool[0];
+        private bool[] _customSingleMaterialAutoUpdates = new bool[0];
         private PointLightVolumeInstance[] _customSingleAreaCookieReceivers = new PointLightVolumeInstance[0];
         private int[] _customSingleAreaCookieReceiverIndices = new int[0];
 
@@ -233,7 +267,6 @@ namespace VRCLightVolumes {
         private Material[] _shadowCubemapMaterials = new Material[0];
         private Texture[] _shadowSingleTextures = new Texture[0];
         private Material[] _shadowSingleMaterials = new Material[0];
-        private int[] _shadowCubemapTextureModes = new int[0]; // Texture layouts: 0 = single 2D texture copied to all faces, 1 = Texture2DArray slices 0..5, 2 = native Cubemap faces
         private bool[] _shadowCubemapTextureAutoUpdates = new bool[0];
         private bool[] _shadowCubemapMaterialAutoUpdates = new bool[0];
         private bool[] _shadowSingleTextureAutoUpdates = new bool[0];
@@ -251,6 +284,8 @@ namespace VRCLightVolumes {
 #if !UNITY_EDITOR && !COMPILER_UDONSHARP
         // Standalone non-Udon execution still owns these runtime values directly.
         private Material _generatedClusteringMaterial;
+        private Material _generatedShadowCullingMaterial;
+        private RenderTexture _shadowCullPyramidSource;
         private Vector4 _editorFroxelDepthParams;
 #endif
 #if UDONSHARP
@@ -284,6 +319,8 @@ namespace VRCLightVolumes {
         // Point Light Volume shader upload buffers
         private int _pointLightCount = 0;
         private int _activeShadowCount = 0;
+        // Full-strength shadow receivers are the only lights for which a Hi-Z proof can remove a bit.
+        private int _activeShadowCullCount = 0;
         private int[] _enabledPointIDs = new int[MaxPointLightCount];
         // Rebuilt with compact buffers. Every lookup validates the hint against _enabledPointIDs before using it, so registry mutations can only cause a slower fallback, never a wrong slot.
         private int[] _pointLightRegistryToShaderIndex = new int[0];
@@ -299,6 +336,9 @@ namespace VRCLightVolumes {
         private Vector4[] _clusteringLights = new Vector4[MaxPointLightCount / 2];
         private Vector4[] _pointLightShadowReprojectionData = new Vector4[MaxPointLightCount];
         private Vector4[] _pointLightShadowRotationData = new Vector4[MaxPointLightCount];
+        // Clustering-only shadow data is predecoded once per light. Sign bits carry the four
+        // cold-path flags; magnitudes stay strictly positive for every culling-eligible light.
+        private Vector4[] _froxelShadowMetadata = new Vector4[MaxPointLightCount];
         private bool _clusteringLightsDirty = true;
 
         // Matrix upload buffer for active regular volumes
@@ -341,8 +381,44 @@ namespace VRCLightVolumes {
         private bool _clusterMaskDirty = true;
         private bool _clusterMaskValid = false;
         private bool _clusterGeometryUploadPending = false;
+#if !COMPILER_UDONSHARP
+        // Standalone benchmark diagnostics. These fields are excluded from the Udon program so production Udon pays no counter increment or heap cost.
+        // Static storage also keeps the UdonSharp proxy serializer from looking for standalone-only fields in the Udon heap.
+        [System.NonSerialized]
+        private static int _clusterMaskBuildCount = 0;
+        [System.NonSerialized]
+        private static int _shadowCullPyramidBuildCount = 0;
+        [System.NonSerialized]
+        private static int _shadowCullPyramidBlitCount = 0;
+#endif
+        // The finished hierarchy is one compact linear mip-tail atlas. Per-level textures exist only as build scratch and are released immediately after the final packing blit.
+        private RenderTexture _shadowCullPyramid;
+        private RenderTexture[] _shadowCullBuildLevels = new RenderTexture[MaxShadowCullBuildLevelCount];
+        private bool _shadowCullPyramidDirty = true;
+        private bool _shadowCullPyramidValid = false;
+        private bool _shadowCullPyramidUnsupported = false;
+        private bool _shadowCullPyramidAllocationFailed = false;
+        private bool _shadowCullPyramidSuspendedForAutoUpdates = false;
+        private int _shadowCullPyramidResolution = 0;
+        private int _shadowCullPyramidFirstLevel = 0;
+        private int _shadowCullPyramidLevelCount = 0;
+        private int _shadowCullPyramidSliceCount = 0;
+        private int _shadowCullPyramidAtlasWidthShift = 0;
+        private int _shadowCullPyramidNodeCount = 0;
+        private bool _shadowCullSettingsInitialized = false;
+        private bool _shadowCullSettingsEnabled = false;
+        private float _shadowCullAuthoredBleedReduction = -1f;
+        private float _shadowCullAuthoredMinVariance = -1f;
+        private float _shadowCullBleedReduction = -1f;
+        private float _shadowCullPositiveVarianceScale = -1f;
+        private float _shadowCullNegativeVarianceScale = -1f;
+        private bool _shadowCullMaterialBindingDirty = true;
+        private Material _boundClusteringMaterial;
         private float _froxelLayoutFov;
         private float _froxelLayoutAspect;
+        private float _froxelLayoutHorizontalFov;
+        private float _froxelSourceTanHalfHorizontal;
+        private float _froxelSourceTanHalfVertical;
         private float _froxelLayoutDensity;
         private int _froxelLayoutSlices;
         private int _froxelLayoutCoarse;
@@ -363,6 +439,13 @@ namespace VRCLightVolumes {
         private Vector3 _froxelCameraRight;
         private Vector3 _froxelCameraUp;
         private Vector3 _froxelCameraForward;
+        private Quaternion _froxelCameraRotation;
+        private bool _froxelCameraAnchorValid = false;
+        private bool _froxelCameraAnchorGuarded = false;
+        private float _froxelAnchorSourceNearClip;
+        private float _froxelAnchorSourceFarClip;
+        private float _froxelAnchorSourceHorizontalPadding;
+        private float _froxelAnchorSourceVerticalPadding;
 
 #endregion
 
@@ -420,6 +503,7 @@ namespace VRCLightVolumes {
         private int _pointLightShadowTextureID;
         private int _pointLightShadowReceiverParamsID;
         private int _clusteringLightsID;
+        private int _froxelShadowMetadataID;
         private int _lightBrightnessCutoffID;
         // Froxel Clustering
         private int _clusteringEnabledID;
@@ -427,15 +511,22 @@ namespace VRCLightVolumes {
         private int _froxelGridID;
         private int _froxelDepthID;
         private int _froxelDepthStepID;
+        private int _froxelGridInverseID;
         private int _coarseClusterMaskID;
         private int _froxelCoarseGridID;
         private int _froxelFineGridID;
-        private int _froxelPassID;
         private int _froxelCoarseID;
         private int _froxelProjectionID;
         private int _froxelRightID;
         private int _froxelUpID;
         private int _froxelForwardID;
+        private int _froxelShadowCullID;
+        private int _shadowCullBuildParamsID;
+        private int _shadowCullReceiverParamsID;
+        private int _shadowCullPreviousID;
+        private int _shadowCullPackParamsID;
+        private int _shadowCullHierarchyID;
+        private int[] _shadowCullMipIDs = new int[MaxShadowCullBuildLevelCount];
         // Other
         private int _forceSceneLightingID;
         private int _cubemapMainTexID;

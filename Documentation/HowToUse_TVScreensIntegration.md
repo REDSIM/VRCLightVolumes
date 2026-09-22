@@ -1,69 +1,57 @@
-[VRC Light Volumes](../README.md) | **How to Use** | [Best Practices](../Documentation/BestPractices.md) | [Udon Sharp API](../Documentation/UdonSharpAPI.md) | [For Developers](../Documentation/ForDevelopers.md) | [Compatible Shaders](../Documentation/CompatibleShaders.md)
+[VRC Light Volumes](../README.md) | **How to Use** | [Best Practices](./BestPractices.md) | [Scripting API](./ScriptingAPI.md) | [Shader Integration](./ForDevelopers.md) | [Compatible Shaders](./CompatibleShaders.md)
 
-# How to Use
+# TV Screens Integration
 
 | Menu |
-|----|
-|[VRC Light Volumes System](../Documentation/HowToUse.md)|
-|[Regular Light Volumes](../Documentation/HowToUse_RegularLightVolumes.md)|
-| [Point Light Volumes](../Documentation/HowToUse_PointLightVolumes.md)|
-|[Point Light Volume Shadows](../Documentation/HowToUse_Shadows.md)|
-|[Point Light Material Sources](../Documentation/HowToUse_PointLightMaterialSources.md)|
-|[Area Light Emission](../Documentation/HowToUse_AreaLightEmission.md)|
-| [Audio Link Integration](../Documentation/HowToUse_AudioLinkIntegration.md)|
-| **TV Screens Integration**<br />• [TV Screen Quick Setup](#TV-Screen-Quick-Setup)<br />• [Light Volume TVGI Component Description](#Light-Volume-TVGI-Component-Description) |
-| [How Light Volumes Work?](../Documentation/HowToUse_HowItWorks.md) |
+| --- |
+| [Overview](./HowToUse.md) |
+| [Regular Light Volumes](./HowToUse_RegularLightVolumes.md) |
+| [Point Light Volumes](./HowToUse_PointLightVolumes.md) |
+| [Froxel Clustering](./HowToUse_FroxelClustering.md) |
+| [Shadows](./HowToUse_Shadows.md) |
+| [Material Sources](./HowToUse_PointLightMaterialSources.md) |
+| [AudioLink](./HowToUse_AudioLinkIntegration.md) |
+| **TV Screens**<br />• [Area Light Setup](#area-light-setup)<br />• [LTCGI Alternative](#ltcgi-alternative)<br />• [Older Workflow: LightVolumeTVGI](#older-workflow-lightvolumetvgi) |
+| [Debugging](./HowToUse_Debugging.md) |
+| [How It Works](./HowToUse_HowItWorks.md) |
 
-## TV Screens Integration
+Use an **Area Light** with the video player's **Render Texture** as its **Cookie** to light the surroundings with the screen's changing colors. For detailed screen reflections, consider [LTCGI](#ltcgi-alternative).
 
-This package includes a simple Udon script for making realtime global illumination from TV screens.
+## Area Light Setup
 
-![](../Documentation/Preview_13.png)
+1. Right-click in the Hierarchy, choose **Point Light Volume**, and set **Type → Area Light**.
+2. Align the light's center and plane with the screen. Set its Transform X/Y scale to match the screen's width and height in meters, and point the blue local Z axis toward the room.
+3. Assign the video player's output **Render Texture** to **Cookie**. Keep **Color** white and enable **Auto Update Textures** on the **Light Volume Manager**.
+4. Play the video and adjust the light's **Intensity** after setting its physical size.
+5. Enable **Shadows > Enabled** and click **Bake Shadows** so walls and furniture block the screen's light. If the emitting screen surface blocks the capture, add its Renderer to **Excluded Renderers**.
 
-It works visually similar to [LTCGI](https://github.com/PiMaker/ltcgi) in some cases, but it does **not** support real screen reflections. Instead, it works best with **matte** environment materials.
+Changing video frames does not require another shadow bake. For a stationary screen and room, the Cookie can animate while the shadows stay baked. See [Shadows](./HowToUse_Shadows.md) for capture and blur settings.
 
-> [!IMPORTANT]
-> **LightVolumeTVGI** is mostly a legacy workflow now. For new TV screens, monitors and emissive panels, prefer [Area Light Emission](../Documentation/HowToUse_AreaLightEmission.md). It projects the screen texture itself, keeps local color detail near the screen, and has an average-color fallback for older VRC Light Volumes shaders.
+If the player has no output Render Texture, a [Material source](./HowToUse_PointLightMaterialSources.md) can read its video image. It must receive the actual video texture; copying a screen Material alone may miss texture overrides supplied by the player.
 
-#### Advantages
+![A video screen lighting the surrounding scene.](./Preview_13.png)
 
-- Good performance
-- Shadowmasks avatars and environment
+The light spreads and mixes the image's colors instead of projecting a sharp picture. See [Area Light Cookies](./HowToUse_PointLightVolumes.md#area-light-cookies) for shader support and how the emission works.
 
-#### Limitations
-- Doesn't make screen reflections like LTCGI
-- Only projects a **single average screen color**
+## LTCGI Alternative
 
-## TV Screen Quick Setup
+**LTCGI** can provide detailed screen reflections on surfaces with LTCGI shaders. Its Light Volumes integration also supplies diffuse lighting to avatars and props with shaders that support VRC Light Volumes.
 
-1. Create a **separate scene** and bake the area affected by the screen light as an **additive light volume**.
-   See the [Additive Volumes section](https://github.com/REDSIM/VRCLightVolumes/blob/main/Documentation/HowToUse_RegularLightVolumes.md#additive-light-volumes) for detailed steps.
+| Feature | Area Light Cookie | LTCGI with Light Volumes |
+| --- | --- | --- |
+| **Reflections** | Simplified, blurred specular highlights. | Detailed reflections of the video on LTCGI-enabled materials. |
+| **Avatar lighting** | Calculated per pixel. Older 2.x shaders with Area Light support receive only the average color. | Stored in Light Volumes, including for older Light Volume shaders. Spatial detail depends on voxel density. |
+| **Setup and cost** | Direct Render Texture assignment and an optional shadow bake. Can be faster for simple screen lighting. | Requires LTCGI setup and a bake for its Light Volumes integration. Updating the volumes adds runtime work. |
 
-> [!IMPORTANT]
-> Remove all unnecessary lights during baking. Keep only the screen mesh with a **bright emissive material**.
+Follow the [LTCGI integration instructions for VRC Light Volumes](https://ltcgi.dev/Advanced/VRC_Light_Volumes) for setup. Choose Area cookies for simple screen lighting, or LTCGI when detailed reflections matter. Compare performance in your scene.
 
-2. In your main scene, add the **LightVolumeTVGI** component to a GameObject.
+## Older Workflow: LightVolumeTVGI
 
-3. Assign the `Target Render Texture` field with the **Render Texture used by your video player**.
+**LightVolumeTVGI** tints an additive Light Volume with the screen's average color. It keeps the baked bounce lighting and shadows, but uses one color for the whole volume and creates no screen reflections.
 
-> [!WARNING]
-> Make sure that `Enable Mip Maps` and `Auto Generate Mip Maps` are **Enabled** in the texture’s import settings.
+1. In a separate scene, bake an [additive Light Volume](./HowToUse_RegularLightVolumes.md#additive-light-volumes) using only the screen's bright white emission.
+2. Bring the volume into the main scene, enable **Additive**, disable **Bake**, then click **Pack Light Volumes**. Keep the screen's emission out of the main lighting bake to avoid adding it twice.
+3. Add **LightVolumeTVGI**, assign the player's output to **Target Render Texture**, and add the volume to **Target Light Volumes**.
+4. Adjust the volume's **Intensity**. **Anti Flickering** smooths rapid color changes.
 
-4. Add all Light Volumes you want to control to the `Target Light Volumes` list. It's usually a one additive light volume.
-5. **Optionally:** Add all Point Light Volumes you want to control to the `Target Point Light Volumes` list. This can be useful to make other lights to inherit your screen's color.
-6. Tweak the `Intensity` of your additive light volumes in their own LightVolume components. Because sometimes GI from a screen can look too dim.
-7. Done! The system will now update the light color at runtime, even affecting avatars.
-
->[!TIP]
-> Enabling `Auto Update Volumes` for TVGI support is no more required in Light Volumes v.2.0.0 and newer.
-
-If you see unwanted **sharp color transitions** in your additive volume, try adjusting the **Color Correction** settings in the Light Volume component. Lowering `Shadows` in color correction section usually helps.
-
-## Light Volume TVGI Component Description
-
-| Parameter | Description |
-| --- | --- |
-|`Target Render Texture` | Render Texture used by your video player. Can be just a static texture if you want it to be. Make sure that **Enable Mip Maps** and **Auto Generate Mip Maps** are **Enabled** in the texture’s import settings.|
-|`Anti Flickering` | Enables smoothing algorithm that tries to smooth out flickering that is usually a problem. Recommended to always be turned on.|
-|`Target Light Volumes` | List of the **Light Volumes** that should be affected by the Light Volume TVGI script.|
-|`Target Point Light Volumes` | List of the **Point Light Volumes** that should be affected by the Light Volume TVGI script. Usually you don't need it at all.|
+Keep unused target lists empty and remove Missing/None entries.

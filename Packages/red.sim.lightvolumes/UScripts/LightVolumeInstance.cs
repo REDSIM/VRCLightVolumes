@@ -19,75 +19,75 @@ namespace VRCLightVolumes {
     {
 
         [Header("Volume Setup")]
-        [Tooltip("Defines whether this volume can be moved at runtime. Disabling this option slightly improves performance. Don't forget to enable \"Auto Update Volumes\" in your Light Volumes Setup to get these dynamic updates!")]
+        [Tooltip("Enable for a volume that moves in game. Also enable Auto Update Volumes on the Manager.")]
         public bool IsDynamic = false;
-        [Tooltip("Additive volumes apply their light on top of others as an overlay. Useful for movable and toggleable lights. They can also project light onto static lightmapped objects if the surface shader supports it.")]
+        [Tooltip("Adds this baked lighting on top of other lighting. Use it for lights that move or switch together.")]
         public bool IsAdditive = false;
-        [Tooltip("Multiplies the volume’s color by this value.")]
+        [Tooltip("Tints the baked lighting. White keeps its original colors.")]
         [ColorUsage(showAlpha: false)] public Color Color = Color.white;
-        [Tooltip("Brightness of the volume.")]
+        [Tooltip("Scales the baked brightness. Set to 0 to turn it off.")]
         public float Intensity = 1f;
-        [Tooltip("Size in meters of this Light Volume's overlapping regions for smooth blending with other volumes.")]
+        [Tooltip("Width of the blend at the edges, in meters. Increase it for a softer transition between volumes.")]
         [Range(0, 1)] public float SmoothBlending = 0.25f;
-        [Tooltip("Inversed edge smoothing in 3D atlas space. Recalculates via SetSmoothBlending(float radius), UpdateTransform(), and dynamic auto-update.")]
+        [Tooltip("Blend data updated by SetSmoothBlending() and UpdateTransform().")]
         public Vector4 InvLocalEdgeSmoothing = new Vector4();
 
         [Header("Baked Data")]
-        [Tooltip("Texture3D with baked SH data required for future atlas packing. It is removed from the build copy after the atlas is generated. (L0r, L0g, L0b, L1r.z)")]
+        [Tooltip("Baked lighting channel 0. Filled after a bake and packed into the Manager atlas.")]
         public Texture3D Texture0;
-        [Tooltip("Texture3D with baked SH data required for future atlas packing. It is removed from the build copy after the atlas is generated. (L1r.x, L1g.x, L1b.x, L1g.z)")]
+        [Tooltip("Baked lighting channel 1. Filled after a bake and packed into the Manager atlas.")]
         public Texture3D Texture1;
-        [Tooltip("Texture3D with baked SH data required for future atlas packing. It is removed from the build copy after the atlas is generated. (L1r.y, L1g.y, L1b.y, L1b.z)")]
+        [Tooltip("Baked lighting channel 2. Filled after a bake and packed into the Manager atlas.")]
         public Texture3D Texture2;
-        [Tooltip("Editor-only Bakery helper reference. The build preprocessor clears it from the build scene.")]
+        [Tooltip("Bakery helper used during a bake. Removed from the build scene.")]
         [HideInInspector] public Component BakeryVolume;
 
         [Header("Color Correction")]
-        [Tooltip("Makes volume brighter or darker.")]
+        [Tooltip("Adjusts the brightness of all baked lighting without rebaking.")]
         public float Exposure = 0f;
-        [Tooltip("Makes dark volume colors brighter or darker.")]
+        [Tooltip("Adjusts dark parts of the baked lighting without rebaking.")]
         [Range(-1, 1)] public float Shadows = 0f;
-        [Tooltip("Makes bright volume colors brighter or darker.")]
+        [Tooltip("Adjusts bright parts of the baked lighting without rebaking.")]
         [Range(-1, 1)] public float Highlights = 0f;
 
         [Header("Baking Setup")]
-        [Tooltip("Uncheck it if you don't want to rebake this volume's textures.")]
+        [Tooltip("Include this volume in the next bake. Turn off to keep its current baked lighting.")]
         public bool Bake = true;
-        [Tooltip("Reserves atlas UV space for this volume without baking its lighting data. Reserved voxels are written as white L0 and zero L1.")]
+        [Tooltip("Reserves a white region in the atlas for custom lighting. Skips the lighting bake for this volume.")]
         public bool ReserveUVSpace = false;
-        [Tooltip("Automatically sets the resolution based on the Voxels Per Unit value.")]
+        [Tooltip("Sets the grid size from the bounds and Voxels Per Unit.")]
         public bool AdaptiveResolution = true;
-        [Tooltip("Number of voxels used per meter, linearly. This value increases the Light Volume file size cubically.")]
+        [Tooltip("Higher values capture smaller lighting details but take longer to bake. Increase this only where you need more detail.")]
         public float VoxelsPerUnit = 3f;
-        [Tooltip("Manual Light Volume resolution in voxel count.")]
+        [Tooltip("Number of lighting samples along each axis. Used when Adaptive Resolution is off.")]
         public Vector3Int Resolution = new Vector3Int(16, 16, 16);
 
         [Header("Atlas Data")]
-        [Tooltip("Min bounds of Texture0 in 3D atlas space. W stores Scale X.)")]
+        [Tooltip("Atlas position of Texture 0. W stores the X scale. Set when the atlas is packed.")]
         public Vector4 BoundsUvwMin0 = new Vector4();
-        [Tooltip("Min bounds of Texture1 in 3D atlas space. W stores Scale Y.")]
+        [Tooltip("Atlas position of Texture 1. W stores the Y scale. Set when the atlas is packed.")]
         public Vector4 BoundsUvwMin1 = new Vector4();
-        [Tooltip("Min bounds of Texture2 in 3D atlas space. W stores Scale Z.")]
+        [Tooltip("Atlas position of Texture 2. W stores the Z scale. Set when the atlas is packed.")]
         public Vector4 BoundsUvwMin2 = new Vector4();
 
         [Header("Transform Data")]
-        [Tooltip("Inverse rotation of the pose the volume was baked in. Updated when baked data is imported or the atlas is generated; runtime transform updates use this stored bake pose.")]
+        [Tooltip("Inverse rotation at the time of the bake. Used to rotate the stored lighting with the volume.")]
         public Quaternion InvBakedRotation = Quaternion.identity;
-        [Tooltip("Inverse TRS matrix that transforms world positions into this volume's unit cube. Updated by UpdateTransform() and dynamic auto-update.")]
+        [Tooltip("Transforms world positions into the volume. Set by UpdateTransform().")]
         public Matrix4x4 InvWorldMatrix = Matrix4x4.identity;
-        [Tooltip("Current volume rotation row 0 relative to its baked pose. Updated by UpdateTransform() and dynamic auto-update.")]
+        [Tooltip("First row of the rotation relative to the baked pose. Set by UpdateTransform().")]
         public Vector3 RelativeRotationRow0 = Vector3.zero;
-        [Tooltip("Current volume rotation row 1 relative to its baked pose. Updated by UpdateTransform() and dynamic auto-update.")]
+        [Tooltip("Second row of the rotation relative to the baked pose. Set by UpdateTransform().")]
         public Vector3 RelativeRotationRow1 = Vector3.zero;
-        [Tooltip("True when the current pose is rotated relative to the baked pose. Updated by UpdateTransform() and dynamic auto-update; an unrotated volume is cheaper to sample.")]
+        [Tooltip("Whether the volume has rotated from its baked pose. Set by UpdateTransform().")]
         public bool IsRotated = false;
 
         [Header("Runtime State")]
-        [Tooltip("Reference to the world's single Light Volume Manager. Assign it before registration and do not change it afterwards.")]
+        [Tooltip("The Manager that owns this volume. Assign it before registration and keep the same Manager afterwards.")]
         public LightVolumeManager LightVolumeManager;
-        [Tooltip("Internal stable manager registry tie-breaker used when this volume is enabled at runtime. Use SetWeight(float weight) to change priority.")]
+        [Tooltip("Breaks ties between volumes with the same priority. Use SetWeight() to change priority.")]
         [HideInInspector] public int RegistryOrder = 2147483647;
-        [Tooltip("Manager registry sort weight. Higher weights are uploaded to shaders first.")]
+        [Tooltip("Volume priority. Higher values take precedence when volumes overlap.")]
         [HideInInspector] public float RegistryWeight = 0f;
         [HideInInspector] public bool IsActive = true;
 
@@ -151,7 +151,7 @@ namespace VRCLightVolumes {
             bool runtimeEnabled = enabled && gameObject.activeInHierarchy;
             IsActive = runtimeEnabled && Intensity != 0 && Color != Color.black;
             if (!runtimeEnabled) return;
-            RegisterWithManager();
+            if (!_isRegisteredWithManager) RegisterWithManager();
             if (LightVolumeManager == null) return;
             LightVolumeManager.NotifyLightVolumeChanged(this, rebuildFinalData);
         }
@@ -169,8 +169,9 @@ namespace VRCLightVolumes {
         // Registers once with the world's single manager.
         private void RegisterWithManager() {
             if (_isRegisteredWithManager) return;
-            IsActive = enabled && gameObject.activeInHierarchy && Intensity != 0 && Color != Color.black;
-            if (LightVolumeManager == null || !gameObject.activeInHierarchy || !enabled) return;
+            bool runtimeEnabled = enabled && gameObject.activeInHierarchy;
+            IsActive = runtimeEnabled && Intensity != 0 && Color != Color.black;
+            if (LightVolumeManager == null || !runtimeEnabled) return;
             _isRegisteredWithManager = true;
             LightVolumeManager.InitializeLightVolume(this);
         }
@@ -250,7 +251,7 @@ namespace VRCLightVolumes {
         public void SetSmoothBlending(float radius) {
             Vector3 scl = transform.lossyScale;
             float safeRadius = Mathf.Max(radius, 0.00001f);
-            Vector4 invLocalEdgeSmoothing = new Vector4(scl.x / safeRadius, scl.y / safeRadius, scl.z / safeRadius, 0f);
+            Vector4 invLocalEdgeSmoothing = scl / safeRadius;
             if (SmoothBlending == radius && InvLocalEdgeSmoothing == invLocalEdgeSmoothing) return;
             SmoothBlending = radius;
             InvLocalEdgeSmoothing = invLocalEdgeSmoothing;
@@ -265,7 +266,7 @@ namespace VRCLightVolumes {
             InvWorldMatrix = localToWorldMatrix.inverse;
             Vector3 lossyScale = localToWorldMatrix.lossyScale;
             float safeSmoothing = Mathf.Max(SmoothBlending, 0.00001f);
-            InvLocalEdgeSmoothing = new Vector4(lossyScale.x / safeSmoothing, lossyScale.y / safeSmoothing, lossyScale.z / safeSmoothing, 0f);
+            InvLocalEdgeSmoothing = lossyScale / safeSmoothing;
             Quaternion rot = transformRot * InvBakedRotation;
             IsRotated = Mathf.Abs(Quaternion.Dot(rot, Quaternion.identity)) < 0.999999f;
             Matrix4x4 rotationMatrix = Matrix4x4.Rotate(rot);

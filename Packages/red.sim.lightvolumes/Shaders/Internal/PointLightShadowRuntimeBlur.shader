@@ -20,6 +20,9 @@ Shader "Hidden/VRCLV/PointLightShadowRuntimeBlur" {
         CGINCLUDE
         #include "UnityCG.cginc"
 
+        // Implicit gradients are required for Unity's forced anisotropic filtering, including
+        // single-mip arrays. Explicit LOD 0 sampling and zero-radius early-outs alter
+        // the filtering footprint at adaptive blur boundaries.
         UNITY_DECLARE_TEX2DARRAY(_SourceArrayTex);
         #if !defined(VRCLV_RUNTIME_SHADOW_BLUR_UNIFORM)
             UNITY_DECLARE_TEX2DARRAY(_DepthArrayTex);
@@ -36,29 +39,22 @@ Shader "Hidden/VRCLV/PointLightShadowRuntimeBlur" {
             float _DepthBaseSlice;
             float _BlurDepth;
             #define VRCLV_EVSM_NEGATIVE_EXPONENT 5.0f
-        #endif
-        // Exact exponential through exp2. Kept as a helper so blur weights and EVSM tools use the same exp path.
-        float VRCLV_Exp(float x) {
-            return exp2(x * 1.4426950408889634f);
-        }
 
-        // Approximate natural log for positive values using frexp and a quadratic log2 mantissa fit.
-        float VRCLV_FastLogPositive(float x) {
-            float exponent = 0;
-            float mantissa = frexp(max(x, 0.000001f), exponent);
-            float y = mantissa + mantissa - 1.0f;
-            return (exponent - 1.0f + y * (1.3465554f - 0.3465554f * y)) * 0.69314718056f;
-        }
+            // Quadratic log2 mantissa approximation; the clamp guarantees a normal float.
+            float VRCLV_FastLogPositive(float x) {
+                uint bits = asuint(max(x, 0.000001f));
+                int exponent = (int)((bits >> 23u) & 255u) - 127;
+                float y = asfloat((bits & 0x007fffffu) | 0x3f800000u) - 1.0f;
+                return (exponent + y * (1.3465554f - 0.3465554f * y)) * 0.69314718056f;
+            }
+        #endif
 
         #if defined(VRCLV_RUNTIME_SHADOW_BLUR_SPHERICAL)
             #define VRCLV_SHADOW_BLUR_SPHERICAL
         #endif
 
-        #if defined(VRCLV_EDITOR_SHADOW_BLUR_QUALITY)
-            #define VRCLV_BLUR_LOOP [loop]
-        #else
-            #define VRCLV_BLUR_LOOP [unroll]
-        #endif
+        // Rolled loops limit shader size and first-use driver compilation cost.
+        #define VRCLV_BLUR_LOOP [loop]
 
         #if defined(VRCLV_EDITOR_SHADOW_BLUR_QUALITY)
             #define VRCLV_BLUR_SAMPLE_RADIUS 63
@@ -74,7 +70,7 @@ Shader "Hidden/VRCLV/PointLightShadowRuntimeBlur" {
             #define VRCLV_BLUR_INV_SAMPLE_RADIUS 0.0666666667f
         #endif
 
-        #if defined(VRCLV_SHADOW_BLUR_SPHERICAL) || !defined(VRCLV_RUNTIME_SHADOW_BLUR_UNIFORM)
+        #if !defined(VRCLV_RUNTIME_SHADOW_BLUR_UNIFORM)
             #if defined(VRCLV_EDITOR_SHADOW_BLUR_QUALITY)
                 #define VRCLV_CONTRAST_SAMPLE_COUNT 512
                 #define VRCLV_CONTRAST_INV_SAMPLE_COUNT 0.001953125f
@@ -99,7 +95,6 @@ Shader "Hidden/VRCLV/PointLightShadowRuntimeBlur" {
                 #define VRCLV_CONTRAST_SAMPLE_COUNT 8
                 #define VRCLV_CONTRAST_INV_SAMPLE_COUNT 0.125f
             #endif
-            #define VRCLV_CONTRAST_MAX_RADIUS 1.0f
         #endif
 
         #if defined(VRCLV_SHADOW_BLUR_SPHERICAL)
@@ -110,15 +105,12 @@ Shader "Hidden/VRCLV/PointLightShadowRuntimeBlur" {
             #elif defined(VRCLV_RUNTIME_SHADOW_QUALITY_HIGH)
                 #define VRCLV_SPHERICAL_BLUR_RADIUS_SCALE 1.0475f
                 #define VRCLV_SPHERICAL_BLUR_SAMPLE_COUNT 128
-                #define VRCLV_SPHERICAL_BLUR_INV_SAMPLE_COUNT 0.0078125f
             #elif defined(VRCLV_RUNTIME_SHADOW_QUALITY_LOW)
                 #define VRCLV_SPHERICAL_BLUR_RADIUS_SCALE 1.0000f
                 #define VRCLV_SPHERICAL_BLUR_SAMPLE_COUNT 32
-                #define VRCLV_SPHERICAL_BLUR_INV_SAMPLE_COUNT 0.03125f
             #else
                 #define VRCLV_SPHERICAL_BLUR_RADIUS_SCALE 1.0313f
                 #define VRCLV_SPHERICAL_BLUR_SAMPLE_COUNT 64
-                #define VRCLV_SPHERICAL_BLUR_INV_SAMPLE_COUNT 0.015625f
             #endif
         #endif
 
@@ -139,27 +131,7 @@ Shader "Hidden/VRCLV/PointLightShadowRuntimeBlur" {
             return o;
         }
 
-        #if defined(VRCLV_SHADOW_BLUR_SPHERICAL) || !defined(VRCLV_RUNTIME_SHADOW_BLUR_UNIFORM)
-            #define VRCLV_DISK_KERNEL_DIRECTION_COUNT 128
-            #define VRCLV_DISK_KERNEL_DIRECTION_MASK 127u
-            // Direction LUT is sampled with a near-golden-angle stride; radius is derived from the active sample count.
-            static const float2 diskKernelDirections[128] = {
-                float2( 1.0000f,  0.0000f), float2( 0.9988f,  0.0491f), float2( 0.9952f,  0.0980f), float2( 0.9892f,  0.1467f), float2( 0.9808f,  0.1951f), float2( 0.9700f,  0.2430f), float2( 0.9569f,  0.2903f), float2( 0.9415f,  0.3369f), float2( 0.9239f,  0.3827f), float2( 0.9040f,  0.4276f), float2( 0.8819f,  0.4714f), float2( 0.8577f,  0.5141f), float2( 0.8315f,  0.5556f), float2( 0.8032f,  0.5957f), float2( 0.7730f,  0.6344f), float2( 0.7410f,  0.6716f),
-                float2( 0.7071f,  0.7071f), float2( 0.6716f,  0.7410f), float2( 0.6344f,  0.7730f), float2( 0.5957f,  0.8032f), float2( 0.5556f,  0.8315f), float2( 0.5141f,  0.8577f), float2( 0.4714f,  0.8819f), float2( 0.4276f,  0.9040f), float2( 0.3827f,  0.9239f), float2( 0.3369f,  0.9415f), float2( 0.2903f,  0.9569f), float2( 0.2430f,  0.9700f), float2( 0.1951f,  0.9808f), float2( 0.1467f,  0.9892f), float2( 0.0980f,  0.9952f), float2( 0.0491f,  0.9988f),
-                float2( 0.0000f,  1.0000f), float2(-0.0491f,  0.9988f), float2(-0.0980f,  0.9952f), float2(-0.1467f,  0.9892f), float2(-0.1951f,  0.9808f), float2(-0.2430f,  0.9700f), float2(-0.2903f,  0.9569f), float2(-0.3369f,  0.9415f), float2(-0.3827f,  0.9239f), float2(-0.4276f,  0.9040f), float2(-0.4714f,  0.8819f), float2(-0.5141f,  0.8577f), float2(-0.5556f,  0.8315f), float2(-0.5957f,  0.8032f), float2(-0.6344f,  0.7730f), float2(-0.6716f,  0.7410f),
-                float2(-0.7071f,  0.7071f), float2(-0.7410f,  0.6716f), float2(-0.7730f,  0.6344f), float2(-0.8032f,  0.5957f), float2(-0.8315f,  0.5556f), float2(-0.8577f,  0.5141f), float2(-0.8819f,  0.4714f), float2(-0.9040f,  0.4276f), float2(-0.9239f,  0.3827f), float2(-0.9415f,  0.3369f), float2(-0.9569f,  0.2903f), float2(-0.9700f,  0.2430f), float2(-0.9808f,  0.1951f), float2(-0.9892f,  0.1467f), float2(-0.9952f,  0.0980f), float2(-0.9988f,  0.0491f),
-                float2(-1.0000f,  0.0000f), float2(-0.9988f, -0.0491f), float2(-0.9952f, -0.0980f), float2(-0.9892f, -0.1467f), float2(-0.9808f, -0.1951f), float2(-0.9700f, -0.2430f), float2(-0.9569f, -0.2903f), float2(-0.9415f, -0.3369f), float2(-0.9239f, -0.3827f), float2(-0.9040f, -0.4276f), float2(-0.8819f, -0.4714f), float2(-0.8577f, -0.5141f), float2(-0.8315f, -0.5556f), float2(-0.8032f, -0.5957f), float2(-0.7730f, -0.6344f), float2(-0.7410f, -0.6716f),
-                float2(-0.7071f, -0.7071f), float2(-0.6716f, -0.7410f), float2(-0.6344f, -0.7730f), float2(-0.5957f, -0.8032f), float2(-0.5556f, -0.8315f), float2(-0.5141f, -0.8577f), float2(-0.4714f, -0.8819f), float2(-0.4276f, -0.9040f), float2(-0.3827f, -0.9239f), float2(-0.3369f, -0.9415f), float2(-0.2903f, -0.9569f), float2(-0.2430f, -0.9700f), float2(-0.1951f, -0.9808f), float2(-0.1467f, -0.9892f), float2(-0.0980f, -0.9952f), float2(-0.0491f, -0.9988f),
-                float2( 0.0000f, -1.0000f), float2( 0.0491f, -0.9988f), float2( 0.0980f, -0.9952f), float2( 0.1467f, -0.9892f), float2( 0.1951f, -0.9808f), float2( 0.2430f, -0.9700f), float2( 0.2903f, -0.9569f), float2( 0.3369f, -0.9415f), float2( 0.3827f, -0.9239f), float2( 0.4276f, -0.9040f), float2( 0.4714f, -0.8819f), float2( 0.5141f, -0.8577f), float2( 0.5556f, -0.8315f), float2( 0.5957f, -0.8032f), float2( 0.6344f, -0.7730f), float2( 0.6716f, -0.7410f),
-                float2( 0.7071f, -0.7071f), float2( 0.7410f, -0.6716f), float2( 0.7730f, -0.6344f), float2( 0.8032f, -0.5957f), float2( 0.8315f, -0.5556f), float2( 0.8577f, -0.5141f), float2( 0.8819f, -0.4714f), float2( 0.9040f, -0.4276f), float2( 0.9239f, -0.3827f), float2( 0.9415f, -0.3369f), float2( 0.9569f, -0.2903f), float2( 0.9700f, -0.2430f), float2( 0.9808f, -0.1951f), float2( 0.9892f, -0.1467f), float2( 0.9952f, -0.0980f), float2( 0.9988f, -0.0491f)
-            };
-
-            float2 DiskKernelSampleOffset(int sampleIndex, float invSampleCount, out float radiusSq) {
-                radiusSq = (sampleIndex + 0.5f) * invSampleCount;
-                int directionIndex = (int)(((uint)sampleIndex * 49u) & VRCLV_DISK_KERNEL_DIRECTION_MASK);
-                return diskKernelDirections[directionIndex] * sqrt(radiusSq);
-            }
-        #endif
+        #include "PointLightShadowBlurKernels.cginc"
 
         static const float3 faceDirs[6][3] = {
             { float3( 1,  0,  0), float3( 0,  0, -1), float3(0, -1, 0) },
@@ -170,14 +142,12 @@ Shader "Hidden/VRCLV/PointLightShadowRuntimeBlur" {
             { float3( 0,  0, -1), float3(-1,  0,  0), float3(0, -1, 0) }
         };
 
-        float GaussianWeight(float normalizedDistance) {
-            return VRCLV_Exp(-2.0f * normalizedDistance * normalizedDistance);
-        }
-
-        bool KernelFitsFace(float2 uv, float2 absExtent) {
-            float2 edgeDistance = min(uv, 1.0f - uv);
-            return edgeDistance.x >= absExtent.x && edgeDistance.y >= absExtent.y;
-        }
+        #if !defined(VRCLV_SHADOW_BLUR_SPHERICAL) && !defined(VRCLV_RUNTIME_SHADOW_BLUR_DIRECT)
+            bool KernelFitsFace(float2 uv, float2 absExtent) {
+                float2 edgeDistance = min(uv, 1.0f - uv);
+                return edgeDistance.x >= absExtent.x && edgeDistance.y >= absExtent.y;
+            }
+        #endif
 
         #if !defined(VRCLV_RUNTIME_SHADOW_BLUR_UNIFORM)
             float DecodeDepth01(float4 moments) {
@@ -186,11 +156,6 @@ Shader "Hidden/VRCLV/PointLightShadowRuntimeBlur" {
                 return saturate(depth * 0.5f + 0.5f);
             }
         #endif
-
-        float3 FaceUvToDirection(float2 uv) {
-            float2 faceUv = uv * 2.0f - 1.0f;
-            return normalize(faceDirs[_FaceIndex][0] + faceUv.x * faceDirs[_FaceIndex][1] + faceUv.y * faceDirs[_FaceIndex][2]);
-        }
 
         #if defined(VRCLV_SHADOW_BLUR_SPHERICAL)
             #if defined(VRCLV_RUNTIME_SHADOW_BLUR_DIRECT)
@@ -207,30 +172,40 @@ Shader "Hidden/VRCLV/PointLightShadowRuntimeBlur" {
                     return saturate(projectedUv * 0.5f + 0.5f);
                 }
 
-                float3 SpotUvToSphericalDirection(float2 uv, float2 faceUvOffset) {
-                    float3 centerDir = SpotUvToDirection(uv);
-                    float offsetLength = length(faceUvOffset);
-                    float2 offsetDir = faceUvOffset * rcp(max(offsetLength, 0.000001f));
+                float3 SpotUvToSphericalDirection(float3 centerDir, float2 offsetDir, float offsetLength) {
+                    // Rescale the precomputed unit direction to match offset / max(length, 1e-6)
+                    // when the scaled offset length is below 1e-6.
+                    offsetDir *= saturate(offsetLength * 1000000.0f);
                     float3 planeAxis = float3(offsetDir.x, offsetDir.y, 0.0f);
                     float3 tangentDir = planeAxis - centerDir * dot(planeAxis, centerDir);
                     tangentDir *= rsqrt(max(dot(tangentDir, tangentDir), 0.000001f));
                     return normalize(centerDir + tangentDir * offsetLength);
                 }
 
-                float2 SphericalSpotUv(float2 uv, float2 faceUvOffset) {
-                    return DirectionToSpotUv(SpotUvToSphericalDirection(uv, faceUvOffset));
+                float2 SphericalSpotUv(float3 centerDir, float2 offsetDir, float offsetLength) {
+                    return DirectionToSpotUv(SpotUvToSphericalDirection(centerDir, offsetDir, offsetLength));
                 }
             #else
-                float3 FaceUvToSphericalDirection(float2 uv, float2 faceUvOffset) {
-                    float3 centerDir = FaceUvToDirection(uv);
-                    float offsetLength = length(faceUvOffset);
-                    float2 offsetDir = faceUvOffset * rcp(max(offsetLength, 0.000001f));
-                    float3 faceAxis = faceDirs[_FaceIndex][1] * offsetDir.x + faceDirs[_FaceIndex][2] * offsetDir.y;
+                float3 FaceUvToSphericalDirection(float3 centerDir, float2 offsetDir, float offsetLength) {
+                    // Rescale the precomputed unit direction to match offset / max(length, 1e-6)
+                    // when the scaled offset length is below 1e-6.
+                    offsetDir *= saturate(offsetLength * 1000000.0f);
+                    float3 faceAxis = float3(offsetDir, 0.0f);
                     float3 tangentDir = faceAxis - centerDir * dot(faceAxis, centerDir);
                     tangentDir *= rsqrt(max(dot(tangentDir, tangentDir), 0.000001f));
-                    return normalize(centerDir + tangentDir * offsetLength);
+                    return centerDir + tangentDir * offsetLength;
                 }
             #endif
+        #endif
+
+        #if defined(VRCLV_SHADOW_BLUR_SPHERICAL)
+            float3 SphericalCenterDirection(float2 uv) {
+                #if defined(VRCLV_RUNTIME_SHADOW_BLUR_DIRECT)
+                    return SpotUvToDirection(uv);
+                #else
+                    return normalize(float3(uv * 2.0f - 1.0f, 1.0f));
+                #endif
+            }
         #endif
 
         float3 DirectionToArrayUv(float3 dir) {
@@ -239,19 +214,20 @@ Shader "Hidden/VRCLV/PointLightShadowRuntimeBlur" {
             float3 absDir = abs(dir);
             if (absDir.x >= absDir.y && absDir.x >= absDir.z) {
                 face = dir.x > 0 ? 0.0f : 1.0f;
-                uv = float2((dir.x > 0 ? -dir.z : dir.z), -dir.y) * rcp(absDir.x);
+                uv = float2(dir.x > 0 ? -dir.z : dir.z, -dir.y);
             } else if (absDir.y >= absDir.z) {
                 face = dir.y > 0 ? 2.0f : 3.0f;
-                uv = float2(dir.x, (dir.y > 0 ? dir.z : -dir.z)) * rcp(absDir.y);
+                uv = float2(dir.x, dir.y > 0 ? dir.z : -dir.z);
             } else {
                 face = dir.z > 0 ? 4.0f : 5.0f;
-                uv = float2((dir.z > 0 ? dir.x : -dir.x), -dir.y) * rcp(absDir.z);
+                uv = float2(dir.z > 0 ? dir.x : -dir.x, -dir.y);
             }
-            return float3(uv * 0.5f + 0.5f, face);
+            return float3(uv * (0.5f * rcp(max(absDir.x, max(absDir.y, absDir.z)))) + 0.5f, face);
         }
 
         float3 ArrayAddress(float2 uv) {
-            return DirectionToArrayUv(FaceUvToDirection(uv));
+            float2 faceUv = uv * 2.0f - 1.0f;
+            return DirectionToArrayUv(faceDirs[_FaceIndex][0] + faceUv.x * faceDirs[_FaceIndex][1] + faceUv.y * faceDirs[_FaceIndex][2]);
         }
 
         float4 SampleSource(float2 uv) {
@@ -268,33 +244,45 @@ Shader "Hidden/VRCLV/PointLightShadowRuntimeBlur" {
             float2 sourceInvResolution = _SourceResolution.zw;
             float2 sourceHalfTexel = sourceInvResolution * 0.5f;
             float2 edgeDistance = min(uv, 1.0f - uv);
-            if (all(edgeDistance >= sourceHalfTexel))
-                return UNITY_SAMPLE_TEX2DARRAY(_SourceArrayTex, float3(uv, _SourceBaseSlice + _FaceIndex));
+            float4 color;
+            [branch] if (all(edgeDistance >= sourceHalfTexel)) {
+                color = UNITY_SAMPLE_TEX2DARRAY(_SourceArrayTex, float3(uv, _SourceBaseSlice + _FaceIndex));
+            } else {
 
-            float2 texelPosition = uv * sourceResolution - 0.5f;
-            float2 texelBase = floor(texelPosition);
-            float2 texelBlend = frac(texelPosition);
-            float2 tap00 = (texelBase + float2(0.5f, 0.5f)) * sourceInvResolution;
-            float2 tap10 = (texelBase + float2(1.5f, 0.5f)) * sourceInvResolution;
-            float2 tap01 = (texelBase + float2(0.5f, 1.5f)) * sourceInvResolution;
-            float2 tap11 = (texelBase + float2(1.5f, 1.5f)) * sourceInvResolution;
-            float4 row0 = lerp(SampleSource(tap00), SampleSource(tap10), texelBlend.x);
-            float4 row1 = lerp(SampleSource(tap01), SampleSource(tap11), texelBlend.x);
-            return lerp(row0, row1, texelBlend.y);
+                float2 texelPosition = uv * sourceResolution - 0.5f;
+                float2 texelBase = floor(texelPosition);
+                float2 texelBlend = frac(texelPosition);
+                float2 tap00 = (texelBase + float2(0.5f, 0.5f)) * sourceInvResolution;
+                float2 tap10 = (texelBase + float2(1.5f, 0.5f)) * sourceInvResolution;
+                float2 tap01 = (texelBase + float2(0.5f, 1.5f)) * sourceInvResolution;
+                float2 tap11 = (texelBase + float2(1.5f, 1.5f)) * sourceInvResolution;
+                float4 row0 = lerp(SampleSource(tap00), SampleSource(tap10), texelBlend.x);
+                float4 row1 = lerp(SampleSource(tap01), SampleSource(tap11), texelBlend.x);
+                color = lerp(row0, row1, texelBlend.y);
+            }
+            return color;
         }
 
         #if defined(VRCLV_SHADOW_BLUR_SPHERICAL)
             #if !defined(VRCLV_RUNTIME_SHADOW_BLUR_DIRECT)
-                float3 SphericalArrayAddress(float2 uv, float2 faceUvOffset) {
-                    return DirectionToArrayUv(FaceUvToSphericalDirection(uv, faceUvOffset));
+                float3 SphericalArrayAddress(float3 centerDir, float2 offsetDir, float offsetLength) {
+                    float3 dir = FaceUvToSphericalDirection(centerDir, offsetDir, offsetLength);
+                    // Most taps stay on this face; only edge taps need cube remapping.
+                    float3 address;
+                    [branch] if (dir.z >= max(abs(dir.x), abs(dir.y))) {
+                        address = float3(dir.xy * (0.5f * rcp(dir.z)) + 0.5f, _FaceIndex);
+                    } else {
+                        address = DirectionToArrayUv(faceDirs[_FaceIndex][0] * dir.z + faceDirs[_FaceIndex][1] * dir.x + faceDirs[_FaceIndex][2] * dir.y);
+                    }
+                    return address;
                 }
             #endif
 
-            float4 SampleSourceSpherical(float2 uv, float2 faceUvOffset) {
+            float4 SampleSourceSpherical(float3 centerDir, float3 diskSample, float sampleScale) {
                 #if defined(VRCLV_RUNTIME_SHADOW_BLUR_DIRECT)
-                    return UNITY_SAMPLE_TEX2DARRAY(_SourceArrayTex, float3(SphericalSpotUv(uv, faceUvOffset), _SourceBaseSlice + _FaceIndex));
+                    return UNITY_SAMPLE_TEX2DARRAY(_SourceArrayTex, float3(SphericalSpotUv(centerDir, diskSample.xy, diskSample.z * sampleScale), _SourceBaseSlice + _FaceIndex));
                 #else
-                    float3 address = SphericalArrayAddress(uv, faceUvOffset);
+                    float3 address = SphericalArrayAddress(centerDir, diskSample.xy, diskSample.z * sampleScale);
                     address.z += _SourceBaseSlice;
                     return UNITY_SAMPLE_TEX2DARRAY(_SourceArrayTex, address);
                 #endif
@@ -306,59 +294,78 @@ Shader "Hidden/VRCLV/PointLightShadowRuntimeBlur" {
         }
 
         #if !defined(VRCLV_RUNTIME_SHADOW_BLUR_UNIFORM)
-            float4 SampleDepth(float2 uv) {
-                float3 address = ArrayAddress(uv);
-                address.z += _DepthBaseSlice;
-                return UNITY_SAMPLE_TEX2DARRAY(_DepthArrayTex, address);
-            }
+            #if !defined(VRCLV_SHADOW_BLUR_SPHERICAL) && !defined(VRCLV_RUNTIME_SHADOW_BLUR_DIRECT)
+                float4 SampleDepth(float2 uv) {
+                    float3 address = ArrayAddress(uv);
+                    address.z += _DepthBaseSlice;
+                    return UNITY_SAMPLE_TEX2DARRAY(_DepthArrayTex, address);
+                }
+            #endif
 
             float4 SampleDepthDirect(float2 uv) {
                 return UNITY_SAMPLE_TEX2DARRAY(_DepthArrayTex, float3(uv, _DepthBaseSlice + _FaceIndex));
             }
 
             #if defined(VRCLV_SHADOW_BLUR_SPHERICAL)
-                float4 SampleDepthSpherical(float2 uv, float2 faceUvOffset) {
+                float4 SampleDepthSpherical(float3 centerDir, float3 diskSample, float sampleScale) {
                     #if defined(VRCLV_RUNTIME_SHADOW_BLUR_DIRECT)
-                        return UNITY_SAMPLE_TEX2DARRAY(_DepthArrayTex, float3(SphericalSpotUv(uv, faceUvOffset), _DepthBaseSlice + _FaceIndex));
+                        return UNITY_SAMPLE_TEX2DARRAY(_DepthArrayTex, float3(SphericalSpotUv(centerDir, diskSample.xy, diskSample.z * sampleScale), _DepthBaseSlice + _FaceIndex));
                     #else
-                        float3 address = SphericalArrayAddress(uv, faceUvOffset);
+                        float3 address = SphericalArrayAddress(centerDir, diskSample.xy, diskSample.z * sampleScale);
                         address.z += _DepthBaseSlice;
                         return UNITY_SAMPLE_TEX2DARRAY(_DepthArrayTex, address);
                     #endif
                 }
             #endif
 
-            float AverageDepthDifference(float2 uv, float centerDepth, float2 sampleScale) {
-                float depthDifference = 0.0f;
-                VRCLV_BLUR_LOOP for (int sampleIndex = 0; sampleIndex < VRCLV_CONTRAST_SAMPLE_COUNT; sampleIndex++) {
-                    float radiusSq;
-                    float2 diskOffset = DiskKernelSampleOffset(sampleIndex, VRCLV_CONTRAST_INV_SAMPLE_COUNT, radiusSq);
-                    depthDifference += abs(DecodeDepth01(SampleDepth(uv + diskOffset * sampleScale)) - centerDepth);
-                }
-                return depthDifference * VRCLV_CONTRAST_INV_SAMPLE_COUNT;
-            }
+            #if !defined(VRCLV_SHADOW_BLUR_SPHERICAL)
+                #if !defined(VRCLV_RUNTIME_SHADOW_BLUR_DIRECT)
+                    float AverageDepthDifference(float2 uv, float centerDepth, float2 sampleScale) {
+                        float depthDifference = 0.0f;
+                        VRCLV_BLUR_LOOP for (int sampleIndex = 0; sampleIndex < VRCLV_CONTRAST_SAMPLE_COUNT; sampleIndex++) {
+                            float2 diskOffset;
+                            #if defined(VRCLV_EDITOR_SHADOW_BLUR_QUALITY)
+                                diskOffset = DiskKernelSampleOffset(sampleIndex, VRCLV_CONTRAST_INV_SAMPLE_COUNT);
+                            #else
+                                diskOffset = contrastKernel[sampleIndex];
+                            #endif
+                            depthDifference += abs(DecodeDepth01(SampleDepth(uv + diskOffset * sampleScale)) - centerDepth);
+                        }
+                        return depthDifference * VRCLV_CONTRAST_INV_SAMPLE_COUNT;
+                    }
+                #endif
+            #endif
 
             #if defined(VRCLV_SHADOW_BLUR_SPHERICAL)
-                float AverageDepthDifferenceSpherical(float2 uv, float centerDepth, float2 sampleScale) {
+                float AverageDepthDifferenceSpherical(float3 centerDir, float centerDepth, float2 sampleScale) {
                     float depthDifference = 0.0f;
                     VRCLV_BLUR_LOOP for (int sampleIndex = 0; sampleIndex < VRCLV_CONTRAST_SAMPLE_COUNT; sampleIndex++) {
-                        float radiusSq;
-                        float2 diskOffset = DiskKernelSampleOffset(sampleIndex, VRCLV_CONTRAST_INV_SAMPLE_COUNT, radiusSq);
-                        depthDifference += abs(DecodeDepth01(SampleDepthSpherical(uv, diskOffset * (sampleScale * 2.0f))) - centerDepth);
+                        #if defined(VRCLV_EDITOR_SHADOW_BLUR_QUALITY)
+                            float3 diskSample = SphericalDiskSample(sampleIndex, VRCLV_CONTRAST_INV_SAMPLE_COUNT);
+                        #else
+                            float3 diskSample = contrastKernel[sampleIndex];
+                        #endif
+                        depthDifference += abs(DecodeDepth01(SampleDepthSpherical(centerDir, diskSample, sampleScale.x * 2.0f)) - centerDepth);
                     }
                     return depthDifference * VRCLV_CONTRAST_INV_SAMPLE_COUNT;
                 }
             #endif
 
-            float AverageDepthDifferenceDirect(float2 uv, float centerDepth, float2 sampleScale) {
-                float depthDifference = 0.0f;
-                VRCLV_BLUR_LOOP for (int sampleIndex = 0; sampleIndex < VRCLV_CONTRAST_SAMPLE_COUNT; sampleIndex++) {
-                    float radiusSq;
-                    float2 diskOffset = DiskKernelSampleOffset(sampleIndex, VRCLV_CONTRAST_INV_SAMPLE_COUNT, radiusSq);
-                    depthDifference += abs(DecodeDepth01(SampleDepthDirect(uv + diskOffset * sampleScale)) - centerDepth);
+            #if !defined(VRCLV_SHADOW_BLUR_SPHERICAL)
+                float AverageDepthDifferenceDirect(float2 uv, float centerDepth, float2 sampleScale) {
+                    float depthDifference = 0.0f;
+                    VRCLV_BLUR_LOOP for (int sampleIndex = 0; sampleIndex < VRCLV_CONTRAST_SAMPLE_COUNT; sampleIndex++) {
+                        float2 diskOffset;
+                        #if defined(VRCLV_EDITOR_SHADOW_BLUR_QUALITY)
+                            diskOffset = DiskKernelSampleOffset(sampleIndex, VRCLV_CONTRAST_INV_SAMPLE_COUNT);
+                        #else
+                            diskOffset = contrastKernel[sampleIndex];
+                        #endif
+                        depthDifference += abs(DecodeDepth01(SampleDepthDirect(uv + diskOffset * sampleScale)) - centerDepth);
+                    }
+                    return depthDifference * VRCLV_CONTRAST_INV_SAMPLE_COUNT;
                 }
-                return depthDifference * VRCLV_CONTRAST_INV_SAMPLE_COUNT;
-            }
+            #endif
         #endif
 
         float RuntimeBlurRadius(float2 uv, float spotScale) {
@@ -368,12 +375,12 @@ Shader "Hidden/VRCLV/PointLightShadowRuntimeBlur" {
                 float2 contrastSampleScale = _InvResolution * max(radius, 0.0001f) * 2.0f;
                 float depthDifference;
                 #if defined(VRCLV_SHADOW_BLUR_SPHERICAL)
-                    depthDifference = AverageDepthDifferenceSpherical(uv, centerDepth, contrastSampleScale * VRCLV_SPHERICAL_BLUR_RADIUS_SCALE);
+                    depthDifference = AverageDepthDifferenceSpherical(SphericalCenterDirection(uv), centerDepth, contrastSampleScale * VRCLV_SPHERICAL_BLUR_RADIUS_SCALE);
                 #elif defined(VRCLV_RUNTIME_SHADOW_BLUR_DIRECT)
                     depthDifference = AverageDepthDifferenceDirect(uv, centerDepth, contrastSampleScale * spotScale);
                 #else
-                    float2 contrastExtent = contrastSampleScale * VRCLV_CONTRAST_MAX_RADIUS;
-                    [branch] if (KernelFitsFace(uv, contrastExtent)) depthDifference = AverageDepthDifferenceDirect(uv, centerDepth, contrastSampleScale);
+                    // Every contrast sample lies inside the unit disk.
+                    [branch] if (KernelFitsFace(uv, contrastSampleScale)) depthDifference = AverageDepthDifferenceDirect(uv, centerDepth, contrastSampleScale);
                     else depthDifference = AverageDepthDifference(uv, centerDepth, contrastSampleScale);
                 #endif
                 radius *= saturate(depthDifference * rcp(_BlurDepth));
@@ -381,64 +388,93 @@ Shader "Hidden/VRCLV/PointLightShadowRuntimeBlur" {
             return radius;
         }
 
-        float2 RuntimeBlurStep(float2 uv) {
-            float spotScale = 1.0f;
-            #if defined(VRCLV_RUNTIME_SHADOW_BLUR_DIRECT)
-                spotScale = rcp(max(_ShadowTanHalfFov, 0.000001f));
+        #if !defined(VRCLV_SHADOW_BLUR_SPHERICAL)
+            float2 RuntimeBlurStep(float2 uv) {
+                float spotScale = 1.0f;
+                #if defined(VRCLV_RUNTIME_SHADOW_BLUR_DIRECT)
+                    spotScale = rcp(max(_ShadowTanHalfFov, 0.000001f));
+                #endif
+                float radius = RuntimeBlurRadius(uv, spotScale);
+                return _BlurDirection * (_InvResolution * radius * (2.0f * VRCLV_BLUR_INV_SAMPLE_RADIUS) * spotScale);
+            }
+
+            float4 BlurArrayDirect(float2 uv, float2 sampleStep) {
+                float4 color = 0.0f;
+                VRCLV_BLUR_LOOP for (int sampleIndex = -VRCLV_BLUR_SAMPLE_RADIUS; sampleIndex <= VRCLV_BLUR_SAMPLE_RADIUS; sampleIndex++) {
+                    color += SampleSourceDirect(uv + sampleStep * sampleIndex) * linearWeights[abs(sampleIndex)];
+                }
+                return color * VRCLV_LINEAR_INV_WEIGHT_SUM;
+            }
+
+            #if !defined(VRCLV_RUNTIME_SHADOW_BLUR_DIRECT)
+                float4 BlurArraySeamAware(float2 uv, float2 sampleStep) {
+                    float4 color = 0.0f;
+                    #if !defined(VRCLV_RUNTIME_SHADOW_QUALITY_HIGH) || defined(VRCLV_EDITOR_SHADOW_BLUR_QUALITY)
+                    VRCLV_BLUR_LOOP for (int sampleIndex = -VRCLV_BLUR_SAMPLE_RADIUS; sampleIndex <= VRCLV_BLUR_SAMPLE_RADIUS; sampleIndex++) {
+                        float weight = linearWeights[abs(sampleIndex)];
+                        color += SampleSource(uv + sampleStep * sampleIndex) * weight;
+                    }
+                    #else
+                    // High quality processes four consecutive taps per iteration to share loop overhead.
+                    // Other qualities and editor sampling use a scalar loop to limit shader size.
+                    VRCLV_BLUR_LOOP for (int block = -VRCLV_BLUR_SAMPLE_RADIUS; block <= VRCLV_BLUR_SAMPLE_RADIUS - 4; block += 4) {
+                        [unroll] for (int lane = 0; lane < 4; lane++) {
+                            int sampleIndex = block + lane;
+                            color += SampleSource(uv + sampleStep * sampleIndex) * linearWeights[abs(sampleIndex)];
+                        }
+                    }
+                    [unroll] for (int sampleIndex = VRCLV_BLUR_SAMPLE_RADIUS - 2; sampleIndex <= VRCLV_BLUR_SAMPLE_RADIUS; sampleIndex++) {
+                        color += SampleSource(uv + sampleStep * sampleIndex) * linearWeights[abs(sampleIndex)];
+                    }
+                    #endif
+                    return color * VRCLV_LINEAR_INV_WEIGHT_SUM;
+                }
+
+                float4 BlurArray(float2 uv) {
+                    float2 sampleStep = RuntimeBlurStep(uv);
+                    float2 blurExtent = abs(sampleStep) * VRCLV_BLUR_SAMPLE_RADIUS;
+                    [branch] if (KernelFitsFace(uv, blurExtent)) {
+                        return BlurArrayDirect(uv, sampleStep);
+                    } else {
+                        return BlurArraySeamAware(uv, sampleStep);
+                    }
+                }
             #endif
-            float radius = RuntimeBlurRadius(uv, spotScale);
-            return _BlurDirection * (_InvResolution * radius * (2.0f * VRCLV_BLUR_INV_SAMPLE_RADIUS) * spotScale);
-        }
-
-        float4 BlurArrayDirect(float2 uv, float2 sampleStep) {
-            float4 color = 0.0f;
-            float weightSum = 0.0f;
-            VRCLV_BLUR_LOOP for (int sampleIndex = -VRCLV_BLUR_SAMPLE_RADIUS; sampleIndex <= VRCLV_BLUR_SAMPLE_RADIUS; sampleIndex++) {
-                float sampleDistance = sampleIndex * VRCLV_BLUR_INV_SAMPLE_RADIUS;
-                float weight = GaussianWeight(sampleDistance);
-                color += SampleSourceDirect(uv + sampleStep * sampleIndex) * weight;
-                weightSum += weight;
-            }
-            return color * rcp(weightSum);
-        }
-
-        float4 BlurArraySeamAware(float2 uv, float2 sampleStep) {
-            float4 color = 0.0f;
-            float weightSum = 0.0f;
-            VRCLV_BLUR_LOOP for (int sampleIndex = -VRCLV_BLUR_SAMPLE_RADIUS; sampleIndex <= VRCLV_BLUR_SAMPLE_RADIUS; sampleIndex++) {
-                float sampleDistance = sampleIndex * VRCLV_BLUR_INV_SAMPLE_RADIUS;
-                float weight = GaussianWeight(sampleDistance);
-                color += SampleSource(uv + sampleStep * sampleIndex) * weight;
-                weightSum += weight;
-            }
-            return color * rcp(weightSum);
-        }
+        #endif
 
         #if defined(VRCLV_SHADOW_BLUR_SPHERICAL)
             float4 BlurArraySpherical(float2 uv) {
-                float4 color = SampleSourceSpherical(uv, float2(0.0f, 0.0f));
-                float weightSum = 1.0f;
+                float3 centerDir = SphericalCenterDirection(uv);
+                // A zero spherical offset is exactly the center sample.
+                float4 color = SampleSourceDirect(uv);
+                #if defined(VRCLV_EDITOR_SHADOW_BLUR_QUALITY)
+                    float weightSum = 1.0f;
+                #endif
                 float blurRadius = _InvResolution * RuntimeBlurRadius(uv, 1.0f) * (4.0f * VRCLV_SPHERICAL_BLUR_RADIUS_SCALE);
                 VRCLV_BLUR_LOOP for (int sampleIndex = 0; sampleIndex < VRCLV_SPHERICAL_BLUR_SAMPLE_COUNT; sampleIndex++) {
-                    float radiusSq;
-                    float2 diskOffset = DiskKernelSampleOffset(sampleIndex, VRCLV_SPHERICAL_BLUR_INV_SAMPLE_COUNT, radiusSq);
-                    float weight = VRCLV_Exp(-2.0f * radiusSq);
-                    color += SampleSourceSpherical(uv, diskOffset * blurRadius) * weight;
-                    weightSum += weight;
+                    float3 diskSample;
+                    float weight;
+                    #if defined(VRCLV_EDITOR_SHADOW_BLUR_QUALITY)
+                        diskSample = SphericalDiskSample(sampleIndex, VRCLV_SPHERICAL_BLUR_INV_SAMPLE_COUNT);
+                        float radiusSq = (sampleIndex + 0.5f) * VRCLV_SPHERICAL_BLUR_INV_SAMPLE_COUNT;
+                        weight = VRCLV_Exp(-2.0f * radiusSq);
+                    #else
+                        diskSample = sphericalKernel[sampleIndex].xyz;
+                        weight = sphericalKernel[sampleIndex].w;
+                    #endif
+                    color += SampleSourceSpherical(centerDir, diskSample, blurRadius) * weight;
+                    #if defined(VRCLV_EDITOR_SHADOW_BLUR_QUALITY)
+                        weightSum += weight;
+                    #endif
                 }
-                return color * rcp(weightSum);
+                #if defined(VRCLV_EDITOR_SHADOW_BLUR_QUALITY)
+                    color *= rcp(weightSum);
+                #else
+                    color *= VRCLV_SPHERICAL_INV_WEIGHT_SUM;
+                #endif
+                return color;
             }
         #endif
-
-        float4 BlurArray(float2 uv) {
-            float2 sampleStep = RuntimeBlurStep(uv);
-            float2 blurExtent = abs(sampleStep) * VRCLV_BLUR_SAMPLE_RADIUS;
-            [branch] if (KernelFitsFace(uv, blurExtent)) {
-                return BlurArrayDirect(uv, sampleStep);
-            } else {
-                return BlurArraySeamAware(uv, sampleStep);
-            }
-        }
 
         float4 fragArray(v2f i) : SV_Target {
 #if defined(VRCLV_SHADOW_BLUR_SPHERICAL)

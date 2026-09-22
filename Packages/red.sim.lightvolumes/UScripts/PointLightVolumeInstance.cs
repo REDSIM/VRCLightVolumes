@@ -23,139 +23,141 @@ namespace VRCLightVolumes {
     public partial class PointLightVolumeInstance : MonoBehaviour
 #endif
     {
-        [Tooltip("Defines whether this point light volume can be moved at runtime. Disabling this option slightly improves performance. Don't forget to enable \"Auto Update Volumes\" in your Light Volumes Setup to get these dynamic updates!")]
+        [Tooltip("Enable for a light that moves in game. Also enable Auto Update Volumes on the Manager.")]
         public bool IsDynamic = false;
-        [Tooltip("Point Light is the most performant type. For static lighting, prefer baked additive Light Volumes.")]
+        [Tooltip("Choose Point for a bulb, Spot for a flashlight or Area for a panel.")]
         public int LightType = 0; // 0: point, 1: spot, 2: area
-        [Tooltip("Multiplies the point light volume’s color by this value.")]
+        [Tooltip("Tints the light. White keeps the colors of its texture source.")]
         [ColorUsage(showAlpha: false)] public Color Color = Color.white;
-        [Tooltip("Brightness of the point light volume.")]
+        [Tooltip("Adjust brightness after setting Light Source Size. Set to 0 to turn the light off.")]
         public float Intensity = 100f;
-        [Tooltip("Controls per-surface Point Light shading and shadow opacity based on surface normal. 0 disables this extra shading and shadows for this light; 1 applies them fully. Modern individual speculars use the same light mask.")]
+        [Tooltip("Controls surface shading and shadow strength. At 0, the light has no directional shading or shadows.")]
         [Range(0, 1)] public float ShadingStrength = 1f;
 
         [Header("Position Data")]
-        [Tooltip("World-space position used by this point light volume.")]
+        [Tooltip("Light position in world space. Updated from the Transform.")]
         public Vector3 Position = Vector3.zero;
-        [Tooltip("Light source size used by parametric Point Lights, parametric Spot Lights, cookies and cubemap projections. It affects calculated range and broadens size-aware specular highlights in modern compatible shaders.")]
+        [Tooltip("Emitter radius in meters. Larger sources reach farther and produce broader specular highlights.")]
         [Min(0.0001f)] public float LightSourceSize = 0.025f;
         [Tooltip("Inverse squared range used by LUT projection.")]
         [Min(0)] public float InverseSquaredRange = 1f;
-        [Tooltip("Area Light width in meters. Affects textured Area Light emission and size-aware Area Light speculars in modern compatible shaders.")]
+        [Tooltip("Area light width in meters. Changes its lit area and specular highlight.")]
         [Min(0.001f)] public float Width = 1f;
 
         [Header("Direction Data")]
-        [Tooltip("World-space spotlight direction used by parametric and LUT spot lights.")]
+        [Tooltip("Spot direction in world space. Updated from the Transform.")]
         public Vector3 Direction = Vector3.forward;
-        [Tooltip("Rotation used by area lights, cubemap projections and cookie projections.")]
+        [Tooltip("Orientation of the Area light or projected image. Updated from the Transform.")]
         public Quaternion Rotation = Quaternion.identity;
-        [Tooltip("Spotlight cone falloff multiplier used by parametric spot lights.")]
+        [Tooltip("Controls how softly a Spot light fades at its cone edge.")]
         public float ConeFalloff = 1f;
 
         [Header("Angle Data")]
-        [Tooltip("Spotlight cone angle shown in degrees in the inspector. Stored internally as a half-angle in radians.")]
+        [Tooltip("Spot cone half-angle in radians. The Inspector shows the full angle in degrees.")]
         public float Angle = 0.5235988f;
-        [Tooltip("Cosine of the spotlight outer angle used by parametric and LUT spot lights.")]
+        [Tooltip("Cosine of the Spot cone half-angle. Set from Angle.")]
         public float OuterAngleCos = 1f;
-        [Tooltip("Tangent of the spotlight outer angle used by cookie projection.")]
+        [Tooltip("Tangent of the Spot cone half-angle. Used for cookie projection.")]
         public float OuterAngleTan = 0f;
-        [Tooltip("Width / height aspect used by custom spotlight cookie projection. 1 keeps a square projector; values above 1 compress projected height.")]
+        [Tooltip("Width-to-height ratio of a Spot cookie. 1 is square; higher values make the projection shorter.")]
         [Min(0.001f)] public float SpotCookieAspect = 1f;
-        [Tooltip("Area Light height in meters. Affects textured Area Light emission and size-aware Area Light speculars in modern compatible shaders.")]
+        [Tooltip("Area light height in meters. Changes its lit area and specular highlight.")]
         [Min(0.001f)] public float Height = 1f;
 
         [Header("Runtime State")]
-        [Tooltip("Squared range after which light will be culled. Recalculated by the Light Volume Manager.")]
+        [Tooltip("Squared light range. Calculated by the Manager.")]
         public float SquaredRange = 1f;
-        [Tooltip("Average squared lossy scale of the light. Light Source Size uses this for range and size-aware specular calculations. Updates with UpdateTransform() method.")]
+        [Tooltip("Squared scale used for light range and specular size. Set by UpdateTransform().")]
         public float SquaredScale = 1f;
-        [Tooltip("Reference to the world's single Light Volume Manager. Assign it before registration and do not change it afterwards.")]
+        [Tooltip("The Manager that owns this light. Assign it before registration and keep the same Manager afterwards.")]
         public LightVolumeManager LightVolumeManager;
-        [Tooltip("Internal stable manager registry tie-breaker used when this point light volume is enabled at runtime. Use SetWeight(float weight) to change priority.")]
+        [Tooltip("Breaks ties between lights with the same priority. Use SetWeight() to change priority.")]
         [HideInInspector] public int RegistryOrder = 2147483647;
-        [Tooltip("Manager registry sort weight. Higher weights are uploaded to shaders first.")]
+        [Tooltip("Light priority. Higher values are considered first.")]
         [HideInInspector] public float RegistryWeight = 0f;
         [HideInInspector] public bool IsActive = true;
         [Header("Projection Source")]
-        [Tooltip("Texture source used by this light's active LUT, cookie or cubemap projection.")]
+        [Tooltip("Texture used for the active LUT, cookie or cubemap projection.")]
         public Texture CustomTexture;
-        [Tooltip("Material source used by this light's active LUT, cookie or cubemap projection.")]
+        [Tooltip("Material used for the active LUT, cookie or cubemap projection.")]
         public Material CustomTextureMaterial;
-        [Tooltip("Projection mode used by this light. 0 = parametric, 1 = LUT, 2 = custom cookie or cubemap.")]
+        [Tooltip("Projection type: 0 = Parametric, 1 = LUT, 2 = Custom cookie or cubemap.")]
         public int ProjectionMode = 0; // 0: parametric, 1: LUT, 2: custom cookie or cubemap
+        [Tooltip("Refreshes animated projection sources each frame. Also requires Auto Update Textures on the Manager. Turn off to keep a snapshot.")]
+        public bool AutoUpdateCustomTexture = false;
 
         [Header("Shadow Source")]
         [Tooltip("Texture source used by this light's shadow map.")]
         public Texture ShadowMapTexture;
         [Tooltip("Material source used by this light's shadow map.")]
         public Material ShadowMapMaterial;
-        [Tooltip("Updates this light's shadow map texture every frame.")]
+        [Tooltip("Refreshes the assigned shadow source each frame. Also requires Auto Update Textures on the Manager.")]
         public bool AutoUpdateShadowMap = false;
-        [Tooltip("Index of the shadow map used by this light. -1 means no shadow.")]
+        [Tooltip("Assigned shadow map slot. -1 means no shadow map.")]
         public float ShadowMapID = -1f;
-        [Tooltip("Keeps baked shadows fixed in world space instead of moving with the light. This costs slightly more at runtime.")]
+        [Tooltip("Keeps baked shadows in their original world positions when the light moves.")]
         public bool WorldSpaceShadows = false;
-        [Tooltip("World-space position where the shadow map was baked.")]
+        [Tooltip("Light position when its shadows were baked.")]
         public Vector3 ShadowBakePosition = Vector3.zero;
-        [Tooltip("World-space rotation where the shadow map was baked.")]
+        [Tooltip("Light rotation when its shadows were baked.")]
         public Quaternion ShadowBakeRotation = Quaternion.identity;
 
         [Header("Shadow Bake Settings")]
         [Tooltip("Layers that can cast shadows.")]
         public int LayerMask = 270849;
-        [Tooltip("Near clip plane used by the shadow bake camera. Higher values can clip nearby occluders.")]
+        [Tooltip("Closest distance captured by the shadow camera. Objects nearer than this cannot cast shadows.")]
         [Min(0.0001f)] public float NearClip = 0.01f;
-        [Tooltip("Far clip plane used by the shadow bake camera. Shadow casters outside the near-far range are clipped. 0 uses this light's current culling range.")]
+        [Tooltip("Farthest distance captured by the shadow camera. Set to 0 to use the light range.")]
         [Min(0)] public float FarClip = 0f;
         // Serialized source of truth for the far clip actually used by the latest shadow bake.
         [HideInInspector] public float BakedFarClip = 0f;
-        [Tooltip("World-space bias in meters applied while baking this light's shadow map. Larger values reduce self-shadow artifacts, but can detach contact edges. Requires rebaking.")]
+        [Tooltip("Moves the shadow capture depth by this distance in meters. Increase to reduce self-shadow artifacts; too much separates shadows from objects. Rebake after changes.")]
         [Min(0)] public float Bias = 0.01f;
-        [Tooltip("Shadow blur radius applied after baking, normalized to 128x128 shadow resolution. Editor and runtime baking use the Spherical Blur setting below. 0 keeps the baked shadow map unblurred. Requires rebaking.")]
+        [Tooltip("Softens the shadow edges. Set to 0 for no blur. Rebake after changes.")]
         [Min(0)] public float Blur = 1f;
-        [Tooltip("Hardens shadows near the contact areas. Can produce artefacts, so use with caution. Requires rebaking. More performant when set to 0 in realtime mode. Spherical Blur also applies to contact hardening samples.")]
+        [Tooltip("Sharpens shadows near contact points. Reduce it if artifacts appear. Rebake after changes.")]
         [Range(0, 1)] public float ContactHardening = 0f;
 
-        [Tooltip("Queues this light for a one-shot in-game shadow bake when its runtime instance starts. The Manager completes one queued light per frame. The editor-baked shadow texture is not included in the build or asset bundle.")]
+        [Tooltip("Captures shadows once at startup. The Manager bakes one queued light per frame. The Editor-baked shadow is omitted from the build.")]
         public bool BakeInGame = false;
-        [Tooltip("Resolution used by runtime shadow baking.")]
+        [Tooltip("Resolution of the in-game shadow capture. The Manager resizes it to the shared shadow resolution.")]
         [Min(16)] public int RuntimeShadowResolution = 128;
-        [Tooltip("Runtime blur and contact hardening sample preset. 0 = low, 1 = medium, 2 = high.")]
+        [Tooltip("Blur quality for in-game shadows: 0 = Low, 1 = Medium, 2 = High.")]
         [Range(0, 2)] public int RuntimeShadowBlurSamplePreset = 2;
-        [Tooltip("Uses spherical shadow-space blur for editor and in-game shadow bakes, reducing cubemap and single-slice spot projection seams. Disable it to use faster planar blur.")]
+        [Tooltip("Reduces seams when shadows are blurred. Turn off for faster planar blur.")]
         public bool RuntimeShadowSphericalBlur = true;
-        [Tooltip("Writes a complete realtime shadow bake directly into the Manager atlas when its resolution matches this light. External runtime bakers enable this mode automatically for realtime updates.")]
+        [Tooltip("Writes shadows directly to the Manager atlas when resolutions match. The runtime baker sets this for repeated updates.")]
         [NonSerialized] public bool RuntimeShadowDirectOutput = false;
 
         // Persistent authoring state. These fields deliberately remain part of the Udon program so the UdonSharp proxy and backing behaviour always share one serializable schema. Duplicate texture
         // references are cleared from the temporary build scene, while runtime authoring references such as the excluded shadow renderers remain available to Udon.
-        [Tooltip("Parametric computes light falloff from settings. LUT uses X for cone falloff and Y for attenuation. Custom projects a cookie or cubemap.")]
+        [Tooltip("Parametric uses light settings. LUT uses a falloff texture. Custom projects a cookie or cubemap.")]
         [HideInInspector] public int Projection = 0; // 0: parametric, 1: LUT, 2: custom cookie or cubemap
-        [Tooltip("Radius in meters beyond which the light is culled. Fewer overlapping lights improve performance.")]
+        [Tooltip("Light range in meters. Keep it as small as your scene needs to reduce overlap.")]
         [HideInInspector] public float Range = 10f;
-        [Tooltip("Controls the Spot Light cone falloff.")]
+        [Tooltip("Controls how softly the Spot light fades at its cone edge.")]
         [HideInInspector] public float Falloff = 1f;
-        [Tooltip("LUT texture or material. X controls cone falloff and Y controls attenuation. Uncompressed RGBA Half or RGBA Float is recommended for textures.")]
+        [Tooltip("Falloff texture or material. X controls the cone; Y controls distance falloff. Use uncompressed RGBA Half or RGBA Float textures.")]
         [HideInInspector] public UnityEngine.Object FalloffLUT;
-        [Tooltip("Texture or material projected by a Spot Light, or used as the textured emitter surface of an Area Light.")]
+        [Tooltip("Image or material projected by a Spot light or emitted by an Area light.")]
         [HideInInspector] public UnityEngine.Object Cookie;
-        [Tooltip("Cubemap texture or material projected by a Point Light.")]
+        [Tooltip("Cubemap or material projected by a Point light.")]
         [HideInInspector] public UnityEngine.Object Cubemap;
-        [Tooltip("Bakes this light into light probes so it can affect objects without Light Volumes support. Intended for static lights.")]
+        [Tooltip("Includes this light in baked Light Probes for objects without Light Volumes support. Use for static lights.")]
         [HideInInspector] public bool BakeIntoProbes = false;
-        [Tooltip("Shows the light's culling range gizmo. Use it to reduce unnecessary overlap between Point Light Volumes.")]
+        [Tooltip("Shows the light range. Use it to reduce overlap between lights.")]
         [HideInInspector] public bool DebugRange = false;
-        [Tooltip("Enables baked shadows for this light. Baked shadows can still affect dynamic objects such as avatars.")]
+        [Tooltip("Enables shadows. Click Bake Shadows after changing the light or nearby objects.")]
         [HideInInspector] public bool Shadows = false;
         [Tooltip("Includes this light when Bake Shadows is clicked in the Light Volume Manager. Disable it to keep the current shadow map during batch bakes.")]
         [HideInInspector] public bool RebakeShadows = true;
         [Tooltip("Renderers that must not cast shadows for this light. Listed renderers are temporarily excluded from both editor and runtime shadow baking.")]
         [HideInInspector] public Renderer[] ExclusionMask = new Renderer[0];
-        [Tooltip("Shows the shadow near and far clip plane gizmo.")]
+        [Tooltip("Shows the nearest and farthest distances included in the shadow capture.")]
         [HideInInspector] public bool DebugClipPlanes = false;
-        [Tooltip("Forces Spot Light shadows to bake and store as a cubemap even when the spot angle is below 180 degrees.")]
+        [Tooltip("Uses a cubemap for Spot shadows. Enable for a full Spot Angle of 180 degrees or more.")]
         [HideInInspector] public bool ForceCubemapShadows = false;
-        [Tooltip("Baked shadow map source for this light. Bake Shadows generates it automatically; compatible textures and materials can also be assigned manually.")]
+        [Tooltip("Filled by Bake Shadows. You can also assign a compatible shadow texture or material.")]
         [HideInInspector] public UnityEngine.Object ShadowMap;
 
         // Shared disabled runtime shadow bake camera assigned by the Light Volume Manager.
@@ -269,7 +271,7 @@ namespace VRCLightVolumes {
             if (_old_ShadingStrength != ShadingStrength) {
                 float oldStrength = _old_ShadingStrength;
                 _old_ShadingStrength = ShadingStrength;
-                NotifyManager((Mathf.Clamp01(oldStrength) <= 0) != (Mathf.Clamp01(ShadingStrength) <= 0), false, false);
+                NotifyManager((oldStrength <= 0) != (ShadingStrength <= 0), false, false);
             }
         }
 #endif
@@ -288,7 +290,7 @@ namespace VRCLightVolumes {
             IsActive = runtimeEnabled && Intensity != 0 && Color != Color.black;
             if (wasActive != IsActive && RuntimeShadowDirectOutput) _runtimeShadowSourceInitialized = false;
             if (!runtimeEnabled) return;
-            RegisterWithManager();
+            if (!_isRegisteredWithManager) RegisterWithManager();
             if (LightVolumeManager == null) return;
             if (wasActive != IsActive) {
                 if (CustomTexture != null || CustomTextureMaterial != null) customTexturesChanged = true;
@@ -300,8 +302,9 @@ namespace VRCLightVolumes {
         // Registers once with the world's single manager.
         private void RegisterWithManager() {
             if (_isRegisteredWithManager) return;
-            IsActive = enabled && gameObject.activeInHierarchy && Intensity != 0 && Color != Color.black;
-            if (LightVolumeManager == null || !gameObject.activeInHierarchy || !enabled) return;
+            bool runtimeEnabled = enabled && gameObject.activeInHierarchy;
+            IsActive = runtimeEnabled && Intensity != 0 && Color != Color.black;
+            if (LightVolumeManager == null || !runtimeEnabled) return;
             _isRegisteredWithManager = true;
             LightVolumeManager.InitializePointLightVolume(this);
         }
@@ -408,7 +411,8 @@ namespace VRCLightVolumes {
             if (LightSourceSize == safeSize && InverseSquaredRange == inverseSquaredRange) return;
             LightSourceSize = safeSize;
             InverseSquaredRange = inverseSquaredRange;
-            MarkRangeDirtyAndNotify(false, false, false);
+            IsRangeDirty = true;
+            NotifyManager(false, false, false);
         }
 
         // Sets LUT mode
@@ -417,38 +421,61 @@ namespace VRCLightVolumes {
             if (LightType == 1) OuterAngleTan = Mathf.Tan(Angle); // 1: spot
             OuterAngleCos = Mathf.Cos(Angle);
             UpdateRotationFromTransformCore();
-            MarkRangeDirtyAndNotify(true, CustomTexture != null || CustomTextureMaterial != null, false);
+            IsRangeDirty = true;
+            NotifyManager(true, CustomTexture != null || CustomTextureMaterial != null, false);
         }
 
-        // Assigns a texture source and schedules a runtime texture cache refresh. RenderTexture and CustomRenderTexture sources are detected by the Manager and updated automatically in the final array.
+        // Selects custom projection mode after a source was assigned through the public fields.
+        public void SetCustomTexture() {
+            SetCustomProjectionMode();
+            IsRangeDirty = true;
+            NotifyManager(true, CustomTexture != null || CustomTextureMaterial != null, false);
+        }
+
+        // Assigns a texture source and uses the dev.16 automatic update default: RenderTexture-derived sources are live, immutable Texture assets are snapshots.
         public void SetCustomTexture(Texture texture) {
+            SetCustomTexture(texture, false, texture != null && typeof(RenderTexture).IsInstanceOfType(texture));
+        }
+
+        // Backward-compatible dev.15 API. Source layout is now inferred from the Texture itself; isCubemap is retained so existing callers keep compiling.
+        public void SetCustomTexture(Texture texture, bool isCubemap, bool autoUpdate) {
             CustomTexture = texture;
             CustomTextureMaterial = null;
+            AutoUpdateCustomTexture = texture != null && autoUpdate;
             if (texture != null) {
                 SetCustomProjectionMode();
             } else {
                 SetParametricMode();
             }
-            MarkRangeDirtyAndNotify(true, true, false);
+            IsRangeDirty = true;
+            NotifyManager(true, true, false);
         }
 
-        // Sets a material source for this light's custom projection and schedules manager runtime texture cache refresh
+        // Assigns a material source using the dev.16 live-source default.
         public void SetCustomMaterial(Material material) {
+            SetCustomMaterial(material, true);
+        }
+
+        // Assigns a material source and chooses whether its rendered projection stays live or remains a rebuild-time snapshot.
+        public void SetCustomMaterial(Material material, bool autoUpdate) {
             CustomTexture = null;
             CustomTextureMaterial = material;
+            AutoUpdateCustomTexture = material != null && autoUpdate;
             if (material != null) {
                 SetCustomProjectionMode();
             } else {
                 SetParametricMode();
             }
-            MarkRangeDirtyAndNotify(true, true, false);
+            IsRangeDirty = true;
+            NotifyManager(true, true, false);
         }
 
         // Sets the light into parametric mode
         public void SetParametric() {
             if (ProjectionMode == 0) return;
             SetParametricMode();
-            MarkRangeDirtyAndNotify(true, CustomTexture != null || CustomTextureMaterial != null, false);
+            IsRangeDirty = true;
+            NotifyManager(true, CustomTexture != null || CustomTextureMaterial != null, false);
         }
 
         // A custom Point cookie occupies six atlas slices; Spot and Area cookies occupy one.
@@ -466,54 +493,68 @@ namespace VRCLightVolumes {
             LightType = 0; // 0: point
             ShadowMapUsesCubemap = true;
             Position = position;
-            if (ProjectionMode != 0) UpdateRotationCore(instanceTransform.rotation, Matrix4x4.identity);
-            MarkRangeDirtyAndNotify(false, customTexturesChanged, shadowTexturesChanged);
+            if (ProjectionMode != 0) Rotation = Quaternion.Inverse(instanceTransform.rotation);
+            IsRangeDirty = true;
+            NotifyManager(false, customTexturesChanged, shadowTexturesChanged);
         }
 
         // Sets the light into the spotlight type with both angle and falloff because angle is required to determine falloff
         public void SetSpotLight(float angleDeg, float falloff) {
             float angle = angleDeg * Mathf.Deg2Rad * 0.5f;
             float outerAngleTan = Mathf.Tan(angle);
-            float outerAngleCos = Mathf.Cos(angle);
-            float coneFalloff = 1f / (Mathf.Cos(angle * (1.0f - Mathf.Clamp01(falloff))) - outerAngleCos);
             Transform instanceTransform = transform;
             Vector3 position = instanceTransform.position;
             Quaternion transformRotation = instanceTransform.rotation;
-            Vector3 direction = transformRotation * Vector3.forward;
-            Quaternion rotation = Quaternion.Inverse(transformRotation);
-            if (LightType == 1 && Angle == angle && OuterAngleTan == outerAngleTan && Position == position && (ProjectionMode == 2 ? Rotation == rotation : Direction == direction && OuterAngleCos == outerAngleCos && ConeFalloff == coneFalloff)) return;
+            bool unchangedSpot = LightType == 1 && Angle == angle && OuterAngleTan == outerAngleTan && Position == position;
+            // Custom cookies use inverse rotation; other Spot projections use direction and cone data. Derive only the selected representation and reuse it below.
+            if (ProjectionMode == 2) {
+                Quaternion rotation = Quaternion.Inverse(transformRotation);
+                if (unchangedSpot && Rotation == rotation) return;
+                Rotation = rotation;
+            } else {
+                float outerAngleCos = Mathf.Cos(angle);
+                float coneFalloff = 1f / (Mathf.Cos(angle * (1.0f - Mathf.Clamp01(falloff))) - outerAngleCos);
+                Vector3 direction = transformRotation * Vector3.forward;
+                if (unchangedSpot && Direction == direction && OuterAngleCos == outerAngleCos && ConeFalloff == coneFalloff) return;
+                Direction = direction;
+                OuterAngleCos = outerAngleCos;
+                ConeFalloff = coneFalloff;
+            }
             bool customTexturesChanged = CustomCookieStateChangesWithLightType(1);
             LightType = 1; // 1: spot
             Angle = angle;
             OuterAngleTan = outerAngleTan;
-            if (ProjectionMode != 2) { // 2: custom cookie or cubemap
-                OuterAngleCos = outerAngleCos;
-                ConeFalloff = coneFalloff;
-            }
             Position = position;
-            UpdateRotationCore(transformRotation, Matrix4x4.identity);
-            MarkRangeDirtyAndNotify(false, customTexturesChanged, false);
+            IsRangeDirty = true;
+            NotifyManager(false, customTexturesChanged, false);
         }
 
         // Sets the light into the spotlight type with a specified angle
         public void SetSpotLight(float angleDeg) {
             float angle = angleDeg * Mathf.Deg2Rad * 0.5f;
             float outerAngleTan = Mathf.Tan(angle);
-            float outerAngleCos = Mathf.Cos(angle);
             Transform instanceTransform = transform;
             Vector3 position = instanceTransform.position;
             Quaternion transformRotation = instanceTransform.rotation;
-            Vector3 direction = transformRotation * Vector3.forward;
-            Quaternion rotation = Quaternion.Inverse(transformRotation);
-            if (LightType == 1 && Angle == angle && OuterAngleTan == outerAngleTan && Position == position && (ProjectionMode == 2 ? Rotation == rotation : Direction == direction && OuterAngleCos == outerAngleCos)) return;
+            bool unchangedSpot = LightType == 1 && Angle == angle && OuterAngleTan == outerAngleTan && Position == position;
+            if (ProjectionMode == 2) {
+                Quaternion rotation = Quaternion.Inverse(transformRotation);
+                if (unchangedSpot && Rotation == rotation) return;
+                Rotation = rotation;
+            } else {
+                float outerAngleCos = Mathf.Cos(angle);
+                Vector3 direction = transformRotation * Vector3.forward;
+                if (unchangedSpot && Direction == direction && OuterAngleCos == outerAngleCos) return;
+                Direction = direction;
+                OuterAngleCos = outerAngleCos;
+            }
             bool customTexturesChanged = CustomCookieStateChangesWithLightType(1);
             LightType = 1; // 1: spot
             Angle = angle;
             OuterAngleTan = outerAngleTan;
-            if (ProjectionMode != 2) OuterAngleCos = outerAngleCos; // 2: custom cookie or cubemap
             Position = position;
-            UpdateRotationCore(transformRotation, Matrix4x4.identity);
-            MarkRangeDirtyAndNotify(false, customTexturesChanged, false);
+            IsRangeDirty = true;
+            NotifyManager(false, customTexturesChanged, false);
         }
 
         // Sets the light into the area light type
@@ -528,8 +569,10 @@ namespace VRCLightVolumes {
             Position = instanceTransform.position;
             Width = Mathf.Max(Mathf.Abs(lossyScale.x), 0.001f);
             Height = Mathf.Max(Mathf.Abs(lossyScale.y), 0.001f);
-            UpdateRotationCore(transformRotation, instanceTransform.localToWorldMatrix);
-            MarkRangeDirtyAndNotify(true, customTexturesChanged, shadowTexturesChanged);
+            Rotation = transformRotation;
+            RefreshAreaCookieMirror(transformRotation, instanceTransform.localToWorldMatrix);
+            IsRangeDirty = true;
+            NotifyManager(true, customTexturesChanged, shadowTexturesChanged);
         }
 
         // Sets light source color
@@ -565,7 +608,7 @@ namespace VRCLightVolumes {
             float oldStrength = ShadingStrength;
             ShadingStrength = strength;
             _old_ShadingStrength = strength;
-            NotifyManager((Mathf.Clamp01(oldStrength) <= 0) != (strength <= 0), false, false);
+            NotifyManager((oldStrength <= 0) != (strength <= 0), false, false);
         }
 
         // Sets custom spotlight cookie projection aspect
@@ -574,12 +617,6 @@ namespace VRCLightVolumes {
             if (SpotCookieAspect == safeAspect) return;
             SpotCookieAspect = safeAspect;
             NotifyManager(false, false, false);
-        }
-
-        // Marks this light range dirty and tells the manager which runtime data needs rebuilding.
-        private void MarkRangeDirtyAndNotify(bool rebuildFinalData, bool customTexturesChanged, bool shadowTexturesChanged) {
-            IsRangeDirty = true;
-            NotifyManager(rebuildFinalData, customTexturesChanged, shadowTexturesChanged);
         }
 
         // Color and intensity share a narrow notification; the manager coalesces repeated writes to this compact shader slot and widens unsupported Point profiles to a full record pack.
@@ -669,8 +706,8 @@ namespace VRCLightVolumes {
 
         // Resolves the Area Cookie X/Y reflection relative to the quaternion frame sent to shaders.
         private void RefreshAreaCookieMirror(Quaternion transformRotation, Matrix4x4 localToWorldMatrix) {
-            Vector3 matrixXAxis = new Vector3(localToWorldMatrix.m00, localToWorldMatrix.m10, localToWorldMatrix.m20);
-            Vector3 matrixYAxis = new Vector3(localToWorldMatrix.m01, localToWorldMatrix.m11, localToWorldMatrix.m21);
+            Vector3 matrixXAxis = localToWorldMatrix.GetColumn(0);
+            Vector3 matrixYAxis = localToWorldMatrix.GetColumn(1);
             bool flipCookieX = Vector3.Dot(matrixXAxis, transformRotation * Vector3.right) < 0f;
             bool flipCookieY = Vector3.Dot(matrixYAxis, transformRotation * Vector3.up) < 0f;
             AreaCookieMirror = (flipCookieY ? 2f : 1f) * (flipCookieX ? -1f : 1f);

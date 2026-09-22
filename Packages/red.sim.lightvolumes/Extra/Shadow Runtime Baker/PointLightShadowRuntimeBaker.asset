@@ -97,7 +97,7 @@ MonoBehaviour:
       Data: 6|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Point Light Volume instance that receives the runtime-baked shadow texture.
+      Data: Point, Spot or Area light whose shadows this component updates.
     - Name: 
       Entry: 8
       Data: 
@@ -160,7 +160,7 @@ MonoBehaviour:
       Data: 10|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Bake one full shadow cubemap when this behaviour is enabled.
+      Data: Captures shadows once when this component is enabled.
     - Name: 
       Entry: 8
       Data: 
@@ -217,8 +217,8 @@ MonoBehaviour:
       Data: 13|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Continuously bakes the target's complete shadow directly into the Manager
-        atlas through a delayed Udon event loop.
+      Data: Updates shadows repeatedly while enabled. Use for a moving light or moving
+        shadow casters.
     - Name: 
       Entry: 8
       Data: 

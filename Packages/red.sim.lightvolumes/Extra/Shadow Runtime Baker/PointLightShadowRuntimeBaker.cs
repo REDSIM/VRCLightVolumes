@@ -17,11 +17,11 @@ namespace VRCLightVolumes {
     public class PointLightShadowRuntimeBaker : MonoBehaviour
 #endif
     {
-        [Tooltip("Point Light Volume instance that receives the runtime-baked shadow texture.")]
+        [Tooltip("Point, Spot or Area light whose shadows this component updates.")]
         public PointLightVolumeInstance TargetPointLightVolume;
-        [Tooltip("Bake one full shadow cubemap when this behaviour is enabled.")]
+        [Tooltip("Captures shadows once when this component is enabled.")]
         public bool BakeOnEnable = true;
-        [Tooltip("Continuously bakes the target's complete shadow directly into the Manager atlas through a delayed Udon event loop.")]
+        [Tooltip("Updates shadows repeatedly while enabled. Use for a moving light or moving shadow casters.")]
         public bool Realtime = false;
 
         private PointLightVolumeInstance _configuredTargetPointLightVolume;
@@ -53,8 +53,7 @@ namespace VRCLightVolumes {
 #endif
         }
 
-        // Releases retained scratch resources. A queued Udon event owns the scheduled flag until it
-        // runs; keeping the flag prevents a quick disable-enable cycle from creating a second loop.
+        // Releases retained scratch resources. A queued Udon event owns the scheduled flag until it runs; keeping the flag prevents a quick disable-enable cycle from creating a second loop.
         private void OnDisable() {
             ReleaseConfiguredTarget();
         }
@@ -121,16 +120,27 @@ namespace VRCLightVolumes {
         private void ConfigureTargetBake(PointLightVolumeInstance target, bool directOutput) {
             if (_configuredTargetPointLightVolume != target) ReleaseConfiguredTarget();
             if (_configuredTargetPointLightVolume == target && _configuredDirectOutput == directOutput) return;
+            bool modeChanged = target.RuntimeShadowDirectOutput != directOutput;
             target.RuntimeShadowDirectOutput = directOutput;
             _configuredTargetPointLightVolume = target;
             _configuredDirectOutput = directOutput;
+            if (!modeChanged || !target.IsActive) return;
+            LightVolumeManager manager = target.LightVolumeManager;
+            if (manager == null) return;
+            if (directOutput) manager.UpdateVolumes();
+            else if (target.ShadowMapTexture != null || target.ShadowMapMaterial != null) manager.ReinitializeShadowTextures();
         }
 
         // Gives retained camera and blur scratch back when realtime baking stops or changes targets.
         private void ReleaseConfiguredTarget() {
             PointLightVolumeInstance target = _configuredTargetPointLightVolume;
             if (target != null) {
+                bool restoreStaticSource = target.RuntimeShadowDirectOutput && (target.ShadowMapTexture != null || target.ShadowMapMaterial != null);
                 target.RuntimeShadowDirectOutput = false;
+                if (restoreStaticSource && target.IsActive) {
+                    LightVolumeManager manager = target.LightVolumeManager;
+                    if (manager != null) manager.ReinitializeShadowTextures();
+                }
                 target._ReleaseRuntimeShadowBakeResources();
             }
             _configuredTargetPointLightVolume = null;

@@ -88,7 +88,7 @@ namespace VRCLightVolumes {
                 texture.Apply(updateMipmaps: false);
                 return true;
             } catch (UnityException ex) {
-                Debug.LogError($"[LightVolumes] Failed to SetPixels in the Texture3D. Error: {ex.Message}");
+                Debug.LogError($"[LightVolumes] Could not write the volume texture: {ex.Message}");
                 return false;
             }
         }
@@ -107,7 +107,7 @@ namespace VRCLightVolumes {
         public static void SaveAsAssetDelayed(Object asset, string assetPath, System.Action<bool> callback = null) {
 #if UNITY_EDITOR
             if (asset == null || string.IsNullOrEmpty(assetPath)) {
-                Debug.LogError("[LightVolumes] Invalid input for saving asset.");
+                Debug.LogError("[LightVolumes] Cannot save an asset without an object and path.");
                 callback?.Invoke(false);
                 return;
             }
@@ -128,7 +128,7 @@ namespace VRCLightVolumes {
             }
             EditorApplication.update += DelayedSave;
 #else
-            Debug.LogError($"[LightVolumes] You can only save assets in the editor!");
+            Debug.LogError($"[LightVolumes] Assets can only be saved in the Editor.");
 #endif
         }
 
@@ -185,7 +185,7 @@ namespace VRCLightVolumes {
         public static void SaveAsAsset(Object asset, string assetPath) {
 #if UNITY_EDITOR
             if (asset == null || string.IsNullOrEmpty(assetPath)) {
-                Debug.LogError("[LightVolumes] Invalid input for saving asset.");
+                Debug.LogError("[LightVolumes] Cannot save an asset without an object and path.");
                 return;
             }
             try {
@@ -198,7 +198,7 @@ namespace VRCLightVolumes {
                 Debug.LogError($"[LightVolumes] Save failed: {e.Message}");
             }
 #else
-            Debug.LogError($"[LightVolumes] You can only save assets in the editor!");
+            Debug.LogError($"[LightVolumes] Assets can only be saved in the Editor.");
 #endif
         }
 

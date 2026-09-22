@@ -136,11 +136,11 @@ namespace VRCLightVolumes {
         private void DrawToolbar() {
             GUIContent editBounds = EditorGUIUtility.IconContent("EditCollider");
             editBounds.text = " Edit Bounds";
-            editBounds.tooltip = "Edit the Light Volume bounds directly in the Scene view.";
+            editBounds.tooltip = "Resize the volume in the Scene view.";
 
             GUIContent previewVoxels = EditorGUIUtility.IconContent("LightProbeGroup Gizmo");
             previewVoxels.text = " Preview Voxels";
-            previewVoxels.tooltip = "Preview Light Volume voxels in the Scene view.";
+            previewVoxels.tooltip = "Show the lighting grid in the Scene view.";
 
             GUIStyle toggleStyle = new GUIStyle(GUI.skin.button) {
                 imagePosition = ImagePosition.ImageLeft,
@@ -170,7 +170,7 @@ namespace VRCLightVolumes {
             int voxelCount = LightVolumeTools.GetVoxelCount(_volume, 1);
             GUILayout.Space(10f);
             if (voxelCount < 0) {
-                EditorGUILayout.HelpBox("Volume density is too high and impossible to calculate and store! Consider using lower density.", MessageType.Error);
+                EditorGUILayout.HelpBox("Lower Voxels Per Unit or Resolution; this grid is too large.", MessageType.Error);
                 return;
             }
 
@@ -178,12 +178,12 @@ namespace VRCLightVolumes {
             GUILayout.Label(
                 new GUIContent(
                     $"Size in VRAM: <b>{SizeInVRAM(voxelCount)} MB</b>",
-                    "Estimated GPU memory used by this volume's three SH textures before atlas packing."),
+                    ""),
                 dataStyle);
             GUILayout.Label(
                 new GUIContent(
                     $"Size in bundle: <b>{SizeInBundle(voxelCount)} MB (Approximately)</b>",
-                    "Estimated compressed build size of this volume's three SH textures before atlas packing."),
+                    "Estimated compressed build size before atlas packing."),
                 dataStyle);
         }
 
@@ -195,8 +195,8 @@ namespace VRCLightVolumes {
             if (!BakeryEditorBridge.IsAvailable) {
                 GUILayout.Space(10f);
                 string message = BakeryEditorBridge.IsInstalled
-                    ? "The installed Bakery API is incomplete or incompatible with VRC Light Volumes. Update Bakery to use Bakery mode."
-                    : "To use Bakery mode, please include Bakery into your project!";
+                    ? "Update Bakery to use Bakery mode."
+                    : "Install Bakery to use Bakery mode.";
                 EditorGUILayout.HelpBox(message, MessageType.Error);
                 return;
             }
@@ -210,8 +210,8 @@ namespace VRCLightVolumes {
 
             GUILayout.Space(10f);
             EditorGUILayout.HelpBox(yRotation ?
-                "With your Bakery version, only Y-axis rotation is supported in the editor. Apply the latest Bakery patch to have full rotation support. Free rotation will still work at runtime."
-                : "With your Bakery version, volume rotation is not supported in the editor. Apply the latest Bakery patch to have full rotation support. Free rotation will still work at runtime.",
+                "This Bakery version can only bake Y-axis rotation. Update Bakery to bake other rotations. Runtime rotation still works."
+                : "Update Bakery to bake rotated volumes. Runtime rotation still works.",
                 MessageType.Warning);
         }
 
@@ -262,7 +262,7 @@ namespace VRCLightVolumes {
             GUILayout.Space(8f);
             using (new EditorGUILayout.HorizontalScope()) {
                 GUILayout.FlexibleSpace();
-                if (GUILayout.Button(new GUIContent("Generate Light Probes", "Opens the probe placer for this Light Volume."), buttonStyle) && _probePlacerWindow == null) {
+                if (GUILayout.Button(new GUIContent("Generate Light Probes", "Choose the density for a new Light Probe Group."), buttonStyle) && _probePlacerWindow == null) {
                     _probePlacerWindow = LightProbePlacerWindow.Show(_volume);
                 }
                 GUILayout.FlexibleSpace();
@@ -273,27 +273,27 @@ namespace VRCLightVolumes {
         private void DrawDebugSection() {
             GUILayout.Space(InspectorSectionSpacing);
             EditorGUI.BeginChangeCheck();
-            _debugExpanded = EditorGUILayout.BeginFoldoutHeaderGroup(_debugExpanded, new GUIContent("Debug", "Shows read-only live Light Volume data for troubleshooting."));
+            _debugExpanded = EditorGUILayout.BeginFoldoutHeaderGroup(_debugExpanded, new GUIContent("Debug", "Check the volume's current state."));
             if (EditorGUI.EndChangeCheck()) SessionState.SetBool(DebugFoldoutSessionKey, _debugExpanded);
 
             if (_debugExpanded) {
                 if (!EditorApplication.isPlaying)
-                    EditorGUILayout.HelpBox("Live values are populated in Play Mode. Derived atlas and transform values show the current editor state.", MessageType.Info);
+                    EditorGUILayout.HelpBox("Enter Play Mode for live values; other fields show the Editor state.", MessageType.Info);
                 if (targets.Length > 1)
-                    EditorGUILayout.HelpBox("Debug values are shown for the first selected Light Volume.", MessageType.Info);
+                    EditorGUILayout.HelpBox("Showing the first selected volume.", MessageType.Info);
 
-                LightVolumeDebugGUI.DrawGroupHeader("Registration", false, "Shows which Manager owns this volume and its registry priority.");
+                LightVolumeDebugGUI.DrawGroupHeader("Registration", false, "The assigned Manager and volume priority.");
                 LightVolumeDebugGUI.DrawObject(serializedObject, nameof(LightVolumeInstance.LightVolumeManager), _volume.LightVolumeManager, typeof(LightVolumeManager), "Manager");
-                LightVolumeDebugGUI.DrawBool("Registered", _volume.RegisteredWithManagerPreview, "Whether this volume is currently in a Manager registry.");
-                LightVolumeDebugGUI.DrawBool("Active", _volume.IsActive, "Whether this volume is currently eligible for rendering.");
+                LightVolumeDebugGUI.DrawBool("Registered", _volume.RegisteredWithManagerPreview, "The volume is registered with its Manager.");
+                LightVolumeDebugGUI.DrawBool("Active", _volume.IsActive, "The volume can contribute lighting.");
                 LightVolumeDebugGUI.DrawInt(serializedObject, nameof(LightVolumeInstance.RegistryOrder), _volume.RegistryOrder);
                 LightVolumeDebugGUI.DrawFloat(serializedObject, nameof(LightVolumeInstance.RegistryWeight), _volume.RegistryWeight);
-                LightVolumeDebugGUI.DrawGroupHeader("Atlas Placement", true, "Shows this volume's resolution and packed location in the shared 3D atlas.");
+                LightVolumeDebugGUI.DrawGroupHeader("Atlas Placement", true, "The volume's resolution and location in the atlas.");
                 LightVolumeDebugGUI.DrawVector3Int(serializedObject, nameof(LightVolumeInstance.Resolution), _volume.Resolution);
                 LightVolumeDebugGUI.DrawVector4(serializedObject, nameof(LightVolumeInstance.BoundsUvwMin0), _volume.BoundsUvwMin0, "Texture 0 UVW");
                 LightVolumeDebugGUI.DrawVector4(serializedObject, nameof(LightVolumeInstance.BoundsUvwMin1), _volume.BoundsUvwMin1, "Texture 1 UVW");
                 LightVolumeDebugGUI.DrawVector4(serializedObject, nameof(LightVolumeInstance.BoundsUvwMin2), _volume.BoundsUvwMin2, "Texture 2 UVW");
-                LightVolumeDebugGUI.DrawGroupHeader("Derived Transform", true, "Values calculated from the volume bounds and rotation for shaders.");
+                LightVolumeDebugGUI.DrawGroupHeader("Derived Transform", true, "The volume's bounds and rotation sent to shaders.");
                 LightVolumeDebugGUI.DrawVector4(serializedObject, nameof(LightVolumeInstance.InvLocalEdgeSmoothing), _volume.InvLocalEdgeSmoothing, "Edge Smoothing");
                 LightVolumeDebugGUI.DrawBool(serializedObject, nameof(LightVolumeInstance.IsRotated), _volume.IsRotated, "Rotated");
                 LightVolumeDebugGUI.DrawQuaternion(serializedObject, nameof(LightVolumeInstance.InvBakedRotation), _volume.InvBakedRotation, "Inverse Baked Rotation");

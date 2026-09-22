@@ -1,62 +1,57 @@
-[VRC Light Volumes](../README.md) | **How to Use** | [Best Practices](../Documentation/BestPractices.md) | [Udon Sharp API](../Documentation/UdonSharpAPI.md) | [For Developers](../Documentation/ForDevelopers.md) | [Compatible Shaders](../Documentation/CompatibleShaders.md)
+[VRC Light Volumes](../README.md) | **How to Use** | [Best Practices](./BestPractices.md) | [Scripting API](./ScriptingAPI.md) | [Shader Integration](./ForDevelopers.md) | [Compatible Shaders](./CompatibleShaders.md)
 
-# How to Use
+# AudioLink Integration
 
 | Menu |
-| ---|
-|[VRC Light Volumes System](../Documentation/HowToUse.md)|
-|[Regular Light Volumes](../Documentation/HowToUse_RegularLightVolumes.md)|
-| [Point Light Volumes](../Documentation/HowToUse_PointLightVolumes.md)|
-|[Point Light Volume Shadows](../Documentation/HowToUse_Shadows.md)|
-|[Point Light Material Sources](../Documentation/HowToUse_PointLightMaterialSources.md)|
-|[Area Light Emission](../Documentation/HowToUse_AreaLightEmission.md)|
-| **Audio Link Integration**<br />• [Audio Link Quick Setup](#Audio-Link-Quick-Setup)<br />• [Light Volume Audio Link Component Description](#Light-Volume-Audio-Link-Component-Description) |
-|[TV Screens Integration](../Documentation/HowToUse_TVScreensIntegration.md)|
-|[How Light Volumes Work?](../Documentation/HowToUse_HowItWorks.md)|
+| --- |
+| [Overview](./HowToUse.md) |
+| [Regular Light Volumes](./HowToUse_RegularLightVolumes.md) |
+| [Point Light Volumes](./HowToUse_PointLightVolumes.md) |
+| [Froxel Clustering](./HowToUse_FroxelClustering.md) |
+| [Shadows](./HowToUse_Shadows.md) |
+| [Material Sources](./HowToUse_PointLightMaterialSources.md) |
+| **AudioLink**<br />• [Setup AudioLink](#setup-audiolink)<br />• [Component Settings](#component-settings) |
+| [TV Screens](./HowToUse_TVScreensIntegration.md) |
+| [Debugging](./HowToUse_Debugging.md) |
+| [How It Works](./HowToUse_HowItWorks.md) |
 
-## Audio Link Integration
+Use **LightVolumeAudioLink** to control light color and brightness from AudioLink. It works with Point, Spot and Area lights, baked Light Volumes, and material emission.
 
-This package includes a [AudioLink](https://github.com/llealloo/audiolink/) integration Udon script. 
+Install and set up [AudioLink](https://github.com/llealloo/audiolink/) to use this feature.
 
-![](../Documentation/Preview_14.gif)
+![Music-reactive light and emission.](./Preview_14.gif)
 
-**LightVolumeAudioLink** component can change Light Volumes, Point light Volumes and Mesh Renderers materials colors in runtime based on AudioLink.
+## Setup AudioLink
 
-## Audio Link Quick Setup
+With AudioLink receiving audio in your scene:
 
-1. Add the **LightVolumeAudioLink** component to a GameObject in your scene.
+1. Add **LightVolumeAudioLink** to a GameObject and assign the scene's AudioLink component to **Audio Link**.
+2. Assign Point, Spot or Area lights to **Target Point Light Volumes**, and baked volumes to **Target Light Volumes**. Leave unused lists empty.
+3. Choose an **Audio Band** and **Color Mode**. **Auto** follows AudioLink theme colors; **Override Color** uses your chosen **Color**.
+4. Adjust **Smoothing**, **Invert**, and the **Multiply** and **Add** settings to control how the lights respond.
+5. Check the result in Play Mode with audio playing. Set each light's overall brightness with its **Intensity**.
 
-2. One **LightVolumeAudioLink** can control Light Volumes, Point Light Volumes and material colors based on an `Audio Band` value you choose: `Bass`, `Low Mid`, `High Mid`, `Treble`
+To make visible surfaces follow the same response, add their renderers to **Target Mesh Renderers**. Their shaders must have emission enabled and use `_EmissionColor`. **Materials Intensity** controls their brightness separately from the light output.
 
-3. Assign your **Audio Link** object in the `Audio Link` field.
+Color animation doesn't need **Auto Update Volumes**. Keep **Dynamic** off unless the light also moves.
 
-4. Add all Light Volumes you want to control to the `Target Light Volumes` list and Point Light Volumes in the `Target Point Light Volumes` list.
+## Component Settings
 
-5. Add all Mesh Renderers you want to change emission color by AudioLink to the `Target Mesh Renderers` list.
-
-> [!IMPORTANT]
-> These meshes should use materials with **emission enabled**. The shader must include a property named `_EmissionColor` (the **Standard** shader supports this).
-
-6. Adjust `Materials Intensity` to fine-tune the brightness of your materials. `Intensity` of Light Volumes and Point Light Volumes can be configured in their components.
-7. In your **AudioLink** component, make sure that **GPU Readback** is enabled. Click `Enable readback` if it’s not already active.
-8. Done! You should now see visual changes reacting to audio.
-   Add more **LightVolumeAudioLink** components to control other AudioLink bands.
-
->[!TIP]
->Enabling `Auto Update Volumes` for Audio-Link support is no more required in Light Volumes v.2.0.0 and newer.
-
-## Light Volume Audio Link Component Description
-
-| Parameter | Description |
+| Parameter | Meaning |
 | --- | --- |
-|`Audio Link` | Reference to your Audio Link Manager that should control Light Volumes.|
-|`Audio Band` | Defines which audio band will be used to control Light Volumes. Four bands available: **Bass, Low Mid, High Mid, Treble**.|
-|`Delay` | Defines how many samples back in history we're getting data from. Can be a value from **0** to **127**. Zero means no delay at all.|
-|`Smoothing Enabled` | Enables smoothing algorithm that tries to smooth out flickering that can usually be a problem.|
-|`Smoothing` | Value from 0 to 1 that defines how much smoothing should be applied. **Zero** usually applies just a little bit of smoothing. **One** smoothes out almost all the fast blinks and makes intensity changing very slow.|
-|`ColorMode` | Auto uses Theme Colors 0, 1, 2, 3 for Bass, LowMid, HighMid, Treble. Override Color allows you to set the static color value. |
-|`Color` | Color that will be used when **Override Color** is enabled.|
-|`Target Light Volumes` | List of the **Light Volumes** that should be affected by AudioLink.|
-|`Target Point Light Volumes` | List of the **Point Light Volumes** that should be affected by AudioLink.|
-|`Target Mesh Renderers` | List of the **Mesh Renderers** that has materials that should change color based on AudioLink.|
-|`Materials Intensity` | Brightness multiplier of the materials that should change color based on AudioLink.|
+| **Audio Link** | Scene AudioLink component to read. |
+| **Audio Band** | Choose Bass, Low Mid, High Mid, Treble or Volume. |
+| **Delay** | History offset `0–127`, not a time in seconds. `0` is current data. Volume ignores Delay. |
+| **Smoothing Enabled / Smoothing** | Smooths brightness changes; larger values react more slowly. |
+| **Invert** | Reverse the main brightness response. |
+| **Minimum / Maximum Multiply** | Multiply the response at quiet and loud levels. |
+| **Minimum / Maximum Add** | Add brightness at quiet and loud levels. Use Minimum Add to keep some light in silence. |
+| **Color Mode** | Auto, a selected theme color, Override Color, or No Change. **No Change stops all target updates**, including brightness. |
+| **Normalize Colors** | Makes sampled theme colors fully saturated and bright before the audio response. Does not modify Override Color. |
+| **Color** | Color used by Override Color. It replaces the target's color rather than multiplying its original tint. |
+| **Set Base Color** | Change the material's base color as well as emission. Requires a `_Color` property. |
+| **Materials Intensity** | Extra multiplier for renderer output; does not change Light Volume intensity. |
+| **Target Light Volumes / Target Point Light Volumes** | Lights whose color and brightness follow AudioLink. Leave unused lists empty. |
+| **Target Mesh Renderers** | Visible objects whose emission should follow the light. |
+
+If a light responds but its visible mesh does not, check the material's emission setting and property names. If nothing responds, check the Audio Link reference, audio playback and Color Mode first.

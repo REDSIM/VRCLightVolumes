@@ -44,8 +44,10 @@ namespace VRCLightVolumes {
             return encodedX + encodedY * ClusterAxisStride + shapeCode * ClusterShapeStride;
         }
 
-        // Packs two lights per vector as radius + shape. Shape 0 is point, 1 is one-sided area and 2..255 is a conservative spot cone.
-        private void WriteClusteringLight(int shaderIndex, float squaredRange, int lightType, float outerTangent, Vector3 shapeAxis) {
+        // Packs two lights per vector as signed radius + shape. A negative radius marks an exact,
+        // full-strength shadow that is eligible for the expensive Hi-Z proof; intersection uses abs(radius).
+        private void WriteClusteringLight(int shaderIndex, float squaredRange, int lightType, float outerTangent,
+                Vector3 shapeAxis, bool shadowCullEligible) {
             int shapeCode = 0;
             if (lightType == 1 && outerTangent > 0f) { // 1: spot; wider-than-hemisphere cones fall back to their range sphere tan(angle + padding) avoids two Udon transcendental calls while covering the packed-axis error.
                 float paddingDenominator = 1f - outerTangent * ClusterAxisPad;
@@ -62,6 +64,7 @@ namespace VRCLightVolumes {
 
             float packedShape = shapeCode == 0 ? 0f : EncodeClusterShape(shapeAxis, shapeCode);
             float range = Mathf.Sqrt(Mathf.Max(squaredRange, 0f));
+            if (shadowCullEligible && range > 0f) range = -range;
             int packedIndex = shaderIndex >> 1;
             Vector4 packedData = _clusteringLights[packedIndex];
             if ((shaderIndex & 1) == 0) {
@@ -80,43 +83,42 @@ namespace VRCLightVolumes {
 
         // Resolves the Area Cookie X/Y reflection relative to the quaternion frame sent to shaders.
         private float GetAreaCookieMirror(Matrix4x4 localToWorldMatrix, Quaternion transformRotation) {
-            Vector3 matrixXAxis = new Vector3(localToWorldMatrix.m00, localToWorldMatrix.m10, localToWorldMatrix.m20);
-            Vector3 matrixYAxis = new Vector3(localToWorldMatrix.m01, localToWorldMatrix.m11, localToWorldMatrix.m21);
+            Vector3 matrixXAxis = localToWorldMatrix.GetColumn(0);
+            Vector3 matrixYAxis = localToWorldMatrix.GetColumn(1);
             bool flipCookieX = Vector3.Dot(matrixXAxis, transformRotation * Vector3.right) < 0f;
             bool flipCookieY = Vector3.Dot(matrixYAxis, transformRotation * Vector3.up) < 0f;
             return (flipCookieY ? 2f : 1f) * (flipCookieX ? -1f : 1f);
         }
 
-        // Computes a bounding sphere radius squared for area lights
-        private float ComputeAreaLightSquaredBoundingSphere(float width, float height, Color color, float intensity, float cutoff) {
-            float minSolidAngle = Mathf.Clamp(cutoff / (Mathf.Max(color.r, Mathf.Max(color.g, color.b)) * intensity), -Mathf.PI * 2f, Mathf.PI * 2);
-            float A = width * height;
-            float w2 = width * width;
-            float h2 = height * height;
-            float B = 0.25f * (w2 + h2);
-            float t = Mathf.Tan(0.25f * minSolidAngle);
-            float T = t * t;
-            float TB = T * B;
-            float discriminant = Mathf.Sqrt(TB * TB + 4.0f * T * A * A);
-            return (discriminant - TB) * 0.125f / T;
-        }
-
-        // Computes a bounding sphere radius squared for point and spot lights
-        private float ComputePointLightSquaredBoundingSphere(Color color, float intensity, float sqSize, float cutoff) {
-            float L = Mathf.Max(color.r, Mathf.Max(color.g, color.b));
-            return Mathf.Max(Mathf.PI * 2 * L * Mathf.Abs(intensity) / (cutoff * cutoff) - 1, 0) * sqSize;
-        }
-
-        // Recalculates point light culling range using manager-side math
+        // Recalculates the canonical culling range with the historical arithmetic order. Keep each profile in this method to avoid a second Udon call and repeated source reads.
         private void ComputePointLightRange(PointLightVolumeInstance instance) {
             if (instance == null) return;
             float cutoff = LightsBrightnessCutoff;
             if (instance.LightType == 2) { // 2: area
-                instance.SquaredRange = ComputeAreaLightSquaredBoundingSphere(Mathf.Abs(instance.SquaredScale / instance.Width), instance.Height, instance.Color, instance.Intensity * Mathf.PI, cutoff);
+                float width = Mathf.Abs(instance.SquaredScale / instance.Width);
+                float height = instance.Height;
+                Color color = instance.Color;
+                float intensity = instance.Intensity * Mathf.PI;
+                float minSolidAngle = Mathf.Clamp(cutoff / (Mathf.Max(color.r, Mathf.Max(color.g, color.b)) * intensity), -Mathf.PI * 2f, Mathf.PI * 2);
+                float area = width * height;
+                float widthSquared = width * width;
+                float heightSquared = height * height;
+                float diagonalTerm = 0.25f * (widthSquared + heightSquared);
+                float tangent = Mathf.Tan(0.25f * minSolidAngle);
+                float tangentSquared = tangent * tangent;
+                float tangentDiagonal = tangentSquared * diagonalTerm;
+                float discriminant = Mathf.Sqrt(tangentDiagonal * tangentDiagonal + 4.0f * tangentSquared * area * area);
+                instance.SquaredRange = (discriminant - tangentDiagonal) * 0.125f / tangentSquared;
             } else if (instance.ProjectionMode == 1) { // 1: LUT
                 instance.SquaredRange = Mathf.Abs(instance.SquaredScale / instance.InverseSquaredRange);
             } else {
-                instance.SquaredRange = ComputePointLightSquaredBoundingSphere(instance.Color, instance.Intensity, Mathf.Abs(instance.SquaredScale * instance.LightSourceSize * instance.LightSourceSize), cutoff);
+                Color color = instance.Color;
+                float intensity = instance.Intensity;
+                float squaredScale = instance.SquaredScale;
+                float lightSourceSize = instance.LightSourceSize;
+                float squaredSize = Mathf.Abs(squaredScale * lightSourceSize * lightSourceSize);
+                float luminance = Mathf.Max(color.r, Mathf.Max(color.g, color.b));
+                instance.SquaredRange = Mathf.Max(Mathf.PI * 2 * luminance * Mathf.Abs(intensity) / (cutoff * cutoff) - 1, 0) * squaredSize;
             }
             instance.IsRangeDirty = false;
         }
@@ -143,11 +145,7 @@ namespace VRCLightVolumes {
             bool isRotated = Mathf.Abs(relativeRotation.w) < 0.999999f;
             Vector3 lossyScale = localToWorldMatrix.lossyScale;
             float safeSmoothing = Mathf.Max(instance.SmoothBlending, 0.00001f);
-            Vector4 invLocalEdgeSmoothing = new Vector4(
-                lossyScale.x / safeSmoothing,
-                lossyScale.y / safeSmoothing,
-                lossyScale.z / safeSmoothing,
-                0f);
+            Vector4 invLocalEdgeSmoothing = lossyScale / safeSmoothing;
             Vector3 relativeRotationRow0 = new Vector3(1, 0, 0);
             Vector3 relativeRotationRow1 = new Vector3(0, 1, 0);
             if (isRotated) {
@@ -232,6 +230,7 @@ namespace VRCLightVolumes {
         private int SelectLightVolumesByWeight() {
             int selectedCount = 0;
             int registryCount = LightVolumeInstances.Length;
+            bool hasUnorderedWeight = false;
 
             // Read every active source once and insert it immediately. This keeps direct public field writes visible on the next rebuild without a persistent cache, active snapshot or second registry pass.
             for (int registryIndex = 0; registryIndex < registryCount; registryIndex++) {
@@ -241,18 +240,44 @@ namespace VRCLightVolumes {
                 int candidateOrder = instance.RegistryOrder;
 
                 int insertIndex = selectedCount;
-                for (int selectedIndex = 0; selectedIndex < selectedCount; selectedIndex++) {
-                    int selectedRegistryIndex = _selectedLightVolumeIDs[selectedIndex];
-                    float selectedWeight = _selectionLightVolumeWeights[selectedRegistryIndex];
-                    bool higherWeight = candidateWeight > selectedWeight;
-                    bool earlierEqualWeight = candidateWeight == selectedWeight && candidateOrder < _selectionLightVolumeOrders[selectedRegistryIndex];
-                    if (!higherWeight && !earlierEqualWeight) continue;
-                    insertIndex = selectedIndex;
-                    break;
+                if (selectedCount < 8 || hasUnorderedWeight) {
+                    // NaN is historically incomparable: preserve its insertion position with the original scan.
+                    for (int selectedIndex = 0; selectedIndex < selectedCount; selectedIndex++) {
+                        int selectedRegistryIndex = _selectedLightVolumeIDs[selectedIndex];
+                        float selectedWeight = _selectionLightVolumeWeights[selectedRegistryIndex];
+                        if (candidateWeight > selectedWeight || (candidateWeight == selectedWeight && candidateOrder < _selectionLightVolumeOrders[selectedRegistryIndex])) {
+                            insertIndex = selectedIndex;
+                            break;
+                        }
+                    }
+                } else {
+                    // The common ascending/descending/equal-weight registries need only endpoint checks. Search the interior logarithmically instead of scanning up to 32 Udon records.
+                    int firstRegistryIndex = _selectedLightVolumeIDs[0];
+                    float firstWeight = _selectionLightVolumeWeights[firstRegistryIndex];
+                    if (candidateWeight > firstWeight || (candidateWeight == firstWeight && candidateOrder < _selectionLightVolumeOrders[firstRegistryIndex])) {
+                        insertIndex = 0;
+                    } else {
+                        int lastIndex = selectedCount - 1;
+                        int lastRegistryIndex = _selectedLightVolumeIDs[lastIndex];
+                        float lastWeight = _selectionLightVolumeWeights[lastRegistryIndex];
+                        if (candidateWeight > lastWeight || (candidateWeight == lastWeight && candidateOrder < _selectionLightVolumeOrders[lastRegistryIndex])) {
+                            int lower = 1;
+                            int upper = lastIndex;
+                            while (lower < upper) {
+                                int middle = (lower + upper) >> 1;
+                                int middleRegistryIndex = _selectedLightVolumeIDs[middle];
+                                float middleWeight = _selectionLightVolumeWeights[middleRegistryIndex];
+                                if (candidateWeight > middleWeight || (candidateWeight == middleWeight && candidateOrder < _selectionLightVolumeOrders[middleRegistryIndex])) upper = middle;
+                                else lower = middle + 1;
+                            }
+                            insertIndex = lower;
+                        }
+                    }
                 }
                 if (insertIndex >= MaxLightVolumeCount) continue;
 
                 // Only accepted IDs can become selected records and be compared later.
+                if (float.IsNaN(candidateWeight)) hasUnorderedWeight = true;
                 _selectionLightVolumeWeights[registryIndex] = candidateWeight;
                 _selectionLightVolumeOrders[registryIndex] = candidateOrder;
                 int shiftStart = selectedCount < MaxLightVolumeCount ? selectedCount : MaxLightVolumeCount - 1;
@@ -477,6 +502,7 @@ namespace VRCLightVolumes {
             VRCShader.SetGlobalFloat(_lightVolumeAdditiveMaxOverdrawID, AdditiveMaxOverdraw);
             VRCShader.SetGlobalFloat(_lightBrightnessCutoffID, LightsBrightnessCutoff);
             VRCShader.SetGlobalVector(_pointLightShadowReceiverParamsID, GetPointLightShadowReceiverParams());
+            RefreshShadowCullReceiverParameters();
             if (AutoUpdateTextures) ScheduleUpdateProcess();
         }
 #endif
@@ -488,16 +514,27 @@ namespace VRCLightVolumes {
 #endif
             if (Clustering == enabled) {
                 // An explicit retry may recover from a layout-specific allocation failure.
-                if (enabled && (_clusteringUnsupported || _clusteringAllocationFailed)) {
-                    _clusteringUnsupported = false;
-                    _clusteringAllocationFailed = false;
-                    _froxelLayoutValid = false;
+                if (enabled) {
+                    if (_clusteringUnsupported || _clusteringAllocationFailed) {
+                        _clusteringUnsupported = false;
+                        _clusteringAllocationFailed = false;
+                        _froxelLayoutValid = false;
+                    }
+                    if (_shadowCullPyramidUnsupported || _shadowCullPyramidAllocationFailed) {
+                        _shadowCullPyramidUnsupported = false;
+                        _shadowCullPyramidAllocationFailed = false;
+                        InvalidateShadowCullPyramid();
+                    }
                 }
                 return;
             }
             Clustering = enabled;
             _clusteringUnsupported = false;
             _clusteringAllocationFailed = false;
+            _shadowCullPyramidUnsupported = false;
+            _shadowCullPyramidAllocationFailed = false;
+            _shadowCullPyramidSuspendedForAutoUpdates = false;
+            _shadowCullPyramidDirty = true;
             _froxelLayoutValid = false;
             TryInitialize();
             DisableClustering();
@@ -544,6 +581,7 @@ namespace VRCLightVolumes {
             _pointLightShadowTextureID = VRCShader.PropertyToID("_UdonPointLightVolumeShadowTexture");
             _pointLightShadowReceiverParamsID = VRCShader.PropertyToID("_UdonPointLightVolumeShadowReceiverParams");
             _clusteringLightsID = VRCShader.PropertyToID("_UdonClusteringLights");
+            _froxelShadowMetadataID = VRCShader.PropertyToID("_UdonFroxelShadowMetadata");
             _lightBrightnessCutoffID = VRCShader.PropertyToID("_UdonLightBrightnessCutoff");
             // Froxel Clustering
             _clusteringEnabledID = VRCShader.PropertyToID("_UdonClusteringEnabled");
@@ -551,15 +589,26 @@ namespace VRCLightVolumes {
             _froxelGridID = VRCShader.PropertyToID("_UdonFroxelGrid");
             _froxelDepthID = VRCShader.PropertyToID("_UdonFroxelDepth");
             _froxelDepthStepID = VRCShader.PropertyToID("_UdonFroxelDepthStep");
+            _froxelGridInverseID = VRCShader.PropertyToID("_UdonFroxelGridInverse");
             _coarseClusterMaskID = VRCShader.PropertyToID("_UdonCoarseClusterMask");
             _froxelCoarseGridID = VRCShader.PropertyToID("_UdonFroxelCoarseGrid");
             _froxelFineGridID = VRCShader.PropertyToID("_UdonFroxelFineGrid");
-            _froxelPassID = VRCShader.PropertyToID("_UdonFroxelPass");
             _froxelCoarseID = VRCShader.PropertyToID("_UdonFroxelCoarse");
             _froxelProjectionID = VRCShader.PropertyToID("_UdonFroxelProjection");
             _froxelRightID = VRCShader.PropertyToID("_UdonFroxelRight");
             _froxelUpID = VRCShader.PropertyToID("_UdonFroxelUp");
             _froxelForwardID = VRCShader.PropertyToID("_UdonFroxelForward");
+            _froxelShadowCullID = VRCShader.PropertyToID("_UdonFroxelShadowCull");
+            _shadowCullBuildParamsID = VRCShader.PropertyToID("_UdonShadowCullBuildParams");
+            _shadowCullReceiverParamsID = VRCShader.PropertyToID("_UdonShadowCullReceiverParams");
+            _shadowCullPreviousID = VRCShader.PropertyToID("_UdonShadowCullPrevious");
+            _shadowCullPackParamsID = VRCShader.PropertyToID("_UdonShadowCullPackParams");
+            _shadowCullHierarchyID = VRCShader.PropertyToID("_UdonShadowCullHierarchy");
+            _shadowCullMipIDs[0] = VRCShader.PropertyToID("_UdonShadowCullMip1");
+            _shadowCullMipIDs[1] = VRCShader.PropertyToID("_UdonShadowCullMip2");
+            _shadowCullMipIDs[2] = VRCShader.PropertyToID("_UdonShadowCullMip3");
+            _shadowCullMipIDs[3] = VRCShader.PropertyToID("_UdonShadowCullMip4");
+            _shadowCullMipIDs[4] = VRCShader.PropertyToID("_UdonShadowCullMip5");
             // Other
             _forceSceneLightingID = VRCShader.PropertyToID("_UdonForceSceneLighting");
             _cubemapMainTexID = VRCShader.PropertyToID("_MainTex");
@@ -585,6 +634,7 @@ namespace VRCLightVolumes {
             VRCShader.SetGlobalVectorArray(_pointLightCustomIdID, _pointLightCustomId);
             VRCShader.SetGlobalVectorArray(_pointLightShadowReprojectionDataID, _pointLightShadowReprojectionData);
             VRCShader.SetGlobalVectorArray(_pointLightShadowRotationDataID, _pointLightShadowRotationData);
+            VRCShader.SetGlobalVectorArray(_froxelShadowMetadataID, _froxelShadowMetadata);
             VRCShader.SetGlobalVector(_pointLightShadowReceiverParamsID, GetPointLightShadowReceiverParams());
             _clusteringLightsDirty = true;
             VRCShader.SetGlobalFloat(_clusteringEnabledID, 0f);
@@ -619,6 +669,19 @@ namespace VRCLightVolumes {
             _isInitialized = false;
             _clusteringUnsupported = false;
             _clusteringAllocationFailed = false;
+            _shadowCullPyramidUnsupported = false;
+            _shadowCullPyramidAllocationFailed = false;
+            _shadowCullPyramidDirty = true;
+            _shadowCullPyramidValid = false;
+            _shadowCullSettingsInitialized = false;
+            _shadowCullSettingsEnabled = false;
+            _shadowCullAuthoredBleedReduction = -1f;
+            _shadowCullAuthoredMinVariance = -1f;
+            _shadowCullBleedReduction = -1f;
+            _shadowCullPositiveVarianceScale = -1f;
+            _shadowCullNegativeVarianceScale = -1f;
+            _shadowCullMaterialBindingDirty = true;
+            _boundClusteringMaterial = null;
             _shadowTextureAllocationFailed = false;
             _froxelLayoutValid = false;
             _froxelDepthValid = false;

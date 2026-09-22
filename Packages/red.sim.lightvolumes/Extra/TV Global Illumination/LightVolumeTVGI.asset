@@ -43,7 +43,7 @@ MonoBehaviour:
       Data: 
     - Name: 
       Entry: 12
-      Data: 11
+      Data: 10
     - Name: 
       Entry: 7
       Data: 
@@ -91,9 +91,8 @@ MonoBehaviour:
       Data: 5|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: "Render Texture used by your video player. Can be just a static texture
-        if you want it to be. Make sure that Enable Mip Maps and Auto Generate Mip
-        Maps are Enabled in the texture\u2019s import settings."
+      Data: Assign your video player texture or a static image. Its average color
+        tints the target lights.
     - Name: 
       Entry: 8
       Data: 
@@ -156,8 +155,7 @@ MonoBehaviour:
       Data: 9|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Enables a smoothing algorithm that tries to smooth out flickering that
-        is usually a problem. Recommended to always be turned on.
+      Data: Smooths changes in the video color to reduce flicker.
     - Name: 
       Entry: 8
       Data: 
@@ -358,8 +356,7 @@ MonoBehaviour:
       Data: 22|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: List of the Light Volumes that should be affected by the Light Volume
-        TVGI script.
+      Data: Baked volumes to tint with the video color.
     - Name: 
       Entry: 8
       Data: 
@@ -422,8 +419,7 @@ MonoBehaviour:
       Data: 26|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: List of the Point Light Volumes that should be affected by the Light
-        Volume TVGI script. Usually you don't need it at all.
+      Data: Point, Spot and Area lights to tint with the video color.
     - Name: 
       Entry: 8
       Data: 
@@ -660,10 +656,64 @@ MonoBehaviour:
       Data: 
     - Name: $k
       Entry: 1
-      Data: _readbackPending
+      Data: _downsampledMipLevel
     - Name: $v
       Entry: 7
       Data: 39|UdonSharp.Compiler.FieldDefinition, UdonSharp.Editor
+    - Name: <Name>k__BackingField
+      Entry: 1
+      Data: _downsampledMipLevel
+    - Name: <UserType>k__BackingField
+      Entry: 7
+      Data: 33|System.RuntimeType, mscorlib
+    - Name: 
+      Entry: 1
+      Data: System.Int32, mscorlib
+    - Name: 
+      Entry: 8
+      Data: 
+    - Name: <SystemType>k__BackingField
+      Entry: 9
+      Data: 33
+    - Name: <SyncMode>k__BackingField
+      Entry: 7
+      Data: System.Nullable`1[[UdonSharp.UdonSyncMode, UdonSharp.Runtime]], mscorlib
+    - Name: 
+      Entry: 6
+      Data: 
+    - Name: 
+      Entry: 8
+      Data: 
+    - Name: <IsSerialized>k__BackingField
+      Entry: 5
+      Data: false
+    - Name: _fieldAttributes
+      Entry: 7
+      Data: 34|System.Collections.Generic.List`1[[System.Attribute, mscorlib]], mscorlib
+    - Name: 
+      Entry: 12
+      Data: 0
+    - Name: 
+      Entry: 13
+      Data: 
+    - Name: 
+      Entry: 8
+      Data: 
+    - Name: 
+      Entry: 8
+      Data: 
+    - Name: 
+      Entry: 8
+      Data: 
+    - Name: 
+      Entry: 7
+      Data: 
+    - Name: $k
+      Entry: 1
+      Data: _readbackPending
+    - Name: $v
+      Entry: 7
+      Data: 35|UdonSharp.Compiler.FieldDefinition, UdonSharp.Editor
     - Name: <Name>k__BackingField
       Entry: 1
       Data: _readbackPending
@@ -687,7 +737,7 @@ MonoBehaviour:
       Data: false
     - Name: _fieldAttributes
       Entry: 7
-      Data: 40|System.Collections.Generic.List`1[[System.Attribute, mscorlib]], mscorlib
+      Data: 36|System.Collections.Generic.List`1[[System.Attribute, mscorlib]], mscorlib
     - Name: 
       Entry: 12
       Data: 0

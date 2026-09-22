@@ -1,158 +1,171 @@
-[VRC Light Volumes](../README.md) | **How to Use** | [Best Practices](../Documentation/BestPractices.md) | [Udon Sharp API](../Documentation/UdonSharpAPI.md) | [For Developers](../Documentation/ForDevelopers.md) | [Compatible Shaders](../Documentation/CompatibleShaders.md)
+[VRC Light Volumes](../README.md) | **How to Use** | [Best Practices](./BestPractices.md) | [Scripting API](./ScriptingAPI.md) | [Shader Integration](./ForDevelopers.md) | [Compatible Shaders](./CompatibleShaders.md)
 
-# How to Use
+# Point Light Volumes
 
 | Menu |
-|----|
-|[VRC Light Volumes System](../Documentation/HowToUse.md)|
-|[Regular Light Volumes](../Documentation/HowToUse_RegularLightVolumes.md)|
-|**Point Light Volumes**<br />• [Point Light Volumes Placement](#Point-Light-Volumes-Placement)<br />• [Light Projection](#Light-Projection)<br />• [Point Light Volume Component Description](#Point-Light-Volume-Component-Description)|
-|[Point Light Volume Shadows](../Documentation/HowToUse_Shadows.md)|
-|[Point Light Material Sources](../Documentation/HowToUse_PointLightMaterialSources.md)|
-|[Area Light Emission](../Documentation/HowToUse_AreaLightEmission.md)|
-|[Audio Link Integration](../Documentation/HowToUse_AudioLinkIntegration.md)|
-|[TV Screens Integration](../Documentation/HowToUse_TVScreensIntegration.md)|
-|[How Light Volumes Work?](../Documentation/HowToUse_HowItWorks.md)|
+| --- |
+| [Overview](./HowToUse.md) |
+| [Regular Light Volumes](./HowToUse_RegularLightVolumes.md) |
+| **Point Light Volumes**<br />• [Setup Point Light Volumes](#setup-point-light-volumes)<br />• [Size, Brightness And Range](#size-brightness-and-range)<br />• [Projection Modes](#projection-modes)<br />• [Area Light Cookies](#area-light-cookies)<br />• [Animated Textures](#animated-textures)<br />• [Shadows](#shadows)<br />• [Bake Into Probes](#bake-into-probes)<br />• [Runtime Control](#runtime-control)<br />• [Keep It Performant](#keep-it-performant) |
+| [Froxel Clustering](./HowToUse_FroxelClustering.md) |
+| [Shadows](./HowToUse_Shadows.md) |
+| [Material Sources](./HowToUse_PointLightMaterialSources.md) |
+| [AudioLink](./HowToUse_AudioLinkIntegration.md) |
+| [TV Screens](./HowToUse_TVScreensIntegration.md) |
+| [Debugging](./HowToUse_Debugging.md) |
+| [How It Works](./HowToUse_HowItWorks.md) |
 
-## Point Light Volumes
+![Point, Spot and Area Light Volume examples.](./Preview_4.png)
 
-![](../Documentation/Preview_4.png)
+Point Light Volumes are custom realtime Point, Spot and Area lights, similar to Unity's built-in lights. They offer physically based falloff, features such as animated cookies and realtime Area lighting, and can be more efficient in scenes with many lights.
 
-**Point Light Volumes** is a fast and optimized custom lighting system that has it's own parametric Point Lights, Spot Lights and Area Lights. Point Light Volumes are not voxel based, they forms the light parametrically, or based on special LUT textures (similar to IES). They can project light cookies or cubemaps and can use baked or runtime-updated shadow maps. Modern compatible shaders can also calculate individual Point Light Volume speculars, including shadows, cookies, per-surface shading and source size. It can be up to 128 point lights visible in one scene at the same time.
+They work separately from Regular Light Volumes and do not store lighting in voxels. You can move them, change their color, or switch them on and off in game.
 
-**Point Light Volumes** consist of two components in the editor: `Point Light Volume` and `Point Light Volume Instance`.
+> [!WARNING]
+> Materials need a [shader that supports VRC Light Volumes](./CompatibleShaders.md) to receive this light directly. For static lights, [Bake Into Probes](#bake-into-probes) can store their lighting in ordinary Unity Light Probes. This requires enough probes in the lit areas and materials that use Light Probes.
 
-The `Point Light Volume` component is an editor-only script that helps you configure the light more easily. It is not included in the VRChat upload. Its purpose is to set up the `Point Light Volume Instance` Udon script in a user-friendly way.
+Use Point Light Volumes for flashlights, switchable lamps, video screens or music-reactive lights. For many lights that never change, use your lightmapper's lights and bake them into [Regular Light Volumes](./HowToUse_RegularLightVolumes.md) instead.
 
-The `Point Light Volume Instance` component is a VRChat Udon script that stores all the data required by the Light Volumes system to render the light. You generally shouldn’t modify its values manually in the editor - use the `Point Light Volume` script instead. However, if you’re writing game logic that changes light parameters at runtime, you should reference the `Point Light Volume Instance` component, since it is the one that actually functions as the real light in-game.
+<a id="add-your-first-light"></a>
 
-For runtime changes from Udon, prefer `Point Light Volume Instance` setter methods such as `SetColor()`, `SetIntensity()`, `SetDynamic()`, `SetLightSourceSize()`, `SetPointLight()` and `SetSpotLight()` where they exist, so the manager receives only the update it actually needs. Shadow bake fields are public; assign them directly and call `BakeShadows()` when you want the instance to run its native runtime shadow bake.
+## Setup Point Light Volumes
 
-## Point Light Volumes Placement
+1. Right-click in the Hierarchy and select **Point Light Volume**. A **Light Volume Manager** is added if the scene does not have one.
+2. Choose **Point Light**, **Spot Light** or **Area Light** in **Type**, depending on the source's shape.
+3. Position the light and match its **Light Source Size** to the emitting surface. Then adjust **Color** and **Intensity**.
+4. If the light will move, rotate or scale in game, enable **Dynamic** on it and **Auto Update Volumes** on the Manager.
 
-![](../Documentation/Preview_5.png)
+| Light&nbsp;Type | Use it for | Source Size |
+| --- | --- | --- |
+| **Point&nbsp;Light** | Bulbs, lamps, light in all directions. | Set **Light Source Size** to the approximate radius of the bulb or emitting surface, in meters. |
+| **Spot&nbsp;Light** | Flashlights, spotlights, projectors. | Match **Light Source Size** to the lens or reflector radius, in meters. Set **Angle** to match the beam's spread. |
+| **Area&nbsp;Light** | Screens, panels, soft boxes. | Set Transform X/Y scale to match the emitting surface's width and height, in meters. |
 
-**Point Light Volumes** are mostly useful in cases when you need independent dynamic lights, that can be individually toggled, moved or changed color in runtime.
 
-If you just have a lot of point light sources that are static and don't change any of their properties in runtime, consider using a regular Light Volume and bake as much lights into it as you want. It is usually much more optimized than placing a lot of individual point lights. However, one Point Light Volume is usually much cheaper than a one regular additive light volume when you need runtime control.
+> [!IMPORTANT]
+> Source size describes the emitter, not how far its light reaches. Set the size first, then adjust **Intensity**. Large sources may need low values, while small sources may need values in the hundreds or thousands.
 
-Area Lights are a bit heavier than Point and Spot Lights, but they are not dramatically heavier anymore. You can safely use them for movable and scalable runtime soft boxes. If you assign a Cookie to an Area Light, it becomes a textured emitter for TV screens, signs, windows and similar panels. See [Area Light Emission](../Documentation/HowToUse_AreaLightEmission.md) for setup details. Just avoid excessive overlaps, and still prefer baking a regular Light Volume in a shape of an area light when the light is fully static.
+For artistic effects, you can make the source larger or smaller than the visible emitter and adjust **Intensity** to suit.
 
-Note that more point lights you have active in your scene, the less performance you'll have. So, consider manually turning off unused point lights if you have a lot of them at your scene.
+## Size, Brightness And Range
 
-The manager excludes a Point Light Volume from the shader-visible list when its `Intensity` is exactly `0`, its `Color` is black, its GameObject is inactive, or its instance is otherwise inactive. This is global light culling. A non-black shadowed light remains active because EVSM visibility is different for every receiver pixel; the Point/Spot shader paths skip their remaining contribution work locally when that per-pixel shadow visibility reaches zero.
+![Light placement and affected ranges.](./Preview_5.png)
 
-The **more** point light volumes overlap, the **less** performance you'll have! 
+Enable **Debug Range**, select the light and turn on Scene view **Gizmos** to see its range. The yellow outline includes dim lighting beyond the bright patch.
 
-**Point light Volumes** calculates the **range** automatically based on their `Light Source Size` value, their scale, `Intensity` and `Color`. You can also configure the `Brightness Cutoff` value in the **Light Volume Setup** to limit the effective range of the light and improve performance. Higher values reduce the light's visible radius, which generally increases performance, but results in less realistic light attenuation.
+Transform scale also changes the source size of Point and Spot lights. Larger sources produce larger specular highlights in shaders that support individual speculars.
 
-`Light Source Size` is also important for specular highlights in modern compatible shaders. Larger sources produce wider, softer speculars and a smoother horizon fade. Smaller sources produce tighter and sharper highlights. If glossy surfaces look too sharp, too wide, or too bright near the light, tune `Light Source Size` before compensating with material smoothness.
+**Color** tints the light and **Intensity** sets its brightness. Its values use a different scale from Unity's built-in Light intensity.
 
-Only shaders using the current `LightVolumeSHSpecular()` path, or an equivalent ASE **Light Volume SH Specular** node, show individual source-size aware Point Light Volume speculars. Shaders that only use `LightVolumeSH()` plus `LightVolumeSpecular()` still receive Point Light Volume diffuse lighting, cookies and shadows through SH, but their specular is the cheaper SH approximation.
+Larger or brighter sources reach farther. Raise the Manager's **Brightness Cutoff** to shorten calculated ranges, at the cost of dim lighting near the edges. **LUT** projection has a manual **Range** instead.
 
-Try not to make an insanely huge range for your lights. Use `Debug Range` flag in your Point Light Volume component to preview the region affected by your point light.
+Use the range outline to check overlap between lights. Shadows do not reduce the calculated range.
 
-If a static Point Light Volume should also affect avatars or props with no Light Volumes shader support, enable `Bake Into Probes` before baking. This bakes the point light contribution into regular Unity Light Probes. It is not needed for objects using shaders with VRC Light Volumes support.
+**Shading Strength** controls surface shading and shadow strength. At `1` they apply fully; at `0` they are disabled.
 
-## Light Projection
+
+## Projection Modes
 
 ### Parametric
 
-Point Light Volumes and Spot Light Volumes use `Parametric` projection by default. **Point Light Volumes work differently compared to Unity’s built-in lights.** They use inverse-square light attenuation that more closely resembles how light behaves in the real world.
+![Parametric Spot Light and its cone.](./Preview_7.png)
 
-![](../Documentation/Preview_7.png)
+Use **Parametric** for ordinary Point and Spot lights. It calculates the light's distance falloff automatically.
 
-The main difference to Unity’s built-in lights is the `Light Source Size` property. It represents the physical radius of the light-emitting surface, like a matte light bulb for point lights, or a flashlight reflector for spotlights.
-
-In shaders that use the modern `LightVolumeSHSpecular()` path, this size strongly affects specular lighting. A small light behaves more like a sharp point source. A large light behaves more like a broad source: specular highlights become wider and softer, and grazing angles fade more smoothly instead of cutting off at a hard `NoL` horizon.
-
-Note that `Intensity` can be very high (in the hundreds or even thousands) for small `Light Source Size` values. This is because intensity here represents the light emitted per unit of surface area. A smaller light source must emit more intense light to achieve a reasonable visible range.
-
-> [!TIP]
-> Scaling the light game object also scales the light source size!
-
-In Spot Light mode, several additional parametric shape properties are available. The `Angle` property controls the cone angle of the spotlight in degrees. Unlike Unity’s built-in Spot Light, this angle can exceed 180 degrees to create an inverted cone. The `Falloff` property adjusts the softness of the cone edges.
+For a Spot Light, **Angle** is the full cone angle in degrees and **Falloff** softens its edge. Parametric angles can exceed 180 degrees for an inverted cone.
 
 ### LUT
 
-If you want to create a complex light shape and attenuation, `LUT` projection is what you need. For the Spot Light mode, LUT works similar to IES light shape format, but easier for people to create their own LUT presets.
+![LUT textures and the light shapes they produce.](./Preview_6.png)
 
-![](../Documentation/Preview_6.png)
+Use **LUT** when you need to draw your own distance falloff or Spot cone profile. A LUT is a small texture that describes the light:
 
-**LUT** (Look Up Table) texture data in horizontal direction describes light color change from the center of the spot light cone to the cone edge. Vertical direction of the texture data describes the light attenuation, that is usually should be an inversed square distribution, but you can make it linear or anything else if you want to create any special light effects.
+- Horizontal axis: color and brightness from the center to the edge of a Spot cone.
+- Vertical axis: color and brightness over distance.
+- Point lights use only the vertical axis.
 
-In Point Light mode, only vertical texture direction is used, as there are no cone. Horizontal data will just be ignored.
-
-So, LUT is the only projection mode, which can customize the light attenuation. It uses `Range` property to manually define the light range.
-
-> [!IMPORTANT]
-> It’s recommended to completely disable compression for any texture used as a Cookie or a LUT. The Light Volumes system does not inherit the compression settings, but compression artifacts will still remain and affect the result.
+Assign it to **Falloff LUT** and set **Range** manually. This is useful for stylized light falloff and attenuation.
 
 ### Custom
 
-If you want just to project a light cookie texture, you can use `Custom` projection mode. Unlike Unity’s built-in Spot Light, here cookie can project a colored texture, that can work as a projector. Using angle with more than 180 degrees will not create an inversed cone in this case.
+![Colored cookies and cubemap projection.](./Preview_8.png)
 
-![](../Documentation/Preview_8.png)
+Use **Custom** to project an image:
 
-Point Light in `Custom` projection mode can project a cubemap instead of a regular cookie. So it's a perfect solution to make disco balls, lamps that projects stars or anything else you want.
+- **Spot Light:** assign a 2D image to **Cookie**. RGB supplies the color and alpha masks the light. Set **Spot Cookie Aspect** to image width divided by height; `1` is square.
+- **Point Light:** assign a **Cubemap**, for example a star projector or disco-ball pattern. RGB supplies the color; alpha is ignored.
+- **Area Light:** assign **Cookie** directly; it has no Projection dropdown. See [Area Light Cookies](#area-light-cookies).
 
-Area Lights do not expose the `Projection` dropdown. Assigning a `Cookie` source automatically enables textured Area Light Emission. Close to the light it keeps the rectangular texture detail, and with distance it blends through mip levels toward the average emitted color.
+## Area Light Cookies
 
-If the projection source is a Material, see [Point Light Material Sources](../Documentation/HowToUse_PointLightMaterialSources.md) for the required shader contract, cubemap face layout and single-slice cookie behavior.
+An Area Light's **Cookie** approximates light spreading from a screen. Nearby surfaces receive different colors from the image; farther away, those colors blend together. It lights the surroundings instead of projecting a sharp picture.
 
-### Projection Texture Resolution
+For video-screen lighting, this can be a simpler, lower-cost alternative to [LTCGI](https://ltcgi.dev/) or [AreaLit](https://booth.pm/en/items/3661829). It provides only simplified, blurred specular highlights in shaders that support them, without detailed reflections of the screen image.
 
-When you assign a LUT, Cookie texture, Cubemap, Render Texture, or Material, the **Light Volumes** system automatically packs everything into a shared runtime **Texture Array**. The `Cookie Resolution` of this array can be configured in the **Light Volumes Setup** component.
+![A red and blue screen casting separate colors nearby and mixed purple light farther away.](./Images/area-screen.png)
 
-> [!WARNING]
-> High resolutions increase VRAM usage and can cause temporary lag while the texture array is rebuilt.
+For a video player, assign its output **Render Texture** to **Cookie**, or use a [Material source](./HowToUse_PointLightMaterialSources.md) that reads the video image. Enable **Auto Update Textures** on the **Light Volume Manager**. Match the light's X/Y scale to the screen and point its blue local Z axis toward the room.
 
-LUTs and Cookie textures share the same resolution, as they are packed into the same texture array. Cubemaps, however, require 6 slices per entry (one for each face), so each cubemap takes up six times more space than a LUT or Cookie. If your input textures have a different resolution, they will be automatically rescaled during packing. 
+Keep **Color** white to preserve the video colors. Cookie alpha masks emission, so an image with zero alpha produces no light. If the player supplies its texture through a **Material Property Block**, copying the screen Material alone will not include that texture.
 
-Duplicated LUTs, Cubemaps, and Cookie textures are only uploaded to VRChat once and are reused by all lights that reference them. So don’t worry about using the same textures across multiple Point Light Volumes - it won’t increase the build size.
+See [TV Screens Integration](./HowToUse_TVScreensIntegration.md#area-light-setup) for screen alignment and shadow baking.
 
-At runtime, the shared projection texture array also deduplicates sources by both source object and auto-update mode. The same Texture, RenderTexture, Cubemap or Material with the same `autoUpdate` value shares a runtime slice between matching lights. If the same source is used with `autoUpdate = false` on one light and `autoUpdate = true` on another, the manager creates separate slices so the auto-updated copy does not overwrite the static copy.
+> [!NOTE]
+> Shaders with VRC Light Volumes **3.x support** receive the cookie's different colors. Older **2.x shaders with Area Light support** receive one average color instead.
 
-If you use a `RenderTexture` or a `Material` as the source, the shared texture array can be updated in runtime. This is controlled by `Auto Update Textures` in **Light Volume Setup**. Keep it disabled if all projection sources are static textures.
+## Animated Textures
 
-Area Light cookies use the mip chain of this shared texture array to approximate soft textured emission. Modern shaders sample the texture directly. Older VRC Light Volumes shaders receive an average-color fallback from the final mip level, so they do not turn black when an Area Light uses a cookie.
+Sources can also be Render Textures or [Materials](./HowToUse_PointLightMaterialSources.md).
+
+With **Auto Update Textures** enabled on the Manager, Light Volumes updates each animated source every frame:
+
+- **Spot or Area cookie:** one image.
+- **Point cubemap:** six faces.
+- **LUT:** one image, including on Point lights.
+
+Each image update adds at least one draw call. Material rendering and cubemap conversion can require additional draw calls.
+
+Several Spot lights sharing one source still update only one image per frame. Several Point lights sharing one cubemap still update only one set of six faces. Assign the same Texture or Material asset to share these updates. Separate copies count as separate sources.
+
+Higher **Cookie Resolution** means more pixels to draw every frame for animated sources, so it increases GPU cost as well as texture memory (VRAM). Static textures have no per-frame redraw, higher resolution mainly increases VRAM use.
+
+For a fixed image, use a static Texture asset or a [snapshot](./HowToUse_PointLightMaterialSources.md#updates-and-snapshots). Materials and Render Textures are treated as live sources by default, even when their image does not change.
+
+## Shadows
+
+Under **Shadows**, turn on **Enabled**, then choose a workflow:
+
+- **[Bake In Editor](./HowToUse_Shadows.md#baked-shadows):** use **Bake Shadows** to capture stationary geometry. The baked shadow maps are included in the world build.
+- **[Bake In Game](./HowToUse_Shadows.md#bake-in-game):** bake once when the light first starts in game. You can still bake in the Editor for a preview, but those maps will not be in the world build. The runtime maps still use GPU memory, and baking may cause a brief stutter.
+- **[Bake In Realtime](./HowToUse_Shadows.md#realtime-shadows):** add **Point Light Shadow Runtime Baker** and enable **Realtime** to update shadows continuously for moving lights or shadow casters. Use **Bake On Enable** instead for one bake each time the baker is activated. Continuous updates can be expensive, especially for six-view shadows.
+
+A normal Spot Light captures one shadow view. Point and Area lights capture six views, as does a Spot with **Force Cubemap Shadows** enabled. Consider Force Cubemap Shadows for wide Spot angles of around 120 degrees or more.
+
+See [Shadows](./HowToUse_Shadows.md) for setup, quality controls and runtime costs.
+
+## Bake Into Probes
+
+Enable **Bake Into Probes** for a static light that should also affect ordinary Unity Light Probes. Place enough probes in the lit area to capture its lighting. Objects and avatars without Light Volume support can receive this baked lighting if their materials use Light Probes. Re-bake the scene's probes after changing the light.
+
+Leave it off for lights that move or change: ordinary baked probes keep the old lighting when the live light is switched off or changes color.
+
+## Runtime Control
+
+Use the [UdonSharp API](./ScriptingAPI.md#pointlightvolumeinstance) to change a light from scripts. Color, intensity and on/off changes work without **Auto Update Volumes**. Enable it with **Dynamic** for movement.
+
+If scripts change a light type, cookie or shadows, retain those features in the Manager's **Shader Stripping** settings. Automatic detection cannot predict later script changes.
+
+## Keep It Performant
+
+Keep the active light count and overlap low. Use **Debug Range** to avoid lighting areas that don't need each light.
 
 > [!IMPORTANT]
-> It’s recommended to completely disable compression for any texture used as a Cookie or a LUT. The Light Volumes system does not inherit the compression settings, but compression artifacts will still remain and affect the result.
+> **128 active Point Light Volumes** is a maximum, not a performance target. The Manager's **Additive Max Overdraw** also limits how many affect one pixel. Lights can be seen with visual artefacts where this limit is reached.
 
-For shadow setup, baked shadows, `Bake In Game`, the Realtime Shadow Baker and runtime script control, see [Point Light Volume Shadows](../Documentation/HowToUse_Shadows.md).
+Disable lights in unused areas, or set their Intensity to zero. Scripts can use `SetWeight()` to give important lights priority.
 
-## Point Light Volume Component Description
+Prefer baked shadows for stationary lights. And better use realtime shadows for spotlighs only, because they are ~6 times cheraper than point lights or area lights with realtime shadows.
 
-| Parameter | Description |
-| --- | --- |
-|`Dynamic` | Defines whether this point light volume can be moved in runtime. Disabling this option slightly improves performance on the CPU side. If you want to make Dynamic lights auto-update their positions and other parameters in runtime, enable **Auto Update Volumes** in **Light Volume Setup**, or call the **UpdateVolumes()** function manually through an Udon script. Otherwise, they will stay in one place in game.|
-|`Type` | Changes the light mode between Point Light, Spot Light and Area Light.|
-|`Light Source Size` | Physical radius of a light source if it was a matte glowing sphere for a point light, or a flashlight reflector for a spot light. Larger size emits more light without increasing overall intensity, increases calculated range, and strongly broadens size-aware specular highlights in modern compatible shaders.|
-|`Range` | Radius in meters beyond which point and spot lights are culled. (Only available in LUT light shape mode)|
-|`Color` | Multiplies the point light volume’s color by this value.|
-|`Intensity` | Brightness of the point light volume.|
-|`Shading Strength` | Controls per-surface Point Light Volume shading and shadow opacity for this light. Values between `0` and `1` fade the effect; `0` disables this extra shading and shadows for this light.|
-|`Bake Into Probes` | Bakes this Point Light Volume into Unity Light Probes. Useful for static lights that should affect objects without Light Volumes shader support.|
-|`Debug Range` | Shows overdrawing range gizmo. Less point light volumes intersections - more performance!|
-|`Projection` | Parametric uses settings to compute light falloff. LUT uses a texture: X - cone falloff, Y - attenuation (Y only for point lights). Cookie projects a texture for spot lights. Cubemap projects a cubemap for point lights. Area Lights hide this dropdown and use the Cookie field directly when a source is assigned.|
-|`Angle` | Angle of a spotlight cone in degrees. (Only available in spotlight mode)|
-|`Falloff` | Spotlight cone falloff. (Only available in parametric spotlight mode)|
-|`Falloff LUT` | Texture that defines custom light shape. Similar to IES. X - cone falloff, Y - attenuation. Disable compression to avoid LUT artifacts.|
-|`Cookie` | Projects a texture, RenderTexture or Material for Spot Light cookies and Area Light Emission.|
-|`Spot Cookie Aspect` | Width / height aspect used by custom Spot Light cookie projection. Area Light cookies use the Area Light transform scale instead.|
-|`Cubemap` | Projects a texture, Cubemap, Texture2DArray, RenderTexture, or Material for point lights. Cubemap and array sources use independent faces; a single 2D texture is copied to all faces.|
-|`Shadows` | Enables shadow map sampling for this light. Requires a baked or assigned shadow source.|
-|`Shadow Map` | Shadow texture source used by this light. Can be generated by `Bake Shadows`, assigned manually, or updated by the runtime baker.|
-|`Layer Mask` | Layers that can cast shadows during shadow baking.|
-|`Object Mask` | Optional object list. If empty, all objects on the selected layers can cast shadows. If not empty, only children of the listed objects are rendered during the bake.|
-|`Near Plane` | Near clip plane used by the shadow bake camera. Shadow depth is normalized between `Near Plane` and `Far Clip`, so raising it can improve precision but can also clip nearby occluders.|
-|`Far Clip Plane` | Far clip plane used by the shadow bake camera. `0` uses the light's calculated culling range, which is usually the correct default. Set a manual value only when you intentionally want to clip distant shadow casters or reduce the shadow depth range for a bounded area.|
-|`Bias` | World-space bias in meters used while baking shadows. Larger values reduce self-shadow artifacts but can detach contact edges.|
-|`Blur` | Shadow blur radius applied after baking, normalized to 128x128 shadow resolution. Editor baking uses spherical shadow-space blur to reduce visible cubemap and Spot Light projection seams. Runtime baking uses `Planar Blur` unless `Spherical Blur` is enabled on the runtime baker. `0` keeps shadows unblurred.|
-|`Contact Hardening` | Hardens shadows near contact areas. Can produce artifacts, so use it carefully. More performant when set to `0` in runtime shadow mode. Runtime baker `Spherical Blur` also applies to contact hardening samples.|
-|`Use World Space` | Keeps baked shadows attached to the baked world-space pose instead of moving them with the light. Less optimized when enabled.|
-|`Force Cubemap Shadows` | Forces spotlight shadows to bake and store as a cubemap even when the spot angle could use a single projected shadow texture.|
-|`Rebake Shadows` | Includes this light when pressing `Bake Shadows` in **Light Volume Setup**.|
+[Froxel Clustering](./HowToUse_FroxelClustering.md) helps scenes with many lights in different places. It does less for many large lights covering the same surface. Keep ranges tight and profile the busiest view on the target device.
 
-Global EVSM shadow settings, including automatic `Shadow Format`, `Shadow Bleed Reduction` and `Shadow Min Variance`, are configured in **Light Volume Setup**. See [Point Light Volume Shadows](../Documentation/HowToUse_Shadows.md) for the recommended tuning workflow.
+If shadows cover large parts of a light's range, try [**Shadow Culling** (Hi-Z)](./HowToUse_FroxelClustering.md#shadow-culling-hi-z) in the Manager's **Froxel Clustering** settings. It skips that light in fully shadowed cells. Use it with baked or one-shot runtime shadows, and compare frame time with the option on and off.

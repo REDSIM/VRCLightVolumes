@@ -113,8 +113,12 @@ namespace VRCLightVolumes {
             for (int i = 0; i < count; i++) {
                 LightVolumeInstance existingLightVolume = LightVolumeInstances[i];
                 if (existingLightVolume == null) continue;
-                if (existingLightVolume.RegistryOrder == DefaultRegistryOrder) existingLightVolume.RegistryOrder = i;
-                if (existingLightVolume.RegistryOrder > nextRegistryOrder) nextRegistryOrder = existingLightVolume.RegistryOrder;
+                int existingOrder = existingLightVolume.RegistryOrder;
+                if (existingOrder == DefaultRegistryOrder) {
+                    existingOrder = i;
+                    existingLightVolume.RegistryOrder = existingOrder;
+                }
+                if (existingOrder > nextRegistryOrder) nextRegistryOrder = existingOrder;
                 if (existingLightVolume == lightVolume) existingIndex = i;
             }
             if (lightVolume.RegistryOrder == DefaultRegistryOrder) lightVolume.RegistryOrder = nextRegistryOrder + 1;
@@ -224,8 +228,12 @@ namespace VRCLightVolumes {
             for (int i = 0; i < count; i++) {
                 PointLightVolumeInstance existingPointLightVolume = PointLightVolumeInstances[i];
                 if (existingPointLightVolume == null) continue;
-                if (existingPointLightVolume.RegistryOrder == DefaultRegistryOrder) existingPointLightVolume.RegistryOrder = i;
-                if (existingPointLightVolume.RegistryOrder > nextRegistryOrder) nextRegistryOrder = existingPointLightVolume.RegistryOrder;
+                int existingOrder = existingPointLightVolume.RegistryOrder;
+                if (existingOrder == DefaultRegistryOrder) {
+                    existingOrder = i;
+                    existingPointLightVolume.RegistryOrder = existingOrder;
+                }
+                if (existingOrder > nextRegistryOrder) nextRegistryOrder = existingOrder;
                 if (existingPointLightVolume == pointLightVolume) existingIndex = i;
             }
             if (pointLightVolume.RegistryOrder == DefaultRegistryOrder) pointLightVolume.RegistryOrder = nextRegistryOrder + 1;
@@ -251,7 +259,10 @@ namespace VRCLightVolumes {
                     continue;
                 }
                 lastFilledIndex = i;
-                if (insertIndex == count && (existingPointLightVolume.RegistryWeight < targetWeight || existingPointLightVolume.RegistryWeight == targetWeight && existingPointLightVolume.RegistryOrder > targetOrder)) insertIndex = i;
+                if (insertIndex == count) {
+                    float existingWeight = existingPointLightVolume.RegistryWeight;
+                    if (existingWeight < targetWeight || existingWeight == targetWeight && existingPointLightVolume.RegistryOrder > targetOrder) insertIndex = i;
+                }
             }
             if (firstEmptyIndex >= 0) {
                 if (insertIndex == count) {

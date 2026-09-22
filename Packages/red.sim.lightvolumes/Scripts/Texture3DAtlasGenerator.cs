@@ -44,7 +44,7 @@ namespace VRCLightVolumes {
             const int padding = 1;
 
 #if UNITY_EDITOR
-            int progressId = Progress.Start("Generating 3D Atlas", "Generating Light Volumes 3D Atlas", Progress.Options.Sticky);
+            int progressId = Progress.Start("Packing Light Volumes", "Preparing volume textures", Progress.Options.Sticky);
 #endif
 
             try {
@@ -72,7 +72,7 @@ namespace VRCLightVolumes {
 
                     LightVolumeInstance volume = volumes[i];
                     if (volume == null) {
-                        Debug.LogError("[LightVolumes] One of the light volumes is not setuped!");
+                        Debug.LogError("[LightVolumes] A Light Volume entry is missing. Check the Manager's list.");
                         yield break;
                     }
 
@@ -146,7 +146,7 @@ namespace VRCLightVolumes {
                     Task<PostprocessTextureResult> postprocessTask = StartPostprocessSphericalHarmonicsTask(tex0, tex1, tex2, dark, bright, volume.Exposure, postprocessProgress, cancellationSource.Token);
                     IEnumerator waitForPostprocessTask = WaitForTask(postprocessTask, () => (i + GetProgress(postprocessProgress)) / Mathf.Max(volumeCount, 1),
 #if UNITY_EDITOR
-                        progress => ReportProgress(progressId, colorProgressStep, progress, $"Volumes color correction {i + 1}/{volumeCount}")
+                        progress => ReportProgress(progressId, colorProgressStep, progress, $"Adjusting volume colors {i + 1}/{volumeCount}")
 #else
                         null
 #endif
@@ -218,7 +218,7 @@ namespace VRCLightVolumes {
                 Task<PackingResult> packingTask = Task.Run(() => PackTextureBlocks(blocks, padding, packingStrategy, packingProgress, cancellationSource.Token), cancellationSource.Token);
                 IEnumerator waitForPackingTask = WaitForTask(packingTask, () => GetProgress(packingProgress),
 #if UNITY_EDITOR
-                    progress => ReportProgress(progressId, packingProgressStep, progress, $"Packing light volume islands ({Volatile.Read(ref packingProgress.Processed)}/{blocks.Length})")
+                    progress => ReportProgress(progressId, packingProgressStep, progress, $"Packing volume textures ({Volatile.Read(ref packingProgress.Processed)}/{blocks.Length})")
 #else
                     null
 #endif
@@ -228,7 +228,7 @@ namespace VRCLightVolumes {
 
                 PackingResult packingResult = packingTask.Result;
                 if (!packingResult.Success) {
-                    Debug.LogError("[LightVolumes] Light Volume atlas is too large to fit in the maximum texture size!");
+                    Debug.LogError("[LightVolumes] The atlas is too large. Lower volume resolution or increase Downscale Volumes.");
                     yield break;
                 }
 
@@ -238,7 +238,7 @@ namespace VRCLightVolumes {
 
                 ulong vCount = (ulong)atlasW * (ulong)atlasH * (ulong)atlasD;
                 if (vCount > int.MaxValue) {
-                    Debug.LogError($"[LightVolumes] Light Volume voxel count is too large and can't be saved!");
+                    Debug.LogError($"[LightVolumes] The atlas has too many voxels. Lower volume resolution.");
                     yield break;
                 }
 
@@ -251,7 +251,7 @@ namespace VRCLightVolumes {
                 Task writingTask = Task.Run(() => WriteAtlasPixels(packingResult.Placed, uniqueTextureArray, atlasPixels, uniqueBoundsMin, uniqueBoundsMax, atlasW, atlasH, atlasD, padding, writingProgress, cancellationSource.Token), cancellationSource.Token);
                 IEnumerator waitForWritingTask = WaitForTask(writingTask, () => GetProgress(writingProgress),
 #if UNITY_EDITOR
-                    progress => ReportProgress(progressId, writingProgressStep, progress, $"Writing light volumes data ({Volatile.Read(ref writingProgress.Processed)}/{packingResult.Placed.Length})")
+                    progress => ReportProgress(progressId, writingProgressStep, progress, $"Writing volume data ({Volatile.Read(ref writingProgress.Processed)}/{packingResult.Placed.Length})")
 #else
                     null
 #endif
@@ -456,7 +456,7 @@ namespace VRCLightVolumes {
             }
         }
 
-        // Downscales texture pixels with the same 8-sample box filter as the previous implementation.
+        // Downscales texture pixels with an 8-sample box filter.
         private static DownscaleTextureResult DownscaleTexturePixels(Color[] sourcePixels, int sourceWidth, int sourceHeight, int sourceDepth, ThreadProgress progress, CancellationToken cancellationToken) {
             int newWidth = Math.Max(1, sourceWidth / 2);
             int newHeight = Math.Max(1, sourceHeight / 2);

@@ -55,7 +55,7 @@ namespace VRCLightVolumes {
             // Reject another loaded scene before migration can modify this hierarchy.
             manager = LightVolumeManagerEditorBackend.GetPrimaryManager();
             if (manager != null && manager.gameObject.scene != root.scene) {
-                Debug.LogError($"[LightVolumes] The hierarchy was not assigned because the primary Light Volume Manager belongs to another loaded scene ('{manager.gameObject.scene.name}'). Close that scene or move the hierarchy before setup.", root);
+                Debug.LogError($"[LightVolumes] The Manager is in another loaded scene ('{manager.gameObject.scene.name}'). Close that scene or move this hierarchy before setup.", root);
                 manager = null;
                 return false;
             }
@@ -77,7 +77,7 @@ namespace VRCLightVolumes {
 
 #if UDONSHARP
             if (!LightVolumeMigration.IsReadyRuntimeComponent(manager)) {
-                Debug.LogError("[LightVolumes] The hierarchy was not assigned because the scene manager has no valid Udon backing program.", manager);
+                Debug.LogError("[LightVolumes] Setup stopped: the scene Manager has no valid Udon program.", manager);
                 manager = null;
                 return false;
             }
@@ -113,7 +113,7 @@ namespace VRCLightVolumes {
             migrated = LightVolumeMigration.MigrateScene(root.scene, ref blocked) > 0;
             if (root.GetComponentInChildren<LightVolumeSetup>(true) == null) return true;
 #pragma warning restore CS0618
-            Debug.LogWarning($"[LightVolumes] Legacy manager settings on '{root.name}' could not be migrated as a coherent Udon graph. Automatic registration stopped so the configured data stays intact.", root);
+            Debug.LogWarning($"[LightVolumes] Could not migrate legacy Manager settings on '{root.name}'. Setup stopped; the existing data is unchanged.", root);
             return false;
         }
 

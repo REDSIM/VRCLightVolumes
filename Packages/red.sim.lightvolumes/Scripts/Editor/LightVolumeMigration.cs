@@ -112,7 +112,7 @@ namespace VRCLightVolumes {
                 if (!LightVolumeSceneSetup.IsMainStageScene(scene)) continue;
                 migrated += MigrateScene(scene, ref blocked);
             }
-            if (blocked > 0) Debug.LogWarning($"[LightVolumes] Left {blocked} legacy component(s) unchanged because neither a coherent pure-v2 graph nor a complete existing unified Udon graph was available. Existing Udon components were not repaired or replaced.");
+            if (blocked > 0) Debug.LogWarning($"[LightVolumes] Left {blocked} legacy component(s) unchanged because their setup is incomplete or ambiguous. Check the Manager and Udon components.");
             return migrated;
         }
 
@@ -614,7 +614,7 @@ namespace VRCLightVolumes {
                 return true;
             } catch (Exception exception) {
                 RollbackCreatedLegacyGroup(group);
-                Debug.LogWarning($"[LightVolumes] Could not create the unified Udon graph for legacy setup '{group.Setup.gameObject.name}'. The complete legacy group was left unchanged. " + exception.Message, group.Setup);
+                Debug.LogWarning($"[LightVolumes] Could not migrate legacy setup '{group.Setup.gameObject.name}'. Its components are unchanged. " + exception.Message, group.Setup);
                 return false;
             }
         }
@@ -913,6 +913,8 @@ namespace VRCLightVolumes {
             destination.FroxelSlices = source.FroxelSlices;
             destination.FroxelCoarse = source.FroxelCoarse;
             destination.ClusteringMinLights = source.ClusteringMinLights;
+            // Legacy clustering had no shadow-assisted switch. Preserve the current default explicitly instead of inheriting an arbitrary pre-existing destination value.
+            destination.ShadowCulling = true;
             destination.BakingMode = (int)source.BakingMode;
             destination.VolumeBitmask = source.VolumeBitmask;
             destination.ProbeBitmask = source.ProbeBitmask;
@@ -1285,6 +1287,7 @@ namespace VRCLightVolumes {
             }
             pointLight.CustomTexture = null;
             pointLight.CustomTextureMaterial = null;
+            pointLight.AutoUpdateCustomTexture = false;
             pointLight.ShadowMapID = -1f;
             pointLight.IsRangeDirty = true;
             RememberMigratedRuntimeComponent(pointLight);

@@ -17,12 +17,13 @@
 
 ## Inspect The Lighting In Scene View
 
-The Scene view's shading-mode menu, normally showing **Shaded**, contains the **Light Volumes Debug** modes. They show lighting and clustering across the scene independently of its materials.
+The Scene view's shading-mode menu, normally showing **Shaded**, contains the **Light Volumes Debug** modes. They show lighting, overlaps and clustering across the scene independently of its materials.
 
 | Mode | Description |
 | --- | --- |
 | **VRCLV&nbsp;SH&nbsp;L1** | Directional Light Volume lighting, for inspecting how light falls across surfaces. |
 | **VRCLV&nbsp;SH&nbsp;L0** | Lighting color and brightness without directional shading. |
+| **VRCLV&nbsp;Overdraw** | Brighter colors show more overlapping Point Light Volumes, Additive Light Volumes and Regular Light Volumes. Where two Regular Light Volumes blend, both are counted. |
 | **VRCLV&nbsp;Fine&nbsp;Clustering** | Groups of Point Light Volumes in the final clustering grid, shown as colors. |
 | **VRCLV&nbsp;Coarse&nbsp;Clustering** | Light groups in the larger coarse cells, shown as colors for comparison with the Fine view. |
 
@@ -44,6 +45,23 @@ The SH views include both baked volumes and Point Light Volumes. Select **Shaded
 </table>
 
 **VRCLV SH L1** applies Light Volume lighting to all surfaces, including those that normally use lightmaps. This lets you inspect baked volume lighting throughout the scene, even though the result can differ from the scene's usual appearance.
+
+<table width="100%">
+  <thead>
+    <tr>
+      <th width="50%">Shaded</th>
+      <th width="50%">VRCLV&nbsp;Overdraw</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td width="50%"><a href="./Images/debug-overdraw-shaded.jpg"><img src="./Images/debug-overdraw-shaded.jpg" alt="A lantern-lit alley with colored light beams across the ground" width="100%"></a></td>
+      <td width="50%"><a href="./Images/debug-overdraw.jpg"><img src="./Images/debug-overdraw.jpg" alt="The same alley in VRCLV Overdraw, with brighter orange where more lights and volumes overlap" width="100%"></a></td>
+    </tr>
+  </tbody>
+</table>
+
+**VRCLV Overdraw** highlights areas with many overlapping lights and volumes. Brighter colors mean more overlaps from Point Light Volumes, Additive Light Volumes and Regular Light Volumes, including both Regular volumes where they blend.
 
 <table width="100%">
   <thead>

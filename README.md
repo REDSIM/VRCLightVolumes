@@ -1,51 +1,42 @@
-**VRC Light Volumes** | [How to Use](./Documentation/HowToUse.md) | [Best Practices](./Documentation/BestPractices.md) | [UdonSharp API](./Documentation/UdonSharpAPI.md) | [Unity Editor API](./Documentation/UnityEditorAPI.md) | [Shader Integration](./Documentation/ForDevelopers.md) | [Compatible Shaders](./Documentation/CompatibleShaders.md)
+**VRC Light Volumes** | [How to Use](./Documentation/HowToUse.md) | [Best Practices](./Documentation/BestPractices.md) | [Scripting API](./Documentation/ScriptingAPI.md) | [Shader Integration](./Documentation/ForDevelopers.md) | [Compatible Shaders](./Documentation/CompatibleShaders.md)
 
 <p align="center"> <img src="./Documentation/LogoMain.png#gh-dark-mode-only" alt="VRC Light Volumes Main Logo" width="627" /></p>
 <p align="center"> <img src="./Documentation/LogoMainBright.png#gh-light-mode-only" alt="VRC Light Volumes Main Logo" width="627" /></p>
 
-VRC Light Volumes lights avatars, moving props and world surfaces in VRChat. Bake room lighting into **Light Volumes**, or add **Point, Spot and Area lights** that can move and change in game. Materials need a compatible shader to receive the lighting.
+VRC Light Volumes is an optimized voxel-based and analytic lighting solution for Unity and VRChat that complements Unity Light Probes.
 
-**[Start with the setup guide](./Documentation/HowToUse.md).**
+**[Installation process described here](#Installation-through-VRChat-Creator-Companion)**
 
-Extending the package? Use the [UdonSharp API](./Documentation/UdonSharpAPI.md) for runtime scripts, the [Unity Editor API](./Documentation/UnityEditorAPI.md) for authoring tools and custom lightmappers, or [Shader Integration](./Documentation/ForDevelopers.md) for shaders.
+**[Start using VRC Light Volumes with the setup guide](./Documentation/HowToUse.md)**
 
 This is a free and open-source asset. If it is useful to you, you can **[support the project on Patreon](https://www.patreon.com/red_sim/)**.
 
 ![](./Documentation/Preview_0.png)
 
-## What To Use
+## Use Cases
 
-| What you want | Start here |
-|---|---|
-| An avatar's face and body to pick up the room's lighting | [Regular Light Volumes](./Documentation/HowToUse_RegularLightVolumes.md) |
-| A lamp, flashlight or light that changes color | [Point Light Volumes](./Documentation/HowToUse_PointLightVolumes.md) |
-| A glowing screen or sign to light nearby objects | [Area Light Emission](./Documentation/HowToUse_AreaLightEmission.md) |
-| Walls and objects to block a Point Light Volume | [Shadows](./Documentation/HowToUse_Shadows.md) |
-| Better performance with many lights | [Best Practices](./Documentation/BestPractices.md) |
-| Find why a material or avatar looks wrong | [Debugging](./Documentation/HowToUse_Debugging.md) |
-
-For a first world, bake the static room normally and place a Regular Light Volume over the area players can reach. Add Point Light Volumes where you need lights to change in game. The [setup guide](./Documentation/HowToUse.md) walks through both.
+- Baked lighting across avatars and moving props
+- Seamless baked lighting for small static objects
+- Lamps, flashlights, stage lights and glowing panels
+- Image and cubemap projectors
+- Screen lighting and music-reactive effects
 
 ## Main Features
+- Baked voxel based lighting
+- Affects avatars and dynamic props
+- Fast and performant
+- Up to 32 light volumes visible at the same time
+- Up to 128 optimized Point, Spot or Area light sources visible at the same time
+- Baked shadows for realtime Point, Spot and Area lights
+- Works with dynamic batching, which potentially increases performance
+- Works with Bakery, Unity Progressive lightmapper and other lightmappers
+- Supports light clustering, increasing performance
+- Works with AudioLink and LTCGI
+- Very easy and fast to setup
+- Lots of shaders already support VRC Light Volumes
+- It just looks beautiful!
 
-- Baked lighting that varies across an avatar or prop's surface
-- Up to 32 active Regular and Additive Light Volumes combined
-- Up to 128 active Point, Spot or Area Light Volumes visible at the same time
-- Froxel Clustering to skip local lights that cannot reach a surface
-- Shadows baked in the Editor, at startup, or updated in game
-- Texture, Render Texture and Material projection sources
-- Textured Area Light emission for screens, signs, windows and soft panels
-- Specular highlights that respond to each Point Light Volume's size
-- Unity Progressive, Bakery and custom editor lightmapper integration
-- Runtime control through UdonSharp
-- AudioLink and TV-screen integrations
-- PC and Quest/Android support with suitable world shaders
-- Automatic removal of unused shader features from world builds
-
-> [!IMPORTANT]
-> World and avatar materials need a [compatible shader](./Documentation/CompatibleShaders.md) to evaluate VRC Light Volumes. Unity's built-in shaders do not read this lighting data.
-
-Light Volumes complement lightmaps and reflection probes. They shade surfaces; visible fog and light beams require a separate effect.
+[See the full feature list](#full-feature-list).
 
 ## VRChat Worlds To Test It
 
@@ -56,7 +47,7 @@ Light Volumes complement lightmaps and reflection probes. They shade surfaces; v
 
 ## Attribution
 
-The optional attribution prefab tells visitors that their avatar can use VRC Light Volumes-compatible shaders. It is available at:
+Use the optional attribution prefab to tell visitors about avatar shaders that support VRC Light Volumes:
 
 ```text
 Packages/red.sim.lightvolumes/Attribution/
@@ -82,8 +73,6 @@ Attribution is optional, but appreciated.
 
 ## Installation Through Unity Package Manager
 
-> AudioLink is optional. Install it separately if you use the [AudioLink integration](./Documentation/HowToUse_AudioLinkIntegration.md). The core package also works without the VRChat SDK in Unity's Built-in Render Pipeline.
-
 1. In Unity, open `Window > Package Manager`.
 2. Press the `[+]` button and select **Add package from git URL...**
 3. Enter:
@@ -96,6 +85,8 @@ Attribution is optional, but appreciated.
 
 The Git URL follows `main`. When testing a prerelease, install the matching release or branch so the package and documentation describe the same version.
 
+For existing 2.x projects, see [Migrating from 2.x.x to 3.x.x](./Documentation/BestPractices.md#migrating-from-2xx-to-3xx).
+
 ## Install Example Scenes And Assets
 
 1. Open `Window > Package Manager`.
@@ -103,3 +94,35 @@ The Git URL follows `main`. When testing a prerelease, install the matching rele
 3. Open the **Samples** tab.
 4. Import **Examples**.
 5. The sample content appears under `Assets/Samples/VRC Light Volumes/[version]/Examples`.
+
+## Full Feature List
+
+### Baked Lighting
+
+- Up to **32 active Regular and Additive Light Volumes** combined.
+- Per-pixel lighting with adjustable voxel density and smooth blending between volumes.
+- Additive volumes for separately baked lights that can move or turn on and off together.
+- Color and brightness adjustments without rebaking.
+- Baking with Unity Progressive, Bakery, Hikari and Glim. A [custom lightmapper API](./Documentation/CustomLightmapperIntegration.md) supports other integrations.
+
+See [Regular Light Volumes](./Documentation/HowToUse_RegularLightVolumes.md).
+
+### Point, Spot And Area Lights
+
+- Up to **128 active lights** with runtime control of position, color and intensity.
+- Texture, Render Texture and Material sources for cookies and projection.
+- Textured Area emission for screens, signs, windows and panels.
+- Individual specular highlights that respond to each light's size.
+- Shadows baked in the Editor, captured at startup or updated in game.
+
+See [Point Light Volumes](./Documentation/HowToUse_PointLightVolumes.md), [Area Light Cookies](./Documentation/HowToUse_PointLightVolumes.md#area-light-cookies) and [Shadows](./Documentation/HowToUse_Shadows.md).
+
+### Performance And Integration
+
+- [Froxel Clustering](./Documentation/HowToUse_FroxelClustering.md) skips lights that cannot reach a surface, with optional **Shadow Culling**.
+- [Shader Stripping](./Documentation/ForDevelopers.md#shader-feature-stripping) removes unused lighting features from world builds.
+- [PC and Quest/Android support](./Documentation/CompatibleShaders.md#pc-and-android) with world shaders that support VRC Light Volumes.
+- [AudioLink](./Documentation/HowToUse_AudioLinkIntegration.md) and [TV-screen integration](./Documentation/HowToUse_TVScreensIntegration.md).
+- [Scripting API](./Documentation/ScriptingAPI.md) for runtime light control, Editor tools, atlas processing and custom lightmappers.
+- [Shader Integration](./Documentation/ForDevelopers.md) through shader code or Amplify Shader Editor.
+- [Debugging tools](./Documentation/HowToUse_Debugging.md): Scene view modes, voxel previews, live Inspector data and an optional PC avatar debugger.

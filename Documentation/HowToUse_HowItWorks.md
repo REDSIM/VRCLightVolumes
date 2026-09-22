@@ -1,72 +1,152 @@
-[VRC Light Volumes](../README.md) | [How to Use](./HowToUse.md) | [Best Practices](./BestPractices.md) | [UdonSharp API](./UdonSharpAPI.md) | [Unity Editor API](./UnityEditorAPI.md) | [Shader Integration](./ForDevelopers.md) | [Compatible Shaders](./CompatibleShaders.md)
+[VRC Light Volumes](../README.md) | **How to Use** | [Best Practices](./BestPractices.md) | [Scripting API](./ScriptingAPI.md) | [Shader Integration](./ForDevelopers.md) | [Compatible Shaders](./CompatibleShaders.md)
 
 # How VRC Light Volumes Work
 
-**Guides:** [Overview](./HowToUse.md) · [Regular Light Volumes](./HowToUse_RegularLightVolumes.md) · [Point Light Volumes](./HowToUse_PointLightVolumes.md) · [Froxel Clustering](./HowToUse_FroxelClustering.md) · [Shadows](./HowToUse_Shadows.md) · [Material Sources](./HowToUse_PointLightMaterialSources.md) · [Area Light Emission](./HowToUse_AreaLightEmission.md) · [AudioLink](./HowToUse_AudioLinkIntegration.md) · [TV Screens (Older Workflow)](./HowToUse_TVScreensIntegration.md) · [Debugging](./HowToUse_Debugging.md) · **How It Works**
+| Menu |
+| --- |
+| [Overview](./HowToUse.md) |
+| [Regular Light Volumes](./HowToUse_RegularLightVolumes.md) |
+| [Point Light Volumes](./HowToUse_PointLightVolumes.md) |
+| [Froxel Clustering](./HowToUse_FroxelClustering.md) |
+| [Shadows](./HowToUse_Shadows.md) |
+| [Material Sources](./HowToUse_PointLightMaterialSources.md) |
+| [AudioLink](./HowToUse_AudioLinkIntegration.md) |
+| [TV Screens](./HowToUse_TVScreensIntegration.md) |
+| [Debugging](./HowToUse_Debugging.md) |
+| **How It Works**<br />• [Spherical Harmonics](#spherical-harmonics)<br />• [Light Data](#light-data)<br />• [Light Data Storage](#light-data-storage)<br />• [Light Volume Evaluation](#light-volume-evaluation)<br />• [Point Light Volumes](#point-light-volumes)<br />• [Froxel Clustering](#froxel-clustering)<br />• [EVSM Shadows](#evsm-shadows)<br />• [Shadow Culling (Hi-Z)](#shadow-culling-hi-z) |
 
-A **Regular Light Volume** remembers the lighting at many points in a room. A **Point Light Volume** calculates light from a Point, Spot or Area source while the scene is rendered. Compatible shaders combine these contributions to shade a surface.
+This section is for developers and curious users who want to understand how Light Volumes work under the hood. You don't need to learn this to use them. Let's first look at Regular Light Volumes.
 
-The **Light Volume Manager** shares that data with world and avatar shaders. An avatar needs a compatible shader, but no Light Volume component.
+## Spherical Harmonics
 
-## Why A Grid Helps
+**Spherical Harmonics (SH)** represent how light affects a point in space. Light Volumes uses **L1 Spherical Harmonics**: a rough approximation that is quick to calculate and works well for real-time lighting.
 
-Unity Light Probes store baked lighting at scattered points. An ordinary probe-lit Renderer uses one interpolated set of lighting data for the whole object. A Regular Light Volume stores the lighting on a 3D grid instead; each cell is called a **voxel**. Its shader samples nearby voxels at the position of each shaded pixel, so a character can have one side in a brightly lit doorway and the other in a dark room.
+The L1 SH data consists of:
 
-![A Light Volume's grid of lighting samples inside a room](./Preview_3.png)
+- **L0** — Ambient color. The average light color at a point, with no directional information.
+- **L1 Red** — Directional information for red light. A vector pointing toward the average direction the red light comes from. Its length describes how strongly that lighting varies with direction.
+- **L1 Green** — The same directional information for green light.
+- **L1 Blue** — The same directional information for blue light.
 
-More voxels capture smaller changes in lighting. They also take more memory and time to bake. A small, dense volume around a detailed area is usually more useful than increasing the density of the entire world. See [placement and resolution](./HowToUse_RegularLightVolumes.md).
+For example, equally bright lights from opposite directions can cancel each other's L1 vectors while L0 stays bright. SH stores the combined lighting, not a list of individual lights.
 
-Moving a baked volume moves its stored lighting. It does not calculate new light bouncing off the surroundings. Re-bake after changing the room, its lights or other objects that should affect the baked result.
+## Light Data
 
-## Remembering Color And Direction
+Light Volumes are 3D textures made of **voxels**: essentially 3D pixels, like blocks in Minecraft. Each voxel has RGBA channels, just like a pixel in a 2D texture. Here, those channels store lighting data rather than an ordinary image color.
 
-Each voxel stores **spherical harmonics (SH)**: a compact approximation of the light arriving from different directions. Light Volumes uses first-order SH, often written **L0 + L1**.
+Each Light Volume holds this data for a 3D grid of positions in the world. Higher resolution captures smaller changes in lighting, just as a higher-resolution 2D texture captures smaller details.
 
-- **L0** is the average light color. It looks the same from every surface direction.
-- **L1** records how that color changes with direction. It lets a surface facing the light look brighter than a surface facing away.
+![A Light Volume grid with one voxel enlarged, showing its ambient RGB color and red, green and blue light direction vectors.](./Images/SHVoxelData.svg)
 
-![Lighting represented as an ambient color and directional components](./SH_01.png)
+The arrows show the L1 vectors for red, green and blue. They describe the average incoming light direction for each color.
 
-The same baked data in two [debug views](./HowToUse_Debugging.md):
+## Light Data Storage
 
-| L0: average color | L0 + L1: color and direction |
-| --- | --- |
-| ![L0 debug view: spheres keep their local color but look flat without directional shading](./Images/debug-sh-l0.png) | ![L1 debug view: directional lighting gives the same spheres rounded shading](./Images/debug-sh-l1.png) |
+An RGBA texture has four channels per voxel, but SH L1 needs **12 values**: three for the ambient color and three for each of the red, green and blue direction vectors.
 
-Look at the spheres: L0 keeps their local lighting color, while L1 adds the change in brightness around their surfaces. The black walls are outside this volume.
+The bake therefore writes **three separate 3D textures**, each holding four of those values:
 
-This is an approximation. It cannot preserve every sharp shadow or reflection. Keep lightmaps for detailed static surfaces and reflection probes for reflections. The SH data can also provide a simple specular highlight, but it does not replace a reflection of the room.
+![The twelve SH values divided between the RGBA channels of three textures](./Images/SHDataChannels.svg)
 
-## Overlapping Volumes
+**Pack Light Volumes** combines the three textures into one **3D texture atlas**. Think of it as placing several smaller blocks inside one large texture. Padding around each block repeats its edge values, so texture filtering does not mix unrelated blocks.
 
-At each surface position, the shader finds the containing Regular Light Volume with the highest **Weight**. Near its edge, **Smooth Blending** allows a transition to the next containing volume. This lets a small, detailed room volume take priority over a larger background volume.
+![The three texture blocks packed next to one another in a 3D atlas](./Images/SHVolumeAtlas.svg)
 
-If no Regular Light Volume contains the surface, **Light Probes Blending** selects Unity Light Probes as the fallback. When it is off, the lowest-weight Regular Light Volume supplies the fallback instead. **Sharp Bounds** controls blending at edges without another containing volume; it does not disable all blending between overlapping volumes.
+When a scene has multiple Light Volumes, their texture blocks are packed into the same atlas. The shader can then read lighting for different volumes from one shared texture.
 
-An **Additive Light Volume** adds its baked lighting on top. Use one for a separately baked lighting state, such as a lamp that can turn on and off. Regular and Additive volumes share the limit of 32 active volumes.
+![Texture blocks from three Light Volumes packed into a shared 3D atlas](./Images/SHSharedAtlas.svg)
 
-## Point, Spot And Area Lights
+## Light Volume Evaluation
 
-Point Light Volumes do not use a voxel grid. A shader calculates their contribution from the surface position, light shape, size, color and intensity. That is why they can move without re-baking the room's lighting.
+Reading the atlas and evaluating its lighting happens entirely in the shader. That is why materials need a shader that supports VRC Light Volumes.
 
-![Area, Point and Spot Light Volumes lighting nearby surfaces](./Preview_4.png)
+Along with the atlas, the system provides **3D texture coordinates (UVW)** that map positions in the world to the correct part of the atlas. For each surface pixel, the shader finds that position and interpolates lighting from nearby voxels.
 
-Point and Spot lights in **Parametric** mode get dimmer with distance using inverse-square falloff. A **cookie** changes the emitted pattern: a cubemap for Point lights, or a 2D image for Spot and Area lights. An Area light emits from one side of a rectangle. Its textured emission keeps more detail close to the rectangle and blends toward the average color farther away.
+After reading L0 and L1, it uses the surface's **normal** — the direction the surface faces — to calculate the lighting. For each red, green and blue channel, the basic formula is:
 
-A moving light does not automatically update its shadows. Shadows are a separate capture of the objects around that light. Use an Editor bake for fixed surroundings, **Bake In Game** for a startup capture, or a [runtime shadow baker](./HowToUse_Shadows.md) when blockers need to move.
+```glsl
+Lighting = L0 + dot(L1, WorldNormal);
+```
 
-## Why Overlap Costs Performance
+The dot product makes the directional contribution stronger when the surface faces the incoming light. The material then uses this lighting together with its own color and shading.
 
-The shader must do work for every light that reaches a surface. Ten small lights spread across separate rooms can be cheaper than ten lights reaching the same wall.
+Regular Light Volumes complement Unity Light Probes. Keep ordinary probes too: they provide fallback lighting and support materials without Light Volumes integration.
 
-**Froxel Clustering** divides the camera's view into 3D cells, called froxels, and builds a list of possible lights for each cell. Surfaces then skip lights that cannot reach their cell. Exact light and shadow tests still decide the final result. Positions outside this grid use the ordinary light loop, which also keeps mirrors and other cameras working.
+## Point Light Volumes
 
-**Additive Max Overdraw** limits how many Additive Light Volumes and Point Light Volumes a pixel processes. Each group has its own counter with the same limit. Lower values can omit visible lights; this setting is a quality tradeoff. Clustering does not raise the active-light or overlap limits.
+Point Light Volumes also use SH L1 to describe lighting, but don't store it in voxels. Instead, they calculate it in real time from the surface position and the light's shape, size, color and intensity.
 
-Use [Best Practices](./BestPractices.md) for practical tuning and the [clustering guide](./HowToUse_FroxelClustering.md) for its settings.
+Each light type has its own calculation. A **Parametric Point light** uses inverse-square falloff, softened near the source by its physical size:
 
-## For Developers
+```math
+Attenuation = \frac{1}{\text{LightSize}^2 + \text{DistanceToLight}^2}
+```
 
-The baked L0/L1 coefficients are stored across three 3D textures per volume, then packed into one shared atlas. Projection sources and shadows use separate texture arrays. The Manager uploads transforms and light settings to global shader data.
+Its light color, before shadows and material shading, is:
 
-Shaders read that data through the functions in [Shader Integration](./ForDevelopers.md). Scripts should use the [UdonSharp API](./UdonSharpAPI.md) to change lights and the [Unity Editor API](./UnityEditorAPI.md) to bake or pack data.
+```math
+LightColor = \text{Attenuation} \times \text{Color} \times \text{Intensity} \times \text{LightSize}^2
+```
+
+Here, **LightSize** is the physical source size after object scale. Multiplying by its square makes **Intensity** behave more like light emitted per unit surface area than total emitted energy. A larger source emits more light at the same intensity.
+
+To stop calculating the light beyond its range, the shader also applies a distance mask:
+
+```math
+Mask = \text{Saturate}\left(1 - \frac{\text{DistanceToLight}^2}{\text{CutoffDistance}^2}\right)
+```
+
+`Saturate()` clamps the value between 0 and 1. Multiplying the light color by `Mask²` fades it to zero at the cutoff distance.
+
+Spot lights add a cone to this falloff. Area lights use a different calculation based on the rectangle's size, orientation and position. A cookie can add a pattern or image to the light. The resulting SH data combines with the baked volume lighting before the material evaluates it.
+
+## Froxel Clustering
+
+A **froxel** is a small 3D cell inside the camera's viewing volume, called the **frustum**. **Froxel Clustering** divides this space into a grid and records which Point, Spot and Area lights could reach each cell. This grid follows the camera; it does not store baked lighting like a Regular Light Volume.
+
+The grid is built in two stages:
+
+- **Coarse** checks all lights against large cells. Each cell keeps a list of possible lights.
+- **Fine** checks the smaller cells inside each Coarse cell, using only the lights that passed the first check.
+
+When shading a surface, the shader finds its froxel and evaluates only the lights on that cell's final list. The two stages avoid checking every light against every small cell.
+
+![Letters show the possible lights in each cell. The selected Coarse cell contains A and B; its Fine cells test only these two lights, and the selected Fine cell keeps only A.](./Images/FroxelClusteringOverview.svg)
+
+Clustering usually reduces shading work when many lights occupy different parts of a scene. Lights that overlap heavily still share long lists. Building the grid also takes GPU time, so check performance with your scene and grid resolution. See [Froxel Clustering](./HowToUse_FroxelClustering.md) for settings and debug views.
+
+## EVSM Shadows
+
+**EVSM** stands for **Exponential Variance Shadow Maps**. It produces soft shadows from the distances recorded in a shadow map. Two exponential conversions emphasize different parts of the distance range: one near the light, the other farther away.
+
+Both sets of values are blurred while retaining their average and variation (**variance**). The shader compares each surface's distance with this data to estimate how much light reaches it. It keeps the **darker of the two estimates** to reduce light leaks. The blur creates the soft shadow edge, or **penumbra**.
+
+Capture and blur happen during the bake; **Realtime** shadows repeat this work during play. EVSM is approximate, so some light can still leak through. **Shadow Bleed Reduction** helps suppress it. See [Shadows](./HowToUse_Shadows.md) for the controls.
+
+## Shadow Culling (Hi-Z)
+
+**Shadow Culling** skips a light in froxels that are fully inside its shadow. **Hi-Z** means **Hierarchical Z Buffer**: several levels of shadow data, with each level covering larger regions. These levels belong to the light's shadow map. Both the **Coarse** and **Fine** clustering stages use them to check their froxels.
+
+### Building Hi-Z
+
+Light Volumes builds Hi-Z from the filtered EVSM shadow map. Each level combines **2 × 2** cells from the previous level, keeping their **largest value**. Repeating this covers larger areas with fewer values.
+
+![Three Hi-Z levels for the same shadow-map area: each group of four keeps its largest value](./Images/ShadowCullingHiZOverview.svg)
+
+In the diagram above, the numbers are distances from the light in **metres**. Beyond each distance, that part of the shadow map is fully in shadow. The same area is shown with **16 values**, then **4**, then **1**.
+
+The final **4** means the whole area is in shadow beyond **4 metres** from the light.
+
+### Choosing A Hi-Z Level
+
+In a perspective camera, froxels get wider with distance. To check one against a light's shadow, clustering looks at the whole froxel from the light and finds the area it covers in that light's shadow map.
+
+A small projected area uses a **finer Hi-Z level**; a larger area uses a **coarser level**. Both the froxel's size and its position relative to the light affect this choice.
+
+![The player's camera has widening froxels; rays from a separate light show their small and large projections, which select finer and coarser Hi-Z levels](./Images/ShadowCullingHiZLevels.svg)
+
+Both grids on the right show the same shadow map at different levels. Colored outlines show the froxel projections; shaded cells contain the values read for each check. A projection can cross cell boundaries: **B** covers two cells, so both values must be checked.
+
+Clustering compares the froxel's closest distance from the light with these values. If even the closest point is beyond all of them, the whole cell is in shadow and the light can be skipped. For example, a closest point at **6 m** is beyond a **4 m** shadow limit. Cells that could still receive light keep the light for normal shading.
+
+This saves the most work when walls, floors or ceilings block large parts of a light's range. **Shading Strength** must be **1**, and lights with **Realtime** shadow updates do not use Hi-Z. See [Shadow Culling settings](./HowToUse_FroxelClustering.md#shadow-culling-hi-z).

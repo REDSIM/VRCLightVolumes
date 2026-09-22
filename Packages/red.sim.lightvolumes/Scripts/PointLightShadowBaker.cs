@@ -72,7 +72,7 @@ namespace VRCLightVolumes {
                 runtimeShadowTexture = pointLightInstance.ShadowMapTexture as RenderTexture;
                 int sliceCount = cubemapShadows ? 6 : 1;
                 if (!IsRuntimeShadowTextureValid(runtimeShadowTexture, resolution, sliceCount)) {
-                    Debug.LogError($"[LightVolumes] PointLightVolumeInstance did not produce a valid editor shadow output {infoString}.", pointLightVolume);
+                    Debug.LogError($"[LightVolumes] The shadow bake produced no usable texture {infoString}.", pointLightVolume);
                     return false;
                 }
 
@@ -217,7 +217,7 @@ namespace VRCLightVolumes {
         private static UnityEngine.Object SaveShadowAsset(PointLightVolumeInstance pointLightVolume, UnityEngine.Object shadowAsset) {
             UnityEngine.SceneManagement.Scene scene = pointLightVolume.gameObject.scene;
             if (!scene.IsValid() || string.IsNullOrEmpty(scene.path)) {
-                Debug.LogError("[LightVolumes] Save the scene before baking a persistent shadow asset.", pointLightVolume);
+                Debug.LogError("[LightVolumes] Save the scene before baking shadows.", pointLightVolume);
                 DestroyTransientShadowAsset(shadowAsset);
                 return null;
             }
@@ -319,7 +319,7 @@ namespace VRCLightVolumes {
                 AssetDatabase.SaveAssetIfDirty(existingAsset);
                 return existingAsset;
             } catch (System.Exception exception) {
-                Debug.LogError($"[LightVolumes] Failed to update shadow asset '{path}' in place: {exception.Message}");
+                Debug.LogError($"[LightVolumes] Could not update shadow asset '{path}': {exception.Message}");
                 return null;
             } finally {
                 DestroyTransientShadowAsset(shadowAsset);
@@ -383,7 +383,7 @@ namespace VRCLightVolumes {
                 texture.filterMode = FilterMode.Point;
                 texture.anisoLevel = 0;
                 texture.hideFlags = HideFlags.HideAndDontSave;
-                if (!texture.Create()) throw new UnityException("Failed to allocate a temporary render texture for cubemap shadow conversion.");
+                if (!texture.Create()) throw new UnityException("Could not create a texture for the cubemap shadow.");
                 return texture;
             } catch {
                 ReleaseTemporaryRenderTexture(texture);

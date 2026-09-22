@@ -90,61 +90,61 @@ namespace VRCLightVolumes {
 #region Inspector And Runtime References
 
         [Header("Light Volume Atlas")]
-        [Tooltip("Combined Texture3D containing all baked Light Volume data. This field is not used at runtime, see LightVolumeAtlas instead. It specifies the base for the post process chain, if given.")]
+        [Tooltip("Packed baked lighting before atlas post-processors. Runtime rendering uses Light Volume Atlas.")]
         public Texture3D LightVolumeAtlasBase;
-        [Tooltip("Combined texture containing all Light Volumes' textures.")]
+        [Tooltip("Final lighting atlas used by materials. Filled when the baked volumes are packed.")]
         public Texture LightVolumeAtlas;
 
         [Header("Point Light Volumes")]
-        [Tooltip("Resolution used for Point Light cookie, LUT and cubemap projection textures.")]
+        [Tooltip("Resolution used for projected cookies, LUTs and cubemaps.")]
         public int CustomTexturesWidth = 512;
-        [Tooltip("Height of each runtime point light projection texture slice.")]
+        [Tooltip("Height of each projected image in the shared texture array.")]
         public int CustomTexturesHeight = 512;
-        [Tooltip("The minimum brightness at a point due to lighting from a Point Light Volume, before the light is culled. Larger values will result in better performance, but light attenuation will be less physically correct.")]
+        [Tooltip("Higher values shorten light ranges and reduce overlap. Keep low enough to avoid visible light cutoffs.")]
         public float LightsBrightnessCutoff = 0.35f;
-        [Tooltip("Resolution used for each shadow map face. A cubemap shadow uses six faces at this resolution.")]
+        [Tooltip("Resolution of each shadow image. Increase it for sharper shadow detail.")]
         public int ShadowTexturesWidth = 256;
-        [Tooltip("Height of each runtime shadow cubemap face.")]
+        [Tooltip("Height of each shadow image in the shared texture array.")]
         public int ShadowTexturesHeight = 256;
-        [Tooltip("Precision used for baked EVSM shadow maps and the runtime shadow texture array. 0 = ARGBHalf, 1 = ARGBFloat.")]
+        [Tooltip("Shadow precision: 0 = ARGBHalf, 1 = ARGBFloat. Use Float if Half produces artifacts.")]
         public int ShadowTextureFormat = 1;
-        [Tooltip("EVSM light bleed reduction applied by the shadow receiver shader. 0 disables reduction, 1 is strongest.")]
+        [Tooltip("Reduces light leaking through shadows. Higher values make shadows darker and sharper.")]
         public float ShadowBleedReduction = 0.2f;
-        [Tooltip("EVSM variance bias used by the shadow receiver shader. Authoring setup stores this as a 0..1 logarithmic slider.")]
+        [Tooltip("Raw shadow stability value. Use Shadow Min Variance in the Manager Inspector for normal setup.")]
         public float ShadowMinVariance = 0.0001f;
 
-        [Tooltip("Builds camera-relative Coarse-to-Fine froxel clusters so shaders only evaluate Point Light Volumes that can affect the current pixel.")]
+        [Tooltip("Skips lights that cannot reach the visible surface. Try it when many lights are active and compare the frame rate.")]
         public bool Clustering = true;
-        [Tooltip("Fine froxels per camera degree on each screen axis. 1.0 = one froxel per degree; total count is multiplied by Slices Count.")]
+        [Tooltip("Clustering grid detail across the view. Higher values separate nearby lights more precisely but take more time to process.")]
         [Range(0.05f, 3f)] public float FroxelDensity = 1f;
-        [Tooltip("Count of exponentially distributed depth slices between the main camera near and far clip planes. This does not change the angular resolution; memory and build cost scale with the slice count.")]
+        [Tooltip("Clustering grid detail with distance. Increase if lights at different depths are grouped too broadly.")]
         [Range(8, MaxFroxelSize)] public int FroxelSlices = 100;
-        [Tooltip("Power-of-two reduction of the intermediate Coarse grid relative to the Fine grid on every axis. Values are resolved to 2, 4 or 8 so every Fine froxel has one exact parent and the shader can use bit shifts instead of integer division.")]
+        [Tooltip("Size of the coarse grid cells relative to the fine grid. Uses 2, 4 or 8. Start with 4.")]
         [Range(MinFroxelCoarse, MaxFroxelCoarse)] public int FroxelCoarse = 4;
-        [Tooltip("Uses the non-clustered loop below this active Point Light Volume count because building and sampling the cluster mask is unlikely to amortize.")]
+        [Tooltip("Clustering starts when this many Point Light Volumes are active. Below this count, shaders use the normal light list.")]
         [Range(1, MaxPointLightCount)] public int ClusteringMinLights = 8;
-        [Tooltip("Uses a hierarchical z-buffer (Hi-Z) built from the shadow maps to skip lights in froxels that are completely in shadow. It is most useful in heavily shadowed scenes; disable it when shadows rarely hide whole froxels or profiling shows no performance gain.")]
+        [Tooltip("Skips lights where their shadows fully cover a grid cell. Try it in rooms with large blockers and compare the frame rate.")]
         public bool ShadowCulling = false;
 
-        [Tooltip("When enabled, areas outside Light Volumes fall back to light probes. Otherwise, the Light Volume with the smallest weight is used as fallback. It also improves performance.")]
+        [Tooltip("Uses Unity Light Probes outside the volumes. When off, the lowest-weight Regular volume supplies the lighting there.")]
         public bool LightProbesBlending = true;
-        [Tooltip("Disables smooth blending with areas outside Light Volumes. Use it if your entire scene's play area is covered by Light Volumes. It also improves performance.")]
+        [Tooltip("Keeps outer volume edges sharp. Turn off for a smooth transition where no other volume overlaps.")]
         public bool SharpBounds = true;
-        [Tooltip("Automatically updates most volume properties at runtime. Enabling/disabling, Color and Intensity update automatically even without this option enabled. Position, Rotation and Scale get updated only for volumes that are marked dynamic. It's more performant to keep it off.")]
+        [Tooltip("Follows moving volumes marked Dynamic. Color, intensity and enabled state update without this option.")]
         public bool AutoUpdateVolumes = true;
-        [Tooltip("Automatically refreshes projection and shadow sources marked for automatic updates. The one-argument projection APIs mark RenderTexture, Custom Render Texture and Material sources for updates by default, while regular Texture assets default to rebuild-only snapshots. It's more performant to keep this off when all sources are static.")]
+        [Tooltip("Refreshes projection and shadow sources marked for automatic updates. Turn off when all sources are static.")]
         public bool AutoUpdateTextures = true;
-        [Tooltip("Limits the maximum number of additive volumes and Point Light Volumes that can affect a single pixel. This also limits individual Point Light Volume speculars in modern compatible shaders. Lower values improve worst-case performance in overlap-heavy areas.")]
+        [Tooltip("Maximum Additive volumes and Point lights per pixel, counted separately. Lower values can improve the frame rate but may hide lights.")]
         public int AdditiveMaxOverdraw = 4;
-        [Tooltip("Enables the Force Scene Lighting shader override on startup, disabling min/max brightness limits in compatible avatar shaders. When disabled, the existing global override is left unchanged. Use SetForceSceneLighting for manual runtime control.")]
+        [Tooltip("Removes avatar shader brightness limits at startup where supported. Use when avatar lighting should match the scene.")]
         public bool ForceSceneLighting = false;
 
         // Shader authoring settings share the runtime schema so UdonSharp proxies and backing behaviours retain the same serialized fields.
-        [Tooltip("Strips unused shader features in Play Mode and world builds. Disable to keep every feature without changing the saved Auto or manual selection. Edit Mode always keeps all features.")]
+        [Tooltip("Removes unused shader features in Play Mode and builds. Turn off to keep all features. Edit Mode always keeps all features.")]
         [HideInInspector] public bool ShaderStripping = true;
-        [Tooltip("Automatically decides which shader features should be stripped based on the current scene config. You must manually enable required features if you dynamically toggle them in runtime via scripts.")]
+        [Tooltip("Chooses shader features from the current scene. Turn off and keep extra features if scripts enable them in game.")]
         [HideInInspector] public bool AutoShaderFeatures = true;
-        [Tooltip("Shader features retained in Play Mode and world builds when Auto is disabled. Changes take effect immediately in Play Mode. Edit Mode always keeps all features.")]
+        [Tooltip("Features to keep when Auto is off. Include anything your scripts may enable in game.")]
         [HideInInspector] public int ShaderFeatures = 131071;
         // Schema zero keeps newly introduced features for old manual masks until the user explicitly edits the expanded selection.
         [HideInInspector] public int ShaderFeaturesSchema = 0;
@@ -152,28 +152,28 @@ namespace VRCLightVolumes {
         // Persistent authoring settings live on the Udon proxy as well. Keeping them here removes the editor-only Setup component without adding runtime work; heavy asset references are cleared from the temporary build scene by the build preprocessor.
         private const int BakingModeProgressive = 0;
         private const int BakingModeBakery = 1;
-        [Tooltip("Selects the lightmapper used to bake Light Volumes. Bakery usually gives better results and works faster.")]
+        [Tooltip("Choose the lightmapper you use for this scene.")]
         [HideInInspector] public int BakingMode = BakingModeProgressive; // 0 = Progressive, 1 = Bakery, 2 = Custom Lightmapper
-        [Tooltip("Light from Bakery light sources with this bitmask will affect Light Volumes.")]
+        [Tooltip("Bakery lights with a matching bitmask affect the volumes.")]
         [HideInInspector] public int VolumeBitmask = 1;
-        [Tooltip("Light from Bakery light sources with this bitmask will affect light probes.")]
+        [Tooltip("Bakery lights with a matching bitmask affect Light Probes.")]
         [HideInInspector] public int ProbeBitmask = 1;
-        [Tooltip("Removes baked noise in Light Volumes, but may slightly reduce sharpness. Recommended to keep enabled.")]
+        [Tooltip("Smooths noise in the baked lighting. Turn off if it removes detail you need.")]
         [HideInInspector] public bool Denoise = true;
-        [Tooltip("Dilates valid probe data into invalid probes, such as probes inside geometry, to reduce light leaking.")]
+        [Tooltip("Fills invalid samples, such as those inside walls, from nearby valid samples to reduce light leaks.")]
         [HideInInspector] public bool DilateInvalidProbes = true;
-        [Tooltip("Number of dilation passes. More passes can reduce leaking, but increase bake time.")]
+        [Tooltip("How far valid lighting spreads into invalid samples. More passes take longer to bake.")]
         [HideInInspector] public int DilationIterations = 1;
-        [Tooltip("Fraction of backface hits required to mark a probe invalid for dilation. 0 marks every probe invalid; 1 keeps every probe valid.")]
+        [Tooltip("Threshold for filling invalid lighting samples. Lower values mark more samples as invalid.")]
         [HideInInspector] public float DilationBackfaceBias = 0.1f;
-        [Tooltip("Reduces ringing and burned-looking Bakery light probes, at the cost of slightly lower contrast.")]
+        [Tooltip("Reduces harsh, burned-looking Bakery Light Probes. May slightly reduce contrast.")]
         [HideInInspector] public bool FixLightProbesL1 = true;
-        [Tooltip("Downscales each Light Volume before atlas packing. Useful for lower-resolution mobile atlases or reducing aliasing.")]
+        [Tooltip("Uses a smaller baked grid in the atlas. Useful for a lower-detail mobile version.")]
         [HideInInspector] public int DownscaleVolumes = 0; // 0 = None, 1 = x2, 2 = x4, 3 = x8
         // The mobile slider is authoring-only. ShadowMinVariance remains the resolved raw runtime value.
-        [Tooltip("Reduces shadow noise and flickering. Higher values make shadows more stable, but can make them look less attached to objects. This value is configured separately for PC and Mobile.")]
+        [Tooltip("Reduces shadow noise on PC. Higher values can make shadows look less attached to objects.")]
         [HideInInspector] public float ShadowMinVarianceDesktop = 0f;
-        [Tooltip("Reduces shadow noise and flickering. Higher values make shadows more stable, but can make them look less attached to objects. This value is configured separately for PC and Mobile.")]
+        [Tooltip("Reduces shadow noise on mobile. Higher values can make shadows look less attached to objects.")]
         [HideInInspector] public float ShadowMinVarianceMobile = 1f;
         // Serializable RT/material/name projection for editor atlas processors. Delegate callbacks remain in transient editor state and must re-register after reload.
         [HideInInspector] public RenderTexture[] AtlasPostProcessorTargets = new RenderTexture[0];
@@ -181,20 +181,20 @@ namespace VRCLightVolumes {
         [HideInInspector] public string[] AtlasPostProcessorTextureNames = new string[0];
 
         [Header("Runtime Registries")]
-        [Tooltip("All Light Volume instances in stable registration order. The Manager selects the highest-priority active volumes for shader upload. You can disable unnecessary volume GameObjects at runtime to improve performance.")]
+        [Tooltip("Registered baked volumes. Disable unneeded volume GameObjects to reduce work in game.")]
         public LightVolumeInstance[] LightVolumeInstances = new LightVolumeInstance[0];
-        [Tooltip("All Point Light Volume instances. You can enable or disable point light volume GameObjects at runtime. Manually disabling unnecessary point light volumes improves performance.")]
+        [Tooltip("Registered Point, Spot and Area lights. Disable unneeded light GameObjects to reduce work in game.")]
         public PointLightVolumeInstance[] PointLightVolumeInstances = new PointLightVolumeInstance[0];
 
-        [Tooltip("Runtime texture array used for point light cubemaps, LUTs and cookies.")]
+        [Tooltip("Shared texture array for active cookies, LUTs and cubemaps.")]
         public RenderTexture CustomTextures;
-        [Tooltip("Cubemap count stored in CustomTextures. Cubemap array elements start from the beginning, 6 elements each.")]
+        [Tooltip("Number of cubemaps in the projection texture array.")]
         public int CubemapsCount = 0;
-        [Tooltip("Runtime texture array that stores per-light shadow maps.")]
+        [Tooltip("Shared texture array for active shadow maps.")]
         public RenderTexture ShadowTextures;
-        [Tooltip("Cubemap shadow maps count stored in ShadowTextures. Cubemap array elements start from the beginning, 6 elements each.")]
+        [Tooltip("Number of cubemap shadows in the shadow texture array.")]
         public int ShadowCubemapsCount = 0;
-        [Tooltip("Shadow maps count stored in ShadowTextures. Cubemaps use 6 array elements, single projected shadows use 1 array element.")]
+        [Tooltip("Number of shadow maps. Each cubemap counts as one map.")]
         public int ShadowMapsCount = 0;
 
         // Material used to copy cubemap source faces into the shared projection texture array

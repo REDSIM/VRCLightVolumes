@@ -97,7 +97,7 @@ MonoBehaviour:
       Data: 6|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Reference to your Audio Link manager that should control Light Volumes
+      Data: Assign the AudioLink component from your scene.
     - Name: 
       Entry: 8
       Data: 
@@ -166,8 +166,7 @@ MonoBehaviour:
       Data: 11|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: 'Defines which audio band will be used to control Light Volumes. Four
-        bands available: Bass, Low Mid, High Mid, Treble'
+      Data: Choose an audio band or the overall Volume to drive the light.
     - Name: 
       Entry: 8
       Data: 
@@ -224,8 +223,8 @@ MonoBehaviour:
       Data: 14|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Defines how many samples back in history we're getting data from. Can
-        be a value from 0 to 127. Zero means no delay at all
+      Data: How many samples to delay the response. 0 follows the latest audio. Volume
+        ignores this setting.
     - Name: 
       Entry: 8
       Data: 
@@ -300,8 +299,7 @@ MonoBehaviour:
       Data: 19|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Enables a smoothing algorithm that tries to smooth out flickering that
-        can usually be a problem
+      Data: Softens rapid changes in brightness.
     - Name: 
       Entry: 8
       Data: 
@@ -364,9 +362,7 @@ MonoBehaviour:
       Data: 23|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Value from 0 to 1 that defines how much smoothing should be applied.
-        Zero usually applies just a little bit of smoothing. One smooths out almost
-        all fast blinks and makes intensity changes very slow
+      Data: Higher values give a slower, smoother response.
     - Name: 
       Entry: 8
       Data: 
@@ -435,8 +431,7 @@ MonoBehaviour:
       Data: 27|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Inverts Audio Link data to dim the color based on the band, instead of
-        lighting it up.
+      Data: Inverts the band's brightness response before the Add and Multiply adjustments.
     - Name: 
       Entry: 8
       Data: 
@@ -493,7 +488,8 @@ MonoBehaviour:
       Data: 30|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Value added to intensity at AudioLink minimum
+      Data: Brightness added when the band is quiet. Raise it to keep some light
+        between beats.
     - Name: 
       Entry: 8
       Data: 
@@ -550,7 +546,7 @@ MonoBehaviour:
       Data: 33|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Value added to intensity at AudioLink maximum
+      Data: Brightness added when the band reaches its maximum.
     - Name: 
       Entry: 8
       Data: 
@@ -607,7 +603,7 @@ MonoBehaviour:
       Data: 36|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Value multiplied with intensity at AudioLink minimum
+      Data: Audio brightness multiplier when the band is quiet.
     - Name: 
       Entry: 8
       Data: 
@@ -664,7 +660,7 @@ MonoBehaviour:
       Data: 39|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Value multiplied with intensity at AudioLink maximum
+      Data: Audio brightness multiplier when the band reaches its maximum.
     - Name: 
       Entry: 8
       Data: 
@@ -736,8 +732,8 @@ MonoBehaviour:
       Data: 44|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Auto uses Theme Colors 0, 1, 2, 3 for Bass, LowMid, HighMid, Treble.
-        Override Color allows you to set the static color value
+      Data: Auto uses the theme color for each audio band. Override Color uses your
+        chosen color.
     - Name: 
       Entry: 8
       Data: 
@@ -794,10 +790,8 @@ MonoBehaviour:
       Data: 47|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Makes color fully saturated and fully bright before applying Audio Link
-        effect. AudioLink already affects auto theme colors at runtime for some reason,
-        so it prevents doubling the animation, which is especially visible when using
-        Delay
+      Data: Makes theme colors fully bright and saturated before the audio response.
+        Use to avoid applying their existing brightness animation twice.
     - Name: 
       Entry: 8
       Data: 
@@ -860,7 +854,7 @@ MonoBehaviour:
       Data: 51|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Color that will be used when Override Color is enabled
+      Data: Color used in Override Color mode.
     - Name: 
       Entry: 8
       Data: 
@@ -941,7 +935,7 @@ MonoBehaviour:
       Data: 55|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Enable to set the base color of the material to the light color
+      Data: Also changes the material base color, alongside its emission color.
     - Name: 
       Entry: 8
       Data: 
@@ -998,9 +992,8 @@ MonoBehaviour:
       Data: 58|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Brightness multiplier of the materials that should change color based
-        on AudioLink. Intensity for Light Volumes and Point Light Volumes should
-        be setup in their components
+      Data: Brightness of the affected materials. Set light brightness on each light
+        component.
     - Name: 
       Entry: 8
       Data: 
@@ -1078,7 +1071,7 @@ MonoBehaviour:
       Data: 64|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: List of the Light Volumes that should be affected by AudioLink
+      Data: Baked volumes that follow the audio.
     - Name: 
       Entry: 8
       Data: 
@@ -1141,7 +1134,7 @@ MonoBehaviour:
       Data: 68|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: List of the Point Light Volumes that should be affected by AudioLink
+      Data: Point, Spot and Area lights that follow the audio.
     - Name: 
       Entry: 8
       Data: 
@@ -1204,8 +1197,7 @@ MonoBehaviour:
       Data: 72|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: List of the Mesh Renderers that have materials that should change color
-        based on AudioLink
+      Data: Renderers whose material colors follow the audio.
     - Name: 
       Entry: 8
       Data: 

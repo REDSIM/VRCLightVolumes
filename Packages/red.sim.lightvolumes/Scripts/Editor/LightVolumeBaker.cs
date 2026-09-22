@@ -89,7 +89,7 @@ namespace VRCLightVolumes {
                 LightVolumeInstance volume = volumes[i];
                 if (!IsBakeVolume(_unityManager, volume) || !registeredVolumes.Add(volume)) continue;
                 if (LightVolumeTools.GetVoxelCount(volume) < 0) {
-                    Debug.LogError($"[LightVolumes] Can't add {volume.gameObject.name} to the Progressive bake. Resolution is invalid or the voxel count is too large!", volume);
+                    Debug.LogError($"[LightVolumes] Can't bake {volume.gameObject.name}. Check Resolution or lower Voxels Per Unit.", volume);
                     continue;
                 }
                 int additionalProbeId = GetAdditionalProbeId(_progressiveVolumes.Count);
@@ -113,7 +113,7 @@ namespace VRCLightVolumes {
 
             LightVolumeManager manager = _unityManager;
             if (!HasProgressiveCompletionProbeResult()) {
-                Debug.LogWarning("[LightVolumes] Progressive baking ended without the completion-probe result. Temporary registrations were removed and Light Volume data was left unchanged.", manager);
+                Debug.LogWarning("[LightVolumes] The Progressive bake did not finish. Light Volume data is unchanged.", manager);
                 ResetUnityBakeState();
                 return;
             }
@@ -138,13 +138,15 @@ namespace VRCLightVolumes {
 
             if (lightProbesCommitted) {
                 try {
+                    // Unity 2022.3 can retain native probe pointers from the replaced LightingData asset. Reapplying it rebuilds the scene-to-probe map before bakedProbes writes propagate through it.
+                    Lightmapping.lightingDataAsset = Lightmapping.lightingDataAsset;
                     PostProcessLightProbes(manager, false);
                 } catch (Exception exception) {
                     Debug.LogError($"[LightVolumes] {exception}", manager);
                 }
             }
             FinalizeManager(manager);
-            Debug.Log("[LightVolumes] Progressive Light Volume atlas generation queued.");
+            Debug.Log("[LightVolumes] Progressive bake complete. Atlas packing queued.");
         }
 
         // Unregisters every temporary Progressive probe group still owned by this bake.
@@ -236,7 +238,7 @@ namespace VRCLightVolumes {
 
             int voxelCount = LightVolumeTools.GetVoxelCount(volume);
             if (voxelCount < 0) {
-                Debug.LogError($"[LightVolumes] Can't save light volume {volume.gameObject.name} 3D texture. Resolution is invalid or the voxel count is too large!", volume);
+                Debug.LogError($"[LightVolumes] Can't save {volume.gameObject.name}. Check Resolution or lower Voxels Per Unit.", volume);
                 return false;
             }
 
@@ -247,7 +249,7 @@ namespace VRCLightVolumes {
             using (NativeArray<float> validity = new NativeArray<float>(voxelCount, Allocator.Temp)) {
 #pragma warning disable CS0618
                 if (!UnityEditor.Experimental.Lightmapping.GetAdditionalBakedProbes(id, probes, validity)) {
-                    Debug.LogError("[LightVolumes] Can't grab light volume data. No additional baked probes found!", volume);
+                    Debug.LogError("[LightVolumes] No baked probes were returned for this Light Volume.", volume);
                     return false;
                 }
 #pragma warning restore CS0618
@@ -283,7 +285,7 @@ namespace VRCLightVolumes {
 
             Scene scene = volume.gameObject.scene;
             if (!scene.IsValid() || string.IsNullOrEmpty(scene.path)) {
-                Debug.LogError($"[LightVolumes] Can't save custom bake for light volume {volume.gameObject.name}. Save the containing scene first!", volume);
+                Debug.LogError($"[LightVolumes] Save the scene before baking {volume.gameObject.name}.", volume);
                 return false;
             }
 
@@ -376,7 +378,7 @@ namespace VRCLightVolumes {
                         TryApplyBakeryRuntimeBitmasks();
                     } catch (Exception exception) {
                         _bakeryBitmaskPending = false;
-                        Debug.LogError($"[LightVolumes] Bakery bitmask overrides were disabled after an unexpected compatibility error. {exception}");
+                        Debug.LogError($"[LightVolumes] Bakery bitmask overrides failed. {exception}");
                     }
                 }
                 return;
@@ -397,7 +399,7 @@ namespace VRCLightVolumes {
                 BeginBakeryBake();
             } catch (Exception exception) {
                 ResetBakeryBakeState();
-                Debug.LogError($"[LightVolumes] Bakery start callback failed safely. {exception}");
+                Debug.LogError($"[LightVolumes] Could not prepare Light Volumes for the Bakery bake. {exception}");
             }
         }
 
@@ -434,7 +436,7 @@ namespace VRCLightVolumes {
                 QueueBakeryCompletion();
             } catch (Exception exception) {
                 ResetBakeryBakeState();
-                Debug.LogError($"[LightVolumes] Bakery completion callback failed safely. {exception}");
+                Debug.LogError($"[LightVolumes] Could not read the Bakery bake result. {exception}");
             }
         }
 
@@ -447,7 +449,7 @@ namespace VRCLightVolumes {
                 QueueBakeryCompletion();
             } catch (Exception exception) {
                 ResetBakeryBakeState();
-                Debug.LogError($"[LightVolumes] Bakery Legacy probe callback failed safely. {exception}");
+                Debug.LogError($"[LightVolumes] Could not read the Bakery Legacy probe result. {exception}");
             }
         }
 
@@ -506,7 +508,7 @@ namespace VRCLightVolumes {
             }
             if (finalizeFullRender) {
                 FinalizeManager(manager);
-                Debug.Log("[LightVolumes] Bakery Light Volume atlas generation queued.");
+                Debug.Log("[LightVolumes] Bakery bake complete. Atlas packing queued.");
             }
         }
 

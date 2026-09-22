@@ -288,15 +288,16 @@ namespace VRCLightVolumes.Tests {
             Assert.That(GetSceneComponents<LightVolumeManager>(), Is.Empty);
             GameObject instanceRoot = (GameObject)PrefabUtility.InstantiatePrefab(prefabAsset, _scene);
             Undo.RegisterCreatedObjectUndo(instanceRoot, "Instantiate Light Volumes Prefab");
-            for (int i = 0; i < 30 && GetSceneComponents<LightVolumeManager>().Count == 0; i++) yield return null;
+            LightVolumeInstance volume = instanceRoot.GetComponentInChildren<LightVolumeInstance>(true);
+            PointLightVolumeInstance pointLight = instanceRoot.GetComponentInChildren<PointLightVolumeInstance>(true);
+            yield return WaitForAutomaticEditorChange(
+                () => volume.LightVolumeManager != null && pointLight.LightVolumeManager == volume.LightVolumeManager,
+                "prefab instances to receive their scene Manager");
 
             List<LightVolumeManager> managers = GetSceneComponents<LightVolumeManager>();
             Assert.That(managers, Has.Count.EqualTo(1));
             LightVolumeManager manager = managers[0];
-            AssertRegistered(
-                manager,
-                instanceRoot.GetComponentInChildren<LightVolumeInstance>(true),
-                instanceRoot.GetComponentInChildren<PointLightVolumeInstance>(true));
+            AssertRegistered(manager, volume, pointLight);
         }
 
         [UnityTest]
@@ -328,7 +329,9 @@ namespace VRCLightVolumes.Tests {
                 PrefabUtility.UnloadPrefabContents(contentsRoot);
             }
 
-            for (int i = 0; i < 30 && manager.LightVolumeInstances.Length < 2; i++) yield return null;
+            yield return WaitForAutomaticEditorChange(
+                () => manager.LightVolumeInstances.Length >= 2 && manager.PointLightVolumeInstances.Length >= 2,
+                "updated prefab instances to register both volume types");
             LightVolumeEditorUpdater.FlushPendingSceneChanges();
 
             LightVolumeInstance firstVolume = firstInstance.GetComponentInChildren<LightVolumeInstance>(true);
@@ -356,7 +359,9 @@ namespace VRCLightVolumes.Tests {
             Assert.That(GetSceneComponents<LightVolumeManager>(), Is.Empty);
 
             LightVolumeInstance volume = UdonSharpUndo.AddComponent<LightVolumeInstance>(volumeObject);
-            for (int i = 0; i < 30 && GetSceneComponents<LightVolumeManager>().Count == 0; i++) yield return null;
+            yield return WaitForAutomaticEditorChange(
+                () => volume.LightVolumeManager != null,
+                "the added Light Volume to receive its scene Manager");
 
             LightVolumeManager manager = GetSingleSceneComponent<LightVolumeManager>();
             Assert.That(manager.LightVolumeInstances, Is.EqualTo(new[] { volume }));
@@ -364,7 +369,9 @@ namespace VRCLightVolumes.Tests {
             AssertBackingManager(volume, manager);
 
             PointLightVolumeInstance pointLight = UdonSharpUndo.AddComponent<PointLightVolumeInstance>(pointLightObject);
-            for (int i = 0; i < 30 && pointLight.LightVolumeManager == null; i++) yield return null;
+            yield return WaitForAutomaticEditorChange(
+                () => pointLight.LightVolumeManager != null,
+                "the added Point Light Volume to receive its scene Manager");
 
             Assert.That(GetSceneComponents<LightVolumeManager>(), Is.EqualTo(new[] { manager }));
             Assert.That(manager.LightVolumeInstances, Is.EqualTo(new[] { volume }));
@@ -609,7 +616,9 @@ namespace VRCLightVolumes.Tests {
 
             EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
             _scene = EditorSceneManager.OpenScene(_sceneAssetPath, OpenSceneMode.Single);
-            for (int i = 0; i < 30 && GetSceneComponents<LightVolumeManager>().Count == 0; i++) yield return null;
+            yield return WaitForAutomaticEditorChange(
+                () => GetSceneComponents<LightVolumeManager>().Count != 0,
+                "the reopened scene to receive its Manager");
 
             GameObject instanceRoot = FindPrefabInstanceRoot();
             LightVolumeManager manager = GetSingleSceneComponent<LightVolumeManager>();
@@ -994,6 +1003,17 @@ namespace VRCLightVolumes.Tests {
         private static void QueueAndFlush(GameObject root) {
             LightVolumeEditorUpdater.QueueHierarchyOnboarding(root);
             LightVolumeEditorUpdater.FlushPendingSceneChanges();
+        }
+
+        private static IEnumerator WaitForAutomaticEditorChange(Func<bool> condition, string description) {
+            // Editor update counts do not guarantee that object-change events and delayCall have run.
+            // Keep the real automatic path: do not queue onboarding or flush the updater from this wait.
+            double deadline = EditorApplication.timeSinceStartup + 10d;
+            while (!condition() && EditorApplication.timeSinceStartup < deadline) {
+                EditorApplication.QueuePlayerLoopUpdate();
+                yield return null;
+            }
+            Assert.That(condition(), Is.True, $"Timed out waiting for {description}.");
         }
 
         private static IEnumerator DrainAutomaticEditorChanges(int editorTurns = 4) {

@@ -21,55 +21,55 @@ namespace VRCLightVolumes {
     public class LightVolumeAudioLink : MonoBehaviour
 #endif
     {
-        [Tooltip("Reference to your Audio Link manager that should control Light Volumes")]
+        [Tooltip("Assign the AudioLink component from your scene.")]
 #if UDONSHARP
         public UdonSharpBehaviour AudioLink;
 #else
         public MonoBehaviour AudioLink;
 #endif
-        [Tooltip("Defines which audio band will be used to control Light Volumes. Four bands available: Bass, Low Mid, High Mid, Treble")]
+        [Tooltip("Choose an audio band or the overall Volume to drive the light.")]
         public AudioLinkBand AudioBand = AudioLinkBand.Bass;
-        [Tooltip("Defines how many samples back in history we're getting data from. Can be a value from 0 to 127. Zero means no delay at all")]
+        [Tooltip("How many samples to delay the response. 0 follows the latest audio. Volume ignores this setting.")]
         [Range(0, 127)] public int Delay = 0;
-        [Tooltip("Enables a smoothing algorithm that tries to smooth out flickering that can usually be a problem")]
+        [Tooltip("Softens rapid changes in brightness.")]
         public bool SmoothingEnabled = true;
-        [Tooltip("Value from 0 to 1 that defines how much smoothing should be applied. Zero usually applies just a little bit of smoothing. One smooths out almost all fast blinks and makes intensity changes very slow")]
+        [Tooltip("Higher values give a slower, smoother response.")]
         [Range(0, 1)] public float Smoothing = 0.25f;
 
-        [Tooltip("Inverts Audio Link data to dim the color based on the band, instead of lighting it up.")]
+        [Tooltip("Inverts the band's brightness response before the Add and Multiply adjustments.")]
         public bool Invert = false;
 
-        [Tooltip("Value added to intensity at AudioLink minimum")]
+        [Tooltip("Brightness added when the band is quiet. Raise it to keep some light between beats.")]
         public float MinimumAdd = 0f;
-        [Tooltip("Value added to intensity at AudioLink maximum")]
+        [Tooltip("Brightness added when the band reaches its maximum.")]
         public float MaximumAdd = 0f;
 
-        [Tooltip("Value multiplied with intensity at AudioLink minimum")]
+        [Tooltip("Audio brightness multiplier when the band is quiet.")]
         public float MinimumMultiply = 1f;
-        [Tooltip("Value multiplied with intensity at AudioLink maximum")]
+        [Tooltip("Audio brightness multiplier when the band reaches its maximum.")]
         public float MaximumMultiply = 1f;
 
         [Space]
-        [Tooltip("Auto uses Theme Colors 0, 1, 2, 3 for Bass, LowMid, HighMid, Treble. Override Color allows you to set the static color value")]
+        [Tooltip("Auto uses the theme color for each audio band. Override Color uses your chosen color.")]
         public AudioLinkColor ColorMode = AudioLinkColor.Auto;
 
-        [Tooltip("Makes color fully saturated and fully bright before applying Audio Link effect. AudioLink already affects auto theme colors at runtime for some reason, so it prevents doubling the animation, which is especially visible when using Delay")]
+        [Tooltip("Makes theme colors fully bright and saturated before the audio response. Use to avoid applying their existing brightness animation twice.")]
         public bool NormalizeColors = true;
 
-        [Tooltip("Color that will be used when Override Color is enabled")]
+        [Tooltip("Color used in Override Color mode.")]
         [ColorUsage(showAlpha: false)] public Color Color = Color.white;
 
-        [Tooltip("Enable to set the base color of the material to the light color")]
+        [Tooltip("Also changes the material base color, alongside its emission color.")]
         public bool SetBaseColor = false;
-        [Tooltip("Brightness multiplier of the materials that should change color based on AudioLink. Intensity for Light Volumes and Point Light Volumes should be setup in their components")]
+        [Tooltip("Brightness of the affected materials. Set light brightness on each light component.")]
         public float MaterialsIntensity = 2f;
 
         [Space]
-        [Tooltip("List of the Light Volumes that should be affected by AudioLink")]
+        [Tooltip("Baked volumes that follow the audio.")]
         public LightVolumeInstance[] TargetLightVolumes;
-        [Tooltip("List of the Point Light Volumes that should be affected by AudioLink")]
+        [Tooltip("Point, Spot and Area lights that follow the audio.")]
         public PointLightVolumeInstance[] TargetPointLightVolumes;
-        [Tooltip("List of the Mesh Renderers that have materials that should change color based on AudioLink")]
+        [Tooltip("Renderers whose material colors follow the audio.")]
         public Renderer[] TargetMeshRenderers;
 
         // shader property IDs
@@ -196,7 +196,7 @@ namespace VRCLightVolumes {
             return _audioData[index];
         }
 
-        // Gets color with max brightness and saturation. Applies on top of the color chord color because AL dims the brightness of this color by default, which makes no sense to use with smoothing, delayed effects, etc.
+        // Removes the theme color's brightness animation before the band response. This avoids applying brightness changes twice with delayed or smoothed effects.
         private Color NormalizeColor(Color color) {
             if (NormalizeColors) {
                 Color.RGBToHSV(color, out float h, out float s, out float v);
@@ -228,7 +228,7 @@ namespace VRCLightVolumes {
             // Smoothing speed depends on the color difference
             float smoothing = Time.deltaTime / Mathf.Lerp(Mathf.Lerp(0.25f, 1f, Smoothing), Mathf.Lerp(1e-05f, 0.1f, Smoothing), Mathf.Pow(diff * 1.5f, 0.1f));
 
-            // Actually smoothing the value
+            // Smooth the sampled value.
             _prevData = Mathf.Lerp(_prevData, alData, smoothing);
             return _prevData;
         }

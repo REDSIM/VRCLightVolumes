@@ -3,13 +3,13 @@
 <p align="center"> <img src="./Documentation/LogoMain.png#gh-dark-mode-only" alt="VRC Light Volumes Main Logo" width="627" /></p>
 <p align="center"> <img src="./Documentation/LogoMainBright.png#gh-light-mode-only" alt="VRC Light Volumes Main Logo" width="627" /></p>
 
-VRC Light Volumes is an optimized voxel-based and analytic lighting solution for Unity and VRChat that complements Unity Light Probes.
+VRC Light Volumes is an optimized voxel-based and analytic lighting solution for Unity and VRChat.
 
 **[Installation process described here](#Installation-through-VRChat-Creator-Companion)**
 
 **[Start using VRC Light Volumes with the setup guide](./Documentation/HowToUse.md)**
 
-This is a free and open-source asset. If it is useful to you, you can **[support the project on Patreon](https://www.patreon.com/red_sim/)**.
+This is a free and open-source asset. If you really like it, you can **[support the project on Patreon](https://www.patreon.com/red_sim/)**.
 
 ![](./Documentation/Preview_0.png)
 

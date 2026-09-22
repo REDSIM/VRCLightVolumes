@@ -145,6 +145,10 @@ namespace VRCLightVolumes.Tests {
                 { "AutoUpdateTextures", typeof(bool) },
                 { "AdditiveMaxOverdraw", typeof(int) },
                 { "ForceSceneLighting", typeof(bool) },
+                { "ShaderStripping", typeof(bool) },
+                { "AutoShaderFeatures", typeof(bool) },
+                { "ShaderFeatures", typeof(int) },
+                { "ShaderFeaturesSchema", typeof(int) },
                 { "BakingMode", typeof(int) },
                 { "VolumeBitmask", typeof(int) },
                 { "ProbeBitmask", typeof(int) },
@@ -180,7 +184,7 @@ namespace VRCLightVolumes.Tests {
                 { "HasAutoShadowTextureUpdates", typeof(bool) }
             };
 
-            Assert.That(expectedFields.GetLength(0), Is.EqualTo(55), "Update the contract deliberately when its baseline changes.");
+            Assert.That(expectedFields.GetLength(0), Is.EqualTo(59), "Update the contract deliberately when its baseline changes.");
             FieldInfo[] declaredFields = typeof(LightVolumeManager).GetFields(PublicInstanceDeclared);
             Array.Sort(declaredFields, (left, right) => left.MetadataToken.CompareTo(right.MetadataToken));
             Assert.That(declaredFields, Has.Length.EqualTo(expectedFields.GetLength(0)), "Unexpected public instance field changed the serialized/Udon ABI.");

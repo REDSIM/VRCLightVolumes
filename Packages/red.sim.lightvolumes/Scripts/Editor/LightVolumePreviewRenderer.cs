@@ -133,7 +133,7 @@ namespace VRCLightVolumes {
             if (voxelCount <= 0) return;
             if (!SystemInfo.supportsInstancing) {
                 if (!_reportedMissingInstancing) {
-                    Debug.LogError("[LightVolumes] GPU instancing is not supported by the current graphics device. Voxel preview cannot be rendered.");
+                    Debug.LogError("[LightVolumes] Voxel preview needs GPU instancing, which this device does not support.");
                     _reportedMissingInstancing = true;
                 }
 
@@ -201,11 +201,11 @@ namespace VRCLightVolumes {
                         throw;
                     }
                     if (!shader.isSupported && !_reportedMissingShader) {
-                        Debug.LogError($"[LightVolumes] Shader '{PreviewShaderName}' is not supported by the current graphics API. Voxel preview cannot be rendered.");
+                        Debug.LogError($"[LightVolumes] Voxel preview is unavailable: this graphics API does not support '{PreviewShaderName}'.");
                         _reportedMissingShader = true;
                     }
                 } else if (!_reportedMissingShader) {
-                    Debug.LogError($"[LightVolumes] Shader '{PreviewShaderName}' was not found. Voxel preview cannot be rendered.");
+                    Debug.LogError($"[LightVolumes] Voxel preview is unavailable: shader '{PreviewShaderName}' is missing.");
                     _reportedMissingShader = true;
                 }
             }

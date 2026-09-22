@@ -7,15 +7,15 @@ namespace VRCLightVolumes {
     [DisallowMultipleComponent]
     public class LightVolume : MonoBehaviour {
         [Header("Volume Setup")]
-        [Tooltip("Defines whether this volume can be moved at runtime.")]
+        [Tooltip("Allow this volume to move in game.")]
         public bool Dynamic;
-        [Tooltip("Additive volumes apply their light on top of others as an overlay.")]
+        [Tooltip("Add this volume's lighting on top of other volumes.")]
         public bool Additive;
-        [Tooltip("Multiplies the volume's color by this value.")]
+        [Tooltip("Tint the volume's lighting.")]
         [ColorUsage(showAlpha: false)] public Color Color = Color.white;
-        [Tooltip("Brightness of the volume.")]
+        [Tooltip("Adjust the brightness.")]
         public float Intensity = 1f;
-        [Tooltip("Size in meters of this Light Volume's overlapping regions for smooth blending with other volumes.")]
+        [Tooltip("Blend with other volumes over this distance, in meters.")]
         [Range(0, 1)] public float SmoothBlending = 0.25f;
 
         [Header("Baked Data")]

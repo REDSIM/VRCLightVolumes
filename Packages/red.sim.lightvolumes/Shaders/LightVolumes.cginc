@@ -1,11 +1,12 @@
 #ifndef VRC_LIGHT_VOLUMES_INCLUDED
 #define VRC_LIGHT_VOLUMES_INCLUDED
 
-// Use the package's scene profile even when this file is copied into another shader.
-// Define VRCLV_FORCE_FULL_FEATURES before including a standalone copy without the package.
+// Distribute this include with LightVolumesBuildConfig.cginc beside it.
+// Its first line must be: // VRC Light Volumes: managed shader stripping config
+// Ship only that marker; the installed package fills in the current scene profile.
 // Explicit VRCLV_DISABLE_* tags supplied by the host shader still apply.
 #ifndef VRCLV_FORCE_FULL_FEATURES
-    #include "Packages/red.sim.lightvolumes/Shaders/LightVolumesBuildConfig.cginc"
+    #include "LightVolumesBuildConfig.cginc"
 #endif
 
 // Close parent dependencies here as well as in the scene editor. A host shader may

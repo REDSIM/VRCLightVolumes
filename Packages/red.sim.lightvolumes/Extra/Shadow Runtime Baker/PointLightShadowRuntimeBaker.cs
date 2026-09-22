@@ -17,11 +17,11 @@ namespace VRCLightVolumes {
     public class PointLightShadowRuntimeBaker : MonoBehaviour
 #endif
     {
-        [Tooltip("Point Light Volume instance that receives the runtime-baked shadow texture.")]
+        [Tooltip("Point, Spot or Area light whose shadows this component updates.")]
         public PointLightVolumeInstance TargetPointLightVolume;
-        [Tooltip("Bake one full shadow cubemap when this behaviour is enabled.")]
+        [Tooltip("Captures shadows once when this component is enabled.")]
         public bool BakeOnEnable = true;
-        [Tooltip("Continuously bakes the target's complete shadow directly into the Manager atlas through a delayed Udon event loop.")]
+        [Tooltip("Updates shadows repeatedly while enabled. Use for a moving light or moving shadow casters.")]
         public bool Realtime = false;
 
         private PointLightVolumeInstance _configuredTargetPointLightVolume;

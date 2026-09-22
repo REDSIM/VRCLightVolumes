@@ -91,9 +91,8 @@ MonoBehaviour:
       Data: 5|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Defines whether this point light volume can be moved at runtime. Disabling
-        this option slightly improves performance. Don't forget to enable "Auto Update
-        Volumes" in your Light Volumes Setup to get these dynamic updates!
+      Data: Enable for a light that moves in game. Also enable Auto Update Volumes
+        on the Manager.
     - Name: 
       Entry: 8
       Data: 
@@ -156,8 +155,7 @@ MonoBehaviour:
       Data: 9|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Point Light is the most performant type. For static lighting, prefer
-        baked additive Light Volumes.
+      Data: Choose Point for a bulb, Spot for a flashlight or Area for a panel.
     - Name: 
       Entry: 8
       Data: 
@@ -220,7 +218,7 @@ MonoBehaviour:
       Data: 13|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: "Multiplies the point light volume\u2019s color by this value."
+      Data: Tints the light. White keeps the colors of its texture source.
     - Name: 
       Entry: 8
       Data: 
@@ -307,7 +305,8 @@ MonoBehaviour:
       Data: 18|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Brightness of the point light volume.
+      Data: Adjust brightness after setting Light Source Size. Set to 0 to turn the
+        light off.
     - Name: 
       Entry: 8
       Data: 
@@ -364,9 +363,8 @@ MonoBehaviour:
       Data: 21|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Controls per-surface Point Light shading and shadow opacity based on
-        surface normal. 0 disables this extra shading and shadows for this light;
-        1 applies them fully. Modern individual speculars use the same light mask.
+      Data: Controls surface shading and shadow strength. At 0, the light has no
+        directional shading or shadows.
     - Name: 
       Entry: 8
       Data: 
@@ -450,7 +448,7 @@ MonoBehaviour:
       Data: 27|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: World-space position used by this point light volume.
+      Data: Light position in world space. Updated from the Transform.
     - Name: 
       Entry: 8
       Data: 
@@ -507,9 +505,8 @@ MonoBehaviour:
       Data: 30|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Light source size used by parametric Point Lights, parametric Spot Lights,
-        cookies and cubemap projections. It affects calculated range and broadens
-        size-aware specular highlights in modern compatible shaders.
+      Data: Emitter radius in meters. Larger sources reach farther and produce broader
+        specular highlights.
     - Name: 
       Entry: 8
       Data: 
@@ -641,8 +638,7 @@ MonoBehaviour:
       Data: 38|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Area Light width in meters. Affects textured Area Light emission and
-        size-aware Area Light speculars in modern compatible shaders.
+      Data: Area light width in meters. Changes its lit area and specular highlight.
     - Name: 
       Entry: 8
       Data: 
@@ -717,7 +713,7 @@ MonoBehaviour:
       Data: 43|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: World-space spotlight direction used by parametric and LUT spot lights.
+      Data: Spot direction in world space. Updated from the Transform.
     - Name: 
       Entry: 8
       Data: 
@@ -780,7 +776,7 @@ MonoBehaviour:
       Data: 47|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Rotation used by area lights, cubemap projections and cookie projections.
+      Data: Orientation of the Area light or projected image. Updated from the Transform.
     - Name: 
       Entry: 8
       Data: 
@@ -837,7 +833,7 @@ MonoBehaviour:
       Data: 50|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Spotlight cone falloff multiplier used by parametric spot lights.
+      Data: Controls how softly a Spot light fades at its cone edge.
     - Name: 
       Entry: 8
       Data: 
@@ -903,8 +899,8 @@ MonoBehaviour:
       Data: 54|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Spotlight cone angle shown in degrees in the inspector. Stored internally
-        as a half-angle in radians.
+      Data: Spot cone half-angle in radians. The Inspector shows the full angle in
+        degrees.
     - Name: 
       Entry: 8
       Data: 
@@ -961,7 +957,7 @@ MonoBehaviour:
       Data: 57|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Cosine of the spotlight outer angle used by parametric and LUT spot lights.
+      Data: Cosine of the Spot cone half-angle. Set from Angle.
     - Name: 
       Entry: 8
       Data: 
@@ -1018,7 +1014,7 @@ MonoBehaviour:
       Data: 60|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Tangent of the spotlight outer angle used by cookie projection.
+      Data: Tangent of the Spot cone half-angle. Used for cookie projection.
     - Name: 
       Entry: 8
       Data: 
@@ -1075,8 +1071,8 @@ MonoBehaviour:
       Data: 63|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Width / height aspect used by custom spotlight cookie projection. 1 keeps
-        a square projector; values above 1 compress projected height.
+      Data: Width-to-height ratio of a Spot cookie. 1 is square; higher values make
+        the projection shorter.
     - Name: 
       Entry: 8
       Data: 
@@ -1142,8 +1138,7 @@ MonoBehaviour:
       Data: 67|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Area Light height in meters. Affects textured Area Light emission and
-        size-aware Area Light speculars in modern compatible shaders.
+      Data: Area light height in meters. Changes its lit area and specular highlight.
     - Name: 
       Entry: 8
       Data: 
@@ -1218,8 +1213,7 @@ MonoBehaviour:
       Data: 72|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Squared range after which light will be culled. Recalculated by the Light
-        Volume Manager.
+      Data: Squared light range. Calculated by the Manager.
     - Name: 
       Entry: 8
       Data: 
@@ -1276,9 +1270,7 @@ MonoBehaviour:
       Data: 75|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Average squared lossy scale of the light. Light Source Size uses this
-        for range and size-aware specular calculations. Updates with UpdateTransform()
-        method.
+      Data: Squared scale used for light range and specular size. Set by UpdateTransform().
     - Name: 
       Entry: 8
       Data: 
@@ -1347,8 +1339,8 @@ MonoBehaviour:
       Data: 80|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Reference to the world's single Light Volume Manager. Assign it before
-        registration and do not change it afterwards.
+      Data: The Manager that owns this light. Assign it before registration and keep
+        the same Manager afterwards.
     - Name: 
       Entry: 8
       Data: 
@@ -1405,8 +1397,8 @@ MonoBehaviour:
       Data: 83|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Internal stable manager registry tie-breaker used when this point light
-        volume is enabled at runtime. Use SetWeight(float weight) to change priority.
+      Data: Breaks ties between lights with the same priority. Use SetWeight() to
+        change priority.
     - Name: 
       Entry: 8
       Data: 
@@ -1469,8 +1461,7 @@ MonoBehaviour:
       Data: 87|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Manager registry sort weight. Higher weights are uploaded to shaders
-        first.
+      Data: Light priority. Higher values are considered first.
     - Name: 
       Entry: 8
       Data: 
@@ -1602,7 +1593,7 @@ MonoBehaviour:
       Data: 96|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Texture source used by this light's active LUT, cookie or cubemap projection.
+      Data: Texture used for the active LUT, cookie or cubemap projection.
     - Name: 
       Entry: 8
       Data: 
@@ -1665,7 +1656,7 @@ MonoBehaviour:
       Data: 100|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Material source used by this light's active LUT, cookie or cubemap projection.
+      Data: Material used for the active LUT, cookie or cubemap projection.
     - Name: 
       Entry: 8
       Data: 
@@ -1723,8 +1714,7 @@ MonoBehaviour:
       Data: 103|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Projection mode used by this light. 0 = parametric, 1 = LUT, 2 = custom
-        cookie or cubemap.
+      Data: 'Projection type: 0 = Parametric, 1 = LUT, 2 = Custom cookie or cubemap.'
     - Name: 
       Entry: 8
       Data: 
@@ -1782,9 +1772,8 @@ MonoBehaviour:
       Data: 106|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Updates this light's custom projection slice every frame while the Manager's
-        Auto Update Textures option is enabled. Disable it to keep a snapshot captured
-        during the last texture-array rebuild.
+      Data: Refreshes animated projection sources each frame. Also requires Auto
+        Update Textures on the Manager. Turn off to keep a snapshot.
     - Name: 
       Entry: 8
       Data: 
@@ -1967,7 +1956,8 @@ MonoBehaviour:
       Data: 116|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Updates this light's shadow map texture every frame.
+      Data: Refreshes the assigned shadow source each frame. Also requires Auto Update
+        Textures on the Manager.
     - Name: 
       Entry: 8
       Data: 
@@ -2025,7 +2015,7 @@ MonoBehaviour:
       Data: 119|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Index of the shadow map used by this light. -1 means no shadow.
+      Data: Assigned shadow map slot. -1 means no shadow map.
     - Name: 
       Entry: 8
       Data: 
@@ -2083,8 +2073,8 @@ MonoBehaviour:
       Data: 122|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Keeps baked shadows fixed in world space instead of moving with the light.
-        This costs slightly more at runtime.
+      Data: Keeps baked shadows in their original world positions when the light
+        moves.
     - Name: 
       Entry: 8
       Data: 
@@ -2142,7 +2132,7 @@ MonoBehaviour:
       Data: 125|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: World-space position where the shadow map was baked.
+      Data: Light position when its shadows were baked.
     - Name: 
       Entry: 8
       Data: 
@@ -2200,7 +2190,7 @@ MonoBehaviour:
       Data: 128|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: World-space rotation where the shadow map was baked.
+      Data: Light rotation when its shadows were baked.
     - Name: 
       Entry: 8
       Data: 
@@ -2325,8 +2315,8 @@ MonoBehaviour:
       Data: 135|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Near clip plane used by the shadow bake camera. Higher values can clip
-        nearby occluders.
+      Data: Closest distance captured by the shadow camera. Objects nearer than this
+        cannot cast shadows.
     - Name: 
       Entry: 8
       Data: 
@@ -2393,8 +2383,8 @@ MonoBehaviour:
       Data: 139|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Far clip plane used by the shadow bake camera. Shadow casters outside
-        the near-far range are clipped. 0 uses this light's current culling range.
+      Data: Farthest distance captured by the shadow camera. Set to 0 to use the
+        light range.
     - Name: 
       Entry: 8
       Data: 
@@ -2516,9 +2506,9 @@ MonoBehaviour:
       Data: 146|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: World-space bias in meters applied while baking this light's shadow map.
-        Larger values reduce self-shadow artifacts, but can detach contact edges.
-        Requires rebaking.
+      Data: Moves the shadow capture depth by this distance in meters. Increase to
+        reduce self-shadow artifacts; too much separates shadows from objects. Rebake
+        after changes.
     - Name: 
       Entry: 8
       Data: 
@@ -2585,9 +2575,7 @@ MonoBehaviour:
       Data: 150|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Shadow blur radius applied after baking, normalized to 128x128 shadow
-        resolution. Editor and runtime baking use the Spherical Blur setting below.
-        0 keeps the baked shadow map unblurred. Requires rebaking.
+      Data: Softens the shadow edges. Set to 0 for no blur. Rebake after changes.
     - Name: 
       Entry: 8
       Data: 
@@ -2654,9 +2642,8 @@ MonoBehaviour:
       Data: 154|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Hardens shadows near the contact areas. Can produce artefacts, so use
-        with caution. Requires rebaking. More performant when set to 0 in realtime
-        mode. Spherical Blur also applies to contact hardening samples.
+      Data: Sharpens shadows near contact points. Reduce it if artifacts appear.
+        Rebake after changes.
     - Name: 
       Entry: 8
       Data: 
@@ -2726,9 +2713,8 @@ MonoBehaviour:
       Data: 158|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Queues this light for a one-shot in-game shadow bake when its runtime
-        instance starts. The Manager completes one queued light per frame. The editor-baked
-        shadow texture is not included in the build or asset bundle.
+      Data: Captures shadows once at startup. The Manager bakes one queued light
+        per frame. The Editor-baked shadow is omitted from the build.
     - Name: 
       Entry: 8
       Data: 
@@ -2786,7 +2772,8 @@ MonoBehaviour:
       Data: 161|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Resolution used by runtime shadow baking.
+      Data: Resolution of the in-game shadow capture. The Manager resizes it to the
+        shared shadow resolution.
     - Name: 
       Entry: 8
       Data: 
@@ -2853,8 +2840,7 @@ MonoBehaviour:
       Data: 165|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Runtime blur and contact hardening sample preset. 0 = low, 1 = medium,
-        2 = high.
+      Data: 'Blur quality for in-game shadows: 0 = Low, 1 = Medium, 2 = High.'
     - Name: 
       Entry: 8
       Data: 
@@ -2924,9 +2910,7 @@ MonoBehaviour:
       Data: 169|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Uses spherical shadow-space blur for editor and in-game shadow bakes,
-        reducing cubemap and single-slice spot projection seams. Disable it to use
-        faster planar blur.
+      Data: Reduces seams when shadows are blurred. Turn off for faster planar blur.
     - Name: 
       Entry: 8
       Data: 
@@ -2984,9 +2968,8 @@ MonoBehaviour:
       Data: 172|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Writes a complete realtime shadow bake directly into the Manager atlas
-        when its resolution matches this light. External runtime bakers enable this
-        mode automatically for realtime updates.
+      Data: Writes shadows directly to the Manager atlas when resolutions match.
+        The runtime baker sets this for repeated updates.
     - Name: 
       Entry: 8
       Data: 
@@ -3050,8 +3033,8 @@ MonoBehaviour:
       Data: 176|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Parametric computes light falloff from settings. LUT uses X for cone
-        falloff and Y for attenuation. Custom projects a cookie or cubemap.
+      Data: Parametric uses light settings. LUT uses a falloff texture. Custom projects
+        a cookie or cubemap.
     - Name: 
       Entry: 8
       Data: 
@@ -3115,8 +3098,8 @@ MonoBehaviour:
       Data: 180|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Radius in meters beyond which the light is culled. Fewer overlapping
-        lights improve performance.
+      Data: Light range in meters. Keep it as small as your scene needs to reduce
+        overlap.
     - Name: 
       Entry: 8
       Data: 
@@ -3180,7 +3163,7 @@ MonoBehaviour:
       Data: 184|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Controls the Spot Light cone falloff.
+      Data: Controls how softly the Spot light fades at its cone edge.
     - Name: 
       Entry: 8
       Data: 
@@ -3250,8 +3233,8 @@ MonoBehaviour:
       Data: 189|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: LUT texture or material. X controls cone falloff and Y controls attenuation.
-        Uncompressed RGBA Half or RGBA Float is recommended for textures.
+      Data: Falloff texture or material. X controls the cone; Y controls distance
+        falloff. Use uncompressed RGBA Half or RGBA Float textures.
     - Name: 
       Entry: 8
       Data: 
@@ -3315,8 +3298,7 @@ MonoBehaviour:
       Data: 193|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Texture or material projected by a Spot Light, or used as the textured
-        emitter surface of an Area Light.
+      Data: Image or material projected by a Spot light or emitted by an Area light.
     - Name: 
       Entry: 8
       Data: 
@@ -3380,7 +3362,7 @@ MonoBehaviour:
       Data: 197|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Cubemap texture or material projected by a Point Light.
+      Data: Cubemap or material projected by a Point light.
     - Name: 
       Entry: 8
       Data: 
@@ -3444,8 +3426,8 @@ MonoBehaviour:
       Data: 201|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Bakes this light into light probes so it can affect objects without Light
-        Volumes support. Intended for static lights.
+      Data: Includes this light in baked Light Probes for objects without Light Volumes
+        support. Use for static lights.
     - Name: 
       Entry: 8
       Data: 
@@ -3509,8 +3491,7 @@ MonoBehaviour:
       Data: 205|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Shows the light's culling range gizmo. Use it to reduce unnecessary overlap
-        between Point Light Volumes.
+      Data: Shows the light range. Use it to reduce overlap between lights.
     - Name: 
       Entry: 8
       Data: 
@@ -3574,8 +3555,8 @@ MonoBehaviour:
       Data: 209|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Enables baked shadows for this light. Baked shadows can still affect
-        dynamic objects such as avatars.
+      Data: Enables shadows. Click Bake Shadows after changing the light or nearby
+        objects.
     - Name: 
       Entry: 8
       Data: 
@@ -3775,7 +3756,7 @@ MonoBehaviour:
       Data: 222|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Shows the shadow near and far clip plane gizmo.
+      Data: Shows the nearest and farthest distances included in the shadow capture.
     - Name: 
       Entry: 8
       Data: 
@@ -3839,8 +3820,8 @@ MonoBehaviour:
       Data: 226|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Forces Spot Light shadows to bake and store as a cubemap even when the
-        spot angle is below 180 degrees.
+      Data: Uses a cubemap for Spot shadows. Enable for a full Spot Angle of 180
+        degrees or more.
     - Name: 
       Entry: 8
       Data: 
@@ -3904,8 +3885,8 @@ MonoBehaviour:
       Data: 230|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Baked shadow map source for this light. Bake Shadows generates it automatically;
-        compatible textures and materials can also be assigned manually.
+      Data: Filled by Bake Shadows. You can also assign a compatible shadow texture
+        or material.
     - Name: 
       Entry: 8
       Data: 

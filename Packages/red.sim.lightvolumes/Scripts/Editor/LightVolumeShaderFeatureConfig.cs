@@ -1,12 +1,15 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Text;
 using UnityEditor;
 using UnityEditor.Build;
 using UnityEditor.Build.Reporting;
+using UnityEditor.PackageManager;
 using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.SceneManagement;
+using PackageInfo = UnityEditor.PackageManager.PackageInfo;
 #if UDONSHARP
 using VRC.SDKBase.Editor;
 using VRC.SDKBase.Editor.BuildPipeline;
@@ -100,6 +103,8 @@ namespace VRCLightVolumes {
     // Specializes the shared include only for Play Mode and builds, without shader keywords or variants.
     [InitializeOnLoad]
     internal static class LightVolumeShaderFeatureConfig {
+        private const string ConfigFileName = "LightVolumesBuildConfig.cginc";
+        internal const string ConfigMarker = "// VRC Light Volumes: managed shader stripping config";
         private const string ConfigAssetPath = "Packages/red.sim.lightvolumes/Shaders/LightVolumesBuildConfig.cginc";
         private static readonly string[] _disableTags = {
             "VRCLV_DISABLE_REGULAR_VOLUMES", "VRCLV_DISABLE_ADDITIVE_VOLUMES",
@@ -117,7 +122,10 @@ namespace VRCLightVolumes {
         private static bool _detectionDirty = true;
         private static int _detectedSceneHandle;
         private static LightVolumeShaderFeatures _detectedFeatures;
-        private static string _appliedSource;
+        private static readonly Dictionary<string, string> _configSources = new Dictionary<string, string>(StringComparer.Ordinal);
+        private static readonly Dictionary<string, string> _configErrors = new Dictionary<string, string>(StringComparer.Ordinal);
+        private static readonly HashSet<string> _pendingConfigImports = new HashSet<string>(StringComparer.Ordinal);
+        private static bool _configDiscoveryPending = true;
         private static bool _sdkBuild;
 #if UDONSHARP
         private static IVRCSdkBuilderApi _buildApi;
@@ -162,6 +170,7 @@ namespace VRCLightVolumes {
             Undo.undoRedoPerformed += OnUndoRedo;
             AssemblyReloadEvents.beforeAssemblyReload += Shutdown;
             EditorApplication.quitting += Shutdown;
+            Events.registeredPackages += OnPackagesChanged;
             QueueUpdate();
         }
 
@@ -176,6 +185,7 @@ namespace VRCLightVolumes {
             Undo.undoRedoPerformed -= OnUndoRedo;
             AssemblyReloadEvents.beforeAssemblyReload -= Shutdown;
             EditorApplication.quitting -= Shutdown;
+            Events.registeredPackages -= OnPackagesChanged;
             EditorApplication.delayCall -= Refresh;
             EditorApplication.delayCall -= WatchBuild;
             EditorApplication.update -= CheckBuildFinished;
@@ -471,6 +481,7 @@ namespace VRCLightVolumes {
         internal static string BuildConfigSource(LightVolumeShaderFeatures features) {
             features = NormalizeFeatures(features);
             StringBuilder source = new StringBuilder();
+            source.Append(ConfigMarker).Append('\n');
             source.Append("#ifndef VRC_LIGHT_VOLUMES_BUILD_CONFIG_INCLUDED\n#define VRC_LIGHT_VOLUMES_BUILD_CONFIG_INCLUDED\n\n");
             source.Append("// Generated for the primary VRChat world scene. No disable tags means all features are available.\n\n");
             for (int i = 0; i < _disableTags.Length; i++) {
@@ -480,12 +491,99 @@ namespace VRCLightVolumes {
             return source.ToString();
         }
 
-        // Restores the current session profile if a package update or source control replaces the generated include.
-        internal static void OnConfigImported(string assetPath) {
-            if (_writing) return;
-            if (!string.Equals(assetPath, ConfigAssetPath, StringComparison.Ordinal)) return;
-            _appliedSource = null;
+        // Imports update the small path cache directly; folder/package changes request one indexed search.
+        internal static void OnConfigAssetsChanged(string[] importedAssets, string[] deletedAssets, string[] movedAssets, string[] movedFromAssetPaths) {
+            bool changed = RemoveConfigAssets(deletedAssets) | RemoveConfigAssets(movedFromAssetPaths);
+            changed |= RecordConfigAssets(importedAssets);
+            changed |= RecordConfigAssets(movedAssets);
+            if (changed) QueueUpdate();
+        }
+
+        // Exact names select candidates. The first-line marker authorizes writes.
+        internal static bool IsConfigAssetPath(string assetPath) {
+            return !string.IsNullOrEmpty(assetPath)
+                && (assetPath.StartsWith("Assets/", StringComparison.Ordinal) || assetPath.StartsWith("Packages/", StringComparison.Ordinal))
+                && assetPath.EndsWith("/" + ConfigFileName, StringComparison.Ordinal);
+        }
+
+        // File.ReadAllText decodes the BOM. No trimming or later-line match can opt a file in.
+        internal static bool HasConfigMarker(string source) {
+            if (string.IsNullOrEmpty(source)) return false;
+            using (StringReader reader = new StringReader(source)) {
+                return string.Equals(reader.ReadLine(), ConfigMarker, StringComparison.Ordinal);
+            }
+        }
+
+        private static bool RecordConfigAssets(string[] assetPaths) {
+            bool changed = false;
+            for (int i = 0; i < assetPaths.Length; i++) {
+                string assetPath = assetPaths[i];
+                if (AssetDatabase.IsValidFolder(assetPath)) {
+                    _configDiscoveryPending = true;
+                    changed = true;
+                } else if (IsConfigAssetPath(assetPath)) {
+                    // Include our own imports: the deferred content comparison stops the loop,
+                    // without losing an unrelated copy imported in the same callback.
+                    _configSources[assetPath] = null;
+                    changed = true;
+                }
+            }
+            return changed;
+        }
+
+        // A folder deletion/move can be reported without a separate event for each child.
+        private static bool RemoveConfigAssets(string[] assetPaths) {
+            bool changed = false;
+            for (int i = 0; i < assetPaths.Length; i++) {
+                string assetPath = assetPaths[i];
+                string prefix = assetPath.TrimEnd('/') + "/";
+                List<string> removed = new List<string>();
+                foreach (string configPath in _configSources.Keys) {
+                    if (string.Equals(configPath, assetPath, StringComparison.Ordinal) || configPath.StartsWith(prefix, StringComparison.Ordinal)) removed.Add(configPath);
+                }
+                for (int j = 0; j < removed.Count; j++) {
+                    _configSources.Remove(removed[j]);
+                    _configErrors.Remove(removed[j]);
+                    _pendingConfigImports.Remove(removed[j]);
+                    changed = true;
+                }
+                if (string.Equals(assetPath, ConfigAssetPath, StringComparison.Ordinal)) {
+                    _configDiscoveryPending = true;
+                    changed = true;
+                }
+            }
+            return changed;
+        }
+
+        private static void OnPackagesChanged(PackageRegistrationEventArgs changes) {
+            _configDiscoveryPending = true;
             QueueUpdate();
+        }
+
+        // FindAssets uses Unity's asset index, including packages; never walk the project filesystem.
+        private static void DiscoverConfigAssets() {
+            if (!_configDiscoveryPending) return;
+            string[] guids = AssetDatabase.FindAssets("LightVolumesBuildConfig");
+            _configSources.Clear();
+            _configSources[ConfigAssetPath] = null;
+            for (int i = 0; i < guids.Length; i++) {
+                string assetPath = AssetDatabase.GUIDToAssetPath(guids[i]);
+                if (IsConfigAssetPath(assetPath) && !AssetDatabase.IsValidFolder(assetPath)) _configSources[assetPath] = null;
+            }
+            _pendingConfigImports.RemoveWhere(assetPath => !_configSources.ContainsKey(assetPath));
+            foreach (string assetPath in new List<string>(_configErrors.Keys)) {
+                if (!_configSources.ContainsKey(assetPath)) _configErrors.Remove(assetPath);
+            }
+            _configDiscoveryPending = false;
+        }
+
+        // Package asset paths are virtual for registry/Git/local packages. ImportAsset still uses the virtual path.
+        private static string GetConfigFilePath(string assetPath) {
+            if (assetPath.StartsWith("Packages/", StringComparison.Ordinal)) {
+                PackageInfo package = PackageInfo.FindForAssetPath(assetPath);
+                if (package != null) return Path.Combine(package.resolvedPath, assetPath.Substring(package.assetPath.Length + 1));
+            }
+            return Path.Combine(Path.GetDirectoryName(Application.dataPath), assetPath);
         }
 
         // Inspector changes are immediate in Play Mode; authoring only saves the selection for the next play/build session.
@@ -585,21 +683,68 @@ namespace VRCLightVolumes {
         }
 #endif
 
-        // A content comparison avoids reimporting every dependent shader when only a light's transform/color/count changes.
+        // All copies receive one profile. Cached/equal content never causes a file write or shader reimport.
         private static bool WriteConfig(LightVolumeShaderFeatures features) {
             try {
+                DiscoverConfigAssets();
                 if (HasAvatarSdk) features = LightVolumeShaderFeatures.All;
                 string source = BuildConfigSource(features);
-                if (string.Equals(_appliedSource, source, StringComparison.Ordinal)) return true;
-                string existing = File.Exists(ConfigAssetPath) ? File.ReadAllText(ConfigAssetPath) : null;
-                if (!string.Equals(existing, source, StringComparison.Ordinal)) {
-                    _writing = true;
-                    File.WriteAllText(ConfigAssetPath, source, new UTF8Encoding(false));
-                    AssetDatabase.ImportAsset(ConfigAssetPath, ImportAssetOptions.ForceUpdate | ImportAssetOptions.ForceSynchronousImport);
+                List<string> paths = new List<string>(_configSources.Keys);
+                paths.Sort(StringComparer.Ordinal);
+                bool success = true;
+                _writing = true;
+                for (int i = 0; i < paths.Count; i++) {
+                    string assetPath = paths[i];
+                    if (string.Equals(_configSources[assetPath], source, StringComparison.Ordinal)) continue;
+                    try {
+                        string filePath = GetConfigFilePath(assetPath);
+                        bool exists = File.Exists(filePath);
+                        // Do not recreate deleted third-party copies from a stale cache.
+                        if (!exists && !string.Equals(assetPath, ConfigAssetPath, StringComparison.Ordinal)) {
+                            _configSources.Remove(assetPath);
+                            _configErrors.Remove(assetPath);
+                            _pendingConfigImports.Remove(assetPath);
+                            continue;
+                        }
+                        string existing = exists ? File.ReadAllText(filePath) : null;
+                        // Check the current contents before any overwrite, even for previously managed copies.
+                        if (exists && !HasConfigMarker(existing)) {
+                            _configSources.Remove(assetPath);
+                            _configErrors.Remove(assetPath);
+                            _pendingConfigImports.Remove(assetPath);
+                            continue;
+                        }
+                        if (!string.Equals(existing, source, StringComparison.Ordinal)) {
+                            File.WriteAllText(filePath, source, new UTF8Encoding(false));
+                            _pendingConfigImports.Add(assetPath);
+                        }
+                        _configSources[assetPath] = source;
+                        _configErrors.Remove(assetPath);
+                    } catch (Exception exception) {
+                        success = false;
+                        _configSources[assetPath] = null;
+                        if (!_configErrors.TryGetValue(assetPath, out string previous) || previous != exception.Message) {
+                            Debug.LogError("[LightVolumes] Could not update shader configuration '" + assetPath + "'. Make this file writable before entering Play Mode or building. " + exception.Message);
+                            _configErrors[assetPath] = exception.Message;
+                        }
+                    }
                 }
-                _appliedSource = source;
-                return true;
+                // Write every file before importing, so dependent shaders see a consistent profile.
+                if (_pendingConfigImports.Count > 0) {
+                    List<string> changedPaths = new List<string>(_pendingConfigImports);
+                    changedPaths.Sort(StringComparer.Ordinal);
+                    AssetDatabase.StartAssetEditing();
+                    try {
+                        for (int i = 0; i < changedPaths.Count; i++) AssetDatabase.ImportAsset(changedPaths[i], ImportAssetOptions.ForceUpdate | ImportAssetOptions.ForceSynchronousImport);
+                    } finally {
+                        AssetDatabase.StopAssetEditing();
+                    }
+                    // Retain pending paths if importing fails, even though their disk content is already current.
+                    for (int i = 0; i < changedPaths.Count; i++) _pendingConfigImports.Remove(changedPaths[i]);
+                }
+                return success;
             } catch (Exception exception) {
+                _configDiscoveryPending = true;
                 Debug.LogError("[LightVolumes] Could not apply shader features. The shader configuration must be writable before building. " + exception.Message);
                 return false;
             } finally {
@@ -608,14 +753,10 @@ namespace VRCLightVolumes {
         }
     }
 
-    // Keeps an externally restored package include consistent with the scene's serialized settings.
+    // New, moved and restored shader integrations follow the same scene profile as the package include.
     internal sealed class LightVolumeShaderFeatureAssetPostprocessor : AssetPostprocessor {
-        // Synchronous imports initiated by the writer are ignored, preventing refresh loops.
         private static void OnPostprocessAllAssets(string[] importedAssets, string[] deletedAssets, string[] movedAssets, string[] movedFromAssetPaths) {
-            for (int i = 0; i < importedAssets.Length; i++) {
-                if (!importedAssets[i].EndsWith("/LightVolumesBuildConfig.cginc", StringComparison.Ordinal)) continue;
-                LightVolumeShaderFeatureConfig.OnConfigImported(importedAssets[i]);
-            }
+            LightVolumeShaderFeatureConfig.OnConfigAssetsChanged(importedAssets, deletedAssets, movedAssets, movedFromAssetPaths);
         }
     }
 

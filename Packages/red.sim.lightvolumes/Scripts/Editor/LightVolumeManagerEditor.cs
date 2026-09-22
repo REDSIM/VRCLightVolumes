@@ -59,8 +59,8 @@ namespace VRCLightVolumes {
             LightVolumeShaderFeatures.SmoothBounds
         };
         private static readonly GUIContent[] ShaderFeatureLabels = {
-            new GUIContent("Regular Volumes", "Baked Light Volumes that provide the scene's base lighting."),
-            new GUIContent("Additive Volumes", "Baked Light Volumes that add lighting over the base lighting."),
+            new GUIContent("Regular Volumes", "Use baked volumes for the scene's base lighting."),
+            new GUIContent("Additive Volumes", "Add baked lighting on top of the base lighting."),
             new GUIContent("Point Lights", "Point Light Volume shading."),
             new GUIContent("Spot Lights", "Spot Light Volume shading and cone falloff."),
             new GUIContent("Area Lights", "Area Light Volume shading and specular highlights."),
@@ -68,14 +68,14 @@ namespace VRCLightVolumes {
             new GUIContent("Point Cookies", "Cubemap projection for Point Light Volumes."),
             new GUIContent("Spot Cookies", "Cookie projection for Spot Light Volumes."),
             new GUIContent("Area Cookies", "Textured emission from Area Light Volumes."),
-            new GUIContent("Shadows", "Master switch for baked and runtime shadows from Point, Spot and Area Light Volumes. Requires at least one light type."),
-            new GUIContent("Froxel Clustering", "Camera-relative clustered light selection. Requires at least one light type; the sequential fallback remains available."),
-            new GUIContent("Volume Rotation", "Rotates baked directional lighting. Shared by Regular Volumes and Additive Volumes; requires at least one volume type."),
-            new GUIContent("World Space Shadows", "Keeps baked shadows fixed at their world-space bake origin while lights move. Requires an enabled shadow map type."),
-            new GUIContent("Cubemap Shadows", "Six-face shadow maps for Point, Area and wide-angle Spot Light Volumes."),
-            new GUIContent("Single-slice Shadows", "Single-slice shadow maps. Requires Spot Lights and Shadows."),
-            new GUIContent("Light Probes Blending", "Blends regular Light Volumes with light probes outside their bounds. Requires Regular Volumes."),
-            new GUIContent("Smooth Bounds", "Smoothly blends a regular volume's outer boundary when no second volume contains the sample. Requires Regular Volumes; overlapping volumes can still blend when disabled.")
+            new GUIContent("Shadows", "Keep baked and runtime shadows. Enable at least one light type."),
+            new GUIContent("Froxel Clustering", "Skip lights that can't reach a surface. Enable at least one light type."),
+            new GUIContent("Volume Rotation", "Rotate baked lighting. Enable Regular Volumes or Additive Volumes."),
+            new GUIContent("World Space Shadows", "Keep shadows at their baked position as lights move. Enable a shadow map type."),
+            new GUIContent("Cubemap Shadows", "Shadows for Point, Area and wide-angle Spot lights."),
+            new GUIContent("Single-slice Shadows", "Shadows for narrow Spot lights. Enable Spot Lights and Shadows."),
+            new GUIContent("Light Probes Blending", "Blend with Light Probes outside volume bounds. Enable Regular Volumes."),
+            new GUIContent("Smooth Bounds", "Soften outer volume edges. Enable Regular Volumes. Overlapping volumes still blend when this is off.")
         };
         private static GUIContent _bakedShadowIndicatorContent;
         private static GUIContent _pendingShadowIndicatorContent;
@@ -203,11 +203,11 @@ namespace VRCLightVolumes {
             EditorGUILayout.Space(EditorGUIUtility.singleLineHeight * 0.5f);
 
             if (LVUtils.IsInPrefabAsset(_manager))
-                EditorGUILayout.HelpBox("This component is part of a prefab asset.\nEdit the instance placed in a scene.", MessageType.Warning);
+                EditorGUILayout.HelpBox("Edit the Manager instance in a scene.", MessageType.Warning);
             if (_multipleManagers) {
                 string primaryName = _primaryManager != null ? _primaryManager.name : "none";
-                string selection = _manager == _primaryManager ? "This is the primary Manager. All other Managers are ignored." : $"This Manager is ignored.";
-                EditorGUILayout.HelpBox($"Multiple Light Volume Managers were found in loaded scenes. {selection}\nRemove the extra Managers before building.", MessageType.Error);
+                string selection = _manager == _primaryManager ? "This Manager is used." : $"This Manager is ignored.";
+                EditorGUILayout.HelpBox($"More than one Manager is loaded. {selection}\nRemove the extra Managers before building.", MessageType.Error);
                 GUILayout.Space(8f);
                 if (_manager != _primaryManager) return;
             }
@@ -216,12 +216,12 @@ namespace VRCLightVolumes {
             GUILayout.Label(
                 new GUIContent(
                     $"Data size in VRAM: <b>{FormatMegabytes(_cachedVramBytes)} MB</b>",
-                    "Estimated peak texture memory used by VRC Light Volumes. Includes loaded atlas, cookie and shadow sources, runtime arrays, active froxel masks, packed Hi-Z, persistent Bake In Game outputs and runtime-shadow bake scratch."),
+                    ""),
                 RichLabelStyle);
             GUILayout.Label(
                 new GUIContent(
                     $"Data size in bundle: <b>{FormatMegabytes(_cachedBundleBytes)} MB (Approximately)</b>",
-                    "Estimated compressed texture payload kept by the build: the final Light Volume atlas, projection-source textures and baked shadows. Runtime arrays, froxel masks, Hi-Z and Bake In Game preview shadows are excluded."),
+                    "Estimated compressed build size."),
                 RichLabelStyle);
             GUILayout.Space(8f);
 
@@ -452,9 +452,9 @@ namespace VRCLightVolumes {
         private static GUIContent GetShadowIndicatorContent(bool baked, bool bakeInGame) {
             if (_bakedShadowIndicatorContent == null) {
                 Texture icon = GetThemedUnityIcon("Shadow Icon").image;
-                _bakedShadowIndicatorContent = new GUIContent(icon, "Shadows are enabled and baked");
-                _pendingShadowIndicatorContent = new GUIContent(icon, "Shadows are enabled but not baked");
-                _runtimeShadowIndicatorContent = new GUIContent(icon, "Shadows are enabled and will be baked at runtime");
+                _bakedShadowIndicatorContent = new GUIContent(icon, "Shadows baked");
+                _pendingShadowIndicatorContent = new GUIContent(icon, "Shadows need a bake");
+                _runtimeShadowIndicatorContent = new GUIContent(icon, "Shadows bake in game");
             }
             if (baked) return _bakedShadowIndicatorContent;
             return bakeInGame ? _runtimeShadowIndicatorContent : _pendingShadowIndicatorContent;
@@ -509,7 +509,7 @@ namespace VRCLightVolumes {
 
             GUILayout.Space(8f);
             if (!_manager.FroxelLayoutValidPreview) {
-                GUILayout.Label(new GUIContent("Froxel Layout: <b>waiting for a camera render</b>", "The grid and its packed mask textures are shown after clustering has been calculated for a camera."), RichLabelStyle);
+                GUILayout.Label(new GUIContent("Froxel Layout: <b>waiting for a camera render</b>", "The grid appears when a camera uses clustering."), RichLabelStyle);
                 return;
             }
 
@@ -524,12 +524,12 @@ namespace VRCLightVolumes {
             GUILayout.Label(
                 new GUIContent(
                     $"Fine Froxels: <b>{columns} x {rows} x {slices} ({(long)columns * rows * slices:N0} froxels)</b>",
-                    "The detailed camera grid currently used by shaders. The texture resolution is the actual packed Fine mask atlas written by the clustering blit."),
+                    "The grid used to choose lights for each part of the view."),
                 RichLabelStyle);
             GUILayout.Label(
                 new GUIContent(
                     $"Coarse Froxels: <b>{coarseColumns} x {coarseRows} x {coarseSlices} ({(long)coarseColumns * coarseRows * coarseSlices:N0} froxels)</b>",
-                    "The helper grid currently used to reject unrelated lights. The texture resolution is the actual packed Coarse mask atlas written by the clustering blit."),
+                    "The larger grid used to narrow down possible lights."),
                 RichLabelStyle);
         }
 
@@ -553,21 +553,21 @@ namespace VRCLightVolumes {
             if (isBakery) {
                 if (BakeryEditorBridge.IsAvailable) {
                     if (!BakeryEditorBridge.SupportsFullRenderLifecycle) {
-                        EditorGUILayout.HelpBox("This Bakery version does not expose the full render lifecycle required for automatic Light Volume import and atlas finalization. Update Bakery to enable it.", MessageType.Warning);
+                        EditorGUILayout.HelpBox("Update Bakery to import and pack Light Volumes automatically.", MessageType.Warning);
                     }
                     using (new EditorGUI.DisabledScope(!BakeryEditorBridge.SupportsRuntimeBitmasks)) {
                         DrawMask("Volume Bitmask", "VolumeBitmask");
                         DrawMask("Probe Bitmask", "ProbeBitmask");
                     }
                     if (!BakeryEditorBridge.SupportsRuntimeBitmasks) {
-                        EditorGUILayout.HelpBox("This Bakery version does not expose compatible implicit-group bitmasks. Bitmask overrides are disabled.", MessageType.Warning);
+                        EditorGUILayout.HelpBox("Update Bakery to use Volume Bitmask and Probe Bitmask.", MessageType.Warning);
                     }
                     EditorGUILayout.PropertyField(serializedObject.FindProperty("FixLightProbesL1"));
                     EditorGUILayout.PropertyField(serializedObject.FindProperty("Denoise"));
                 } else {
                     string message = BakeryEditorBridge.IsInstalled
-                        ? "The installed Bakery API is incomplete or incompatible with VRC Light Volumes. Update Bakery to use Bakery mode."
-                        : "Bakery mode requires the Bakery asset.";
+                        ? "Update Bakery to use Bakery mode."
+                        : "Install Bakery to use Bakery mode.";
                     EditorGUILayout.HelpBox(message, MessageType.Error);
                 }
             }
@@ -592,7 +592,7 @@ namespace VRCLightVolumes {
             GUILayout.Space(InspectorSectionSpacing);
             using (new EditorGUILayout.HorizontalScope()) {
                 if (hasLightVolumes) {
-                    if (GUILayout.Button(new GUIContent("Pack Light Volumes", "Rebuilds the Light Volume 3D atlas."))) LightVolumeManagerEditorBackend.GenerateAtlas(_manager);
+                    if (GUILayout.Button(new GUIContent("Pack Light Volumes", "Pack the baked volume textures into the atlas."))) LightVolumeManagerEditorBackend.GenerateAtlas(_manager);
                 }
                 if (hasPointLights) {
                     using (new EditorGUI.DisabledScope(!_canBatchBakeShadows)) {
@@ -627,7 +627,7 @@ namespace VRCLightVolumes {
                         }
                     }
 
-                    EditorGUILayout.HelpBox("When Shader Stripping is enabled, play mode and world builds strips disabled features from LightVolumes.cginc", MessageType.Info);
+                    EditorGUILayout.HelpBox("Disabled features are removed in Play Mode and world builds.", MessageType.Info);
                     LightVolumeShaderFeatures selected = auto.boolValue ? detected : LightVolumeShaderFeatureConfig.GetManualFeatures(features.intValue, schema.intValue);
                     EditorGUI.BeginChangeCheck();
                     using (new EditorGUI.DisabledScope(auto.boolValue)) {
@@ -661,7 +661,7 @@ namespace VRCLightVolumes {
                     }
                     LightVolumeShaderFeatures effective = LightVolumeShaderFeatureConfig.NormalizeFeatures(selected);
                     if (_shaderStripping.boolValue && !auto.boolValue && (detected & ~effective) != 0) {
-                        EditorGUILayout.HelpBox("Some detected scene features are disabled. Keep every feature that can be used during Play Mode or in the built world.", MessageType.Warning);
+                        EditorGUILayout.HelpBox("Some scene features are disabled. Enable every feature your world uses, including scripted changes.", MessageType.Warning);
                     }
                 }
             }
@@ -673,7 +673,7 @@ namespace VRCLightVolumes {
             Rect row = EditorGUILayout.GetControlRect();
             GUIContent label = new GUIContent("Shader Stripping", _shaderStripping.tooltip);
             if (!strippingAllowed) {
-                label.tooltip = "Disabled because the VRChat Avatars SDK is installed; all shader features stay available.";
+                label.tooltip = "Unavailable with the VRChat Avatars SDK. All features are kept.";
                 using (new EditorGUI.DisabledScope(true)) EditorGUI.Toggle(row, label, false);
                 return false;
             }
@@ -717,46 +717,46 @@ namespace VRCLightVolumes {
         private void DrawDebugSection() {
             GUILayout.Space(InspectorSectionSpacing);
             EditorGUI.BeginChangeCheck();
-            _debugExpanded = EditorGUILayout.BeginFoldoutHeaderGroup(_debugExpanded, new GUIContent("Debug", "Shows read-only live Manager data for troubleshooting."));
+            _debugExpanded = EditorGUILayout.BeginFoldoutHeaderGroup(_debugExpanded, new GUIContent("Debug", "Check the Manager's current state."));
             if (EditorGUI.EndChangeCheck()) SessionState.SetBool(DebugFoldoutSessionKey, _debugExpanded);
 
             if (_debugExpanded) {
-                if (!EditorApplication.isPlaying) EditorGUILayout.HelpBox("Live values are populated in Play Mode. Runtime texture arrays are rebuilt on initialization and are not stored in the build.", MessageType.Info);
+                if (!EditorApplication.isPlaying) EditorGUILayout.HelpBox("Enter Play Mode to see live values.", MessageType.Info);
 
-                LightVolumeDebugGUI.DrawGroupHeader("Runtime Texture Arrays", false, "Live texture arrays rebuilt by the Manager and sampled by shaders.");
+                LightVolumeDebugGUI.DrawGroupHeader("Runtime Texture Arrays", false, "The cookie and shadow textures currently in use.");
                 LightVolumeDebugGUI.DrawObject(serializedObject, nameof(LightVolumeManager.CustomTextures), _manager.CustomTextures, typeof(RenderTexture), "Cookie Array");
-                LightVolumeDebugGUI.DrawInt("Cookie Slices", GetTextureDepth(_manager.CustomTextures), "Number of allocated array slices. Each cubemap uses six slices.");
+                LightVolumeDebugGUI.DrawInt("Cookie Slices", GetTextureDepth(_manager.CustomTextures), "Each cubemap uses six slices.");
                 LightVolumeDebugGUI.DrawInt(serializedObject, nameof(LightVolumeManager.CubemapsCount), _manager.CubemapsCount, "Cookie Cubemaps");
-                LightVolumeDebugGUI.DrawBool("Dynamic Cookie Sources", _manager.HasAutoCustomTextureUpdates, "Whether any cookie source must be copied again at runtime.");
+                LightVolumeDebugGUI.DrawBool("Dynamic Cookie Sources", _manager.HasAutoCustomTextureUpdates, "Cookies need updates in game.");
 
                 GUILayout.Space(EditorGUIUtility.standardVerticalSpacing);
                 LightVolumeDebugGUI.DrawObject(serializedObject, nameof(LightVolumeManager.ShadowTextures), _manager.ShadowTextures, typeof(RenderTexture), "Shadow Array");
-                LightVolumeDebugGUI.DrawInt("Shadow Slices", GetTextureDepth(_manager.ShadowTextures), "Number of allocated array slices. Each cubemap shadow uses six slices.");
+                LightVolumeDebugGUI.DrawInt("Shadow Slices", GetTextureDepth(_manager.ShadowTextures), "Each cubemap shadow uses six slices.");
                 LightVolumeDebugGUI.DrawInt(serializedObject, nameof(LightVolumeManager.ShadowMapsCount), _manager.ShadowMapsCount, "Shadow Maps");
                 LightVolumeDebugGUI.DrawInt(serializedObject, nameof(LightVolumeManager.ShadowCubemapsCount), _manager.ShadowCubemapsCount, "Shadow Cubemaps");
-                LightVolumeDebugGUI.DrawBool("Dynamic Shadow Sources", _manager.HasAutoShadowTextureUpdates, "Whether any shadow source must be copied again at runtime.");
+                LightVolumeDebugGUI.DrawBool("Dynamic Shadow Sources", _manager.HasAutoShadowTextureUpdates, "Shadows need updates in game.");
 
-                LightVolumeDebugGUI.DrawGroupHeader("Froxel Clustering", true, "Live clustering textures and the current clustering state.");
-                LightVolumeDebugGUI.DrawObject("Fine Cluster Mask", _manager.FineClusterMaskPreview, typeof(RenderTexture), "The detailed clustered-light mask currently sampled by shaders.");
-                LightVolumeDebugGUI.DrawText("Fine Resolution", GetTextureResolution(_manager.FineClusterMaskPreview), "Actual resolution of the packed Fine mask atlas written by the clustering blit.");
-                LightVolumeDebugGUI.DrawObject("Coarse Cluster Mask", _manager.CoarseClusterMaskPreview, typeof(RenderTexture), "The lower-resolution mask used to reject unrelated lights before building the Fine mask.");
-                LightVolumeDebugGUI.DrawText("Coarse Resolution", GetTextureResolution(_manager.CoarseClusterMaskPreview), "Actual resolution of the packed Coarse mask atlas written by the clustering blit.");
-                LightVolumeDebugGUI.DrawText("Clustering Status", GetClusteringStatus(), "Current runtime state of froxel clustering.");
+                LightVolumeDebugGUI.DrawGroupHeader("Froxel Clustering", true, "Check the grids used to select lights.");
+                LightVolumeDebugGUI.DrawObject("Fine Cluster Mask", _manager.FineClusterMaskPreview, typeof(RenderTexture), "The lights selected for each part of the view.");
+                LightVolumeDebugGUI.DrawText("Fine Resolution", GetTextureResolution(_manager.FineClusterMaskPreview), "The size of the Fine Cluster Mask texture.");
+                LightVolumeDebugGUI.DrawObject("Coarse Cluster Mask", _manager.CoarseClusterMaskPreview, typeof(RenderTexture), "The larger grid used to narrow down possible lights.");
+                LightVolumeDebugGUI.DrawText("Coarse Resolution", GetTextureResolution(_manager.CoarseClusterMaskPreview), "The size of the Coarse Cluster Mask texture.");
+                LightVolumeDebugGUI.DrawText("Clustering Status", GetClusteringStatus(), "Shows whether clustering is ready to use.");
                 DrawShadowCullPyramidDebug();
 
-                LightVolumeDebugGUI.DrawGroupHeader("Runtime State", true, "Live initialization state and the counts currently uploaded by the Manager.");
-                LightVolumeDebugGUI.DrawBool("Runtime Initialized", _manager.RuntimeInitializedPreview, "Whether the Manager has completed runtime initialization.");
-                LightVolumeDebugGUI.DrawInt("Active Light Volumes", _manager.EnabledCount, "Light Volumes currently uploaded to shaders.");
-                LightVolumeDebugGUI.DrawInt("Active Point Lights", _manager.ActivePointLightCountPreview, "Point Light Volumes currently uploaded to shaders.");
-                LightVolumeDebugGUI.DrawInt("Active Shadows", _manager.ActiveShadowCountPreview, "Uploaded Point Light Volumes that currently use a valid shadow map.");
-                LightVolumeDebugGUI.DrawInt("Shadow-Cull Eligible Lights", _manager.ActiveShadowCullCountPreview, "Full-strength shadowed Point Light Volumes eligible for conservative Hi-Z removal.");
+                LightVolumeDebugGUI.DrawGroupHeader("Runtime State", true, "Check whether the Manager is ready and how many lights it uses.");
+                LightVolumeDebugGUI.DrawBool("Runtime Ready", _manager.RuntimeInitializedPreview, "The Manager is ready to update lighting.");
+                LightVolumeDebugGUI.DrawInt("Active Light Volumes", _manager.EnabledCount, "Light Volumes currently available to shaders.");
+                LightVolumeDebugGUI.DrawInt("Active Point Lights", _manager.ActivePointLightCountPreview, "Point Light Volumes currently available to shaders.");
+                LightVolumeDebugGUI.DrawInt("Active Shadows", _manager.ActiveShadowCountPreview, "Active lights with a usable shadow map.");
+                LightVolumeDebugGUI.DrawInt("Shadow-Cull Eligible Lights", _manager.ActiveShadowCullCountPreview, "Lights with full-strength shadows that Shadow Culling can skip in shadowed regions.");
 
-                LightVolumeDebugGUI.DrawGroupHeader("Runtime Materials", true, "Materials used internally by runtime texture and clustering passes.");
-                LightVolumeDebugGUI.DrawObject("Cookie Copy Material", _manager.CubemapFaceMaterial, typeof(Material), "Copies cubemap faces into the runtime cookie array.");
-                LightVolumeDebugGUI.DrawObject("Shadow Depth Material", _manager.RuntimeShadowDepthEncodeMaterial, typeof(Material), "Encodes shadow-camera depth into runtime shadow textures.");
-                LightVolumeDebugGUI.DrawObject("Shadow Blur Material", _manager.RuntimeShadowBlurMaterial, typeof(Material), "Filters runtime shadow textures.");
+                LightVolumeDebugGUI.DrawGroupHeader("Runtime Materials", true, "Materials used to update textures and select lights.");
+                LightVolumeDebugGUI.DrawObject("Cookie Copy Material", _manager.CubemapFaceMaterial, typeof(Material), "Copies cubemap cookies into the atlas.");
+                LightVolumeDebugGUI.DrawObject("Shadow Depth Material", _manager.RuntimeShadowDepthEncodeMaterial, typeof(Material), "Converts camera depth into shadow data.");
+                LightVolumeDebugGUI.DrawObject("Shadow Blur Material", _manager.RuntimeShadowBlurMaterial, typeof(Material), "Softens in-game shadows.");
                 LightVolumeDebugGUI.DrawObject("Clustering Material", _manager.ClusteringMaterialPreview, typeof(Material), "Builds the Fine and Coarse froxel masks.");
-                LightVolumeDebugGUI.DrawObject("Shadow Culling Material", _manager.ShadowCullingMaterialPreview, typeof(Material), "Builds and packs the persistent critical-depth hierarchy.");
+                LightVolumeDebugGUI.DrawObject("Shadow Culling Material", _manager.ShadowCullingMaterialPreview, typeof(Material), "Prepares depth data for Shadow Culling.");
             }
             EditorGUILayout.EndFoldoutHeaderGroup();
         }
@@ -764,28 +764,28 @@ namespace VRCLightVolumes {
         // Exposes the single persistent hierarchy resource. Per-level build textures are temporary
         // and have already been released by the time the Inspector can repaint.
         private void DrawShadowCullPyramidDebug() {
-            LightVolumeDebugGUI.DrawGroupHeader("Shadow Cull Hi-Z", true, "The cached critical-depth hierarchy used to reject fully shadowed froxels.");
-            LightVolumeDebugGUI.DrawText("Hi-Z Status", GetShadowCullPyramidStatus(), "Only a Ready hierarchy is sampled by the clustering shader.");
+            LightVolumeDebugGUI.DrawGroupHeader("Shadow Cull Hi-Z", true, "Depth data used to skip fully shadowed parts of the view.");
+            LightVolumeDebugGUI.DrawText("Hi-Z Status", GetShadowCullPyramidStatus(), "Depth data is used only when the status is Ready.");
             RenderTexture hierarchy = _manager.ShadowCullPyramidPreview;
             LightVolumeDebugGUI.DrawInt("Active Levels", _manager.ShadowCullPyramidValidPreview ? _manager.ShadowCullPyramidLevelCountPreview : 0,
-                "Number of exact max-reduction levels packed into the hierarchy.");
+                "The number of detail levels in the depth data.");
             LightVolumeDebugGUI.DrawInt("Finest Level Resolution", _manager.ShadowCullPyramidValidPreview ? _manager.ShadowCullPyramidFinestResolutionPreview : 0,
-                "Resolution of the most detailed retained Hi-Z level for each shadow-map face.");
+                "The finest detail level kept for each shadow-map face.");
             LightVolumeDebugGUI.DrawInt("Shadow Slices", _manager.ShadowCullPyramidValidPreview ? _manager.ShadowCullPyramidSliceCountPreview : 0,
-                "Number of spot-map and cubemap-face slices represented by the packed hierarchy.");
+                "The number of Spot shadow maps and cubemap faces included.");
 
             if (hierarchy == null) {
-                LightVolumeDebugGUI.DrawText("Packed Hierarchy", "Not Allocated", "The hierarchy is created lazily after shadow-assisted clustering first runs.");
+                LightVolumeDebugGUI.DrawText("Packed Hierarchy", "Not Allocated", "Created when Shadow Culling first runs.");
                 return;
             }
             if (!_manager.ShadowCullPyramidValidPreview) {
-                EditorGUILayout.HelpBox("This cached texture is stale and is not currently sampled. The Hi-Z Status above explains why.", MessageType.Info);
+                EditorGUILayout.HelpBox("This texture is out of date. Check Hi-Z Status above.", MessageType.Info);
             }
             string allocationState = hierarchy.IsCreated() ? string.Empty : " (Released)";
             LightVolumeDebugGUI.DrawObject("Packed Hierarchy" + allocationState, hierarchy, typeof(RenderTexture),
-                "The complete point-filtered RFloat hierarchy used by froxel clustering.");
+                "Depth data used by Shadow Culling.");
             LightVolumeDebugGUI.DrawText("Storage Resolution", GetTextureResolution(hierarchy),
-                "Physical dimensions of the single persistent packed texture.");
+                "The size of the depth texture.");
         }
 
         // Converts the Manager's clustering flags into one inspector status label.

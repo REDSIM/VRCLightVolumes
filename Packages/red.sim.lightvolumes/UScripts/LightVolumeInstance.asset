@@ -100,9 +100,8 @@ MonoBehaviour:
       Data: 6|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Defines whether this volume can be moved at runtime. Disabling this option
-        slightly improves performance. Don't forget to enable "Auto Update Volumes"
-        in your Light Volumes Setup to get these dynamic updates!
+      Data: Enable for a volume that moves in game. Also enable Auto Update Volumes
+        on the Manager.
     - Name: 
       Entry: 8
       Data: 
@@ -159,9 +158,8 @@ MonoBehaviour:
       Data: 9|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Additive volumes apply their light on top of others as an overlay. Useful
-        for movable and toggleable lights. They can also project light onto static
-        lightmapped objects if the surface shader supports it.
+      Data: Adds this baked lighting on top of other lighting. Use it for lights
+        that move or switch together.
     - Name: 
       Entry: 8
       Data: 
@@ -224,7 +222,7 @@ MonoBehaviour:
       Data: 13|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: "Multiplies the volume\u2019s color by this value."
+      Data: Tints the baked lighting. White keeps its original colors.
     - Name: 
       Entry: 8
       Data: 
@@ -311,7 +309,7 @@ MonoBehaviour:
       Data: 18|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Brightness of the volume.
+      Data: Scales the baked brightness. Set to 0 to turn it off.
     - Name: 
       Entry: 8
       Data: 
@@ -368,8 +366,8 @@ MonoBehaviour:
       Data: 21|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Size in meters of this Light Volume's overlapping regions for smooth
-        blending with other volumes.
+      Data: Width of the blend at the edges, in meters. Increase it for a softer
+        transition between volumes.
     - Name: 
       Entry: 8
       Data: 
@@ -444,8 +442,7 @@ MonoBehaviour:
       Data: 26|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Inversed edge smoothing in 3D atlas space. Recalculates via SetSmoothBlending(float
-        radius), UpdateTransform(), and dynamic auto-update.
+      Data: Blend data updated by SetSmoothBlending() and UpdateTransform().
     - Name: 
       Entry: 8
       Data: 
@@ -517,9 +514,8 @@ MonoBehaviour:
       Data: 31|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Texture3D with baked SH data required for future atlas packing. It is
-        removed from the build copy after the atlas is generated. (L0r, L0g, L0b,
-        L1r.z)
+      Data: Baked lighting channel 0. Filled after a bake and packed into the Manager
+        atlas.
     - Name: 
       Entry: 8
       Data: 
@@ -576,9 +572,8 @@ MonoBehaviour:
       Data: 34|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Texture3D with baked SH data required for future atlas packing. It is
-        removed from the build copy after the atlas is generated. (L1r.x, L1g.x,
-        L1b.x, L1g.z)
+      Data: Baked lighting channel 1. Filled after a bake and packed into the Manager
+        atlas.
     - Name: 
       Entry: 8
       Data: 
@@ -635,9 +630,8 @@ MonoBehaviour:
       Data: 37|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Texture3D with baked SH data required for future atlas packing. It is
-        removed from the build copy after the atlas is generated. (L1r.y, L1g.y,
-        L1b.y, L1b.z)
+      Data: Baked lighting channel 2. Filled after a bake and packed into the Manager
+        atlas.
     - Name: 
       Entry: 8
       Data: 
@@ -700,8 +694,7 @@ MonoBehaviour:
       Data: 41|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Editor-only Bakery helper reference. The build preprocessor clears it
-        from the build scene.
+      Data: Bakery helper used during a bake. Removed from the build scene.
     - Name: 
       Entry: 8
       Data: 
@@ -773,7 +766,7 @@ MonoBehaviour:
       Data: 46|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Makes volume brighter or darker.
+      Data: Adjusts the brightness of all baked lighting without rebaking.
     - Name: 
       Entry: 8
       Data: 
@@ -830,7 +823,7 @@ MonoBehaviour:
       Data: 49|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Makes dark volume colors brighter or darker.
+      Data: Adjusts dark parts of the baked lighting without rebaking.
     - Name: 
       Entry: 8
       Data: 
@@ -899,7 +892,7 @@ MonoBehaviour:
       Data: 53|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Makes bright volume colors brighter or darker.
+      Data: Adjusts bright parts of the baked lighting without rebaking.
     - Name: 
       Entry: 8
       Data: 
@@ -977,7 +970,8 @@ MonoBehaviour:
       Data: 58|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Uncheck it if you don't want to rebake this volume's textures.
+      Data: Include this volume in the next bake. Turn off to keep its current baked
+        lighting.
     - Name: 
       Entry: 8
       Data: 
@@ -1034,8 +1028,8 @@ MonoBehaviour:
       Data: 61|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Reserves atlas UV space for this volume without baking its lighting data.
-        Reserved voxels are written as white L0 and zero L1.
+      Data: Reserves a white region in the atlas for custom lighting. Skips the lighting
+        bake for this volume.
     - Name: 
       Entry: 8
       Data: 
@@ -1092,7 +1086,7 @@ MonoBehaviour:
       Data: 64|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Automatically sets the resolution based on the Voxels Per Unit value.
+      Data: Sets the grid size from the bounds and Voxels Per Unit.
     - Name: 
       Entry: 8
       Data: 
@@ -1149,8 +1143,8 @@ MonoBehaviour:
       Data: 67|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Number of voxels used per meter, linearly. This value increases the Light
-        Volume file size cubically.
+      Data: Higher values capture smaller lighting details but take longer to bake.
+        Increase this only where you need more detail.
     - Name: 
       Entry: 8
       Data: 
@@ -1213,7 +1207,8 @@ MonoBehaviour:
       Data: 71|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Manual Light Volume resolution in voxel count.
+      Data: Number of lighting samples along each axis. Used when Adaptive Resolution
+        is off.
     - Name: 
       Entry: 8
       Data: 
@@ -1279,7 +1274,8 @@ MonoBehaviour:
       Data: 75|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Min bounds of Texture0 in 3D atlas space. W stores Scale X.)
+      Data: Atlas position of Texture 0. W stores the X scale. Set when the atlas
+        is packed.
     - Name: 
       Entry: 8
       Data: 
@@ -1336,7 +1332,8 @@ MonoBehaviour:
       Data: 78|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Min bounds of Texture1 in 3D atlas space. W stores Scale Y.
+      Data: Atlas position of Texture 1. W stores the Y scale. Set when the atlas
+        is packed.
     - Name: 
       Entry: 8
       Data: 
@@ -1393,7 +1390,8 @@ MonoBehaviour:
       Data: 81|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Min bounds of Texture2 in 3D atlas space. W stores Scale Z.
+      Data: Atlas position of Texture 2. W stores the Z scale. Set when the atlas
+        is packed.
     - Name: 
       Entry: 8
       Data: 
@@ -1465,9 +1463,8 @@ MonoBehaviour:
       Data: 86|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Inverse rotation of the pose the volume was baked in. Updated when baked
-        data is imported or the atlas is generated; runtime transform updates use
-        this stored bake pose.
+      Data: Inverse rotation at the time of the bake. Used to rotate the stored lighting
+        with the volume.
     - Name: 
       Entry: 8
       Data: 
@@ -1530,8 +1527,7 @@ MonoBehaviour:
       Data: 90|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Inverse TRS matrix that transforms world positions into this volume's
-        unit cube. Updated by UpdateTransform() and dynamic auto-update.
+      Data: Transforms world positions into the volume. Set by UpdateTransform().
     - Name: 
       Entry: 8
       Data: 
@@ -1594,8 +1590,7 @@ MonoBehaviour:
       Data: 94|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Current volume rotation row 0 relative to its baked pose. Updated by
-        UpdateTransform() and dynamic auto-update.
+      Data: First row of the rotation relative to the baked pose. Set by UpdateTransform().
     - Name: 
       Entry: 8
       Data: 
@@ -1652,8 +1647,7 @@ MonoBehaviour:
       Data: 97|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Current volume rotation row 1 relative to its baked pose. Updated by
-        UpdateTransform() and dynamic auto-update.
+      Data: Second row of the rotation relative to the baked pose. Set by UpdateTransform().
     - Name: 
       Entry: 8
       Data: 
@@ -1710,9 +1704,7 @@ MonoBehaviour:
       Data: 100|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: True when the current pose is rotated relative to the baked pose. Updated
-        by UpdateTransform() and dynamic auto-update; an unrotated volume is cheaper
-        to sample.
+      Data: Whether the volume has rotated from its baked pose. Set by UpdateTransform().
     - Name: 
       Entry: 8
       Data: 
@@ -1791,8 +1783,8 @@ MonoBehaviour:
       Data: 106|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Reference to the world's single Light Volume Manager. Assign it before
-        registration and do not change it afterwards.
+      Data: The Manager that owns this volume. Assign it before registration and
+        keep the same Manager afterwards.
     - Name: 
       Entry: 8
       Data: 
@@ -1856,8 +1848,8 @@ MonoBehaviour:
       Data: 110|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Internal stable manager registry tie-breaker used when this volume is
-        enabled at runtime. Use SetWeight(float weight) to change priority.
+      Data: Breaks ties between volumes with the same priority. Use SetWeight() to
+        change priority.
     - Name: 
       Entry: 8
       Data: 
@@ -1921,8 +1913,7 @@ MonoBehaviour:
       Data: 114|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Manager registry sort weight. Higher weights are uploaded to shaders
-        first.
+      Data: Volume priority. Higher values take precedence when volumes overlap.
     - Name: 
       Entry: 8
       Data: 

@@ -51,6 +51,44 @@ namespace VRCLightVolumes.Tests {
             Assert.That(LightVolumeShaderFeatureConfig.GetConfiguredFeatures(null), Is.EqualTo(LightVolumeShaderFeatures.All));
         }
 
+        // Only the exact filename in Unity's asset roots is a candidate for the marker check.
+        [TestCase("Assets/LightVolumesBuildConfig.cginc", true)]
+        [TestCase("Assets/Shader Integration/Includes/LightVolumesBuildConfig.cginc", true)]
+        [TestCase("Packages/com.example.shader/Includes/LightVolumesBuildConfig.cginc", true)]
+        [TestCase("Packages/red.sim.lightvolumes/Shaders/LightVolumesBuildConfig.cginc", true)]
+        [TestCase("Assets/LightVolumesBuildConfig.cginc.meta", false)]
+        [TestCase("Assets/LightVolumesBuildConfig.cginc.backup", false)]
+        [TestCase("Assets/MyLightVolumesBuildConfig.cginc", false)]
+        [TestCase("Assets/LightVolumesBuildConfig.hlsl", false)]
+        [TestCase("Assets/lightvolumesbuildconfig.cginc", false)]
+        [TestCase("Assets/LightVolumesBuildConfig.cginc/Unrelated.cginc", false)]
+        [TestCase("Library/PackageCache/com.example.shader/LightVolumesBuildConfig.cginc", false)]
+        [TestCase("ProjectSettings/LightVolumesBuildConfig.cginc", false)]
+        [TestCase("LightVolumesBuildConfig.cginc", false)]
+        [TestCase("", false)]
+        [TestCase(null, false)]
+        public void ShaderConfigDiscoveryRequiresExactAssetFileName(string assetPath, bool expected) {
+            Assert.That(LightVolumeShaderFeatureConfig.IsConfigAssetPath(assetPath), Is.EqualTo(expected));
+        }
+
+        // The opt-in is an exact first-line comment, independent of platform line endings.
+        [TestCase("// VRC Light Volumes: managed shader stripping config", true)]
+        [TestCase("// VRC Light Volumes: managed shader stripping config\n#define EXAMPLE\n", true)]
+        [TestCase("// VRC Light Volumes: managed shader stripping config\r\n#define EXAMPLE\r\n", true)]
+        [TestCase("// VRC Light Volumes: managed shader stripping config\r#define EXAMPLE\r", true)]
+        [TestCase("\n// VRC Light Volumes: managed shader stripping config", false)]
+        [TestCase("// Custom configuration\n// VRC Light Volumes: managed shader stripping config", false)]
+        [TestCase(" // VRC Light Volumes: managed shader stripping config", false)]
+        [TestCase("// VRC Light Volumes: managed shader stripping config ", false)]
+        [TestCase("// VRC Light Volumes: managed shader stripping config backup", false)]
+        [TestCase("// vrc light volumes: managed shader stripping config", false)]
+        [TestCase("#ifndef VRC_LIGHT_VOLUMES_BUILD_CONFIG_INCLUDED\n", false)]
+        [TestCase("", false)]
+        [TestCase(null, false)]
+        public void ShaderConfigRequiresExactFirstLineMarker(string source, bool expected) {
+            Assert.That(LightVolumeShaderFeatureConfig.HasConfigMarker(source), Is.EqualTo(expected));
+        }
+
         // Neither manual selections nor Auto can override an installed Avatars SDK, including in a mixed SDK project.
         [TestCase(false)]
         [TestCase(true)]
@@ -659,6 +697,7 @@ namespace VRCLightVolumes.Tests {
             if (dependentDefines.Length != 0) expected.AddRange(dependentDefines.Split(','));
 
             CollectionAssert.AreEquivalent(expected, ReadDisableDefines(source));
+            Assert.That(LightVolumeShaderFeatureConfig.HasConfigMarker(source), Is.True);
             Assert.That(source, Does.Not.Contain("#pragma"));
         }
 
@@ -668,6 +707,7 @@ namespace VRCLightVolumes.Tests {
             string source = LightVolumeShaderFeatureConfig.BuildConfigSource(LightVolumeShaderFeatures.All);
 
             Assert.That(ReadDisableDefines(source), Is.Empty);
+            Assert.That(LightVolumeShaderFeatureConfig.HasConfigMarker(source), Is.True);
             Assert.That(source, Does.Not.Contain("#pragma"));
             Assert.That(source, Does.Not.Contain("multi_compile"));
             Assert.That(source, Does.Not.Contain("shader_feature"));
@@ -688,6 +728,7 @@ namespace VRCLightVolumes.Tests {
             };
 
             CollectionAssert.AreEquivalent(expected, ReadDisableDefines(source));
+            Assert.That(LightVolumeShaderFeatureConfig.HasConfigMarker(source), Is.True);
             Assert.That(source, Does.Not.Contain("#pragma"));
         }
 

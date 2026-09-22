@@ -561,7 +561,7 @@ namespace VRCLightVolumes {
         public bool OnBuildRequested(VRCSDKRequestedBuildType requestedBuildType) {
             if (requestedBuildType != VRCSDKRequestedBuildType.Scene) return true;
             if (LightVolumeMigration.ValidateLoadedSceneUdonPairs(out int issueCount, out string issueSummary)) return true;
-            Debug.LogError("[LightVolumes] Build blocked: " + issueCount + " Light Volume setup issue(s) found. " + issueSummary + ". Fix the reported setup, save the affected scene(s), and try building again.");
+            Debug.LogError("[LightVolumes] Build blocked: " + issueCount + " Light Volume setup issue(s) found. " + issueSummary + ". Fix these issues, save the affected scenes, and build again.");
             return false;
         }
     }

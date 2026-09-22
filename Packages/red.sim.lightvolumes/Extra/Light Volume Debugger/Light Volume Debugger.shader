@@ -7,17 +7,17 @@ Shader "Light Volume Samples/Light Volume Debugger" {
         [Header(Light Volumes)]
         [IntRange] _DebugVolumeID("Volume ID", Range(0, 31)) = 0
         [Toggle] _DebugAutoVolumeID("Auto Volume ID", Float) = 0
-        _DebugSphereRadius("Sphere size", Range(0, 1)) = 0.7
+        _DebugSphereRadius("Sphere Size", Range(0, 1)) = 0.7
         _DebugVisibleFraction("Draw Amount", Range(0, 1)) = 1
         _DebugBoundsThickness("Bounds Thickness", Float) = 0.02
         _DebugRegularBoundsColor("Regular Bounds Color", Color) = (0, 1, 1, 1)
         _DebugAdditiveBoundsColor("Additive Bounds Color", Color) = (1, 0.5, 0, 1)
 
         [Header(Point Light Volumes)]
-        [NoScaleOffset] _DebugLightIcon("Light Icon", 2D) = "white" {}
-        _DebugLightIconSize("Light Icon Size", Float) = 0.25
-        _DebugLightIconCutoff("Light Icon Cutout", Range(0, 1)) = 0.5
-        _DebugAreaLightRectColor("Area Light Rect Color", Color) = (1, 1, 0, 1)
+        [NoScaleOffset] _DebugLightIcon("Icon", 2D) = "white" {}
+        _DebugLightIconSize("Icon Size", Float) = 0.25
+        _DebugLightIconCutoff("Icon Cutout", Range(0, 1)) = 0.5
+        _DebugAreaLightRectColor("Area Outline Color", Color) = (1, 1, 0, 1)
     }
 
     SubShader {

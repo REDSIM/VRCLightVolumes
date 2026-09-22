@@ -91,9 +91,8 @@ MonoBehaviour:
       Data: 5|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: "Render Texture used by your video player. Can be just a static texture
-        if you want it to be. Make sure that Enable Mip Maps and Auto Generate Mip
-        Maps are Enabled in the texture\u2019s import settings."
+      Data: Assign your video player texture or a static image. Its average color
+        tints the target lights.
     - Name: 
       Entry: 8
       Data: 
@@ -156,8 +155,7 @@ MonoBehaviour:
       Data: 9|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: Enables a smoothing algorithm that tries to smooth out flickering that
-        is usually a problem. Recommended to always be turned on.
+      Data: Smooths changes in the video color to reduce flicker.
     - Name: 
       Entry: 8
       Data: 
@@ -235,8 +233,7 @@ MonoBehaviour:
       Data: 15|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: List of the Light Volumes that should be affected by the Light Volume
-        TVGI script.
+      Data: Baked volumes to tint with the video color.
     - Name: 
       Entry: 8
       Data: 
@@ -299,8 +296,7 @@ MonoBehaviour:
       Data: 19|UnityEngine.TooltipAttribute, UnityEngine.CoreModule
     - Name: tooltip
       Entry: 1
-      Data: List of the Point Light Volumes that should be affected by the Light
-        Volume TVGI script. Usually you don't need it at all.
+      Data: Point, Spot and Area lights to tint with the video color.
     - Name: 
       Entry: 8
       Data: 

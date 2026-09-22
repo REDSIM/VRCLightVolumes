@@ -19,14 +19,14 @@ namespace VRCLightVolumes {
     public class LightVolumeTVGI : MonoBehaviour
 #endif
     {
-        [Tooltip("Render Texture used by your video player. Can be just a static texture if you want it to be. Make sure that Enable Mip Maps and Auto Generate Mip Maps are Enabled in the texture’s import settings.")]
+        [Tooltip("Assign your video player texture or a static image. Its average color tints the target lights.")]
         public Texture TargetRenderTexture;
-        [Tooltip("Enables a smoothing algorithm that tries to smooth out flickering that is usually a problem. Recommended to always be turned on.")]
+        [Tooltip("Smooths changes in the video color to reduce flicker.")]
         public bool AntiFlickering = true;
         [Space]
-        [Tooltip("List of the Light Volumes that should be affected by the Light Volume TVGI script.")]
+        [Tooltip("Baked volumes to tint with the video color.")]
         public LightVolumeInstance[] TargetLightVolumes;
-        [Tooltip("List of the Point Light Volumes that should be affected by the Light Volume TVGI script. Usually you don't need it at all.")]
+        [Tooltip("Point, Spot and Area lights to tint with the video color.")]
         public PointLightVolumeInstance[] TargetPointLightVolumes;
         
 #if UDONSHARP
@@ -118,7 +118,7 @@ namespace VRCLightVolumes {
         // Smooths and applies the sampled video color to all configured light targets.
         private void SetColor(Color color) {
 
-            // Custom delta time for the async stuff 
+            // Measure the time since the last completed readback.
             float time = Time.time;
             float dTime = time - _timePrev;
             _timePrev = time;
@@ -130,7 +130,7 @@ namespace VRCLightVolumes {
                 float b = color.b - _prevColor.b;
                 float diff = Mathf.Sqrt((2f + rmean) * r * r + 4f * g * g + (3f - rmean) * b * b) / 3;
                 float smoothing = dTime / Mathf.Lerp(0.25f, 1e-05f, Mathf.Pow(diff * 1.5f, 0.1f)); // Smoothing speed depends on the color difference
-                _prevColor = Color.Lerp(_prevColor, color, smoothing); // Actually smooths colors
+                _prevColor = Color.Lerp(_prevColor, color, smoothing);
             } else {
                 _prevColor = color;
             }

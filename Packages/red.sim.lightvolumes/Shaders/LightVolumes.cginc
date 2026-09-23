@@ -3,7 +3,7 @@
 
 // Distribute this include with LightVolumesBuildConfig.cginc beside it.
 // Its first line must be: // VRC Light Volumes: managed shader stripping config
-// Ship only that marker; the installed package fills in the current scene profile.
+// Ship the default config without feature exclusions. The package fills in the scene profile.
 // Explicit VRCLV_DISABLE_* tags supplied by the host shader still apply.
 #ifndef VRCLV_FORCE_FULL_FEATURES
     #include "LightVolumesBuildConfig.cginc"
@@ -99,14 +99,18 @@
     #define VRCLV_DYNAMIC_LOOP [fastopt]
 #endif
 
+#if VRCLV_CLUSTERING_SUPPORTED
+uniform float4 _UdonFroxelRight;      // xyz: axis, w: camera position x
+uniform float4 _UdonFroxelUp;         // xyz: axis, w: camera position y
+uniform float4 _UdonFroxelForward;    // xyz: axis, w: camera position z
+#endif
+
 #ifndef SHADER_TARGET_SURFACE_ANALYSIS
-// GLES3 and baseline Vulkan guarantee only 16 KiB per uniform block and 12 blocks per stage.
-// Three blocks group data by update frequency and leave bindings available for material shaders:
-//   cold regular-volume, scalar, shadow and layout data: 9,856 bytes
-//   per-camera clustering transform data:                  48 bytes
-//   runtime Point Light position and attributes:        10,240 bytes
-// Regular-volume and shadow-reprojection data share a block because they normally stay
-// constant after world loading; clustering transforms update per camera.
+// Unity's D3D11/D3D12 shader path uses SHADER_API_D3D11. One 20,096-byte block fits its
+// 64 KiB limit and leaves more bindings for host shaders and other integrations.
+// Other APIs retain two blocks: 9,856 bytes of volume/scalar/shadow data and 10,240 bytes
+// of runtime light data. Both fit the 16 KiB floor of GLES3, OpenGL and baseline Vulkan.
+// Sizes include all features. Camera changes remain separate from these arrays.
 cbuffer LightVolumeUniforms {
 #endif
 
@@ -192,21 +196,8 @@ uniform float4 _UdonPointLightVolumeShadowReprojectionData[VRCLV_MAX_LIGHTS_COUN
 //   XYZW = Rotation from current world space to baked shadow space.
 uniform float4 _UdonPointLightVolumeShadowRotationData[VRCLV_MAX_LIGHTS_COUNT];
 
-#ifndef SHADER_TARGET_SURFACE_ANALYSIS
+#if !defined(SHADER_TARGET_SURFACE_ANALYSIS) && !defined(SHADER_API_D3D11)
 }
-#endif
-
-// Only the camera basis and position change during normal HMD motion. The enable flag and
-// projection/layout values stay in the cold block because their transitions are infrequent.
-#if VRCLV_CLUSTERING_SUPPORTED
-cbuffer LightVolumeClusteringUniforms {
-uniform float4 _UdonFroxelRight;      // xyz: axis, w: camera position x
-uniform float4 _UdonFroxelUp;         // xyz: axis, w: camera position y
-uniform float4 _UdonFroxelForward;    // xyz: axis, w: camera position z
-}
-#endif
-
-#ifndef SHADER_TARGET_SURFACE_ANALYSIS
 cbuffer PointLightVolumeUniforms {
 #endif
 

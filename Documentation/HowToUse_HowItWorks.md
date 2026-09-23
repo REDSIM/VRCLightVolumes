@@ -23,10 +23,10 @@ This section is for developers and curious users who want to understand how Ligh
 
 The L1 SH data consists of:
 
-- **L0** — Ambient color. The average light color at a point, with no directional information.
-- **L1 Red** — Directional information for red light. A vector pointing toward the average direction the red light comes from. Its length describes how strongly that lighting varies with direction.
-- **L1 Green** — The same directional information for green light.
-- **L1 Blue** — The same directional information for blue light.
+- **L0**: Ambient color. The average light color at a point, with no directional information.
+- **L1 Red**: Directional information for red light. A vector pointing toward the average direction the red light comes from. Its length describes how strongly that lighting varies with direction.
+- **L1 Green**: The same directional information for green light.
+- **L1 Blue**: The same directional information for blue light.
 
 For example, equally bright lights from opposite directions can cancel each other's L1 vectors while L0 stays bright. SH stores the combined lighting, not a list of individual lights.
 
@@ -62,7 +62,7 @@ Reading the atlas and evaluating its lighting happens entirely in the shader. Th
 
 Along with the atlas, the system provides **3D texture coordinates (UVW)** that map positions in the world to the correct part of the atlas. For each surface pixel, the shader finds that position and interpolates lighting from nearby voxels.
 
-After reading L0 and L1, it uses the surface's **normal** — the direction the surface faces — to calculate the lighting. For each red, green and blue channel, the basic formula is:
+After reading L0 and L1, it uses the surface's **normal**, the direction the surface faces, to calculate the lighting. For each red, green and blue channel, the basic formula is:
 
 ```glsl
 Lighting = L0 + dot(L1, WorldNormal);
@@ -102,7 +102,7 @@ Spot lights add a cone to this falloff. Area lights use a different calculation 
 
 ## Froxel Clustering
 
-A **froxel** is a small 3D cell inside the camera's viewing volume, called the **frustum**. **Froxel Clustering** divides this space into a grid and records which Point, Spot and Area lights could reach each cell. This grid follows the camera; it does not store baked lighting like a Regular Light Volume.
+A **froxel** is a small 3D cell inside the camera's viewing volume, called the **frustum**. **Froxel Clustering** divides this space into a grid and records which Point, Spot and Area lights could reach each cell. This grid follows the camera. It does not store baked lighting like a Regular Light Volume.
 
 The grid is built in two stages:
 
@@ -111,7 +111,7 @@ The grid is built in two stages:
 
 When shading a surface, the shader finds its froxel and evaluates only the lights on that cell's final list. The two stages avoid checking every light against every small cell.
 
-![Letters show the possible lights in each cell. The selected Coarse cell contains A and B; its Fine cells test only these two lights, and the selected Fine cell keeps only A.](./Images/FroxelClusteringOverview.svg)
+![Letters show the possible lights in each cell. The selected Coarse cell contains A and B. Its Fine cells test only these two lights, and the selected Fine cell keeps only A.](./Images/FroxelClusteringOverview.svg)
 
 Clustering usually reduces shading work when many lights occupy different parts of a scene. Lights that overlap heavily still share long lists. Building the grid also takes GPU time, so check performance with your scene and grid resolution. See [Froxel Clustering](./HowToUse_FroxelClustering.md) for settings and debug views.
 
@@ -121,7 +121,7 @@ Clustering usually reduces shading work when many lights occupy different parts 
 
 Both sets of values are blurred while retaining their average and variation (**variance**). The shader compares each surface's distance with this data to estimate how much light reaches it. It keeps the **darker of the two estimates** to reduce light leaks. The blur creates the soft shadow edge, or **penumbra**.
 
-Capture and blur happen during the bake; **Realtime** shadows repeat this work during play. EVSM is approximate, so some light can still leak through. **Shadow Bleed Reduction** helps suppress it. See [Shadows](./HowToUse_Shadows.md) for the controls.
+Capture and blur happen during the bake. **Realtime** shadows repeat this work during play. EVSM is approximate, so some light can still leak through. **Shadow Bleed Reduction** helps suppress it. See [Shadows](./HowToUse_Shadows.md) for the controls.
 
 ## Shadow Culling (Hi-Z)
 
@@ -141,11 +141,11 @@ The final **4** means the whole area is in shadow beyond **4 metres** from the l
 
 In a perspective camera, froxels get wider with distance. To check one against a light's shadow, clustering looks at the whole froxel from the light and finds the area it covers in that light's shadow map.
 
-A small projected area uses a **finer Hi-Z level**; a larger area uses a **coarser level**. Both the froxel's size and its position relative to the light affect this choice.
+A small projected area uses a **finer Hi-Z level**. A larger area uses a **coarser level**. Both the froxel's size and its position relative to the light affect this choice.
 
-![The player's camera has widening froxels; rays from a separate light show their small and large projections, which select finer and coarser Hi-Z levels](./Images/ShadowCullingHiZLevels.svg)
+![The player's camera has widening froxels. Rays from a separate light show their small and large projections, which select finer and coarser Hi-Z levels](./Images/ShadowCullingHiZLevels.svg)
 
-Both grids on the right show the same shadow map at different levels. Colored outlines show the froxel projections; shaded cells contain the values read for each check. A projection can cross cell boundaries: **B** covers two cells, so both values must be checked.
+Both grids on the right show the same shadow map at different levels. Colored outlines show the froxel projections. Shaded cells contain the values read for each check. A projection can cross cell boundaries: **B** covers two cells, so both values must be checked.
 
 Clustering compares the froxel's closest distance from the light with these values. If even the closest point is beyond all of them, the whole cell is in shadow and the light can be skipped. For example, a closest point at **6 m** is beyond a **4 m** shadow limit. Cells that could still receive light keep the light for normal shading.
 

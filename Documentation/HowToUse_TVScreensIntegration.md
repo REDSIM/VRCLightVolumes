@@ -27,7 +27,7 @@ Use an **Area Light** with the video player's **Render Texture** as its **Cookie
 
 Changing video frames does not require another shadow bake. For a stationary screen and room, the Cookie can animate while the shadows stay baked. See [Shadows](./HowToUse_Shadows.md) for capture and blur settings.
 
-If the player has no output Render Texture, a [Material source](./HowToUse_PointLightMaterialSources.md) can read its video image. It must receive the actual video texture; copying a screen Material alone may miss texture overrides supplied by the player.
+If the player has no output Render Texture, a [Material source](./HowToUse_PointLightMaterialSources.md) can read its video image. It must receive the actual video texture. Copying a screen Material alone may miss texture overrides supplied by the player.
 
 ![A video screen lighting the surrounding scene.](./Preview_13.png)
 

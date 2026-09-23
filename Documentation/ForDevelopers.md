@@ -18,7 +18,7 @@ The [ASE Shaders folder](../Packages/red.sim.lightvolumes/Shaders/ASE%20Shaders)
 
 Keep the output node's usual material inputs connected. For directionless fog or particles using **Light Volume L0**, set **Point Light Shading** to `0`.
 
-These nodes are available in ASE's node menu; search for **Light Volume**:
+Search for **Light Volume** in ASE's node menu:
 
 | Node | Description |
 | --- | --- |
@@ -27,7 +27,7 @@ These nodes are available in ASE's node menu; search for **Light Volume**:
 | **Light Volume L0** | Ambient color for fog, particles and other surfaces that do not need light direction. |
 | **Light Volume Evaluate** | Converts SH to diffuse lighting using the surface normal. |
 | **Light Volume Specular** | Approximate highlights from existing SH. **Dominant Direction** gives one cheaper highlight. Do not add it on top of SH Specular. |
-| **Is Light Volumes** | `1` when supported Light Volumes are enabled; otherwise `0`. |
+| **Is Light Volumes** | `1` when supported Light Volumes are enabled, `0` otherwise. |
 | **Light Volumes Version** | Scene integration version, not the package version. |
 
 ## Light Volume integration through shader code
@@ -43,7 +43,7 @@ Use target 3.5 or newer. Include `UnityCG.cginc` before `LightVolumes.cginc`. Wi
 ### Where To Add The Lighting
 
 - Add the lighting in **ForwardBase**. **ForwardAdd** would repeat it for each additional Unity light, which is unnecessary.
-- Use the full sample in place of the shader's probe lighting. Probe fallback is already included; keep probes in the scene.
+- Use the full sample in place of the shader's probe lighting. Probe fallback is already included. Keep probes in the scene.
 - For lightmapped meshes, keep your shader's existing lightmap lighting and add the **Additive** result. The examples below calculate only the Light Volume contribution.
 - Keep your shader's direct lights, reflections, AO and emission.
 
@@ -52,30 +52,43 @@ Use target 3.5 or newer. Include `UnityCG.cginc` before `LightVolumes.cginc`. Wi
 
 ## Shipping Without The Package
 
-You can distribute Light Volumes support in two ways:
+The package include shown above requires VRC Light Volumes to be installed. Otherwise, your shader will not compile. To remove that dependency, distribute your own `LightVolumes.cginc` and `LightVolumesBuildConfig.cginc`.
 
-- **Package dependency:** use the package include path shown above. Your shader will not compile without the Light Volumes package installed.
-- **Bundled files:** ship your own `LightVolumes.cginc` and `LightVolumesBuildConfig.cginc`. Your shader then compiles without the package.
+`LightVolumesBuildConfig.cginc` tells [Shader Stripping](#shader-feature-stripping) which features to remove. The installed package manages its contents automatically.
 
-For bundled files, keep both files in the same folder. Ship `LightVolumesBuildConfig.cginc` with only this exact first-line comment:
+- **Main code:** `LightVolumes.cginc` can sit beside your shader, be renamed or be copied directly into your shader code. Keep its config `#include` when copying the code.
+- **Config:** keep `LightVolumesBuildConfig.cginc` as a separate file. By default, it sits beside `LightVolumes.cginc`. You can move it elsewhere under `Assets` or `Packages` if you update the config's `#include` path accordingly.
+
+`LightVolumesBuildConfig.cginc` should contain:
 
 ```hlsl
 // VRC Light Volumes: managed shader stripping config
+#ifndef VRC_LIGHT_VOLUMES_BUILD_CONFIG_INCLUDED
+#define VRC_LIGHT_VOLUMES_BUILD_CONFIG_INCLUDED
+
+// Generated for the primary VRChat world scene. No disable tags means all features are available.
+
+#endif
 ```
 
 > [!IMPORTANT]
-> The filename must be exactly `LightVolumesBuildConfig.cginc`, including capitalization. The first-line marker identifies it as a Light Volumes config that the package may overwrite. If either the filename or marker differs, the file stays untouched and does not receive **Shader Stripping** settings. Keep it writable and reset it to just the marker before distribution; do not ship generated `VRCLV_DISABLE_*` definitions from your test world.
+> Keep the exact filename and first-line comment: they identify a config the package may safely overwrite. Otherwise, automatic [Shader Stripping](#shader-feature-stripping) will not work. Keep the file writable and reset it to the template above before distribution. Do not ship your test world's generated exclusions.
 
-Use the path to your copy in every Light Volumes include. If it is beside the shader:
+If both files sit beside your shader, include the main file after `UnityCG.cginc`:
 
 ```hlsl
 #include "UnityCG.cginc"
 #include "LightVolumes.cginc"
 ```
 
-No extra defines are required. Without the package, all features stay available. With it installed, marked configs follow its **Shader Stripping** settings.
+### How LightVolumesBuildConfig Works
 
-The receiving world supplies the lighting data, so the shader's project doesn't need a Manager. Update your copied `LightVolumes.cginc` when adopting a newer integration version.
+- **Without the package:** the template above keeps all features available. No extra defines or Manager are needed to compile the shader.
+- **With the package:** Light Volumes updates every marked config automatically. World creators use **Light Volume Manager > [Shader Stripping](#shader-feature-stripping)**: **Auto** detects scene features. Turn it off to select features manually. Do not edit the generated config.
+- **Play Mode and world builds:** [Shader Stripping](#shader-feature-stripping) applies when enabled. Entering Play Mode can recompile shaders. Edit Mode keeps all features to avoid recompiling after each scene change.
+- **VRChat Avatars SDK projects:** all features stay available, even with the Worlds SDK also installed.
+
+The receiving world supplies the lighting data at runtime.
 
 ## Directional Shading With Individual Speculars
 
@@ -87,14 +100,14 @@ The Additive version includes only Additive volumes and Point/Spot/Area lights. 
 // Use your shader's world-space position and normal, with normal mapping applied.
 float3 normalWS = normalize(worldNormal);
 float3 viewDir = normalize(_WorldSpaceCameraPos.xyz - worldPos); // Surface toward camera.
-float3 worldPosOffset = 0; // Offset baked-volume sampling only; leave zero normally.
+float3 worldPosOffset = 0; // Offset baked-volume sampling only. Leave zero normally.
 float pointLightShading = 3; // Normal shaping: 0 = off, 1 = softer, higher = sharper.
 
 // All colors are linear. Smoothness and metallic are in 0..1.
 float3 L0, L1r, L1g, L1b, specular;
 
 #ifdef LIGHTMAP_ON
-    // Additive volumes and Point/Spot/Area lights; the shader already handles the lightmap.
+    // Additive volumes and Point/Spot/Area lights. The shader already handles the lightmap.
     LightVolumeAdditiveSHSpecular(worldPos, L0, L1r, L1g, L1b, specular,
         albedo, smoothness, metallic, normalWS, viewDir, worldPosOffset, pointLightShading);
 #else
@@ -128,7 +141,7 @@ float3 L0, L1r, L1g, L1b;
     LightVolumeSH(worldPos, L0, L1r, L1g, L1b, worldPosOffset, normalWS, pointLightShading);
 #endif
 
-// Evaluate directionality; a toon shader can apply its ramp here.
+// Evaluate directionality. A toon shader can apply its ramp here.
 float3 irradiance = LightVolumeEvaluate(normalWS, L0, L1r, L1g, L1b);
 float3 volumeLighting = max(irradiance, 0) * diffuseColor; // Usually the material's albedo.
 ```
@@ -156,46 +169,44 @@ float3 volumeLighting = max(irradiance, 0) * diffuseColor;
 
 ## Separate Lighting Groups
 
-Use the internal `LV_*` functions together to adjust Regular, Additive and Point Light lighting separately. This example returns three diffuse-lighting results for your own tints, intensities or toon ramps.
+If you're making a stylized or toon shader, these helpers give you separate control over lighting and highlights. You get Regular, Additive and Point/Spot/Area lighting, plus separate volume and light speculars. The helpers already loop over lights and handle clustering, overdraw limits and shadows.
 
-Define the function after the Light Volumes include:
-
-```hlsl
-void SampleLightVolumeGroups(float3 worldPos, float3 normalWS,
-    out float3 regular, out float3 additive, out float3 pointLights) {
-    // Regular volumes, including their configured probe fallback.
-    float3 L0 = 0, L1r = 0, L1g = 0, L1b = 0;
-    LV_LightVolumeRegularSH(worldPos, L0, L1r, L1g, L1b);
-    regular = LightVolumeEvaluate(normalWS, L0, L1r, L1g, L1b);
-
-    // Reset the SH values before sampling the next group.
-    L0 = L1r = L1g = L1b = 0;
-    LV_LightVolumeAdditiveSH(worldPos, L0, L1r, L1g, L1b);
-    additive = LightVolumeEvaluate(normalWS, L0, L1r, L1g, L1b);
-
-    // Point, Spot and Area lights.
-    L0 = L1r = L1g = L1b = 0;
-    LV_PointLightVolumeSH(worldPos, normalWS, 3, L0, L1r, L1g, L1b);
-    pointLights = LightVolumeEvaluate(normalWS, L0, L1r, L1g, L1b);
-}
-```
-
-For a surface without lightmaps, keep the shader's existing `probeLighting` as fallback:
+Place this in your fragment function. `normalWS` and `viewDir` must be normalized. `f0` is your material's specular color, such as `lerp(0.04, albedo, metallic)`.
 
 ```hlsl
-float3 regular = probeLighting, additive = 0, pointLights = 0;
-if (LightVolumesEnabled() > 0) {
-    SampleLightVolumeGroups(worldPos, normalize(worldNormal), regular, additive, pointLights);
+float3 R0 = 0, R1r = 0, R1g = 0, R1b = 0;
+float3 A0 = 0, A1r = 0, A1g = 0, A1b = 0;
+float3 P0 = 0, P1r = 0, P1g = 0, P1b = 0;
+float3 pointSpec = 0;
+bool enabled = LightVolumesEnabled() > 0;
+
+// Regular volumes or probe fallback. Skip this for lightmapped meshes.
+#ifndef LIGHTMAP_ON
+if (enabled) LV_LightVolumeRegularSH(worldPos, R0, R1r, R1g, R1b);
+else LV_SampleLightProbe(R0, R1r, R1g, R1b);
+#endif
+
+// Additive volumes and local lights go into separate SH sets.
+if (enabled) {
+    LV_LightVolumeAdditiveSH(worldPos, A0, A1r, A1g, A1b);
+    LV_PointLightVolumeSHSpecular(worldPos, normalWS, viewDir, smoothness, f0, 0, P0, P1r, P1g, P1b, pointSpec);
 }
 
-// Independent intensities: Regular, Additive, then Point/Spot/Area.
-float3 intensity = float3(1, 1, 1);
-float3 irradiance = regular * intensity.x + additive * intensity.y + pointLights * intensity.z;
-// Apply the material color after combining the groups.
-float3 volumeLighting = max(irradiance, 0) * diffuseColor;
+// Evaluate the diffuse groups and the combined volume/probe highlight.
+float3 regular = LightVolumeEvaluate(normalWS, R0, R1r, R1g, R1b);
+float3 additive = LightVolumeEvaluate(normalWS, A0, A1r, A1g, A1b);
+float3 pointLights = LightVolumeEvaluate(normalWS, P0, P1r, P1g, P1b);
+float3 volumeSpec = LightVolumeSpecularDominant(f0, smoothness, normalWS, viewDir, R0 + A0, R1r + A1r, R1g + A1g, R1b + A1b);
+
+// Your code here: adjust each group, then combine with your material's diffuse color.
+
+float3 volumeLighting = max(regular + additive + pointLights, 0) * diffuseColor;
+volumeLighting += volumeSpec + pointSpec;
 ```
 
-For lightmapped surfaces, leave out `regular` and add only `additive` and `pointLights` to the existing lightmap lighting. Keep the `LightVolumesEnabled()` check: internal helpers do not check availability themselves. Their API can change between releases.
+The `0` argument disables extra Point Light normal shaping for your own toon response. Shadows still apply to both `pointLights` and `pointSpec`. For lightmapped meshes, add `volumeLighting` to your existing lightmap lighting.
+
+These internal `LV_*` helpers can change between releases. For finer control, see [LightVolumes.cginc](../Packages/red.sim.lightvolumes/Shaders/LightVolumes.cginc).
 
 ## Custom Specular BRDF
 
@@ -217,26 +228,26 @@ float3 LV_SpecularBRDFDirection_Custom(float3 f0, float roughness, float roughne
 #include "Packages/red.sim.lightvolumes/Shaders/LightVolumes.cginc"
 ```
 
-In your fragment function, use the combined sampler as usual; it calls your hook for each contributing light:
+In your fragment function, the combined sampler calls your hook for each contributing light:
 
 ```hlsl
 float3 L0, L1r, L1g, L1b, specular;
 LightVolumeSHSpecular(worldPos, L0, L1r, L1g, L1b, specular, albedo, smoothness, metallic, normalWS, viewDir);
 ```
 
-Use `LightVolumeAdditiveSHSpecular()` for the lightmapped branch. Supply normalized normal and view directions. The hook receives a normalized light direction. `l0` includes color, attenuation, cookie, shadow and normal-based masking. Return that light's final specular contribution; the caller adds it to the output.
+Use `LightVolumeAdditiveSHSpecular()` for the lightmapped branch. Supply normalized normal and view directions. The hook receives a normalized light direction. `l0` includes color, attenuation, cookie, shadow and normal-based masking. Return that light's final specular contribution. The caller adds it to the output.
 
-`roughness` is squared perceptual roughness; `roughnessSq` is its square. `NoV` is the clamped normal/view dot product. `lightSpreadSq` describes source spread for size-aware highlights.
+`roughness` is squared perceptual roughness. `roughnessSq` is its square. `NoV` is the clamped normal/view dot product. `lightSpreadSq` describes source spread for size-aware highlights.
 
-Keep shared material calculations outside the hook, which runs for each contributing light. Define it in source; no `shader_feature` or `multi_compile` keyword is needed.
+Keep shared material calculations outside the hook, which runs for each contributing light. Define it in source. No `shader_feature` or `multi_compile` keyword is needed.
 
 ## Shader feature stripping
 
-**Shader Stripping** removes unused Light Volumes code for Play Mode and world builds. Edit Mode keeps all features. **Auto** checks the primary Manager's scene, including inactive and zero-intensity lights. It can't predict script changes or find features in other scenes and external prefabs.
+Configure **Shader Stripping** on the **Light Volume Manager**. **Auto** checks the primary Manager's scene, including inactive and zero-intensity lights. It can't predict script changes or find features in other scenes and external prefabs.
 
-If scripts add a feature later, turn **Auto** off and keep that feature enabled. Switching Point to Spot needs **Spot Lights**; adding a Spot cookie needs **Spot Cookies**; rotating a non-dynamic baked volume needs **Volume Rotation**. Keep parent features too, such as **Shadows** for any shadow-map type. Disable **Shader Stripping** to keep everything while testing.
+If scripts add a feature later, turn **Auto** off and keep that feature enabled. Switching Point to Spot needs **Spot Lights**. Adding a Spot cookie needs **Spot Cookies**. Rotating a non-dynamic baked volume needs **Volume Rotation**. Keep parent features too, such as **Shadows** for any shadow-map type. Disable **Shader Stripping** to keep everything while testing.
 
-The package updates all marked `LightVolumesBuildConfig.cginc` copies, including those [shipped with other shaders](#shipping-without-the-package). It tracks asset and package changes, and writes/imports only changed files. Udon can't restore code removed from a built shader. Play Mode Inspector changes can recompile shaders, so test runtime changes in a world build too. Projects with the VRChat Avatars SDK keep all features, even with both SDKs installed.
+The package writes these settings to every marked `LightVolumesBuildConfig.cginc`, including [bundled copies](#shipping-without-the-package). Udon can't restore code removed from a built shader. Play Mode Inspector changes can recompile shaders, so test runtime changes in a world build too.
 
 Shader authors can exclude features before the include. For example, this shader keeps plain Area lights but omits their textures:
 

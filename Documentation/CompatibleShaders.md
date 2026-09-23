@@ -46,7 +46,7 @@ These entries record **2.x support**. Check the author's release notes for newer
 | [Unity Shaders Plus](https://github.com/ShingenPizza/UnityShadersPlus/) | Modified versions of Unity built-in shaders. | 3 |
 | [GeneLit by Momoma](https://github.com/momoma-null/GeneLit) | PBR shaders based on Filament. | 1.0.8 |
 | [Cottonfox Fur Shader](https://github.com/jamestruhlar/cottonfoxfur/) | Fur shader. | — |
-| [Orels Unity Shaders (Toon and PBR)](https://github.com/orels1/orels-Unity-Shaders/tree/dev) | Toon and PBR shaders; the recorded version is a prerelease. | 7.0.0 Dev 23 |
+| [Orels Unity Shaders (Toon and PBR)](https://github.com/orels1/orels-Unity-Shaders/tree/dev) | Toon and PBR shaders. The recorded version is a prerelease. | 7.0.0 Dev 23 |
 | [Moriohs Toon Shader](https://gitlab.com/xMorioh/moriohs-toon-shader) | Toon shader with PBR options. | 2.1.0 |
 | [RealToon (Pro Anime/Toon Shader)](https://assetstore.unity.com/packages/vfx/shaders/realtoon-pro-anime-toon-shader-65518?aid=1100lwff7) | Anime and toon shader. | 5.0.13 |
 | [Quantum Shader](https://github.com/SaphiBlue/quantumshader) | PBR shader pack made with Amplify Shader Editor. | 2025-07-24 |
@@ -57,7 +57,7 @@ These entries record **2.x support**. Check the author's release notes for newer
 
 ## PC And Android
 
-Shader support for Light Volumes and shader support for Android are separate requirements. For an Android world, use a world shader that supports both VRC Light Volumes and Android. VRChat restricts Android avatars to its [allowed mobile avatar shaders](https://creators.vrchat.com/platforms/android/quest-content-limitations/#shaders); installing this world package does not change those restrictions.
+Shader support for Light Volumes and shader support for Android are separate requirements. For an Android world, use a world shader that supports both VRC Light Volumes and Android. VRChat restricts Android avatars to its [allowed mobile avatar shaders](https://creators.vrchat.com/platforms/android/quest-content-limitations/#shaders). Installing this world package does not change those restrictions.
 
 If a material receives baked lighting but has no Point Light Volume shadows or textured Area detail, check its integration version before changing the lights. If only specular highlights are missing, also check whether the shader enables that feature.
 

@@ -78,7 +78,7 @@ The SH views include both baked volumes and Point Light Volumes. Select **Shaded
   </tbody>
 </table>
 
-Clustering colors identify groups of lights; they do not represent brightness or performance. See [Froxel Clustering](./HowToUse_FroxelClustering.md) for the Coarse and Fine views in more detail.
+Clustering colors identify groups of lights. They do not represent brightness or performance. See [Froxel Clustering](./HowToUse_FroxelClustering.md) for the Coarse and Fine views in more detail.
 
 ## Inspect A Baked Volume's Grid
 

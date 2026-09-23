@@ -27,7 +27,7 @@ With AudioLink receiving audio in your scene:
 
 1. Add **LightVolumeAudioLink** to a GameObject and assign the scene's AudioLink component to **Audio Link**.
 2. Assign Point, Spot or Area lights to **Target Point Light Volumes**, and baked volumes to **Target Light Volumes**. Leave unused lists empty.
-3. Choose an **Audio Band** and **Color Mode**. **Auto** follows AudioLink theme colors; **Override Color** uses your chosen **Color**.
+3. Choose an **Audio Band** and **Color Mode**. **Auto** follows AudioLink theme colors. **Override Color** uses your chosen **Color**.
 4. Adjust **Smoothing**, **Invert**, and the **Multiply** and **Add** settings to control how the lights respond.
 5. Check the result in Play Mode with audio playing. Set each light's overall brightness with its **Intensity**.
 
@@ -42,7 +42,7 @@ Color animation doesn't need **Auto Update Volumes**. Keep **Dynamic** off unles
 | **Audio Link** | Scene AudioLink component to read. |
 | **Audio Band** | Choose Bass, Low Mid, High Mid, Treble or Volume. |
 | **Delay** | History offset `0–127`, not a time in seconds. `0` is current data. Volume ignores Delay. |
-| **Smoothing Enabled / Smoothing** | Smooths brightness changes; larger values react more slowly. |
+| **Smoothing Enabled / Smoothing** | Smooths brightness changes. Larger values react more slowly. |
 | **Invert** | Reverse the main brightness response. |
 | **Minimum / Maximum Multiply** | Multiply the response at quiet and loud levels. |
 | **Minimum / Maximum Add** | Add brightness at quiet and loud levels. Use Minimum Add to keep some light in silence. |
@@ -50,7 +50,7 @@ Color animation doesn't need **Auto Update Volumes**. Keep **Dynamic** off unles
 | **Normalize Colors** | Makes sampled theme colors fully saturated and bright before the audio response. Does not modify Override Color. |
 | **Color** | Color used by Override Color. It replaces the target's color rather than multiplying its original tint. |
 | **Set Base Color** | Change the material's base color as well as emission. Requires a `_Color` property. |
-| **Materials Intensity** | Extra multiplier for renderer output; does not change Light Volume intensity. |
+| **Materials Intensity** | Extra multiplier for renderer output. Does not change Light Volume intensity. |
 | **Target Light Volumes / Target Point Light Volumes** | Lights whose color and brightness follow AudioLink. Leave unused lists empty. |
 | **Target Mesh Renderers** | Visible objects whose emission should follow the light. |
 

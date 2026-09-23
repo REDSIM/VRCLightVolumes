@@ -61,7 +61,7 @@ Larger or brighter sources reach farther. Raise the Manager's **Brightness Cutof
 
 Use the range outline to check overlap between lights. Shadows do not reduce the calculated range.
 
-**Shading Strength** controls surface shading and shadow strength. At `1` they apply fully; at `0` they are disabled.
+**Shading Strength** controls surface shading and shadow strength. At `1` they apply fully. At `0` they are disabled.
 
 
 ## Projection Modes
@@ -92,13 +92,13 @@ Assign it to **Falloff LUT** and set **Range** manually. This is useful for styl
 
 Use **Custom** to project an image:
 
-- **Spot Light:** assign a 2D image to **Cookie**. RGB supplies the color and alpha masks the light. Set **Spot Cookie Aspect** to image width divided by height; `1` is square.
-- **Point Light:** assign a **Cubemap**, for example a star projector or disco-ball pattern. RGB supplies the color; alpha is ignored.
-- **Area Light:** assign **Cookie** directly; it has no Projection dropdown. See [Area Light Cookies](#area-light-cookies).
+- **Spot Light:** assign a 2D image to **Cookie**. RGB supplies the color and alpha masks the light. Set **Spot Cookie Aspect** to image width divided by height. `1` is square.
+- **Point Light:** assign a **Cubemap**, for example a star projector or disco-ball pattern. RGB supplies the color. Alpha is ignored.
+- **Area Light:** assign **Cookie** directly. It has no Projection dropdown. See [Area Light Cookies](#area-light-cookies).
 
 ## Area Light Cookies
 
-An Area Light's **Cookie** approximates light spreading from a screen. Nearby surfaces receive different colors from the image; farther away, those colors blend together. It lights the surroundings instead of projecting a sharp picture.
+An Area Light's **Cookie** approximates light spreading from a screen. Nearby surfaces receive different colors from the image. Farther away, those colors blend together. It lights the surroundings instead of projecting a sharp picture.
 
 For video-screen lighting, this can be a simpler, lower-cost alternative to [LTCGI](https://ltcgi.dev/) or [AreaLit](https://booth.pm/en/items/3661829). It provides only simplified, blurred specular highlights in shaders that support them, without detailed reflections of the screen image.
 

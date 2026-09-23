@@ -21,7 +21,7 @@ A Material can generate a cookie for any Point Light Volume type, including anim
 
 Assign a Material directly to **Cookie** for a Spot or Area light, or **Cubemap** for a Point light. Point and Spot lights need **Projection → Custom** for these fields.
 
-With **Projection → LUT**, a Material in **Falloff LUT** controls distance falloff; Spot lights also use horizontal cone falloff. Materials are also accepted in **Shadow Map** for [custom shadows](#shadow-map-materials).
+With **Projection → LUT**, a Material in **Falloff LUT** controls distance falloff. Spot lights also use horizontal cone falloff. Materials are also accepted in **Shadow Map** for [custom shadows](#shadow-map-materials).
 
 Several lights can share one Material. Give them separate Materials when their image settings need to differ.
 
@@ -33,7 +33,7 @@ The Manager renders **pass 0** of your shader with `0..1` UVs. For a cubemap, it
 float4 _CustomRenderTextureInfo;
 // x = output width in pixels, y = output height in pixels
 // Cubemap: z = 1, w = face index (0..5)
-// Single image: z/w are internal array data; ignore them.
+// Single image: z/w are internal array data. Ignore them.
 ```
 
 Face indices are `0 = +X`, `1 = -X`, `2 = +Y`, `3 = -Y`, `4 = +Z`, `5 = -Z`. Ignoring the face index repeats the same image on all six faces. For a single image, such as a Spot cookie or LUT, use the UVs directly.
@@ -94,8 +94,8 @@ Output **linear color** from the source shader. The light applies its own Color 
 
 | Light type | Output interpretation |
 | --- | --- |
-| Point custom cubemap | RGB lights the scene; alpha is ignored. |
-| Spot custom cookie | RGB lights the scene; alpha masks the contribution. |
+| Point custom cubemap | RGB lights the scene. Alpha is ignored. |
+| Spot custom cookie | RGB lights the scene. Alpha masks the contribution. |
 | Area cookie | Emission is `RGB × Alpha`. |
 
 Write alpha `1` for a fully emitting Spot or Area image. A shader that returns zero alpha may look bright in an RGB preview but produce no light.
@@ -159,7 +159,7 @@ return EncodeVRCLVShadowEVSM(depth01);
 
 Supply `radialDistance`, `shadowNearClip` and `shadowFarClip` through your own shader calculations or Material properties. The Manager supplies `_CustomRenderTextureInfo`, but does not pass the light's position, rotation or near/far range to the Material.
 
-Match the light's shadow projection, pose and depth range. A previous built-in bake can retain its far distance in `BakedFarClip`; use the range the shadow receiver actually uses. Convert perspective-camera depth to radial distance before encoding it. The package's [depth encoder](../Packages/red.sim.lightvolumes/Shaders/Editor/PointLightShadowDepthEncode.shader#L53) shows that conversion and the bake-bias calculation. A black-and-white mask or raw camera-depth texture will not work.
+Match the light's shadow projection, pose and depth range. A previous built-in bake can retain its far distance in `BakedFarClip`. Use the range the shadow receiver actually uses. Convert perspective-camera depth to radial distance before encoding it. The package's [depth encoder](../Packages/red.sim.lightvolumes/Shaders/Editor/PointLightShadowDepthEncode.shader#L53) shows that conversion and the bake-bias calculation. A black-and-white mask or raw camera-depth texture will not work.
 
 Point and Area shadows need six faces. Spot shadows use a single projected image, or six faces with **Force Cubemap Shadows**. For six-face Materials, use the same face indices and `CubemapDirection()` helper described above. The shadow layout is separate from the light's cookie layout.
 

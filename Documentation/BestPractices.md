@@ -8,7 +8,7 @@
 
 ## Support Avatars With Light Probes And Light Volumes
 
-Keep both **Unity Light Probes** and **Light Volumes** in your world. Light Volumes light avatars whose shaders support them; ordinary probes light avatars with other shaders. Probes also provide fallback lighting outside your volumes.
+Keep both **Unity Light Probes** and **Light Volumes** in your world. Light Volumes light avatars whose shaders support them. Ordinary probes light avatars with other shaders. Probes also provide fallback lighting outside your volumes.
 
 ## Choose The Lighting Type For The Job
 
@@ -19,7 +19,7 @@ Keep both **Unity Light Probes** and **Light Volumes** in your world. Light Volu
 | Two lighting states for the same room | Bake a **Regular Light Volume** for each state, then enable only the one you need. This does not switch the room's lightmaps. |
 | Flashlight or projector | A **Spot Light Volume**. A narrow cone avoids lighting unrelated parts of the scene. |
 | Portable bulb or independently animated lamp | A **Point Light Volume**. |
-| Screen, sign or soft panel | An **Area Light Volume**; add a texture when its image should affect the light. |
+| Screen, sign or soft panel | An **Area Light Volume**. Add a texture when its image should affect the light. |
 | Music-reactive club lighting | Control Point, Spot or Area lights with [AudioLink](./HowToUse_AudioLinkIntegration.md). |
 | Small props with visible lightmap seams | Use a shader that supports VRC Light Volumes to light the prop from a Regular Light Volume instead of a lightmap. Check that the grid has enough detail for the prop. |
 | Lit particles or fog meshes | Use a particle shader that supports VRC Light Volumes. Keep the number of overlapping transparent layers low. |
@@ -42,7 +42,7 @@ Give each volume you bake a unique GameObject name: its source textures use that
 
 ## Batch Small Moving Props
 
-For many small moving props that share a material, test [Unity's dynamic batching](https://docs.unity3d.com/2022.3/Documentation/Manual/dynamic-batching.html). Light Volumes can still light these props with **Light Probes** disabled on their Mesh Renderers. Compare frame time before keeping the change; batching also takes CPU time.
+For many small moving props that share a material, test [Unity's dynamic batching](https://docs.unity3d.com/2022.3/Documentation/Manual/dynamic-batching.html). Light Volumes can still light these props with **Light Probes** disabled on their Mesh Renderers. Compare frame time before keeping the change, because batching also takes CPU time.
 
 ## Blend Between Volumes
 
@@ -76,7 +76,7 @@ Light Source Size also changes the width of glossy highlights in shaders with in
 
 Keep **Clustering Enabled** on in the **Light Volume Manager's Froxel Clustering** section. [Froxel Clustering](./HowToUse_FroxelClustering.md) builds a short light list for each part of the player's view. Each visible surface checks lights from that list instead of every active light in the scene.
 
-The default settings usually work best. Change them only when you understand the grid settings and want to tune performance for a specific scene. Clustering helps most when many lights occupy separate areas; heavy overlap still costs time.
+The default settings usually work best. Change them only when you understand the grid settings and want to tune performance for a specific scene. Clustering helps most when many lights occupy separate areas. Heavy overlap still costs time.
 
 Enable [Shadow Culling (Hi-Z)](./HowToUse_FroxelClustering.md#shadow-culling-hi-z) when walls, floors or ceilings put large parts of a light's range in shadow. This lets clustering skip that light in fully shadowed cells.
 
@@ -106,7 +106,7 @@ Use per-light **Bias** for self-shadow artifacts and **Blur** for softness. Thes
 
 ## Keep Animated Sources Affordable
 
-Use the smallest acceptable **Cookie Resolution**. A Point light's cubemap needs six images; a Spot cookie or an Area emitter texture uses one.
+Use the smallest acceptable **Cookie Resolution**. A Point light's cubemap needs six images. A Spot cookie or an Area emitter texture uses one.
 
 Use a [custom Material shader](./HowToUse_PointLightMaterialSources.md) for animated patterns and special effects. Keep its calculations affordable at the chosen resolution.
 
@@ -135,7 +135,7 @@ The Manager's **Shader Stripping** removes unused features from Play Mode and wo
 
 It cannot predict every change your scripts make. For example, a script might change a Point light to an Area light, add a cookie or turn on shadows that were not configured in the scene.
 
-For those setups, open **Shader Stripping**, disable **Auto**, and enable every feature your scripts need. Or disable **Shader Stripping** to keep all features. Test the interaction in Play Mode; the Edit Mode preview keeps all features.
+For those setups, open **Shader Stripping**, disable **Auto**, and enable every feature your scripts need. Or disable **Shader Stripping** to keep all features. Test the interaction in Play Mode. The Edit Mode preview keeps all features.
 
 Stripping is disabled in projects with the VRChat Avatar SDK. See [Shader Feature Stripping](./ForDevelopers.md#shader-feature-stripping) for the complete controls.
 
@@ -143,7 +143,7 @@ Stripping is disabled in projects with the VRChat Avatar SDK. See [Shader Featur
 
 Configure the light as a prefab with its normal **Light Volume** or **Point Light Volume** component.
 
-A spawned light needs the scene's **Light Volume Manager** reference to register. Assign it before activation where possible. If the prefab uses **Bake In Game**, make sure the reference is ready before its first `Start`; assigning it later does not replay the startup bake.
+A spawned light needs the scene's **Light Volume Manager** reference to register. Assign it before activation where possible. If the prefab uses **Bake In Game**, make sure the reference is ready before its first `Start`. Assigning it later does not replay the startup bake.
 
 For Regular Light Volumes, prepare their baked data in the scene's atlas before runtime. Instantiating a prefab does not pack new 3D textures in game. Keep any runtime-only shader features enabled as described above.
 
@@ -163,7 +163,7 @@ If the Light Volume Inspector reports limited rotation support, update Bakery. R
 
 **Poiyomi** and **lilToon** can limit an avatar's minimum and maximum brightness. Enable **Force Scene Lighting** on the **Light Volume Manager** when you want avatars to follow your scene's lighting without those limits.
 
-This uses the shared `_UdonForceSceneLighting` standard supported by these shaders; see [lil's original proposal](https://x.com/lil_xyzw/status/1961487430256922928). Use it when your scene lighting is ready to determine avatar brightness, including in dark areas.
+This uses the shared `_UdonForceSceneLighting` standard supported by these shaders. See [lil's original proposal](https://x.com/lil_xyzw/status/1961487430256922928). Use it when your scene lighting is ready to determine avatar brightness, including in dark areas.
 
 ## Check Before Release
 

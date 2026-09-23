@@ -27,7 +27,7 @@ Put your code in an Editor-only assembly with direct references to both package 
 }
 ```
 
-`red.sim.LightVolumesUdon` supplies the Manager and context types; `red.sim.LightVolumesEditor` supplies the extension methods. `red.sim.LightVolumes` alone isn't enough.
+`red.sim.LightVolumesUdon` supplies the Manager and context types. `red.sim.LightVolumesEditor` supplies the extension methods. `red.sim.LightVolumes` alone isn't enough.
 
 Add these imports:
 
@@ -37,7 +37,7 @@ using VRCLightVolumes;
 using VRCLightVolumes.Editor;
 ```
 
-The snippets below belong inside your Editor tool's methods. They assume `manager` is a non-null `LightVolumeManager`; other inputs are described beside each snippet.
+The snippets below belong inside your Editor tool's methods. They assume `manager` is a non-null `LightVolumeManager`. Other inputs are described beside each snippet.
 
 These APIs exist under `UNITY_EDITOR && !COMPILER_UDONSHARP`. Call them on Unity's main thread. Save the scene before writing baked assets.
 
@@ -53,7 +53,7 @@ bool hasManager = editor.IsValid;
 bool usesBakery = editor.IsBakeryMode;
 ```
 
-`IsValid` only checks that the Manager is non-null. Check `manager` before reading `manager.Editor`. A default context returns `false`, `0` or empty arrays from queries; other calls do nothing.
+`IsValid` only checks that the Manager is non-null. Check `manager` before reading `manager.Editor`. A default context returns `false`, `0` or empty arrays from queries. Other calls do nothing.
 
 Keep one Manager across the world's loaded scenes. Atlas generation, shadow baking and custom probe calls use the primary Manager, so remove duplicates.
 
@@ -99,7 +99,7 @@ This `void` method also works in Play Mode, where it schedules runtime bakes on 
 
 ## Atlas post-processors
 
-Each stage reads the previous 3D lighting atlas and writes a replacement. Stages run in registration order; the last output becomes `manager.LightVolumeAtlas`. The chain needs a base atlas before it can run.
+Each stage reads the previous 3D lighting atlas and writes a replacement. Stages run in registration order. The last output becomes `manager.LightVolumeAtlas`. The chain needs a base atlas before it can run.
 
 ### Operations
 
@@ -113,11 +113,11 @@ manager.Editor.RegisterPostProcessor(customRenderTexture);
 
 The material receives the previous atlas in `_MainTex`. Light Volumes recreates the target as a matching 3D half-float texture and sets its **Update Mode** to **Realtime**. Treat the input as packed lighting data, rather than a 2D color image.
 
-For an ordinary RenderTexture with your own callback, use the descriptor overload under [Custom callbacks](#custom-callbacks). Both registration overloads return `void`, add or update a stage, and refresh the chain when its registration changes. Matching target or callback identities identify the same stage; duplicate matches are collapsed.
+For an ordinary RenderTexture with your own callback, use the descriptor overload under [Custom callbacks](#custom-callbacks). Both registration overloads return `void`, add or update a stage, and refresh the chain when its registration changes. Matching target or callback identities identify the same stage. Duplicate matches are collapsed.
 
 #### `GetPostProcessors()`
 
-Get the registered stages for an Inspector or other Editor UI. The return value is an `AtlasPostProcessor[]` copy; changing the array doesn't edit the chain.
+Get the registered stages for an Inspector or other Editor UI. The return value is an `AtlasPostProcessor[]` copy. Changing the array doesn't edit the chain.
 
 ```csharp
 AtlasPostProcessor[] stages = manager.Editor.GetPostProcessors();
@@ -153,7 +153,7 @@ Remove a stage when your integration is disabled. Pass the same output target yo
 manager.Editor.UnregisterPostProcessor(target);
 ```
 
-Both `void UnregisterPostProcessor(RenderTexture target)` and `void UnregisterPostProcessor(AtlasPostProcessor processor)` refresh the remaining chain. The target form removes every stage writing to that target; the descriptor form removes matches by target or callback identity.
+Both `void UnregisterPostProcessor(RenderTexture target)` and `void UnregisterPostProcessor(AtlasPostProcessor processor)` refresh the remaining chain. The target form removes every stage writing to that target. The descriptor form removes matches by target or callback identity.
 
 ### Custom callbacks
 
@@ -174,17 +174,17 @@ The constructor is `AtlasPostProcessor(RenderTexture target, Material material, 
 | --- | --- |
 | `RenderTexture Target` | Required output. Each run recreates it as Clamp/Trilinear, half-float 3D data matching the base atlas. |
 | `Material Material` | Optional material receiving the input texture. Assigning it alone does **not** render the stage. |
-| `string InputTextureProperty` | Input property on the material; defaults to `_MainTex`. |
+| `string InputTextureProperty` | Input property on the material. Defaults to `_MainTex`. |
 | `Action Update` | Callback that writes the output without an input argument. |
 | `Action<Texture> UpdateWithInput` | Callback receiving the previous atlas. Takes priority over `Update` when both are assigned. |
 
-A stage needs a target and a material or callback. A callback or Custom Render Texture must fill the output; an ordinary material alone only receives the input.
+A stage needs a target and a material or callback. A callback or Custom Render Texture must fill the output. An ordinary material alone only receives the input.
 
-For the copy above, match the source and target formats and mip counts. The platform must support 3D texture copies; see Unity's [Graphics.CopyTexture requirements](https://docs.unity3d.com/2022.3/Documentation/ScriptReference/Graphics.CopyTexture.html). Your own processor must write every required slice.
+For the copy above, match the source and target formats and mip counts. The platform must support 3D texture copies. See Unity's [Graphics.CopyTexture requirements](https://docs.unity3d.com/2022.3/Documentation/ScriptReference/Graphics.CopyTexture.html). Your own processor must write every required slice.
 
 The Manager saves target, material and input-property references. Register callbacks again after a domain reload. Use a target asset if the registration must survive scene reloads, and keep the input and target separate.
 
-World builds keep the final atlas reference but remove post-processor registrations. These C# callbacks won't run in the world. For runtime output, use a Custom Render Texture that can regenerate from included source assets, or another runtime writer. A RenderTexture asset doesn't save the pixels rendered in the Editor; see Unity's [RenderTexture lifetime notes](https://docs.unity3d.com/2022.3/Documentation/ScriptReference/RenderTexture.html).
+World builds keep the final atlas reference but remove post-processor registrations. These C# callbacks won't run in the world. For runtime output, use a Custom Render Texture that can regenerate from included source assets, or another runtime writer. A RenderTexture asset doesn't save the pixels rendered in the Editor. See Unity's [RenderTexture lifetime notes](https://docs.unity3d.com/2022.3/Documentation/ScriptReference/RenderTexture.html).
 
 ## Custom lightmapper operations
 
@@ -214,9 +214,9 @@ All overloads return `void`:
 
 | Method | Processing |
 | --- | --- |
-| `SetCustomProbesBaked(int id, Vector3[] l0, Vector3[] l1r, Vector3[] l1g, Vector3[] l1b)` | No validity; use `manager.Denoise`. |
-| `SetCustomProbesBaked(int id, Vector3[] l0, Vector3[] l1r, Vector3[] l1g, Vector3[] l1b, bool denoise)` | No validity; use the supplied denoising choice. |
+| `SetCustomProbesBaked(int id, Vector3[] l0, Vector3[] l1r, Vector3[] l1g, Vector3[] l1b)` | No validity. Use `manager.Denoise`. |
+| `SetCustomProbesBaked(int id, Vector3[] l0, Vector3[] l1r, Vector3[] l1g, Vector3[] l1b, bool denoise)` | No validity. Use the supplied denoising choice. |
 | `SetCustomProbesBaked(int id, Vector3[] l0, Vector3[] l1r, Vector3[] l1g, Vector3[] l1b, float[] validity)` | Use validity and `manager.Denoise`. |
 | `SetCustomProbesBaked(int id, Vector3[] l0, Vector3[] l1r, Vector3[] l1g, Vector3[] l1b, float[] validity, bool denoise)` | Use validity and the supplied denoising choice. |
 
-Submission processes the arrays before returning; atlas finalization happens later. See [Custom Lightmapper Integration](./CustomLightmapperIntegration.md) for SH conversion, validity, saving and failure handling.
+Submission processes the arrays before returning. Atlas finalization happens later. See [Custom Lightmapper Integration](./CustomLightmapperIntegration.md) for SH conversion, validity, saving and failure handling.

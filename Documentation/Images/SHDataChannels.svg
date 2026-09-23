@@ -6,7 +6,7 @@
 <marker id="data-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#f4f6f9"/></marker>
 </defs>
 <rect width="1200" height="680" rx="12" fill="#30343b"/>
-<!-- Equal world-space cube edges; orthographic camera elevation 18 degrees, azimuth 45 degrees. -->
+<!-- Equal world-space cube edges. Orthographic camera elevation 18 degrees, azimuth 45 degrees. -->
 <g stroke="#b29a87" stroke-width="1.4" stroke-linejoin="round">
 <polygon points="776.78,546.63 600.00,601.25 600.00,363.49 776.78,308.86" fill="#62554d"/>
 <polygon points="423.22,546.63 600.00,601.25 600.00,363.49 423.22,308.86" fill="#7c6b60"/>

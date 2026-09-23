@@ -108,10 +108,10 @@ Light Volumes are designed to run efficiently, but too many lights, excessive ov
 
 - For groups of stationary lights, use your lightmapper's lights and bake them into Regular Light Volumes. Don't use hundreds of Point Light Volumes for lighting that can stay baked.
 - Use Point Light Volumes where you need separate control. Disable lights in unused areas.
-- Keep light ranges local. Avoid stacking many Point Light Volumes over the same visible surfaces; use **Debug Range** to check their overlap.
+- Keep light ranges local. Avoid stacking many Point Light Volumes over the same visible surfaces. Use **Debug Range** to check their overlap.
 - Use [**Froxel Clustering**](./HowToUse_FroxelClustering.md) for many lights spread across different areas. It helps less when they all illuminate the same surface.
 - Prefer baked shadows. Capture changes only when needed, and reserve continuous shadow updates for lights that need them.
 - Test the busiest areas on the intended device, especially Quest. Check performance as you add lights, including in mirrors.
 
 > [!IMPORTANT]
-> Up to **32 Regular and Additive Light Volumes combined** and **128 Point/Spot/Area lights** can be active at once. The scene can contain more if you disable unused volumes and enable them when needed. These are capacity limits, not performance targets; a scene can slow down well below them.
+> Up to **32 Regular and Additive Light Volumes combined** and **128 Point/Spot/Area lights** can be active at once. The scene can contain more if you disable unused volumes and enable them when needed. These are capacity limits, not performance targets. A scene can slow down well below them.

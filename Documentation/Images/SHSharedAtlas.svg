@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="740" viewBox="0 0 1200 740" role="img" aria-labelledby="title desc">
 <title id="title">Several Light Volumes share one atlas</title>
-<desc id="desc">Texture blocks from three Light Volumes share one atlas. Gold, mauve and blue represent Texture 0, Texture 1 and Texture 2 in every group. The voxels are cubic and the camera is close to the horizontal. The packing layout does not represent positions in the scene; padding is schematic.</desc>
+<desc id="desc">Texture blocks from three Light Volumes share one atlas. Gold, mauve and blue represent Texture 0, Texture 1 and Texture 2 in every group. The voxels are cubic and the camera is close to the horizontal. The packing layout does not represent positions in the scene. Padding is schematic.</desc>
 <defs><style>text{font-family:Arial,Helvetica,sans-serif;fill:#f4f6f9}.heading{font-size:30px;font-weight:700}.body{font-size:26px}.small{font-size:23px;fill:#c4ced8}.code{font-size:25px;font-family:Consolas,'DejaVu Sans Mono',monospace}</style>
 <marker id="arrow-neutral" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#c4ced8"/></marker>
 <marker id="arrow-r" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#ff7b80"/></marker>

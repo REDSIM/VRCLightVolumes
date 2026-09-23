@@ -23,7 +23,7 @@ Use regular volumes for rooms, outdoor areas and other stationary lighting. Bake
 
 ## Place Volumes Where Objects Need Lighting
 
-Cover areas where players can move and where props need lighting. You can leave other areas uncovered; they use Unity Light Probes when **Light Probes Blending** is enabled.
+Cover areas where players can move and where props need lighting. You can leave other areas uncovered. They use Unity Light Probes when **Light Probes Blending** is enabled.
 
 ![Several volumes covering different rooms and heights](./Preview_10.png)
 
@@ -35,7 +35,7 @@ A practical starting layout is:
 
 Higher **Weight** gives a volume priority wherever the boxes overlap. Set it in the Manager's **Light Volumes** list. For example, keep a large outdoor volume at **Weight** `0` and give a detailed room volume **Weight** `1`.
 
-**Smooth Blending** controls the width of the transition at a volume's edges, in meters. Make the overlap wider than the blend region; for example, overlap by `0.5 m` with **Smooth Blending** set to `0.25`. Check the result on a moving prop.
+**Smooth Blending** controls the width of the transition at a volume's edges, in meters. Make the overlap wider than the blend region. For example, overlap by `0.5 m` with **Smooth Blending** set to `0.25`. Check the result on a moving prop.
 
 To blend from a volume into an uncovered area, keep **Light Probes Blending** enabled and disable **Sharp Bounds** on the Manager. This softens all outer edges, so extend the volume beyond the area that needs its full lighting.
 
@@ -69,7 +69,7 @@ Use **Preview Voxels** to inspect the grid. For a doorway or sharp shadow, try a
 
 Each bake saves a volume's lighting in three source 3D textures: **Texture 0**, **Texture 1** and **Texture 2** in its Inspector.
 
-**Pack Light Volumes** combines the source textures from all volumes into one shared 3D texture, called an atlas. This is the final texture used by the world. Packing runs automatically after a successful bake. It reuses the existing baked data; it does not calculate new lighting.
+**Pack Light Volumes** combines the source textures from all volumes into one shared 3D texture, called an atlas. This is the final texture used by the world. Packing runs automatically after a successful bake. It reuses the existing baked data. It does not calculate new lighting.
 
 Light Volumes includes the packed atlas in the VRChat build and removes its references to the source textures. Keep those source assets in your Unity project: they are needed whenever you pack the volumes again.
 
@@ -86,7 +86,7 @@ Keep ordinary Unity Light Probes alongside Light Volumes to light avatars and ma
 1. Select a volume and click **Generate Light Probes**.
 2. Start with the lower density offered in the window.
 3. Click **Create Light Probe Group**.
-4. Select the new child object and edit its points. Move points inside solid walls or floors into open space; add points around important changes in lighting.
+4. Select the new child object and edit its points. Move points inside solid walls or floors into open space. Add points around important changes in lighting.
 5. Bake the scene again.
 
 Edit the generated Light Probe Group separately if you later resize the volume or change its resolution. See Unity's [probe placement guide](https://docs.unity3d.com/2022.3/Documentation/Manual/LightProbes-Placing-Scripting.html) for placement tips.

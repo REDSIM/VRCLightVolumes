@@ -34,7 +34,7 @@ Enable **Clustering Enabled** in the **Light Volume Manager's Froxel Clustering*
 | **Coarse Reduction** | Divides the final grid resolution along all three axes to build the Coarse grid. |
 | [**Shadow&nbsp;Culling**&nbsp;(Hi&#8209;Z)](#shadow-culling-hi-z) | Skips lights in cells fully covered by their shadows. |
 
-**Coarse Reduction** of **2x** means about **8 times fewer froxels** in the Coarse grid; **4x** means **64 times fewer**, and **8x** means **512 times fewer**. A larger reduction makes the Coarse pass cheaper, but can leave more lights for the Final pass to check.
+**Coarse Reduction** of **2x** means about **8 times fewer froxels** in the Coarse grid. **4x** means **64 times fewer**, and **8x** means **512 times fewer**. A larger reduction makes the Coarse pass cheaper, but can leave more lights for the Final pass to check.
 
 The Manager's **Debug** foldout shows **Clustering Status** and **Active Point Lights**, so you can check whether clustering is active.
 
@@ -73,4 +73,4 @@ The same view with 12 Point Light Volumes:
 Enable **Shadow Culling** when shadows cover large parts of a light's range. Hi-Z stands for **Hierarchical Z Buffer**. It uses several levels of shadow-map depth data to find fully shadowed cells. Clustering can then skip that light in those cells, saving lighting calculations. Compare frame time with it on and off to check the benefit.
 
 > [!IMPORTANT]
-> A light's **Shading Strength** must be **1**; otherwise, Shadow Culling cannot skip that light. The runtime baker's **Realtime** mode also excludes its light from Hi-Z.
+> A light's **Shading Strength** must be **1**. Otherwise, Shadow Culling cannot skip that light. The runtime baker's **Realtime** mode also excludes its light from Hi-Z.

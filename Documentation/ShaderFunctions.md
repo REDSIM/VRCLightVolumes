@@ -11,7 +11,9 @@ For setup and complete examples, see [Shader Integration](./ForDevelopers.md#lig
 
 ## void LightVolumeSHSpecular()
 
-Samples Regular and Additive volumes with their combined dominant-direction highlight, then adds individual Point, Spot and Area lighting. When unavailable, it uses Unity's probe SH for diffuse lighting and an approximate highlight; it does not sample Reflection Probe cubemaps.
+Samples Regular and Additive volumes with their combined dominant-direction highlight, then adds individual Point, Spot and Area lighting. When unavailable, it uses Unity's probe SH for diffuse lighting and an approximate highlight. It does not sample Reflection Probe cubemaps.
+
+For separate lighting groups and volume/light speculars, see [Separate Lighting Groups](./ForDevelopers.md#separate-lighting-groups).
 
 ```hlsl
 // Sample the lighting and collect its SH coefficients and highlights.
@@ -27,13 +29,13 @@ float3 lighting = max(irradiance, 0) * diffuseColor + specular;
 | `float3 worldPos` | Surface position in world space. |
 | `out float3 L0` | Outputs linear ambient RGB. |
 | `out float3 L1r`<br />`out float3 L1g`<br />`out float3 L1b` | Outputs RGB light directions and strength. Do not normalize them. |
-| `out float3 specular` | Outputs all highlights, including the material's specular color. Add directly; do not multiply by albedo again. |
+| `out float3 specular` | Outputs all highlights, including the material's specular color. Add directly. Do not multiply by albedo again. |
 | `float3 albedo` | Linear material albedo. |
 | `float smoothness` | Surface smoothness, `0..1`. |
 | `float metallic` | Metalness, `0..1`. Together with albedo, gives `f0 = lerp(0.04, albedo, metallic)`. |
 | `float3 worldNormal` | Normalized world-space normal, including the normal map if used. |
 | `float3 viewDir` | Normalized world-space direction from the surface toward the camera. |
-| `float3 worldPosOffset` | Optional baked-volume sample offset in world units; default `0`. Does not offset Point Lights. |
+| `float3 worldPosOffset` | Optional baked-volume sample offset in world units, default `0`. Does not offset Point Lights. |
 | `float pointLightShading` | Optional normal shaping for Point Lights: `0` off, `1` soft, default `3`. Use non-negative values. Shadows still work when this is `0`. |
 | `float3 f0` | Alternative linear specular color at a head-on view. Use `f0, smoothness` instead of `albedo, smoothness, metallic`. |
 
@@ -45,7 +47,7 @@ LightVolumeSHSpecular(worldPos, L0, L1r, L1g, L1b, specular, f0, smoothness, nor
 
 ## void LightVolumeAdditiveSHSpecular()
 
-Samples Additive volumes with their dominant-direction highlight, plus individual Point, Spot and Area lighting. It excludes non-additive Regular Volumes and ordinary probes; all outputs are zero when Light Volumes is unavailable.
+Samples Additive volumes with their dominant-direction highlight, plus individual Point, Spot and Area lighting. It excludes non-additive Regular Volumes and ordinary probes. All outputs are zero when Light Volumes is unavailable.
 
 ```hlsl
 // Sample the lighting and collect its SH coefficients and highlights.
@@ -67,7 +69,7 @@ float3 lighting = max(irradiance, 0) * diffuseColor + specular;
 | `float metallic` | Metalness, `0..1`. Together with albedo, gives `f0 = lerp(0.04, albedo, metallic)`. |
 | `float3 worldNormal` | Normalized world-space normal, including the normal map if used. |
 | `float3 viewDir` | Normalized world-space direction from the surface toward the camera. |
-| `float3 worldPosOffset` | Optional Additive-volume sample offset in world units; default `0`. Does not offset Point Lights. |
+| `float3 worldPosOffset` | Optional Additive-volume sample offset in world units, default `0`. Does not offset Point Lights. |
 | `float pointLightShading` | Optional normal shaping for Point Lights: `0` off, `1` soft, default `3`. Use non-negative values. Shadows still work when this is `0`. |
 | `float3 f0` | Alternative linear specular color at a head-on view. Use `f0, smoothness` instead of `albedo, smoothness, metallic`. |
 
@@ -96,7 +98,7 @@ float3 diffuseLighting = max(irradiance, 0) * diffuseColor;
 | `float3 worldNormal` | Normalized world-space normal, including the normal map if used. |
 | `float pointLightShading` | Optional normal shaping for Point Lights: `0` off, `1` soft, default `3`. Use non-negative values. Shadows still work when this is `0`. |
 
-The overload without `worldNormal` accepts optional `worldPosOffset = 0` after the outputs. It disables Point Light normal shaping; use the normal-aware call for surfaces.
+The overload without `worldNormal` accepts optional `worldPosOffset = 0` after the outputs. It disables Point Light normal shaping. Use the normal-aware call for surfaces.
 
 ## void LightVolumeAdditiveSH()
 
@@ -124,7 +126,7 @@ The overload without `worldNormal` accepts optional `worldPosOffset = 0` after t
 
 ## float3 LightVolumeSH_L0()
 
-Returns linear ambient RGB from all Light Volume types, with Unity probe ambient fallback. Use it for particles or fog that do not need light direction; cookies and shadows still apply.
+Returns linear ambient RGB from all Light Volume types, with Unity probe ambient fallback. Use it for particles or fog that do not need light direction. Cookies and shadows still apply.
 
 ```hlsl
 float3 particleLighting = max(LightVolumeSH_L0(worldPos), 0) * particleColor;
@@ -133,9 +135,9 @@ float3 particleLighting = max(LightVolumeSH_L0(worldPos), 0) * particleColor;
 | Function argument | Description |
 | --- | --- |
 | `float3 worldPos` | Position to light, in world space. |
-| `float3 worldPosOffset` | Baked-volume sample offset in world units; default `0` in the short overload. Does not offset Point Lights. |
+| `float3 worldPosOffset` | Baked-volume sample offset in world units, default `0` in the short overload. Does not offset Point Lights. |
 | `float3 worldNormal` | Normalized world-space normal, in the normal-aware overload only. |
-| `float pointLightShading` | Normal-aware overload: optional Point Light normal shaping, default `3`; `0` off and `1` soft. Use non-negative values. |
+| `float pointLightShading` | Normal-aware overload: optional Point Light normal shaping, default `3`. Use `0` for off and `1` for soft. Use non-negative values. |
 
 The short overload has no normal shaping. To keep that shaping while returning only ambient RGB, supply offset and normal:
 
@@ -155,9 +157,9 @@ float3 diffuseLighting = max(decodedLightmap + extraAmbient, 0) * diffuseColor;
 | Function argument | Description |
 | --- | --- |
 | `float3 worldPos` | Position to light, in world space. |
-| `float3 worldPosOffset` | Additive-volume sample offset in world units; default `0` in the short overload. Does not offset Point Lights. |
+| `float3 worldPosOffset` | Additive-volume sample offset in world units, default `0` in the short overload. Does not offset Point Lights. |
 | `float3 worldNormal` | Normalized world-space normal, in the normal-aware overload only. |
-| `float pointLightShading` | Normal-aware overload: optional Point Light normal shaping, default `3`; `0` off and `1` soft. Use non-negative values. |
+| `float pointLightShading` | Normal-aware overload: optional Point Light normal shaping, default `3`. Use `0` for off and `1` for soft. Use non-negative values. |
 
 The short overload has no normal shaping. The normal-aware overload takes `worldPos, worldPosOffset, worldNormal`, then optional `pointLightShading`.
 
@@ -176,7 +178,7 @@ float3 diffuseLighting = max(irradiance, 0) * diffuseColor;
 | `float3 L0` | Sampled linear ambient RGB. |
 | `float3 L1r`<br />`float3 L1g`<br />`float3 L1b` | Sampled RGB directional coefficients, with their original lengths. |
 
-Point Light SH already includes shadows; this function does not recover unshadowed lighting.
+Point Light SH already includes shadows. This function does not recover unshadowed lighting.
 
 ## float3 LightVolumeSpecular()
 
@@ -184,7 +186,7 @@ Approximates highlights from the separate red, green and blue directions in exis
 
 ```hlsl
 float3 specular = LightVolumeSpecular(albedo, smoothness, metallic, normalWS, viewDir, L0, L1r, L1g, L1b);
-// Already includes the material's specular color; add without multiplying by albedo.
+// Already includes the material's specular color. Add without multiplying by albedo.
 lighting += specular;
 ```
 
@@ -205,7 +207,7 @@ float3 specular = LightVolumeSpecular(f0, smoothness, normalWS, viewDir, L0, L1r
 
 ## float3 LightVolumeSpecularDominant()
 
-Approximates one highlight from the combined RGB light direction in existing SH. This is cheaper than `LightVolumeSpecular()`; use either helper instead of adding another highlight to the combined sampler's specular output.
+Approximates one highlight from the combined RGB light direction in existing SH. This is cheaper than `LightVolumeSpecular()`. Use either helper instead of adding another highlight to the combined sampler's specular output.
 
 ```hlsl
 float3 specular = LightVolumeSpecularDominant(albedo, smoothness, metallic, normalWS, viewDir, L0, L1r, L1g, L1b);
@@ -231,7 +233,7 @@ float3 specular = LightVolumeSpecularDominant(f0, smoothness, normalWS, viewDir,
 
 ## float LightVolumesEnabled()
 
-Returns `1` when Light Volumes is enabled with integration version 2 or newer; otherwise `0`. Full samplers already provide probe fallback, so use this check only to keep a different fallback calculation:
+Returns `1` when Light Volumes is enabled with integration version 2 or newer, otherwise `0`. Full samplers already provide probe fallback, so use this check only to keep a different fallback calculation:
 
 ```hlsl
 float3 irradiance = probeLighting; // Your shader's existing probe calculation.
@@ -249,7 +251,7 @@ The built-in fallback reads Unity's `unity_SHA*` terms, without the full L2 resu
 
 ## float LightVolumesVersion()
 
-Returns the scene's integration version: `0` when absent, `1` for legacy data, or the supplied version such as `2` or `3`. This is not the package version; use `LightVolumesEnabled()` to check availability.
+Returns the scene's integration version: `0` when absent, `1` for legacy data, or the supplied version such as `2` or `3`. This is not the package version. Use `LightVolumesEnabled()` to check availability.
 
 ```hlsl
 bool usesVersion3Data = LightVolumesVersion() >= 3;

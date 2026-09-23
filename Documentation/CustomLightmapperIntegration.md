@@ -12,7 +12,7 @@ Use these methods to get voxel positions for your lightmapper and submit its L0/
 
 ## Setup and workflow
 
-Use an Editor-only assembly with direct references to `red.sim.LightVolumesUdon` and `red.sim.LightVolumesEditor`; see [Unity Editor API setup](./UnityEditorAPI.md#setup) for the asmdef and imports.
+Use an Editor-only assembly with direct references to `red.sim.LightVolumesUdon` and `red.sim.LightVolumesEditor`. See [Unity Editor API setup](./UnityEditorAPI.md#setup) for the asmdef and imports.
 
 The snippets belong inside your Editor tool's methods. `manager` is the world's non-null primary `LightVolumeManager`, with **Baking Mode** set to **Custom Lightmapper**. Keep one Manager across loaded scenes.
 
@@ -23,7 +23,7 @@ Call every `manager.Editor` method on Unity's main thread, outside Play Mode. Sa
 
 ## `GetCustomProbesCount()`
 
-Returns the number of volumes your baker can process. Check it before requesting positions; this snippet belongs in a `void` method:
+Returns the number of volumes your baker can process. Check it before requesting positions. This snippet belongs in a `void` method:
 
 ```csharp
 int count = manager.Editor.GetCustomProbesCount();
@@ -62,7 +62,7 @@ This form uses `manager.Denoise` and skips validity-based dilation. To choose de
 manager.Editor.SetCustomProbesBaked(id, l0, l1r, l1g, l1b, denoise: false);
 ```
 
-Both calls return `void`. Submission processes the arrays before returning and leaves them unchanged; your tool retains ownership. Check the Console and saved assets for errors.
+Both calls return `void`. Submission processes the arrays before returning and leaves them unchanged. Your tool retains ownership. Check the Console and saved assets for errors.
 
 A successful submission queues atlas finalization and eligible shadow bakes. Submit finished volumes in one Editor callback when practical so they share that work. You don't need to call `GenerateAtlas()` after each volume. See [saving and finalization](#saving-and-finalization) before using the result.
 
@@ -96,7 +96,7 @@ l1g[i] = new Vector3(sh[1, 3], sh[1, 1], sh[1, 2]);
 l1b[i] = new Vector3(sh[2, 3], sh[2, 1], sh[2, 2]);
 ```
 
-Supply linear, Unity-compatible L0/L1 coefficients; omit L2. Keep L1 in world-space X/Y/Z axes with its original magnitude. The API handles texture packing and its `1.65` L1 multiplier, so don't apply either yourself or rotate L1 into volume-local space.
+Supply linear, Unity-compatible L0/L1 coefficients. Omit L2. Keep L1 in world-space X/Y/Z axes with its original magnitude. The API handles texture packing and its `1.65` L1 multiplier, so don't apply either yourself or rotate L1 into volume-local space.
 
 ## Validity, dilation and denoising
 
@@ -149,10 +149,10 @@ Submission methods return `void`. Check Console errors and the saved assets to c
 
 | Condition | Result |
 | --- | --- |
-| Default context, Play Mode or a non-primary Manager | Queries return zero/empty; submissions do nothing. |
+| Default context, Play Mode or a non-primary Manager | Queries return zero/empty. Submissions do nothing. |
 | Invalid ID on the primary Manager | An error is logged. The query returns an empty array or the submission is skipped. |
 | Null SH arrays or incorrect lengths | An error is logged and the submission is skipped. A supplied validity array must also match the voxel count. |
-| Unsaved containing scene | An error is logged; no texture assets are submitted. |
+| Unsaved containing scene | An error is logged. No texture assets are submitted. |
 | Failure while saving texture assets | An error is logged. Some texture channels may already be assigned. Fix the save failure and resubmit the whole volume. |
 | Authoring state changed during a bake | A stale ID may still pass length checks and target the wrong volume. Prevent those edits until submission is complete. |
 

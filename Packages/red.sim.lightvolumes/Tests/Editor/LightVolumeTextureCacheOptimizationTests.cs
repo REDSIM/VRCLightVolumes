@@ -70,14 +70,14 @@ namespace VRCLightVolumes.Tests {
             Assert.That(GetField<int[]>(manager, "_pointLightCustomIDs"), Is.SameAs(retainedIds));
         }
 
-        // Mixed blocks retain their cube-first offsets, and unusual public type/mode values retain the existing single-source fallback rather than acquiring a new validation policy.
+        // Mixed source blocks retain their cube-first offsets and share IDs across Spot and Area cookies.
         [Test]
-        public void CustomSourcePairLookupKeepsMixedBlockOffsetsAndUnusualModes() {
+        public void CustomSourcePairLookupKeepsMixedBlockOffsets() {
             LightVolumeManager manager = CreateComponent<LightVolumeManager>("Mixed Pair Cache Manager");
             Texture texture = (Texture)CreateSource(false);
             Material material = (Material)CreateSource(true);
-            int[] lightTypes = { 0, 0, 0, 1, 0, 1, -9, 2, 123, 1 };
-            int[] projectionModes = { 2, 2, 2, 2, 2, 2, 37, 2, -1, 0 };
+            int[] lightTypes = { 0, 0, 0, 1, 0, 1, 2, 2, 2, 1 };
+            int[] projectionModes = { 2, 2, 2, 2, 2, 2, 2, 2, 2, 0 };
             bool[] materials = { false, false, true, false, true, false, false, true, true, false };
             bool[] autoUpdates = { false, true, false, false, true, true, false, false, true, true };
             PointLightVolumeInstance[] points = new PointLightVolumeInstance[lightTypes.Length];

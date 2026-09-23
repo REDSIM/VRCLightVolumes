@@ -66,22 +66,6 @@ namespace VRCLightVolumes.Tests {
         }
 
         [Test]
-        public void AutomaticallyCreatedManagerDefaultsToAvailableLightmapper() {
-            _scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
-            GameObject prefabAsset = CreatePrefab(
-                includeLegacyHelpers: false,
-                includeUnifiedComponents: true,
-                includeVolume: false,
-                includePointLight: true);
-            GameObject instanceRoot = (GameObject)PrefabUtility.InstantiatePrefab(prefabAsset, _scene);
-
-            QueueAndFlush(instanceRoot);
-
-            LightVolumeManager manager = GetSingleSceneComponent<LightVolumeManager>();
-            Assert.That(manager.BakingMode, Is.EqualTo(BakeryEditorBridge.IsAvailable ? 1 : 0));
-        }
-
-        [Test]
         public void DuplicateManagersUseFirstHierarchyEntryForOnboarding() {
             _scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
             GameObject firstObject = new GameObject("Primary Manager");
@@ -167,6 +151,7 @@ namespace VRCLightVolumes.Tests {
             QueueAndFlush(instanceRoot);
 
             LightVolumeManager manager = GetSingleSceneComponent<LightVolumeManager>();
+            Assert.That(manager.BakingMode, Is.EqualTo(BakeryEditorBridge.IsAvailable ? 1 : 0));
             LightVolumeInstance volume = instanceRoot.GetComponentInChildren<LightVolumeInstance>(true);
             PointLightVolumeInstance pointLight = instanceRoot.GetComponentInChildren<PointLightVolumeInstance>(true);
             if (pointLightOnly) {

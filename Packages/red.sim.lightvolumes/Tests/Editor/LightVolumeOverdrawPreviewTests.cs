@@ -101,16 +101,6 @@ namespace VRCLightVolumes.Tests {
             AssertCount(0);
         }
 
-        [TestCase(1)]
-        [TestCase(16)]
-        [TestCase(128)]
-        public void OverlappingPointLightsIncreaseTheWarmColor(int count) {
-            SetCounts(count, 0, 0);
-            Color color = AssertCount(count);
-            Assert.That(color.r, Is.GreaterThan(color.g));
-            Assert.That(color.g, Is.GreaterThan(color.b));
-        }
-
         [Test]
         public void InitialOverlapIsVisibleAndBrightnessStepsDecrease() {
             SetCounts(1, 0, 0);

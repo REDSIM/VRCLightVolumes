@@ -123,34 +123,13 @@ namespace VRCLightVolumes.Tests {
             Assert.That(previous == null, Is.False);
         }
 
-        [Test]
-        public void ShadowDefaultsUseLowBiasAndPlatformSpecificVariance() {
-            PointLightVolumeInstance point = CreateComponent<PointLightVolumeInstance>("Default Shadow Point");
-            LightVolumeManager manager = CreateComponent<LightVolumeManager>("Default Shadow Manager");
-
-            Assert.That(point.Bias, Is.EqualTo(0.01f).Within(Epsilon));
-            Assert.That(manager.ShadowMinVarianceDesktop, Is.Zero);
-            Assert.That(manager.ShadowMinVarianceMobile, Is.EqualTo(1f));
-            Assert.That(manager.ShadowMinVariance, Is.EqualTo(0.0001f).Within(0.0000001f));
-            Assert.That(LightVolumeManagerEditorBackend.GetShadowMinVarianceValue(0f), Is.EqualTo(0.0001f).Within(0.0000001f));
-            Assert.That(LightVolumeManagerEditorBackend.GetShadowMinVarianceValue(1f), Is.EqualTo(1f).Within(Epsilon));
-
-#pragma warning disable CS0618
-            LightVolumeSetup legacySetup = CreateComponent<LightVolumeSetup>("Legacy Default Shadow Setup");
-#pragma warning restore CS0618
-            PointLightVolume legacyPoint = CreateComponent<PointLightVolume>("Legacy Default Shadow Point");
-
-            Assert.That(point.FarClip, Is.Zero);
-            Assert.That(legacySetup.ShadowMinVariance, Is.Zero);
-            Assert.That(legacySetup.ShadowMinVarianceMobile, Is.EqualTo(1f));
-            Assert.That(legacyPoint.Bias, Is.EqualTo(0.01f).Within(Epsilon));
-            Assert.That(legacyPoint.FarPlane, Is.Zero);
-        }
-
-        [Test]
-        public void ShadowFarClipInspectorLabelsZeroAsAutomatic() {
-            Assert.That(PointLightVolumeEditor.GetFarClipDisplayText(0f), Is.EqualTo("0 (Auto)"));
-            Assert.That(PointLightVolumeEditor.GetFarClipDisplayText(1f), Is.Null);
+        [TestCase(-1f, 0.0001f)]
+        [TestCase(0f, 0.0001f)]
+        [TestCase(0.5f, 0.01f)]
+        [TestCase(1f, 1f)]
+        [TestCase(2f, 1f)]
+        public void ShadowVarianceSliderUsesLogarithmicScaleAndClampsToRange(float slider, float expected) {
+            Assert.That(LightVolumeManagerEditorBackend.GetShadowMinVarianceValue(slider), Is.EqualTo(expected).Within(0.0000001f));
         }
 
         // External lightmappers consume manager-scoped unified volumes and world-space voxel centers.
@@ -169,12 +148,8 @@ namespace VRCLightVolumes.Tests {
             Assert.That(manager.Editor.GetCustomProbesCount(), Is.EqualTo(1));
             Vector3[] probes = manager.Editor.GetCustomProbes(0);
             Assert.That(probes, Has.Length.EqualTo(2));
-            AssertVector3Close(
-                LVUtils.TransformPoint(new Vector3(-0.25f, 0f, 0f), LightVolumeTools.GetPosition(volume), LightVolumeTools.GetRotation(volume), LightVolumeTools.GetScale(volume)),
-                probes[0]);
-            AssertVector3Close(
-                LVUtils.TransformPoint(new Vector3(0.25f, 0f, 0f), LightVolumeTools.GetPosition(volume), LightVolumeTools.GetRotation(volume), LightVolumeTools.GetScale(volume)),
-                probes[1]);
+            AssertVector3Close(new Vector3(5f, 2f, -2f), probes[0]);
+            AssertVector3Close(new Vector3(5f, 2f, -4f), probes[1]);
 
             LogAssert.Expect(LogType.Error, "[LightVolumes] Custom probe Light Volume ID -1 is invalid. Available volume count: 1.");
             Assert.That(manager.Editor.GetCustomProbes(-1), Is.Empty);

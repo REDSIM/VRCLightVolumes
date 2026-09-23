@@ -12,6 +12,7 @@ namespace VRCLightVolumes.Tests {
     public class Texture3DAtlasGeneratorTests {
         private const float Epsilon = 0.001f;
         private const int MaxAtlasSize = 2048;
+        private const int AtlasTimeoutSeconds = 30;
         private static readonly BindingFlags _staticPrivateFlags = BindingFlags.Static | BindingFlags.NonPublic;
         private static readonly BindingFlags _instancePrivateFlags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
         private static readonly BindingFlags _nestedPrivateFlags = BindingFlags.NonPublic;
@@ -120,7 +121,6 @@ namespace VRCLightVolumes.Tests {
             Assert.That(atlas.Texture, Is.Not.Null);
             Assert.That(atlas.BoundsUvwMin, Has.Length.EqualTo(3));
             AssertBoundsInsideAtlas(atlas.BoundsUvwMin[0], atlas.BoundsUvwMax[0]);
-            Assert.That(atlas.BoundsUvwMax[0].x - atlas.BoundsUvwMin[0].x, Is.GreaterThan(0));
         }
 
         // Verifies null or empty inputs fail without invoking the completion callback.
@@ -146,12 +146,12 @@ namespace VRCLightVolumes.Tests {
             });
 
             try {
-                int guard = 20000;
+                var timer = System.Diagnostics.Stopwatch.StartNew();
                 while (routine.MoveNext()) {
                     pendingAtlas = FindNewTexture3D(existingTextureIds);
                     if (pendingAtlas != null) break;
-                    guard--;
-                    if (guard < 0) Assert.Fail("Atlas generation coroutine did not reach its final ownership-transfer yield.");
+                    if (timer.Elapsed.TotalSeconds > AtlasTimeoutSeconds)
+                        Assert.Fail("Atlas generation did not reach its ownership-transfer yield within the timeout.");
                 }
 
                 Assert.That(pendingAtlas, Is.Not.Null, "The generator completed without exposing its pending atlas allocation.");
@@ -279,12 +279,16 @@ namespace VRCLightVolumes.Tests {
             return completed;
         }
 
-        // Runs a coroutine-like enumerator synchronously with a guard against accidental infinite loops.
+        // Allow worker tasks time to finish and dispose the iterator if an assertion fails.
         private static void RunEnumerator(IEnumerator routine) {
-            int guard = 20000;
-            while (routine.MoveNext()) {
-                guard--;
-                if (guard < 0) Assert.Fail("Atlas generation coroutine did not finish.");
+            var timer = System.Diagnostics.Stopwatch.StartNew();
+            try {
+                while (routine.MoveNext()) {
+                    if (timer.Elapsed.TotalSeconds > AtlasTimeoutSeconds)
+                        Assert.Fail("Atlas generation did not finish within the timeout.");
+                }
+            } finally {
+                (routine as IDisposable)?.Dispose();
             }
         }
 

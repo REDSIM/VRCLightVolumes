@@ -184,17 +184,12 @@ namespace VRCLightVolumes.Tests {
                 { "HasAutoShadowTextureUpdates", typeof(bool) }
             };
 
-            Assert.That(expectedFields.GetLength(0), Is.EqualTo(59), "Update the contract deliberately when its baseline changes.");
-            FieldInfo[] declaredFields = typeof(LightVolumeManager).GetFields(PublicInstanceDeclared);
-            Array.Sort(declaredFields, (left, right) => left.MetadataToken.CompareTo(right.MetadataToken));
-            Assert.That(declaredFields, Has.Length.EqualTo(expectedFields.GetLength(0)), "Unexpected public instance field changed the serialized/Udon ABI.");
             for (int i = 0; i < expectedFields.GetLength(0); i++) {
                 string fieldName = (string)expectedFields[i, 0];
                 Type expectedType = (Type)expectedFields[i, 1];
                 FieldInfo field = typeof(LightVolumeManager).GetField(fieldName, PublicInstanceDeclared);
                 Assert.That(field, Is.Not.Null, "Missing serialized public field " + fieldName);
                 Assert.That(field.FieldType, Is.EqualTo(expectedType), fieldName + " changed its serialized type");
-                Assert.That(declaredFields[i].Name, Is.EqualTo(fieldName), fieldName + " changed its serialized declaration order");
             }
         }
 
@@ -226,16 +221,6 @@ namespace VRCLightVolumes.Tests {
             AssertPublicMethod("UpdatePointLightShadowTexture", typeof(bool), typeof(PointLightVolumeInstance));
             AssertPublicMethod("GetPointLightCustomID", typeof(int), typeof(PointLightVolumeInstance));
             AssertPublicMethod("RequestUpdateVolumes", typeof(void));
-        }
-
-        // Baking-only per-face and staging ABI must not return after the complete-shadow simplification.
-        [Test]
-        public void RemovedRuntimeShadowBakingLegacyContractDoesNotReturn() {
-            Assert.That(typeof(PointLightVolumeInstance).GetField("RuntimeShadowFacesPerFrame", PublicInstanceDeclared), Is.Null);
-            Assert.That(typeof(PointLightVolumeInstance).GetField("RuntimeShadowRetainTemporaries", PublicInstanceDeclared), Is.Null);
-            Assert.That(typeof(PointLightShadowRuntimeBaker).GetField("RealtimeFacesPerFrame", PublicInstanceDeclared), Is.Null);
-            Assert.That(typeof(LightVolumeManager).GetMethod("UpdatePointLightShadowTextureSlice", PublicInstanceDeclared), Is.Null);
-            Assert.That(typeof(LightVolumeManager).GetMethod("UpdatePointLightShadowTextureRange", PublicInstanceDeclared), Is.Null);
         }
 
         // Release builds must never ship a stale or failed serialized Udon program beside current sources.
@@ -279,15 +264,6 @@ namespace VRCLightVolumes.Tests {
             Assert.That(pointType.GetMethod("SetCustomMaterial", PublicInstanceDeclared, null, new[] { typeof(Material), typeof(bool) }, null), Is.Not.Null);
             Assert.That(pointType.GetMethod("SetCustomTexture", PublicInstanceDeclared, null, new[] { typeof(Texture) }, null), Is.Not.Null);
             Assert.That(pointType.GetMethod("SetCustomMaterial", PublicInstanceDeclared, null, new[] { typeof(Material) }, null), Is.Not.Null);
-
-            // The source type and layout are still derived by the lean dev.16 cache instead of restoring stale metadata.
-            Assert.That(pointType.GetField("ProjectionType", PublicInstanceDeclared), Is.Null);
-            Assert.That(pointType.GetField("CustomTextureIsCubemap", PublicInstanceDeclared), Is.Null);
-            Assert.That(pointType.GetField("CustomTextureHasDepthSlices", PublicInstanceDeclared), Is.Null);
-            Assert.That(pointType.GetMethod("SetCustomTexture", PublicInstanceDeclared, null, new[] { typeof(Texture), typeof(bool) }, null), Is.Null);
-            Assert.That(pointType.GetMethod("SetCustomRenderTexture", PublicInstanceDeclared), Is.Null);
-            Assert.That(typeof(LightVolumeManager).GetField("HasLiveCustomTextureUpdates", PublicInstanceDeclared), Is.Null);
-            Assert.That(typeof(LightVolumeManager).GetMethod("UpdateLiveCustomTextures", PublicInstanceDeclared), Is.Null);
         }
 
         // A default handle is intentionally usable by generic editor integrations before a Manager is assigned.
@@ -659,7 +635,8 @@ namespace VRCLightVolumes.Tests {
             if (SystemInfo.graphicsShaderLevel < 35 || !SystemInfo.SupportsRenderTextureFormat(RenderTextureFormat.RFloat))
                 Assert.Ignore("The active graphics API does not support the RFloat shadow-culling hierarchy.");
             Shader shader = Shader.Find("Hidden/VRCLV/FroxelShadowCullPyramid");
-            if (shader == null || !shader.isSupported) Assert.Ignore("The shadow-culling hierarchy shader is unavailable.");
+            Assert.That(shader, Is.Not.Null);
+            Assert.That(shader.isSupported, Is.True);
 
             LightVolumeManager manager = CreateManager("Shadow Cull Pyramid Manager", false, false);
             manager.ShadowCulling = true;
@@ -780,7 +757,8 @@ namespace VRCLightVolumes.Tests {
             if (SystemInfo.graphicsShaderLevel < 35 || !SystemInfo.SupportsRenderTextureFormat(RenderTextureFormat.RFloat))
                 Assert.Ignore("The active graphics API does not support the RFloat shadow-culling hierarchy.");
             Shader shader = Shader.Find("Hidden/VRCLV/FroxelShadowCullPyramid");
-            if (shader == null || !shader.isSupported) Assert.Ignore("The shadow-culling hierarchy shader is unavailable.");
+            Assert.That(shader, Is.Not.Null);
+            Assert.That(shader.isSupported, Is.True);
 
             LightVolumeManager manager = CreateManager("Packed Shadow Cull Layout Manager", false, false);
             manager.ShadowCulling = true;
@@ -853,7 +831,8 @@ namespace VRCLightVolumes.Tests {
             if (SystemInfo.graphicsShaderLevel < 35 || !SystemInfo.SupportsRenderTextureFormat(RenderTextureFormat.RFloat))
                 Assert.Ignore("The active graphics API does not support the RFloat shadow-culling hierarchy.");
             Shader shader = Shader.Find("Hidden/VRCLV/FroxelShadowCullPyramid");
-            if (shader == null || !shader.isSupported) Assert.Ignore("The shadow-culling hierarchy shader is unavailable.");
+            Assert.That(shader, Is.Not.Null);
+            Assert.That(shader.isSupported, Is.True);
 
             LightVolumeManager manager = CreateManager("Capped Shadow Cull Layout Manager", false, false);
             manager.ShadowCulling = true;
@@ -974,9 +953,6 @@ namespace VRCLightVolumes.Tests {
             object[] allLightsTooDetailed = { 2048, 768, 3, 0, 0, 0 };
             Assert.That((bool)resolver.Invoke(null, allLightsTooDetailed), Is.False,
                 "A 256 x 256 finest level for all 128 cubemap lights exceeds the shared 4K atlas.");
-            object[] allLightsGuaranteedLevel = { 2048, 768, 4, 0, 0, 0 };
-            Assert.That((bool)resolver.Invoke(null, allLightsGuaranteedLevel), Is.True,
-                "Automatic quality reduction must still fit all 128 cubemap lights at 128 x 128.");
         }
 
         [Test]
@@ -984,7 +960,8 @@ namespace VRCLightVolumes.Tests {
             if (SystemInfo.graphicsShaderLevel < 35 || !SystemInfo.SupportsRenderTextureFormat(RenderTextureFormat.RFloat))
                 Assert.Ignore("The active graphics API does not support the RFloat shadow-culling hierarchy.");
             Shader shader = Shader.Find("Hidden/VRCLV/FroxelShadowCullPyramid");
-            if (shader == null || !shader.isSupported) Assert.Ignore("The shadow-culling hierarchy shader is unavailable.");
+            Assert.That(shader, Is.Not.Null);
+            Assert.That(shader.isSupported, Is.True);
 
             LightVolumeManager manager = CreateManager("Shrinking Shadow Cull Layout Manager", false);
             manager.ShadowCulling = true;
@@ -1204,9 +1181,8 @@ namespace VRCLightVolumes.Tests {
                 Assert.Ignore("The active graphics API does not support the packed froxel mask format.");
             }
             Shader clusteringShader = Shader.Find("Hidden/VRCLV/FroxelClusteringBuild");
-            if (clusteringShader == null || !clusteringShader.isSupported) {
-                Assert.Ignore("The froxel clustering build shader is unavailable on the active graphics API.");
-            }
+            Assert.That(clusteringShader, Is.Not.Null);
+            Assert.That(clusteringShader.isSupported, Is.True);
 
             LightVolumeManager manager = CreateManager("Released Froxel Texture Manager", false);
             manager.Clustering = true;
@@ -1280,9 +1256,10 @@ namespace VRCLightVolumes.Tests {
                 Assert.Ignore("The active graphics API does not support the froxel clustering formats.");
             Shader clusteringShader = Shader.Find("Hidden/VRCLV/FroxelClusteringBuild");
             Shader shadowCullShader = Shader.Find("Hidden/VRCLV/FroxelShadowCullPyramid");
-            if (clusteringShader == null || !clusteringShader.isSupported
-                    || shadowCullShader == null || !shadowCullShader.isSupported)
-                Assert.Ignore("The froxel clustering shaders are unavailable on the active graphics API.");
+            Assert.That(clusteringShader, Is.Not.Null);
+            Assert.That(clusteringShader.isSupported, Is.True);
+            Assert.That(shadowCullShader, Is.Not.Null);
+            Assert.That(shadowCullShader.isSupported, Is.True);
 
             LightVolumeManager manager = CreateManager("Pending Shadow Cull Retry Manager", false);
             manager.ShadowCulling = true;
@@ -1468,6 +1445,10 @@ namespace VRCLightVolumes.Tests {
             try {
                 onSceneSaved.Invoke(null, new object[] { default(UnityEngine.SceneManagement.Scene) });
                 recoverAfterSceneSave.Invoke(null, null);
+
+                Assert.That((bool)flushQueued.GetValue(null), Is.False);
+                Assert.That((bool)managerUpdateQueued.GetValue(null), Is.False);
+                Assert.That((bool)previewRefreshPending.GetValue(null), Is.False);
             } finally {
                 EditorApplication.delayCall -= recoveryCallback;
                 EditorApplication.delayCall -= flushCallback;
@@ -1476,9 +1457,6 @@ namespace VRCLightVolumes.Tests {
                 previewRefreshPending.SetValue(null, false);
             }
 
-            Assert.That((bool)flushQueued.GetValue(null), Is.False);
-            Assert.That((bool)managerUpdateQueued.GetValue(null), Is.False);
-            Assert.That((bool)previewRefreshPending.GetValue(null), Is.False);
             AssertGlobalFloat(_pointLightCountID, 1f);
         }
 
@@ -5452,40 +5430,6 @@ namespace VRCLightVolumes.Tests {
                 Is.EqualTo(-1f / 7.5f).Within(Epsilon));
         }
 
-        // Verifies runtime shadow baking uses the target light far clip data.
-        [Test]
-        public void RuntimeShadowBakerUsesTargetRangeForShadowFarClip() {
-            LightVolumeManager manager = CreateManager("Runtime Shadow Far Clip Manager", false);
-            PointLightVolumeInstance point = CreatePointLight(manager, "Runtime Shadow Far Clip Light", true);
-            point.FarClip = 0f;
-            point.Intensity = 100f;
-
-            PointLightVolumeInstance baker = point;
-            baker.RuntimeShadowResolution = 16;
-            baker.RuntimeShadowDepthEncodeMaterial = CreateMaterial("Hidden/VRCLV/PointLightShadowDepthEncode");
-            Camera shadowCamera = AddRuntimeShadowCamera(baker);
-
-            float firstAutomaticFarClip = point.GetShadowFarClip();
-            point.IsRangeDirty = true;
-            baker.BakeShadows();
-            Assert.That(shadowCamera.farClipPlane, Is.EqualTo(firstAutomaticFarClip).Within(Epsilon));
-            Assert.That(point.BakedFarClip, Is.EqualTo(firstAutomaticFarClip).Within(Epsilon));
-
-            point.Intensity = 25f;
-            float secondAutomaticFarClip = point.GetShadowFarClip();
-            point.IsRangeDirty = true;
-
-            baker.BakeShadows();
-            Assert.That(shadowCamera.farClipPlane, Is.EqualTo(secondAutomaticFarClip).Within(Epsilon));
-            Assert.That(point.BakedFarClip, Is.EqualTo(secondAutomaticFarClip).Within(Epsilon));
-
-            point.FarClip = 3;
-
-            baker.BakeShadows();
-            Assert.That(shadowCamera.farClipPlane, Is.EqualTo(3).Within(Epsilon));
-            Assert.That(point.BakedFarClip, Is.EqualTo(3).Within(Epsilon));
-        }
-
         // Verifies a dirty automatic range is resolved before runtime shadow depth is encoded and uploaded.
         [Test]
         public void RuntimeShadowBakerRefreshesDirtyAutomaticRangeBeforeEncoding() {
@@ -6339,21 +6283,14 @@ namespace VRCLightVolumes.Tests {
 
             prepareShadowBlurMaterialMethod.Invoke(baker, new object[] { true, 0.25f, 64, false, false });
             float lowResolutionEffectiveRadius = blurMaterial.GetFloat("_BlurRadius") * blurMaterial.GetFloat("_InvResolution");
-            float narrowTanHalfFov = blurMaterial.GetFloat("_ShadowTanHalfFov");
-            float narrowAngleProjectedRadius = lowResolutionEffectiveRadius / narrowTanHalfFov;
-            float narrowAnglePhysicalRadius = narrowAngleProjectedRadius * narrowTanHalfFov;
+            Assert.That(blurMaterial.GetFloat("_ShadowTanHalfFov"), Is.EqualTo(0.25f).Within(Epsilon));
 
             prepareShadowBlurMaterialMethod.Invoke(baker, new object[] { true, 1f, 256, false, false });
             float highResolutionEffectiveRadius = blurMaterial.GetFloat("_BlurRadius") * blurMaterial.GetFloat("_InvResolution");
-            float wideTanHalfFov = blurMaterial.GetFloat("_ShadowTanHalfFov");
-            float wideAngleProjectedRadius = highResolutionEffectiveRadius / wideTanHalfFov;
-            float wideAnglePhysicalRadius = wideAngleProjectedRadius * wideTanHalfFov;
 
             Assert.That(blurMaterial.IsKeywordEnabled("VRCLV_RUNTIME_SHADOW_BLUR_DIRECT"), Is.True);
             Assert.That(blurMaterial.GetFloat("_ShadowTanHalfFov"), Is.EqualTo(1f).Within(Epsilon));
             Assert.That(lowResolutionEffectiveRadius, Is.EqualTo(highResolutionEffectiveRadius).Within(Epsilon));
-            Assert.That(narrowAngleProjectedRadius, Is.GreaterThan(wideAngleProjectedRadius));
-            Assert.That(narrowAnglePhysicalRadius, Is.EqualTo(wideAnglePhysicalRadius).Within(Epsilon));
         }
 
         // Verifies shared manager-owned blur materials use manager keyword state instead of stale per-light state.

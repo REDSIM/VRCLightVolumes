@@ -111,24 +111,46 @@ namespace VRCLightVolumes.Tests {
         public void UdonSharpAssembliesDefineUdonSharpOnlyWithWorldsSdk() {
             for (int i = 0; i < UdonSharpAssemblyPaths.Length; i++) {
                 string path = UdonSharpAssemblyPaths[i];
-                string assemblyDefinition = File.ReadAllText(path);
-                Assert.That(assemblyDefinition, Does.Contain("\"name\": \"com.vrchat.worlds\""), path);
-                Assert.That(assemblyDefinition, Does.Contain("\"define\": \"UDONSHARP\""), path);
+                AssemblyDefinition assemblyDefinition = JsonUtility.FromJson<AssemblyDefinition>(File.ReadAllText(path));
+                VersionDefine[] udonDefines = System.Array.FindAll(assemblyDefinition.versionDefines, item => item.define == "UDONSHARP");
+                Assert.That(udonDefines, Has.Length.EqualTo(1), path);
+                Assert.That(udonDefines[0].name, Is.EqualTo("com.vrchat.worlds"), path);
+                Assert.That(udonDefines[0].expression, Is.EqualTo("0.0.0"), path);
             }
         }
 
-        // Player builds and Play Mode must not silently rewrite persistent import settings for project textures. Custom projection assets remain fully owned by the project author.
-        [Test]
-        public void BuildLifecycleDoesNotReimportProjectionTextures() {
-            const string preprocessorPath = "Packages/red.sim.lightvolumes/Scripts/Editor/LightVolumeBuildPreprocessor.cs";
-            const string utilitiesPath = "Packages/red.sim.lightvolumes/Scripts/LVUtils.cs";
-            string preprocessorSource = File.ReadAllText(preprocessorPath);
-            string utilitiesSource = File.ReadAllText(utilitiesPath);
+        [TestCase(false)]
+        [TestCase(true)]
+        public void RuntimePreparationPreservesProjectionImportSettings(bool editorTemporary) {
+            string path = AssetDatabase.GenerateUniqueAssetPath("Assets/VRCLightVolumesRuntimeProjection.exr");
+            System.Type preprocessor = typeof(LightVolumeMigration).Assembly.GetType("VRCLightVolumes.LightVolumePreprocessor");
+            MethodInfo prepare = preprocessor?.GetMethod("PrepareRuntimeDependencies", BindingFlags.Static | BindingFlags.NonPublic);
+            MethodInfo clear = preprocessor?.GetMethod("ClearRuntimeDependencies", BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.That(prepare, Is.Not.Null);
+            Assert.That(clear, Is.Not.Null);
+            _legacyObject = new GameObject("Runtime Projection Manager");
+            _unifiedObject = new GameObject("Runtime Projection Light");
+            LightVolumeManager manager = _legacyObject.AddComponent<LightVolumeManager>();
+            PointLightVolumeInstance pointLight = _unifiedObject.AddComponent<PointLightVolumeInstance>();
+            GameObject[] roots = { _legacyObject, _unifiedObject };
+            try {
+                CreateExrImport(path);
+                pointLight.LightVolumeManager = manager;
+                pointLight.LightType = 1;
+                pointLight.Projection = 2;
+                pointLight.Cookie = AssetDatabase.LoadAssetAtPath<Texture>(path);
+                Assert.That(pointLight.Cookie, Is.Not.Null);
+                manager.PointLightVolumeInstances = new[] { pointLight };
+                string importSettings = File.ReadAllText(path + ".meta");
 
-            Assert.That(preprocessorSource, Does.Not.Contain("TextureSetLinearHDRAndroidImport"), "Build and Play Mode callbacks must not mutate projection texture importers.");
-            Assert.That(preprocessorSource, Does.Not.Contain("EnsureProjectionTextureImportSettings"), "Projection import checks must remain in edit-time authoring synchronization.");
-            Assert.That(preprocessorSource, Does.Not.Contain("LightVolumeTextureImportBuildPreprocessor"), "VRCLV must not register a projection texture-import callback for player builds.");
-            Assert.That(utilitiesSource, Does.Not.Contain("TextureSetLinearHDRAndroidImport"), "The destructive project-asset import helper must not be reintroduced.");
+                prepare.Invoke(null, new object[] { roots, editorTemporary, manager });
+
+                AssertMisconfiguredExrImport(path);
+                Assert.That(File.ReadAllText(path + ".meta"), Is.EqualTo(importSettings));
+            } finally {
+                clear.Invoke(null, new object[] { roots, manager });
+                AssetDatabase.DeleteAsset(path);
+            }
         }
 
         // Assigning an HDR source configures only that active Light Volumes projection. Detection uses the source data rather than its extension, while LDR and unrelated assets stay intact.
@@ -192,52 +214,26 @@ namespace VRCLightVolumes.Tests {
                 "Packages/red.sim.lightvolumes/Scripts/Editor/red.sim.LightVolumesEditor.asmdef"
             };
             for (int i = 0; i < coreAsmdefs.Length; i++) {
-                string asmdef = File.ReadAllText(coreAsmdefs[i]);
-                Assert.That(asmdef, Does.Not.Contain(audioLinkGuid), coreAsmdefs[i]);
-                Assert.That(asmdef, Does.Not.Contain(bakeryRuntimeGuid), coreAsmdefs[i]);
-                Assert.That(asmdef, Does.Not.Contain(bakeryEditorGuid), coreAsmdefs[i]);
+                AssemblyDefinition asmdef = JsonUtility.FromJson<AssemblyDefinition>(File.ReadAllText(coreAsmdefs[i]));
+                Assert.That(asmdef.references, Does.Not.Contain("GUID:" + audioLinkGuid), coreAsmdefs[i]);
+                Assert.That(asmdef.references, Does.Not.Contain("GUID:" + bakeryRuntimeGuid), coreAsmdefs[i]);
+                Assert.That(asmdef.references, Does.Not.Contain("GUID:" + bakeryEditorGuid), coreAsmdefs[i]);
             }
 
-            const string audioLinkSourcePath = "Packages/red.sim.lightvolumes/Extra/Audio Link/LightVolumeAudioLink.cs";
             const string audioLinkProgramAssetPath = "Packages/red.sim.lightvolumes/Extra/Audio Link/LightVolumeAudioLink.asset";
             const string optionalAsmdefPath = "Packages/red.sim.lightvolumes/Extra/Audio Link/red.sim.LightVolumes.AudioLinkUdon.asmdef";
             const string optionalAssemblyAssetPath = "Packages/red.sim.lightvolumes/Extra/Audio Link/red.sim.LightVolumes.AudioLinkUdon.asset";
-            string audioLinkSource = File.ReadAllText(audioLinkSourcePath);
-            string audioLinkAsmdef = File.ReadAllText(optionalAsmdefPath);
-            Assert.That(audioLinkAsmdef, Does.Not.Contain(audioLinkGuid));
-            Assert.That(audioLinkAsmdef, Does.Contain("\"defineConstraints\": []"), "A conditional asmdef leaves its UdonSharp program asset outside every active U# assembly.");
-            Assert.That(audioLinkAsmdef, Does.Not.Contain("VRCLV_AUDIOLINK"));
+            AssemblyDefinition audioLinkAsmdef = JsonUtility.FromJson<AssemblyDefinition>(File.ReadAllText(optionalAsmdefPath));
+            Assert.That(audioLinkAsmdef.references, Does.Not.Contain("GUID:" + audioLinkGuid));
+            Assert.That(audioLinkAsmdef.defineConstraints, Is.Empty, "A conditional asmdef leaves its UdonSharp program asset outside every active U# assembly.");
             Assert.That(File.Exists(optionalAssemblyAssetPath), Is.True);
             Assert.That(File.ReadAllText(optionalAssemblyAssetPath), Does.Contain(AssetDatabase.AssetPathToGUID(optionalAsmdefPath)));
-            Assert.That(File.Exists("Packages/red.sim.lightvolumes/Extra/Audio Link/UdonLightVolumesRef.asmref"), Is.False);
-            Assert.That(audioLinkSource, Does.Not.Contain("AudioLink.AudioLink"));
-            Assert.That(audioLinkSource, Does.Contain("public UdonSharpBehaviour AudioLink;"));
-            Assert.That(audioLinkSource, Does.Contain("public MonoBehaviour AudioLink;"));
-            Assert.That(audioLinkSource, Does.Contain("AudioLink.SendCustomEvent(EnableReadbackEvent);"));
-            Assert.That(audioLinkSource, Does.Contain("AudioLink.GetProgramVariable(AudioDataVariable)"));
-            Assert.That(audioLinkSource, Does.Contain("GetField(AudioDataVariable"));
             string audioLinkProgramAsset = File.ReadAllText(audioLinkProgramAssetPath);
             Assert.That(audioLinkProgramAsset, Does.Not.Contain("AudioLink.AudioLink, AudioLink"));
             Assert.That(audioLinkProgramAsset, Does.Contain("UdonSharp.UdonSharpBehaviour, UdonSharp.Runtime"));
 
             string packageManifest = File.ReadAllText("Packages/red.sim.lightvolumes/package.json");
-            Assert.That(packageManifest, Does.Not.Contain("\"vpmDependencies\""));
             Assert.That(packageManifest, Does.Not.Contain("com.llealloo.audiolink"));
-
-            string[] productionRoots = {
-                "Packages/red.sim.lightvolumes/UScripts",
-                "Packages/red.sim.lightvolumes/Scripts",
-                "Packages/red.sim.lightvolumes/Extra"
-            };
-            for (int rootIndex = 0; rootIndex < productionRoots.Length; rootIndex++) {
-                string[] sources = Directory.GetFiles(productionRoots[rootIndex], "*.cs", SearchOption.AllDirectories);
-                for (int i = 0; i < sources.Length; i++) {
-                    string source = File.ReadAllText(sources[i]);
-                    Assert.That(source, Does.Not.Contain("BAKERY_INCLUDED"), sources[i]);
-                    Assert.That(source, Does.Not.Contain("#if AUDIOLINK"), sources[i]);
-                    Assert.That(source, Does.Not.Contain("#elif AUDIOLINK"), sources[i]);
-                }
-            }
         }
 
         // A unique co-located Udon component is authoritative even when an obsolete serialized link points elsewhere.
@@ -604,6 +600,20 @@ namespace VRCLightVolumes.Tests {
                 if (replacementShadow != null) UnityEngine.Object.DestroyImmediate(replacementShadow);
                 AssetDatabase.DeleteAsset(path);
             }
+        }
+
+        [System.Serializable]
+        private sealed class AssemblyDefinition {
+            public string[] references = new string[0];
+            public string[] defineConstraints = new string[0];
+            public VersionDefine[] versionDefines = new VersionDefine[0];
+        }
+
+        [System.Serializable]
+        private sealed class VersionDefine {
+            public string name = "";
+            public string expression = "";
+            public string define = "";
         }
 
         private static void SetShadowPixels(Texture texture, Color color) {

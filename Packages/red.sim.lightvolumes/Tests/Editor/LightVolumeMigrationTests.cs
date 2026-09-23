@@ -236,10 +236,11 @@ namespace VRCLightVolumes.Tests {
             Assert.That(_scene.isDirty, Is.False);
         }
 
-        [Test]
-        public void MigrationPreservesEmptyUnownedBackingAndValidationReportsItWithoutDirtyingScene() {
+        [TestCase(false)]
+        [TestCase(true)]
+        public void MigrationPreservesUnownedBackingAndValidationReportsItWithoutDirtyingScene(bool hasCustomPayload) {
             _scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
-            GameObject managerObject = new GameObject("Manager With Empty Orphan Backing");
+            GameObject managerObject = new GameObject("Manager With Orphan Backing");
             SceneManager.MoveGameObjectToScene(managerObject, _scene);
             LightVolumeManager manager = UdonSharpUndo.AddComponent<LightVolumeManager>(managerObject);
             manager.LightVolumeInstances = Array.Empty<LightVolumeInstance>();
@@ -250,6 +251,9 @@ namespace VRCLightVolumes.Tests {
             Assert.That(healthyBacking, Is.Not.Null);
             UdonBehaviour orphanBacking = managerObject.AddComponent<UdonBehaviour>();
             orphanBacking.programSource = healthyBacking.programSource;
+            if (hasCustomPayload) {
+                Assert.That(orphanBacking.publicVariables.TryAddVariable(new UdonVariable<int>("CustomPayload", 42)), Is.True);
+            }
 
             _sceneAssetPath = AssetDatabase.GenerateUniqueAssetPath("Assets/VRCLightVolumesMigrationOrphanTest.unity");
             Assert.That(EditorSceneManager.SaveScene(_scene, _sceneAssetPath), Is.True);
@@ -262,45 +266,10 @@ namespace VRCLightVolumes.Tests {
             Assert.That(orphanBacking == null, Is.False);
             Assert.That(UdonSharpEditorUtility.GetBackingUdonBehaviour(manager), Is.SameAs(healthyBacking));
             Assert.That(managerObject.GetComponents<UdonBehaviour>(), Has.Length.EqualTo(2));
-            Assert.That(_scene.isDirty, Is.False);
-
-            bool valid = LightVolumeMigration.ValidateLoadedSceneUdonPairs(out int issueCount, out string issueSummary);
-
-            Assert.That(valid, Is.False);
-            Assert.That(issueCount, Is.EqualTo(1));
-            Assert.That(issueSummary, Does.Contain("unowned LightVolumeManager backing UdonBehaviour"));
-            Assert.That(issueSummary, Does.Contain(managerObject.name));
-            Assert.That(_scene.isDirty, Is.False);
-        }
-
-        [Test]
-        public void MigrationPreservesCustomPayloadOrphanAndValidationReportsItWithoutDirtyingScene() {
-            _scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
-            GameObject managerObject = new GameObject("Manager With Custom Orphan Backing");
-            SceneManager.MoveGameObjectToScene(managerObject, _scene);
-            LightVolumeManager manager = UdonSharpUndo.AddComponent<LightVolumeManager>(managerObject);
-            manager.LightVolumeInstances = Array.Empty<LightVolumeInstance>();
-            manager.PointLightVolumeInstances = Array.Empty<PointLightVolumeInstance>();
-            UdonSharpEditorUtility.CopyProxyToUdon(manager);
-
-            UdonBehaviour healthyBacking = UdonSharpEditorUtility.GetBackingUdonBehaviour(manager);
-            Assert.That(healthyBacking, Is.Not.Null);
-            UdonBehaviour orphanBacking = managerObject.AddComponent<UdonBehaviour>();
-            orphanBacking.programSource = healthyBacking.programSource;
-            Assert.That(orphanBacking.publicVariables.TryAddVariable(new UdonVariable<int>("CustomPayload", 42)), Is.True);
-
-            _sceneAssetPath = AssetDatabase.GenerateUniqueAssetPath("Assets/VRCLightVolumesMigrationCustomOrphanTest.unity");
-            Assert.That(EditorSceneManager.SaveScene(_scene, _sceneAssetPath), Is.True);
-            Assert.That(_scene.isDirty, Is.False);
-
-            int removed = MigrateScene(_scene, out int blocked);
-
-            Assert.That(removed, Is.Zero);
-            Assert.That(blocked, Is.Zero);
-            Assert.That(orphanBacking == null, Is.False);
-            Assert.That(managerObject.GetComponents<UdonBehaviour>(), Has.Length.EqualTo(2));
-            Assert.That(orphanBacking.publicVariables.TryGetVariableValue("CustomPayload", out object customPayload), Is.True);
-            Assert.That(customPayload, Is.EqualTo(42));
+            if (hasCustomPayload) {
+                Assert.That(orphanBacking.publicVariables.TryGetVariableValue("CustomPayload", out object customPayload), Is.True);
+                Assert.That(customPayload, Is.EqualTo(42));
+            }
             Assert.That(_scene.isDirty, Is.False);
 
             bool valid = LightVolumeMigration.ValidateLoadedSceneUdonPairs(out int issueCount, out string issueSummary);

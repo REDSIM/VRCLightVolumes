@@ -40,33 +40,6 @@ namespace VRCLightVolumes.Tests {
             Assert.That(LightVolumeBaker.ShouldDeringLightProbes(true, false, probes), Is.True);
         }
 
-        // Matches LTCGI's material-driven registration, where a separate editor updater renders the target.
-        [Test]
-        public void ManagerEditorFacadeAcceptsMaterialProcessorWithoutCallback() {
-            GameObject gameObject = new GameObject("LTCGI Style Post Processor Manager");
-            RenderTexture target = new RenderTexture(4, 4, 0);
-            Material material = null;
-            try {
-                Shader shader = Shader.Find("Hidden/InternalErrorShader");
-                Assert.That(shader, Is.Not.Null);
-                material = new Material(shader);
-                LightVolumeManager manager = gameObject.AddComponent<LightVolumeManager>();
-
-                manager.Editor.RegisterPostProcessor(new AtlasPostProcessor {
-                    Target = target,
-                    Material = material,
-                    InputTextureProperty = "_LV_Volume"
-                });
-
-                Assert.That(manager.Editor.ContainsPostProcessor(target, material), Is.True);
-            } finally {
-                target.Release();
-                UnityEngine.Object.DestroyImmediate(target);
-                UnityEngine.Object.DestroyImmediate(material);
-                UnityEngine.Object.DestroyImmediate(gameObject);
-            }
-        }
-
         // Destroyed integration targets must not leave their material and callback rooted by the
         // manager's serialized projection and transient post-processor cache.
         [Test]
@@ -117,9 +90,9 @@ namespace VRCLightVolumes.Tests {
             }
         }
 
-        // Any registered processor, including a regular RenderTexture used by LTCGI, minimizes atlas depth.
+        // LTCGI uses a material processor without a callback. It must register and select minimum-depth atlas packing.
         [Test]
-        public void AtlasPackingMinimizesDepthForAnyPostProcessorType() {
+        public void MaterialPostProcessorWithoutCallbackUsesMinimumDepthPacking() {
             GameObject gameObject = new GameObject("Post Processor Packing Manager");
             RenderTexture target = new RenderTexture(4, 4, 0);
             Material material = null;
@@ -139,6 +112,7 @@ namespace VRCLightVolumes.Tests {
                     InputTextureProperty = "_LV_Volume"
                 });
 
+                Assert.That(manager.Editor.ContainsPostProcessor(target, material), Is.True);
                 Assert.That(resolveStrategy.Invoke(null, new object[] { manager }), Is.EqualTo(TexturePackingStrategy.MinimumDepth));
             } finally {
                 target.Release();

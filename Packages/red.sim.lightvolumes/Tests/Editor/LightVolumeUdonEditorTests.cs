@@ -5730,15 +5730,21 @@ namespace VRCLightVolumes.Tests {
             const int destinationResolution = 64;
             GameObject managerObject = CreateGameObject("Runtime Udon Source-Footprint Manager", true);
             GameObject pointObject = CreateGameObject("Runtime Udon Source-Footprint Light", true);
+            UnityEngine.SceneManagement.Scene fixtureScene = UnityEngine.SceneManagement.SceneManager.GetSceneAt(0);
+            UnityEngine.SceneManagement.SceneManager.MoveGameObjectToScene(managerObject, fixtureScene);
+            UnityEngine.SceneManagement.SceneManager.MoveGameObjectToScene(pointObject, fixtureScene);
+            managerObject.transform.SetAsFirstSibling();
             LightVolumeManager manager = managerObject.AddUdonSharpComponent<LightVolumeManager>();
             PointLightVolumeInstance point = pointObject.AddUdonSharpComponent<PointLightVolumeInstance>();
             manager.ShadowTexturesWidth = destinationResolution;
             manager.ShadowTexturesHeight = destinationResolution;
+            manager.ShaderStripping = false;
             manager.RuntimeShadowBlurMaterial = CreateMaterial("Hidden/VRCLV/PointLightShadowRuntimeBlur");
 
             Color[] faceColors = { Color.red, Color.black, Color.black, Color.black, Color.black, Color.blue };
             Texture2DArray source = CreateSliceColorTextureArray("Runtime Udon Source-Footprint Cubemap", sourceResolution, sourceResolution, faceColors);
             point.LightVolumeManager = manager;
+            point.ShadowMap = source;
             point.IsActive = true;
             point.Intensity = 1f;
             point.ShadingStrength = 1f;
@@ -5747,6 +5753,10 @@ namespace VRCLightVolumes.Tests {
             ConfigureShadowTexture(point, source, false, false, true);
             point.ShadowMapUsesCubemap = true;
             manager.PointLightVolumeInstances = new[] { point };
+            // Scene/import recovery must preserve the authored source before Udon serialization.
+            point.EditorApplyAuthoringData(false, true, false);
+            Assert.That(point.ShadowMapTexture, Is.SameAs(source));
+            Assert.That(point.ShadowMapID, Is.GreaterThanOrEqualTo(0f));
             UdonSharpEditorUtility.CopyProxyToUdon(point);
             UdonSharpEditorUtility.CopyProxyToUdon(manager);
 
@@ -5758,6 +5768,13 @@ namespace VRCLightVolumes.Tests {
             manager = managerObject.GetComponent<LightVolumeManager>();
             var managerBacking = UdonSharpEditorUtility.GetBackingUdonBehaviour(manager);
             Assert.That(managerBacking, Is.Not.Null);
+            pointObject = GameObject.Find("Runtime Udon Source-Footprint Light");
+            Assert.That(pointObject, Is.Not.Null);
+            point = pointObject.GetComponent<PointLightVolumeInstance>();
+            var pointBacking = UdonSharpEditorUtility.GetBackingUdonBehaviour(point);
+            Assert.That(pointBacking, Is.Not.Null);
+            Assert.That(pointBacking.GetProgramVariable("ShadowMapTexture"), Is.InstanceOf<Texture2DArray>());
+            Assert.That(pointBacking.GetProgramVariable("ShadowMapID"), Is.GreaterThanOrEqualTo(0f));
             managerBacking.SendCustomEvent(nameof(LightVolumeManager.ReinitializeShadowTextures));
             yield return null;
 
@@ -6263,6 +6280,108 @@ namespace VRCLightVolumes.Tests {
             Assert.That(material.GetTexture("_MainTex"), Is.SameAs(mainTexture));
             AssertVectorClose(new Vector4(4, 4, 1, 0), material.GetVector(CustomRenderTextureInfoProperty));
             Assert.That(GetManagerField<RenderTexture>(manager, _dummyRTField), Is.Not.Null);
+        }
+
+        // GrabPass requires a color attachment in native Unity, but shadow encoding must still sample depth.
+        [TestCase(false)]
+        [TestCase(true)]
+        public void RuntimeShadowBakeWithGrabPassKeepsDepthCorrect(bool cubemap) {
+            Shader shader = ShaderUtil.CreateShaderAsset(@"
+Shader ""Hidden/VRCLV/Tests/ShadowGrabPass"" {
+    SubShader {
+        Tags { ""RenderType""=""Opaque"" }
+        GrabPass { }
+        Pass {
+            Cull Off ZWrite On
+            CGPROGRAM
+            #pragma vertex vert
+            #pragma fragment frag
+            #include ""UnityCG.cginc""
+            float4 vert(float4 vertex : POSITION) : SV_POSITION { return UnityObjectToClipPos(vertex); }
+            float4 frag() : SV_Target { return 0; }
+            ENDCG
+        }
+    }
+}
+", false);
+            _createdObjects.Add(shader);
+            Assert.That(shader, Is.Not.Null);
+            Assert.That(ShaderUtil.ShaderHasError(shader), Is.False);
+            Material material = new Material(shader);
+            _createdObjects.Add(material);
+
+            var scene = UnityEditor.SceneManagement.EditorSceneManager.NewPreviewScene();
+            Camera.CameraCallback beforeRender = null;
+            try {
+                LightVolumeManager manager = CreateManager("GrabPass Shadow Manager", false);
+                manager.ShadowTexturesWidth = 32;
+                manager.ShadowTexturesHeight = 32;
+                PointLightVolumeInstance point = CreatePointLight(manager, "GrabPass Shadow Light", true);
+                point.LightType = cubemap ? 0 : 1;
+                point.ShadowMapUsesCubemap = cubemap;
+                point.Angle = Mathf.PI * 0.25f;
+                point.NearClip = 0.1f;
+                point.FarClip = 10f;
+                point.Bias = 0f;
+                point.Blur = 0f;
+                point.RuntimeShadowResolution = 32;
+                point.RuntimeShadowDepthEncodeMaterial = CreateMaterial("Hidden/VRCLV/PointLightShadowDepthEncode");
+                Camera camera = AddRuntimeShadowCamera(point);
+                camera.clearFlags = CameraClearFlags.Depth;
+                camera.renderingPath = RenderingPath.Forward;
+                camera.depthTextureMode = DepthTextureMode.None;
+                camera.allowHDR = false;
+                camera.allowMSAA = false;
+                camera.aspect = 1f;
+                camera.scene = scene;
+                UnityEngine.SceneManagement.SceneManager.MoveGameObjectToScene(point.gameObject, scene);
+
+                GameObject caster = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                _createdObjects.Add(caster);
+                UnityEngine.SceneManagement.SceneManager.MoveGameObjectToScene(caster, scene);
+                caster.transform.position = new Vector3(0f, 0f, 3f);
+                caster.transform.localScale = Vector3.one * 2f;
+                Renderer renderer = caster.GetComponent<Renderer>();
+                renderer.sharedMaterial = material;
+
+                int renderCount = 0;
+                int depthBits = 0;
+                RenderTextureFormat captureFormat = RenderTextureFormat.Depth;
+                beforeRender = renderedCamera => {
+                    if (renderedCamera != camera) return;
+                    renderCount++;
+                    depthBits = camera.targetTexture.depth;
+                    captureFormat = camera.targetTexture.format;
+                };
+                Camera.onPreRender += beforeRender;
+
+                point.BakeShadows();
+
+                Assert.That(captureFormat, Is.Not.EqualTo(RenderTextureFormat.Depth));
+                if (SystemInfo.SupportsRenderTextureFormat(RenderTextureFormat.R8)) {
+                    Assert.That(captureFormat, Is.EqualTo(RenderTextureFormat.R8));
+                }
+                Assert.That(depthBits, Is.GreaterThanOrEqualTo(24));
+                Assert.That(renderCount, Is.EqualTo(cubemap ? 6 : 1));
+                Assert.That(renderer.sharedMaterial, Is.SameAs(material));
+                Color[][] pixels = ReadRenderTextureArrayPixels((RenderTexture)point.ShadowMapTexture);
+                Color center = pixels[cubemap ? 5 : 0][16 * 32 + 16];
+                float normalizedDepth = (Mathf.Log(center.r) / 5.54f + 1f) * 0.5f;
+                float expectedDepth = (2f * Mathf.Sqrt(1f + 2f / (32f * 32f)) - point.NearClip) / (point.FarClip - point.NearClip);
+                Assert.That(normalizedDepth, Is.EqualTo(expectedDepth).Within(0.001f), "The EVSM source must contain the cube depth, not the black color attachment.");
+
+                renderer.enabled = false;
+                point.BakeShadows();
+                pixels = ReadRenderTextureArrayPixels((RenderTexture)point.ShadowMapTexture);
+                center = pixels[cubemap ? 5 : 0][16 * 32 + 16];
+                normalizedDepth = (Mathf.Log(center.r) / 5.54f + 1f) * 0.5f;
+                Assert.That(normalizedDepth, Is.EqualTo(1f).Within(0.001f), "An empty capture must clear to the far plane.");
+                Assert.That(renderer.sharedMaterial, Is.SameAs(material));
+                LogAssert.NoUnexpectedReceived();
+            } finally {
+                if (beforeRender != null) Camera.onPreRender -= beforeRender;
+                UnityEditor.SceneManagement.EditorSceneManager.ClosePreviewScene(scene);
+            }
         }
 
         // Verifies runtime blur radius is normalized by resolution before shader sampling.

@@ -4,6 +4,7 @@ using NUnit.Framework;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.Rendering;
+using UnityEngine.SceneManagement;
 using UnityEngine.TestTools;
 using VRCLightVolumes.Editor;
 
@@ -14,6 +15,17 @@ namespace VRCLightVolumes.Tests {
         private static readonly BindingFlags _nonPublicStaticFlags = BindingFlags.Static | BindingFlags.NonPublic;
 
         private readonly List<Object> _createdObjects = new List<Object>();
+        private Transform _root;
+
+        // Primary Manager selection follows loaded-scene order, independently of the active scene.
+        [SetUp]
+        public void SetUp() {
+            GameObject root = new GameObject("Light Volumes Pipeline Tests");
+            _createdObjects.Add(root);
+            SceneManager.MoveGameObjectToScene(root, SceneManager.GetSceneAt(0));
+            _root = root.transform;
+            _root.SetAsFirstSibling();
+        }
 
         [TearDown]
         public void TearDown() {
@@ -22,6 +34,7 @@ namespace VRCLightVolumes.Tests {
                 if (target != null) Object.DestroyImmediate(target);
             }
             _createdObjects.Clear();
+            _root = null;
         }
 
         // Asset generation still depends on deterministic escaping after authoring moved to Udon components.
@@ -145,6 +158,7 @@ namespace VRCLightVolumes.Tests {
             volume.transform.localScale = new Vector3(4f, 2f, 2f);
             manager.LightVolumeInstances = new[] { volume };
 
+            Assert.That(LightVolumeManagerEditorBackend.GetPrimaryManager(), Is.SameAs(manager), "The test Manager must own the primary scene.");
             Assert.That(manager.Editor.GetCustomProbesCount(), Is.EqualTo(1));
             Vector3[] probes = manager.Editor.GetCustomProbes(0);
             Assert.That(probes, Has.Length.EqualTo(2));
@@ -189,6 +203,7 @@ namespace VRCLightVolumes.Tests {
             destroyedManager.BakingMode = 1;
             Object.DestroyImmediate(destroyedManager.gameObject);
 
+            Assert.That(LightVolumeManagerEditorBackend.GetPrimaryManager(), Is.SameAs(restoredManager), "The restored test Manager must own the primary scene.");
             System.Type bakerType = typeof(LightVolumeManagerEditorBackend).Assembly.GetType("VRCLightVolumes.LightVolumeBaker");
             FieldInfo cachedManagerField = bakerType?.GetField("_bakeryManager", _nonPublicStaticFlags);
             MethodInfo resolveManager = bakerType?.GetMethod("ResolveBakeryCompletionManager", _nonPublicStaticFlags);
@@ -558,6 +573,8 @@ namespace VRCLightVolumes.Tests {
         private GameObject CreateGameObject(string name) {
             GameObject gameObject = new GameObject(name);
             _createdObjects.Add(gameObject);
+            SceneManager.MoveGameObjectToScene(gameObject, _root.gameObject.scene);
+            gameObject.transform.SetParent(_root, false);
             return gameObject;
         }
 

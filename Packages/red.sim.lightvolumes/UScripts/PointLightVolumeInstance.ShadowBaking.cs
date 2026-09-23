@@ -222,7 +222,13 @@ namespace VRCLightVolumes {
         private bool EnsureRuntimeShadowDepthTexture(int resolution) {
             if (_runtimeShadowDepthTexture != null && _runtimeShadowDepthTexture.width == resolution && _runtimeShadowDepthTexture.height == resolution) return true;
 
-            RenderTexture replacementTexture = new RenderTexture(resolution, resolution, 32, RenderTextureFormat.Depth, RenderTextureReadWrite.Linear);
+#if COMPILER_UDONSHARP && !UNITY_EDITOR
+            RenderTextureFormat captureFormat = RenderTextureFormat.Depth;
+#else
+            // GrabPass needs a color attachment in native Unity, including Udon running in the Editor.
+            RenderTextureFormat captureFormat = RenderTextureFormat.R8;
+#endif
+            RenderTexture replacementTexture = new RenderTexture(resolution, resolution, 32, captureFormat, RenderTextureReadWrite.Linear);
             replacementTexture.dimension = TextureDimension.Tex2D;
             replacementTexture.useMipMap = false;
             replacementTexture.autoGenerateMips = false;

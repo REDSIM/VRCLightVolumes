@@ -12,7 +12,15 @@ Use these methods to get voxel positions for your lightmapper and submit its L0/
 
 ## Setup and workflow
 
-Use an Editor-only assembly with direct references to `red.sim.LightVolumesUdon` and `red.sim.LightVolumesEditor`. See [Unity Editor API setup](./UnityEditorAPI.md#setup) for the asmdef and imports.
+Use an Editor-only assembly with direct references to `red.sim.LightVolumesUdon` and `red.sim.LightVolumesEditor`. See [Unity Editor API setup](./UnityEditorAPI.md#setup) for the asmdef.
+
+Add these imports at the top of your Editor script:
+
+```csharp
+using UnityEngine;
+using VRCLightVolumes;
+using VRCLightVolumes.Editor;
+```
 
 The snippets belong inside your Editor tool's methods. `manager` is the world's non-null primary `LightVolumeManager`, with **Baking Mode** set to **Custom Lightmapper**. Keep one Manager across loaded scenes.
 

@@ -45,7 +45,8 @@ namespace VRCLightVolumes {
             ClearBuffers();
         }
 
-        [PostProcessScene]
+        // UdonSharp strips its proxies at order 0. Prepare their runtime dependencies first.
+        [PostProcessScene(-1)]
         // Prepares runtime dependencies and strips heavy authoring references from Unity's temporary build scene.
         private static void OnPostProcessScene() {
             if (!BuildPipeline.isBuildingPlayer) return;

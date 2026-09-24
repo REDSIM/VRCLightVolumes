@@ -322,6 +322,120 @@ namespace VRCLightVolumes.Tests {
             Assert.That(BakeryEditorBridge.ClassifyProbeRender("L1", true, true, false, true, true), Is.EqualTo(BakeryEditorBridge.ProbeRenderMode.L1));
         }
 
+        // Deferred Bakery renders reload the scene settings and their attached preset.
+        [TestCase(true, false, false)]
+        [TestCase(false, true, false)]
+        [TestCase(false, false, true)]
+        [TestCase(true, true, true)]
+        [TestCase(false, false, false)]
+        public void BakeryVolumeCompressionStaysDisabledAfterPresetReload(bool liveCompression, bool storedCompression, bool presetCompression) {
+            System.Type rendererType = GetBakeryRendererType();
+            FieldInfo compression = rendererType.GetField("compressVolumes", BindingFlags.Static | BindingFlags.Public);
+            FieldInfo storageField = rendererType.GetField("renderSettingsStorage");
+            FieldInfo forceExport = rendererType.GetField("forceRebuildGeometry", BindingFlags.Instance | BindingFlags.NonPublic);
+            System.Type storageType = storageField.FieldType;
+            System.Type presetType = storageType.Assembly.GetType("ftSettingsAsset");
+            Assert.That(presetType, Is.Not.Null);
+            Assert.That(forceExport, Is.Not.Null);
+
+            // Avoid EditorWindow.OnEnable, which loads and changes the current scene's Bakery settings.
+            object renderer = System.Runtime.Serialization.FormatterServices.GetUninitializedObject(rendererType);
+            GameObject storageObject = CreateGameObject("Compression Test Storage");
+            storageObject.SetActive(false);
+            Component storage = storageObject.AddComponent(storageType);
+            ScriptableObject preset = ScriptableObject.CreateInstance(presetType);
+            _createdObjects.Add(preset);
+            FieldInfo storedFlag = storageType.GetField("renderSettingsCompressVolumes");
+            FieldInfo presetFlag = presetType.GetField("renderSettingsCompressVolumes");
+            FieldInfo storedExport = storageType.GetField("renderSettingsForceRebuildGeometry");
+            FieldInfo presetExport = presetType.GetField("renderSettingsForceRebuildGeometry");
+            storedFlag.SetValue(storage, storedCompression);
+            presetFlag.SetValue(preset, presetCompression);
+            storedExport.SetValue(storage, false);
+            presetExport.SetValue(preset, false);
+            storageType.GetField("renderSettingsAsset").SetValue(storage, preset);
+            storageField.SetValue(renderer, storage);
+            EditorUtility.ClearDirty(storage);
+            EditorUtility.ClearDirty(preset);
+
+            object previousCompression = compression.GetValue(null);
+            try {
+                compression.SetValue(null, liveCompression);
+                bool changed = liveCompression || storedCompression || presetCompression;
+                Assert.That(BakeryEditorBridge.DisableVolumeCompression(renderer), Is.EqualTo(changed));
+                Assert.That(compression.GetValue(null), Is.False);
+                Assert.That(storedFlag.GetValue(storage), Is.False);
+                Assert.That(presetFlag.GetValue(preset), Is.False);
+                Assert.That(forceExport.GetValue(renderer), Is.EqualTo(changed));
+                Assert.That(storedExport.GetValue(storage), Is.EqualTo(changed));
+                Assert.That(presetExport.GetValue(preset), Is.EqualTo(changed));
+                Assert.That(EditorUtility.IsDirty(storage), Is.EqualTo(changed));
+                Assert.That(EditorUtility.IsDirty(preset), Is.EqualTo(changed));
+
+                MethodInfo copySettings = storageType.GetMethod("CopySettings", new[] { presetType, storageType });
+                Assert.That(copySettings, Is.Not.Null);
+                copySettings.Invoke(null, new object[] { preset, storage });
+                Assert.That(storedFlag.GetValue(storage), Is.False, "Reloading the attached preset must preserve uncompressed volume output.");
+                Assert.That(storedExport.GetValue(storage), Is.EqualTo(changed), "Reloading the attached preset must preserve the required geometry export.");
+
+                forceExport.SetValue(renderer, false);
+                storedExport.SetValue(storage, false);
+                presetExport.SetValue(preset, false);
+                EditorUtility.ClearDirty(storage);
+                EditorUtility.ClearDirty(preset);
+                Assert.That(BakeryEditorBridge.DisableVolumeCompression(renderer), Is.False);
+                Assert.That(forceExport.GetValue(renderer), Is.False, "An unchanged bake must preserve the geometry export setting.");
+                Assert.That(storedExport.GetValue(storage), Is.False);
+                Assert.That(presetExport.GetValue(preset), Is.False);
+                Assert.That(EditorUtility.IsDirty(storage), Is.False);
+                Assert.That(EditorUtility.IsDirty(preset), Is.False);
+            } finally {
+                compression.SetValue(null, previousCompression);
+            }
+        }
+
+        [TestCase("Eligible", true)]
+        [TestCase("PointLightsOnly", false)]
+        [TestCase("BakeDisabled", false)]
+        [TestCase("Inactive", false)]
+        [TestCase("EditorOnly", false)]
+        [TestCase("OtherManager", false)]
+        public void BakeryVolumeCompressionChangesOnlyForVolumesIncludedInBake(string volumeState, bool expectedChange) {
+            System.Type rendererType = GetBakeryRendererType();
+            FieldInfo compression = rendererType.GetField("compressVolumes", BindingFlags.Static | BindingFlags.Public);
+            object renderer = System.Runtime.Serialization.FormatterServices.GetUninitializedObject(rendererType);
+            LightVolumeManager manager = CreateComponent<LightVolumeManager>("Compression Test Manager");
+            manager.BakingMode = 1;
+            if (volumeState == "PointLightsOnly") {
+                PointLightVolumeInstance point = CreateComponent<PointLightVolumeInstance>("Compression Test Point");
+                point.LightVolumeManager = manager;
+                manager.PointLightVolumeInstances = new[] { point };
+                manager.LightVolumeInstances = new LightVolumeInstance[0];
+            } else {
+                LightVolumeInstance volume = CreateComponent<LightVolumeInstance>("Compression Test Volume");
+                volume.LightVolumeManager = volumeState == "OtherManager"
+                    ? CreateComponent<LightVolumeManager>("Other Compression Test Manager") : manager;
+                volume.Bake = volumeState != "BakeDisabled";
+                if (volumeState == "Inactive") volume.gameObject.SetActive(false);
+                if (volumeState == "EditorOnly") volume.gameObject.tag = "EditorOnly";
+                manager.LightVolumeInstances = new[] { volume };
+            }
+
+            MethodInfo configure = typeof(LightVolumeBaker).GetMethod("ConfigureExistingBakeryVolumes", _nonPublicStaticFlags);
+            Assert.That(configure, Is.Not.Null);
+            object previousCompression = compression.GetValue(null);
+            try {
+                compression.SetValue(null, true);
+                if (expectedChange) {
+                    LogAssert.Expect(LogType.Log, "[LightVolumes] Disabled Bakery's Compress volumes option and enabled Export geometry and maps. Light Volumes require uncompressed volume textures.");
+                }
+                configure.Invoke(null, new[] { (object)manager, renderer });
+                Assert.That(compression.GetValue(null), Is.EqualTo(!expectedChange));
+            } finally {
+                compression.SetValue(null, previousCompression);
+            }
+        }
+
         // Unified authoring infers the update default only when the source changes and preserves manual overrides during broader cache invalidations.
         [Test]
         public void PointLightAuthoringResolvesProjectionSourcesWithoutOverwritingManualAutoUpdate() {
@@ -693,6 +807,15 @@ namespace VRCLightVolumes.Tests {
 
             Assert.Fail("LightVolumePreprocessor type was not found.");
             return null;
+        }
+
+        private static System.Type GetBakeryRendererType() {
+            FieldInfo field = typeof(BakeryEditorBridge).GetField("BakeryRendererType", _nonPublicStaticFlags);
+            System.Type type = field?.GetValue(null) as System.Type;
+            if (type?.GetField("compressVolumes", BindingFlags.Static | BindingFlags.Public)?.FieldType != typeof(bool)) {
+                Assert.Ignore("This test requires a Bakery version with volume compression.");
+            }
+            return type;
         }
 
         private static void AssertRuntimeCacheFieldIsNonSerialized(string fieldName) {

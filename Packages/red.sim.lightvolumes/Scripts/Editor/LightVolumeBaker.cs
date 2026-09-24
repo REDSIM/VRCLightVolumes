@@ -404,7 +404,7 @@ namespace VRCLightVolumes {
         private static void OnBakeryStarted(object sender, EventArgs args) {
             if (Application.isPlaying) return;
             try {
-                BeginBakeryBake();
+                BeginBakeryBake(sender);
             } catch (Exception exception) {
                 ResetBakeryBakeState();
                 Debug.LogError($"[LightVolumes] Could not prepare Light Volumes for the Bakery bake. {exception}");
@@ -412,14 +412,14 @@ namespace VRCLightVolumes {
         }
 
         // Captures the primary Bakery Manager, prepares helpers and starts the global bitmask override.
-        private static void BeginBakeryBake() {
+        private static void BeginBakeryBake(object renderer) {
             ResetBakeryBakeState();
             _bakeryManager = GetActiveManager(1);
             _bakeryFullRenderActive = _bakeryManager != null;
             if (!_bakeryFullRenderActive) return;
             StartBakeryWatcher();
 
-            ConfigureExistingBakeryVolumes(_bakeryManager);
+            ConfigureExistingBakeryVolumes(_bakeryManager, renderer);
             _bakeryBitmaskPending = BakeryEditorBridge.SupportsRuntimeBitmasks;
             if (_bakeryBitmaskPending) {
                 BakeryEditorBridge.ApplyStoredBitmasks(_bakeryManager.VolumeBitmask, _bakeryManager.ProbeBitmask);
@@ -552,13 +552,18 @@ namespace VRCLightVolumes {
         }
 
         // Synchronizes already-created Bakery Volume helpers before rendering begins.
-        private static void ConfigureExistingBakeryVolumes(LightVolumeManager manager) {
+        private static void ConfigureExistingBakeryVolumes(LightVolumeManager manager, object renderer) {
             LightVolumeInstance[] volumes = manager.LightVolumeInstances;
             if (volumes == null) return;
+            bool hasBakeVolumes = false;
             for (int i = 0; i < volumes.Length; i++) {
                 LightVolumeInstance volume = volumes[i];
                 if (!IsBakeVolume(manager, volume)) continue;
+                hasBakeVolumes = true;
                 LightVolumeTools.SetupBakeryDependencies(volume, false);
+            }
+            if (hasBakeVolumes && BakeryEditorBridge.DisableVolumeCompression(renderer)) {
+                Debug.Log("[LightVolumes] Disabled Bakery's Compress volumes option and enabled Export geometry and maps. Light Volumes require uncompressed volume textures.", manager);
             }
         }
 

@@ -153,6 +153,8 @@ See the [UdonSharp API](./ScriptingAPI.md#udonsharp-api) for spawning and regist
 
 Select **Bakery** on the Manager before the Bakery full render. Check the Manager for warnings if automatic import or bitmask controls are unavailable in your Bakery version.
 
+Compressed Bakery volumes are not supported. When baking Light Volumes, **Compress volumes** is automatically disabled in the bake settings and any assigned preset.
+
 Use **Volume Bitmask** and **Probe Bitmask** when different Bakery light groups should contribute to Light Volumes and ordinary probes. Keep the masks consistent with the Bakery lights' masks.
 
 Enable **Fix Light Probes L1** if Bakery's ordinary probes look burned out or excessively dark. It reduces ringing at the cost of some contrast. This affects fallback probes, not your volume texture resolution.

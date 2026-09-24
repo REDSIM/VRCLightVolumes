@@ -28,6 +28,9 @@ namespace VRCLightVolumes {
         private static readonly EventInfo FinishedRenderEvent = BakeryRendererType?.GetEvent("OnFinishedFullRender", StaticFields);
         private static readonly EventInfo FinishedProbesEvent = BakeryRendererType?.GetEvent("OnFinishedProbes", StaticFields);
         private static readonly FieldInfo BakeInProgressField = BakeryRendererType?.GetField("bakeInProgress", StaticFields);
+        private static readonly FieldInfo CompressVolumesField = BakeryRendererType?.GetField("compressVolumes", StaticFields);
+        private static readonly FieldInfo RenderSettingsStorageField = BakeryRendererType?.GetField("renderSettingsStorage", InstanceFields);
+        private static readonly FieldInfo ForceRebuildGeometryField = BakeryRendererType?.GetField("forceRebuildGeometry", InstanceFields);
         private static readonly FieldInfo LightProbeModeField = BakeryRendererType?.GetField("lightProbeMode", StaticFields);
         private static readonly FieldInfo HasAnyProbesField = BakeryRendererType?.GetField("hasAnyProbes", StaticFields);
         private static readonly FieldInfo ApvField = BakeryRendererType?.GetField("apv", StaticFields);
@@ -83,6 +86,39 @@ namespace VRCLightVolumes {
         // Checks whether an L1/L2 full-render completion came from the dedicated Light Probe command.
         internal static bool IsProbeOnlyRender(object renderer) {
             return IsRendererInstance(renderer) && ReadInstanceBool(renderer, ProbesOnlyField);
+        }
+
+        // Bakery reloads scene settings and their preset before export and before it creates volume textures.
+        internal static bool DisableVolumeCompression(object renderer) {
+            if (!IsRendererInstance(renderer) || CompressVolumesField?.FieldType != typeof(bool)
+                || ForceRebuildGeometryField?.FieldType != typeof(bool)) return false;
+            UnityEngine.Object storage = ReadField(RenderSettingsStorageField, renderer) as UnityEngine.Object;
+            using (SerializedObject settings = storage == null ? null : new SerializedObject(storage)) {
+                SerializedProperty presetProperty = settings?.FindProperty("renderSettingsAsset");
+                UnityEngine.Object preset = presetProperty?.propertyType == SerializedPropertyType.ObjectReference ? presetProperty.objectReferenceValue : null;
+                using (SerializedObject presetSettings = preset == null ? null : new SerializedObject(preset)) {
+                    if (!ReadStaticBool(CompressVolumesField) && !HasVolumeCompression(settings) && !HasVolumeCompression(presetSettings)) return false;
+
+                    SetField(CompressVolumesField, null, false);
+                    // Compressed volumes use padded probe grids. The previous export may have different dimensions.
+                    SetField(ForceRebuildGeometryField, renderer, true);
+                    SetUncompressedVolumeSettings(settings);
+                    SetUncompressedVolumeSettings(presetSettings);
+                    return true;
+                }
+            }
+        }
+
+        private static bool HasVolumeCompression(SerializedObject settings) {
+            SerializedProperty compression = settings?.FindProperty("renderSettingsCompressVolumes");
+            return compression?.propertyType == SerializedPropertyType.Boolean && compression.boolValue;
+        }
+
+        private static void SetUncompressedVolumeSettings(SerializedObject settings) {
+            if (settings == null) return;
+            SetBool(settings, "renderSettingsCompressVolumes", false);
+            SetBool(settings, "renderSettingsForceRebuildGeometry", true);
+            if (settings.ApplyModifiedPropertiesWithoutUndo()) LVUtils.MarkDirty(settings.targetObject);
         }
 
         // Identifies a completed classic probe render and preserves Bakery's authoritative L1/L2 mode.

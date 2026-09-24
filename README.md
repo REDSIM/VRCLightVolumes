@@ -67,9 +67,17 @@ Attribution is optional, but appreciated.
 
 ## Installation Through VRChat Creator Companion
 
-1. Open the [RED_SIM VPM Listing](https://redsim.github.io/vpmlisting/).
-2. Press **Add to VCC**.
-3. Confirm the prompt and add **VRC Light Volumes** to the target project.
+1. In VCC, open **Settings > Packages** and click **Add Repository**.
+2. Paste this URL into the repository field:
+
+   ```text
+   https://redsim.github.io/vpmlisting/index.json
+   ```
+
+3. Click **Add**, then confirm with **I Understand, Add Repository**.
+4. Under **Projects**, click **Manage Project** for your world, then click **[+]** next to **VRC Light Volumes**.
+
+Alternatively, open the [RED_SIM VPM Listing](https://redsim.github.io/vpmlisting/) and click **Add to VCC** to add the repository.
 
 ## Installation Through Unity Package Manager
 

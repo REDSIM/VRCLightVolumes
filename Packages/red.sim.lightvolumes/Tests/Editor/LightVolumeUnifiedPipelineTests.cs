@@ -193,6 +193,69 @@ namespace VRCLightVolumes.Tests {
             Assert.That(EditorUtility.IsDirty(manager), Is.True);
         }
 
+        [TestCase(false, LightingSettings.Lightmapper.ProgressiveGPU)]
+#pragma warning disable CS0618
+        [TestCase(true, LightingSettings.Lightmapper.Enlighten)]
+#pragma warning restore CS0618
+        public void UnityBakeSkipsUnsupportedLightingSettings(bool bakedGI, LightingSettings.Lightmapper lightmapper) {
+            LightVolumeManager manager = CreateComponent<LightVolumeManager>("Skipped Unity Bake Manager");
+            manager.BakingMode = 0;
+            Assert.That(LightVolumeManagerEditorBackend.GetPrimaryManager(), Is.SameAs(manager));
+            Lightmapping.TryGetLightingSettings(out LightingSettings previousSettings);
+            LightingSettings settings = new LightingSettings { bakedGI = bakedGI, realtimeGI = true, lightmapper = lightmapper };
+            MethodInfo reset = typeof(LightVolumeBaker).GetMethod("ResetUnityBakeState", _nonPublicStaticFlags);
+            MethodInfo started = typeof(LightVolumeBaker).GetMethod("OnUnityBakeStarted", _nonPublicStaticFlags);
+            MethodInfo completed = typeof(LightVolumeBaker).GetMethod("OnUnityBakeCompleted", _nonPublicStaticFlags);
+            FieldInfo unityManager = typeof(LightVolumeBaker).GetField("_unityManager", _nonPublicStaticFlags);
+            try {
+                reset.Invoke(null, null);
+                Lightmapping.lightingSettings = settings;
+                started.Invoke(null, null);
+
+                Assert.That(unityManager.GetValue(null), Is.Null);
+                completed.Invoke(null, null);
+                reset.Invoke(null, null);
+                LogAssert.NoUnexpectedReceived();
+            } finally {
+                settings.bakedGI = true;
+                settings.lightmapper = LightingSettings.Lightmapper.ProgressiveCPU;
+                reset.Invoke(null, null);
+                Lightmapping.lightingSettings = previousSettings;
+                Object.DestroyImmediate(settings);
+            }
+        }
+
+        [TestCase(LightingSettings.Lightmapper.ProgressiveCPU)]
+        [TestCase(LightingSettings.Lightmapper.ProgressiveGPU)]
+        public void UnityBakeReleasesCompletionProbeOnlyOnce(LightingSettings.Lightmapper lightmapper) {
+            LightVolumeManager manager = CreateComponent<LightVolumeManager>("Unity Probe Cleanup Manager");
+            manager.BakingMode = 0;
+            Assert.That(LightVolumeManagerEditorBackend.GetPrimaryManager(), Is.SameAs(manager));
+            Lightmapping.TryGetLightingSettings(out LightingSettings previousSettings);
+            LightingSettings settings = new LightingSettings { bakedGI = true, lightmapper = lightmapper };
+            MethodInfo reset = typeof(LightVolumeBaker).GetMethod("ResetUnityBakeState", _nonPublicStaticFlags);
+            MethodInfo started = typeof(LightVolumeBaker).GetMethod("OnUnityBakeStarted", _nonPublicStaticFlags);
+            FieldInfo completionRegistered = typeof(LightVolumeBaker).GetField("_progressiveCompletionProbeRegistered", _nonPublicStaticFlags);
+            try {
+                reset.Invoke(null, null);
+                Lightmapping.lightingSettings = settings;
+                started.Invoke(null, null);
+
+                Assert.That(completionRegistered.GetValue(null), Is.True);
+                reset.Invoke(null, null);
+                Assert.That(completionRegistered.GetValue(null), Is.False);
+
+                settings.bakedGI = false;
+                reset.Invoke(null, null);
+                LogAssert.NoUnexpectedReceived();
+            } finally {
+                settings.bakedGI = true;
+                reset.Invoke(null, null);
+                Lightmapping.lightingSettings = previousSettings;
+                Object.DestroyImmediate(settings);
+            }
+        }
+
         // Deferred Bakery bakes can destroy every pre-bake scene object before loading the scene again.
         [Test]
         public void BakeryCompletionResolvesPrimaryManagerFromRestoredSceneInsteadOfDestroyedCache() {

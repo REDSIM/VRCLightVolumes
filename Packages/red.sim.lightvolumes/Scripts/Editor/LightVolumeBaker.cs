@@ -21,6 +21,7 @@ namespace VRCLightVolumes {
 
         // List order defines Unity's additional-probe IDs for the lifetime of the active bake.
         private static readonly List<LightVolumeInstance> _progressiveVolumes = new List<LightVolumeInstance>();
+        private static bool _progressiveCompletionProbeRegistered;
         private static LightVolumeManager _unityManager;
         private static LightProbes _unityInitialLightProbes;
         private static int _unityInitialLightProbesDirtyCount = -1;
@@ -68,6 +69,10 @@ namespace VRCLightVolumes {
             if (Application.isPlaying) return;
             ResetUnityBakeState();
 
+            if (!Lightmapping.TryGetLightingSettings(out LightingSettings settings)) settings = Lightmapping.lightingSettingsDefaults;
+            if (!settings.bakedGI || (settings.lightmapper != LightingSettings.Lightmapper.ProgressiveCPU
+                && settings.lightmapper != LightingSettings.Lightmapper.ProgressiveGPU)) return;
+
             _unityManager = GetActiveManager(0);
             if (_unityManager == null) return;
             _unityInitialLightProbes = LightmapSettings.lightProbes;
@@ -76,6 +81,7 @@ namespace VRCLightVolumes {
             try {
                 // bakeCompleted is raised for canceled jobs too. A one-probe result lets us verify the additional-probe stage even when the Manager contains only Point Lights.
                 SetAdditionalProbes(ProgressiveCompletionProbeId, new[] { Vector3.zero });
+                _progressiveCompletionProbeRegistered = true;
             } catch (Exception exception) {
                 Debug.LogError($"[LightVolumes] Can't register the Progressive completion probe. {exception}", _unityManager);
                 ResetUnityBakeState();
@@ -159,6 +165,8 @@ namespace VRCLightVolumes {
                 }
             }
             _progressiveVolumes.Clear();
+            if (!_progressiveCompletionProbeRegistered) return;
+            _progressiveCompletionProbeRegistered = false;
             try {
                 RemoveAdditionalProbes(ProgressiveCompletionProbeId);
             } catch (Exception exception) {

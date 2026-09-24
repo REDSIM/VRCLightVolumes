@@ -210,9 +210,14 @@ These internal `LV_*` helpers can change between releases. For finer control, se
 
 ## Custom Specular BRDF
 
-`LV_SpecularBRDFDirection_Custom()` supplies your own Point, Spot and Area highlights when `LV_CUSTOM_SPECULAR_BRDF` is defined. Diffuse lighting and baked-volume SH highlights keep their existing behavior.
+Use either hook or both with `LightVolumeSHSpecular()` and `LightVolumeAdditiveSHSpecular()`. Each hook replaces its own specular contribution. Diffuse lighting stays unchanged.
 
-Define your function **before** including `LightVolumes.cginc`, then enable the hook. Replace the placeholder below with your own calculation:
+| Lighting | Define | Callback |
+| --- | --- | --- |
+| Point, Spot and Area lights | `LV_CUSTOM_SPECULAR_BRDF` | `LV_SpecularBRDFDirection_Custom()` |
+| Volumes and fallback Light Probes | `LV_CUSTOM_SH_SPECULAR_BRDF` | `LV_SpecularBRDFSH_Custom()` |
+
+Define the functions and flags **before** the first include of `LightVolumes.cginc`. This example enables both hooks. Replace each placeholder with your own calculation, or omit a function and its define to keep that part's built-in specular:
 
 ```hlsl
 #include "UnityCG.cginc"
@@ -220,26 +225,43 @@ Define your function **before** including `LightVolumes.cginc`, then enable the 
 float3 LV_SpecularBRDFDirection_Custom(float3 f0, float roughness, float roughnessSq, float NoV,
     float3 worldNormal, float3 viewDir, float3 l0, float3 lightDirNormal, float lightSpreadSq) {
     // Your code here: calculate this light's final RGB specular contribution.
-    return 0; // Placeholder: no specular until replaced with your result.
+    return 0; // Placeholder: no individual-light specular until replaced.
 }
 
-// Enable this function before including the Light Volumes sampler.
+float3 LV_SpecularBRDFSH_Custom(float3 f0, float smoothness,
+    float3 worldNormal, float3 viewDir,
+    float3 L0, float3 L1r, float3 L1g, float3 L1b) {
+    // Your code here: calculate the final RGB specular contribution from these SH.
+    return 0; // Placeholder: no SH specular until replaced.
+}
+
 #define LV_CUSTOM_SPECULAR_BRDF
+#define LV_CUSTOM_SH_SPECULAR_BRDF
 #include "Packages/red.sim.lightvolumes/Shaders/LightVolumes.cginc"
 ```
 
-In your fragment function, the combined sampler calls your hook for each contributing light:
+In your fragment function, call the combined sampler as usual:
 
 ```hlsl
 float3 L0, L1r, L1g, L1b, specular;
 LightVolumeSHSpecular(worldPos, L0, L1r, L1g, L1b, specular, albedo, smoothness, metallic, normalWS, viewDir);
 ```
 
-Use `LightVolumeAdditiveSHSpecular()` for the lightmapped branch. Supply normalized normal and view directions. The hook receives a normalized light direction. `l0` includes color, attenuation, cookie, shadow and normal-based masking. Return that light's final specular contribution. The caller adds it to the output.
+Use `LightVolumeAdditiveSHSpecular()` for the lightmapped branch. Supply normalized normal and view directions. Each hook returns a final RGB specular contribution, including any light intensity and `f0` weighting. The sampler adds the contributions without further weighting. Return zero for zero lighting.
 
-`roughness` is squared perceptual roughness. `roughnessSq` is its square. `NoV` is the clamped normal/view dot product. `lightSpreadSq` describes source spread for size-aware highlights.
+### Point, Spot and Area specular
 
-Keep shared material calculations outside the hook, which runs for each contributing light. Define it in source. No `shader_feature` or `multi_compile` keyword is needed.
+`LV_SpecularBRDFDirection_Custom()` runs for each contributing light. It receives a normalized light direction. `l0` includes color, attenuation, cookie, shadow and normal-based masking.
+
+`roughness` is the square of clamped perceptual roughness. `roughnessSq` is its square. `NoV` is the clamped normal/view dot product. `lightSpreadSq` describes source spread for size-aware highlights. Keep shared material calculations outside this per-light hook.
+
+### SH specular
+
+`LV_SpecularBRDFSH_Custom()` evaluates the combined world-space SH in one call, before individual Point, Spot and Area contributions are added. `LightVolumeSHSpecular()` supplies SH from regular and additive volumes, including fallback Light Probes. `LightVolumeAdditiveSHSpecular()` supplies only additive-volume SH. `smoothness` is passed through unchanged.
+
+The additive sampler skips SH specular when additive volumes are disabled or its additive count or overdraw limit is zero. Direct calls to `LightVolumeSpecular()` and `LightVolumeSpecularDominant()` retain their built-in calculations.
+
+Both hooks are enabled independently in source. No `shader_feature` or `multi_compile` keyword is needed. If your hook uses functions from `LightVolumes.cginc`, declare its signature before the include and put its implementation after it.
 
 ## Shader feature stripping
 

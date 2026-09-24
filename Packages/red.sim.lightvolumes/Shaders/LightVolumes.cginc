@@ -1418,7 +1418,7 @@ float3 LightVolumeSpecularDominant(float3 albedo, float smoothness, float metall
     return LightVolumeSpecularDominant(lerp(0.04, albedo, metallic), smoothness, worldNormal, viewDir, L0, L1r, L1g, L1b);
 }
 
-// Calculates L1 SH and speculars based on custom f0. Volumes use dominant SH specular, Point Light Volumes are accumulated individually.
+// Calculates L1 SH and speculars based on custom f0. Volumes use custom or dominant SH specular. Point Light Volumes are accumulated individually.
 void LightVolumeSHSpecular(float3 worldPos, out float3 L0, out float3 L1r, out float3 L1g, out float3 L1b, out float3 specular, float3 f0, float smoothness, float3 worldNormal, float3 viewDir, float3 worldPosOffset = 0, float pointLightShading = 3) {
     L0 = 0; L1r = 0; L1g = 0; L1b = 0; specular = 0;
     bool useFallback = _UdonLightVolumeEnabled == 0 || _UdonLightVolumeVersion < VRCLV_MIN_SUPPORTED_VERSION;
@@ -1428,18 +1428,22 @@ void LightVolumeSHSpecular(float3 worldPos, out float3 L0, out float3 L1r, out f
         LV_LightVolumeRegularSH(worldPos + worldPosOffset, L0, L1r, L1g, L1b);
         LV_LightVolumeAdditiveSH(worldPos + worldPosOffset, L0, L1r, L1g, L1b);
     }
+    #if defined(LV_CUSTOM_SH_SPECULAR_BRDF)
+    specular = LV_SpecularBRDFSH_Custom(f0, smoothness, worldNormal, viewDir, L0, L1r, L1g, L1b);
+    #else
     specular = LV_Specular(f0, smoothness, worldNormal, viewDir, L0, L1r + L1g + L1b);
+    #endif
     [branch] if (!useFallback) {
         LV_PointLightVolumeSHSpecular(worldPos, worldNormal, viewDir, smoothness, f0, pointLightShading, L0, L1r, L1g, L1b, specular);
     }
 }
 
-// Calculates L1 SH and speculars based on PBR data. Volumes use dominant SH specular, Point Light Volumes are accumulated individually.
+// Calculates L1 SH and speculars based on PBR data. Volumes use custom or dominant SH specular. Point Light Volumes are accumulated individually.
 void LightVolumeSHSpecular(float3 worldPos, out float3 L0, out float3 L1r, out float3 L1g, out float3 L1b, out float3 specular, float3 albedo, float smoothness, float metallic, float3 worldNormal, float3 viewDir, float3 worldPosOffset = 0, float pointLightShading = 3) {
     LightVolumeSHSpecular(worldPos, L0, L1r, L1g, L1b, specular, lerp(0.04, albedo, metallic), smoothness, worldNormal, viewDir, worldPosOffset, pointLightShading);
 }
 
-// Calculates additive L1 SH and speculars based on custom f0. Additive volumes use dominant SH specular, Point Light Volumes are accumulated individually.
+// Calculates additive L1 SH and speculars based on custom f0. Additive volumes use custom or dominant SH specular. Point Light Volumes are accumulated individually.
 void LightVolumeAdditiveSHSpecular(float3 worldPos, out float3 L0, out float3 L1r, out float3 L1g, out float3 L1b, out float3 specular, float3 f0, float smoothness, float3 worldNormal, float3 viewDir, float3 worldPosOffset = 0, float pointLightShading = 3) {
     L0 = 0; L1r = 0; L1g = 0; L1b = 0; specular = 0;
     [branch] if (_UdonLightVolumeEnabled != 0 && _UdonLightVolumeVersion >= VRCLV_MIN_SUPPORTED_VERSION) {
@@ -1449,14 +1453,18 @@ void LightVolumeAdditiveSHSpecular(float3 worldPos, out float3 L0, out float3 L1
         // An empty additive set has zero SH, so there is no dominant specular lobe to evaluate.
         [branch] if (additiveMaxOverdraw > 0u) {
             LV_LightVolumeAdditiveSH(worldPos + worldPosOffset, L0, L1r, L1g, L1b);
+            #if defined(LV_CUSTOM_SH_SPECULAR_BRDF)
+            specular = LV_SpecularBRDFSH_Custom(f0, smoothness, worldNormal, viewDir, L0, L1r, L1g, L1b);
+            #else
             specular = LV_Specular(f0, smoothness, worldNormal, viewDir, L0, L1r + L1g + L1b);
+            #endif
         }
         #endif
         LV_PointLightVolumeSHSpecular(worldPos, worldNormal, viewDir, smoothness, f0, pointLightShading, L0, L1r, L1g, L1b, specular);
     }
 }
 
-// Calculates additive L1 SH and speculars based on PBR data. Additive volumes use dominant SH specular, Point Light Volumes are accumulated individually.
+// Calculates additive L1 SH and speculars based on PBR data. Additive volumes use custom or dominant SH specular. Point Light Volumes are accumulated individually.
 void LightVolumeAdditiveSHSpecular(float3 worldPos, out float3 L0, out float3 L1r, out float3 L1g, out float3 L1b, out float3 specular, float3 albedo, float smoothness, float metallic, float3 worldNormal, float3 viewDir, float3 worldPosOffset = 0, float pointLightShading = 3) {
     LightVolumeAdditiveSHSpecular(worldPos, L0, L1r, L1g, L1b, specular, lerp(0.04, albedo, metallic), smoothness, worldNormal, viewDir, worldPosOffset, pointLightShading);
 }

@@ -119,6 +119,16 @@ namespace VRCLightVolumes {
             ScheduleUpdateProcess();
         }
 
+        // The local player can disappear before scene objects are disabled during shutdown.
+        // Udon's delayed-event scheduler may already be unavailable at that point.
+        private bool IsUdonRuntimeAvailable() {
+#if COMPILER_UDONSHARP
+            return VRC.SDKBase.Utilities.IsValid(VRC.SDKBase.Networking.LocalPlayer);
+#else
+            return true;
+#endif
+        }
+
         // Schedules the unified delayed update process when it is not already running
         private void ScheduleUpdateProcess() {
 #if !COMPILER_UDONSHARP && UDONSHARP && UNITY_EDITOR
@@ -129,7 +139,7 @@ namespace VRCLightVolumes {
             }
 #endif
 #if UDONSHARP
-            if (_isUpdateProcessRunning) return;
+            if (_isUpdateProcessRunning || !IsUdonRuntimeAvailable() || !enabled || !gameObject.activeInHierarchy) return;
             _isUpdateProcessRunning = true;
             SendCustomEventDelayedFrames(nameof(UpdateProcess), 1);
 #else
@@ -327,7 +337,7 @@ namespace VRCLightVolumes {
 #if UDONSHARP
         // Internal method to auto update volume data and runtime textures every frame while needed
         public void UpdateProcess() {
-            if (!enabled || !gameObject.activeInHierarchy) {
+            if (!IsUdonRuntimeAvailable() || !enabled || !gameObject.activeInHierarchy) {
                 _isUpdateProcessRunning = false;
                 return;
             }
@@ -362,7 +372,7 @@ namespace VRCLightVolumes {
 
             // Keep the delayed loop alive only for continuous monitoring; one-shot requests schedule their own tick.
 #if UDONSHARP
-            if (keepUpdating) SendCustomEventDelayedFrames(nameof(UpdateProcess), 1);
+            if (keepUpdating && IsUdonRuntimeAvailable()) SendCustomEventDelayedFrames(nameof(UpdateProcess), 1);
             else _isUpdateProcessRunning = false;
 #else
             } while (isActiveAndEnabled && keepUpdating);

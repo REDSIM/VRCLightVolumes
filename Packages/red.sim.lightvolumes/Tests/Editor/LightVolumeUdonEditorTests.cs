@@ -1473,6 +1473,32 @@ namespace VRCLightVolumes.Tests {
             AssertGlobalFloat(_pointLightCountID, 1f);
         }
 
+        // The compiled program must stop delayed work after VRChat clears the local player.
+        [Test]
+        public void CompiledUdonManagerStopsDelayedWorkWithoutLocalPlayer() {
+            RunCompiledUdonWithoutLocalPlayer<LightVolumeManager>(backing => {
+                backing.SetProgramVariable("_volumeDataUpdateRequested", false);
+                backing.SetProgramVariable("_isUpdateProcessRunning", false);
+                backing.SendCustomEvent(nameof(LightVolumeManager.RequestUpdateVolumes));
+                Assert.That(backing.GetProgramVariable("_volumeDataUpdateRequested"), Is.EqualTo(true));
+                Assert.That(backing.GetProgramVariable("_isUpdateProcessRunning"), Is.EqualTo(false));
+
+                backing.SetProgramVariable("_isUpdateProcessRunning", true);
+                backing.SendCustomEvent(nameof(LightVolumeManager.UpdateProcess));
+                Assert.That(backing.GetProgramVariable("_isUpdateProcessRunning"), Is.EqualTo(false));
+                Assert.That(backing.GetProgramVariable("_volumeDataUpdateRequested"), Is.EqualTo(true),
+                    "Shutdown must leave pending work untouched.");
+
+                backing.SetProgramVariable("_areaCookieAverageReadbackScheduled", true);
+                backing.SetProgramVariable("_areaCookieAverageReadbackForceAll", true);
+                backing.SendCustomEvent(nameof(LightVolumeManager._RequestAreaCookieAverageReadbacks));
+                Assert.That(backing.GetProgramVariable("_areaCookieAverageReadbackScheduled"), Is.EqualTo(false));
+                Assert.That(backing.GetProgramVariable("_areaCookieAverageReadbackForceAll"), Is.EqualTo(true),
+                    "Shutdown must return before it consumes the readback request.");
+                LogAssert.NoUnexpectedReceived();
+            });
+        }
+
         // Unified Udon proxies rely on one editor change coordinator instead of per-object ExecuteAlways polling.
         [Test]
         public void EditorChangeCoordinatorSynchronizesTransformAndActiveLifecycle() {
@@ -7022,6 +7048,27 @@ Shader ""Hidden/VRCLV/Tests/ShadowGrabPass"" {
                 "The queued callback, not OnDisable/OnEnable, must release loop ownership.");
         }
 
+        // Both the initial callback and a queued loop must stop before they change the bake state.
+        [Test]
+        public void CompiledUdonExternalBakerStopsDelayedWorkWithoutLocalPlayer() {
+            RunCompiledUdonWithoutLocalPlayer<PointLightShadowRuntimeBaker>(backing => {
+                backing.SetProgramVariable("Realtime", true);
+                backing.SetProgramVariable("_realtimeLoopScheduled", false);
+                backing.SetProgramVariable("_configuredDirectOutput", true);
+                backing.SendCustomEvent("_onEnable");
+                Assert.That(backing.GetProgramVariable("_realtimeLoopScheduled"), Is.EqualTo(false));
+                Assert.That(backing.GetProgramVariable("_configuredTargetPointLightVolume"), Is.Null);
+                Assert.That(backing.GetProgramVariable("_configuredDirectOutput"), Is.EqualTo(true));
+
+                backing.SetProgramVariable("_realtimeLoopScheduled", true);
+                backing.SendCustomEvent(nameof(PointLightShadowRuntimeBaker._RealtimeBakeLoop));
+                Assert.That(backing.GetProgramVariable("_realtimeLoopScheduled"), Is.EqualTo(false));
+                Assert.That(backing.GetProgramVariable("_configuredTargetPointLightVolume"), Is.Null);
+                Assert.That(backing.GetProgramVariable("_configuredDirectOutput"), Is.EqualTo(true));
+                LogAssert.NoUnexpectedReceived();
+            });
+        }
+
         // The external trigger selects only normal/direct output and preserves target-owned bake quality.
         [Test]
         public void ExternalRuntimeShadowBakerPreservesQualityAndSelectsOutputMode() {
@@ -8261,6 +8308,44 @@ Shader ""Hidden/VRCLV/Tests/ShadowGrabPass"" {
             AssertVectorClose(ExpectedLightVolumeColor(volumes[31]), Shader.GetGlobalVectorArray(_lightVolumeColorID)[31]);
             AssertVectorClose(ExpectedPointLightColor(points[0]), Shader.GetGlobalVectorArray(_pointLightColorID)[0]);
             AssertVectorClose(ExpectedPointLightColor(points[127]), Shader.GetGlobalVectorArray(_pointLightColorID)[127]);
+        }
+
+        // Direct VM calls exercise COMPILER_UDONSHARP branches without changing the open scene's play state.
+        private static void RunCompiledUdonWithoutLocalPlayer<T>(Action<CompiledUdonTestProgram> verify) where T : UdonSharpBehaviour {
+            Assert.That(VRC.SDKBase.Networking.LocalPlayer, Is.Null);
+            UdonSharpProgramAsset asset = UdonSharpEditorUtility.GetUdonSharpProgramAsset(typeof(T));
+            Assert.That(asset, Is.Not.Null);
+            VRC.Udon.Common.Interfaces.IUdonProgram program = asset.SerializedProgramAsset.RetrieveProgram();
+            Assert.That(program, Is.Not.Null);
+            var client = new VRC.Udon.ClientBindings.UdonClientInterface(null, null,
+                new VRC.Udon.Security.UnityEngineObjectSecurityBlacklist());
+            VRC.Udon.Common.Interfaces.IUdonVM vm = client.ConstructUdonVM();
+            vm.LoadProgram(program);
+            verify(new CompiledUdonTestProgram(program, vm));
+        }
+
+        private sealed class CompiledUdonTestProgram {
+            private readonly VRC.Udon.Common.Interfaces.IUdonProgram _program;
+            private readonly VRC.Udon.Common.Interfaces.IUdonVM _vm;
+
+            public CompiledUdonTestProgram(VRC.Udon.Common.Interfaces.IUdonProgram program, VRC.Udon.Common.Interfaces.IUdonVM vm) {
+                _program = program;
+                _vm = vm;
+            }
+
+            public void SetProgramVariable<T>(string name, T value) {
+                _program.Heap.SetHeapVariable(_program.SymbolTable.GetAddressFromSymbol(name), value);
+            }
+
+            public object GetProgramVariable(string name) {
+                return _program.Heap.GetHeapVariable(_program.SymbolTable.GetAddressFromSymbol(name));
+            }
+
+            public void SendCustomEvent(string name) {
+                Assert.That(_program.EntryPoints.HasExportedSymbol(name), Is.True, name);
+                _vm.SetProgramCounter(_program.EntryPoints.GetAddressFromSymbol(name));
+                Assert.That(_vm.Interpret(), Is.EqualTo(0u), name);
+            }
         }
 
         // Creates a manager with deterministic defaults.

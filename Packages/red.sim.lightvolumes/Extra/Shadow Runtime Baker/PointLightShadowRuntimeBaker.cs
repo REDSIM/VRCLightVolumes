@@ -86,6 +86,7 @@ namespace VRCLightVolumes {
         public void _RealtimeBakeLoop() {
 #if UDONSHARP
             _realtimeLoopScheduled = false;
+            if (!IsUdonRuntimeAvailable()) return;
 #endif
             if (!enabled || !gameObject.activeInHierarchy || !Realtime) {
                 ReleaseConfiguredTarget();
@@ -97,6 +98,7 @@ namespace VRCLightVolumes {
                 if (target.IsActive) target.BakeShadows();
             } else ReleaseConfiguredTarget();
 #if UDONSHARP
+            if (!IsUdonRuntimeAvailable()) return;
             _realtimeLoopScheduled = true;
             SendCustomEventDelayedFrames(nameof(_RealtimeBakeLoop), 1);
 #endif
@@ -104,6 +106,9 @@ namespace VRCLightVolumes {
 
         // Writes realtime bake fields to the target and starts the external trigger loop.
         private void StartTargetRealtimeBakeLoop() {
+#if UDONSHARP
+            if (!IsUdonRuntimeAvailable()) return;
+#endif
             if (TargetPointLightVolume == null) {
                 ReleaseConfiguredTarget();
                 return;
@@ -115,6 +120,17 @@ namespace VRCLightVolumes {
             SendCustomEventDelayedFrames(nameof(_RealtimeBakeLoop), 1);
 #endif
         }
+
+#if UDONSHARP
+        // VRChat can clear the local player before scene teardown callbacks finish.
+        private bool IsUdonRuntimeAvailable() {
+#if COMPILER_UDONSHARP
+            return VRC.SDKBase.Utilities.IsValid(VRC.SDKBase.Networking.LocalPlayer);
+#else
+            return true;
+#endif
+        }
+#endif
 
         // Selects only the output path; resolution and blur settings remain owned by the target light.
         private void ConfigureTargetBake(PointLightVolumeInstance target, bool directOutput) {

@@ -303,7 +303,7 @@ namespace VRCLightVolumes {
 #endif
             if (!_customTexturesUseMipMap || CustomTextures == null) return;
             if (!autoUpdatePass) _areaCookieAverageReadbackForceAll = true;
-            if (_areaCookieAverageReadbackScheduled) return;
+            if (_areaCookieAverageReadbackScheduled || !IsUdonRuntimeAvailable()) return;
             _areaCookieAverageReadbackScheduled = true;
 #if UDONSHARP
             SendCustomEventDelayedFrames(nameof(_RequestAreaCookieAverageReadbacks), 1);
@@ -323,6 +323,7 @@ namespace VRCLightVolumes {
         // Runs delayed area-cookie fallback readbacks.
         public void _RequestAreaCookieAverageReadbacks() {
             _areaCookieAverageReadbackScheduled = false;
+            if (!IsUdonRuntimeAvailable()) return;
             bool autoUpdatePass = !_areaCookieAverageReadbackForceAll;
             _areaCookieAverageReadbackForceAll = false;
             RequestAreaCookieAverageReadbacks(autoUpdatePass);

@@ -24,6 +24,7 @@
         "VRC.Udon.EditorBindings.dll",
         "VRC.Udon.Compiler.dll",
         "VRC.Udon.Graph.dll",
+        "VRC.Udon.Security.dll",
         "VRCSDK3.dll",
         "VRCSDK3-Editor.dll",
         "VRCSDKBase.dll"

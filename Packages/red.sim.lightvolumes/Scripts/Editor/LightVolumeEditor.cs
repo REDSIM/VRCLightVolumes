@@ -242,7 +242,9 @@ namespace VRCLightVolumes {
             if (_adaptiveResolution.hasMultipleDifferentValues || _adaptiveResolution.boolValue) {
                 DrawProperty(_voxelsPerUnit);
             }
-            DrawProperty(_resolution);
+            using (new EditorGUI.DisabledScope(_adaptiveResolution.hasMultipleDifferentValues || _adaptiveResolution.boolValue)) {
+                DrawProperty(_resolution);
+            }
         }
 
         // Draws a serialized field while preserving its field-level tooltip for custom labels.

@@ -493,6 +493,8 @@ namespace VRCLightVolumes {
                 } else {
                     Vector3 direction = instance.Direction;
                     spotOuterCosine = instance.OuterAngleCos;
+                    // Wide cones use the range sphere. tan(PI) can round to a positive value.
+                    if (spotOuterCosine <= 0f) clusterOuterTangent = 0f;
                     clusterAxis = direction;
                     directionData = new Vector4(direction.x, direction.y, direction.z, instance.ConeFalloff);
                 }

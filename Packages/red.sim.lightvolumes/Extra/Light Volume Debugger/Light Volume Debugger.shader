@@ -192,6 +192,7 @@ Shader "Light Volume Samples/Light Volume Debugger" {
             struct VolumeAttributes {
                 float4 posOS : POSITION;
                 float2 cardData : TEXCOORD0;
+                uint vertexID : SV_VertexID;
                 UNITY_VERTEX_INPUT_INSTANCE_ID
             };
 
@@ -487,7 +488,7 @@ Shader "Light Volume Samples/Light Volume Debugger" {
                 float3 centerWS = LVDebugVolumeLocalToWorld(localUVW, localToWorld3x3, worldToLocalOffset);
                 if (sphereRadiusWS <= 0.0 || mul(UNITY_MATRIX_V, float4(centerWS, 1.0)).z > sphereRadiusWS) return o;
 
-                float2 disc = v.posOS.xy;
+                float2 disc = float2(v.vertexID & 1u, (v.vertexID >> 1u) & 1u) * 2.0 - 1.0;
                 float3 cameraRightWS = unity_CameraToWorld._m00_m10_m20;
                 float3 cameraUpWS = unity_CameraToWorld._m01_m11_m21;
                 float3 posWS = centerWS + (cameraRightWS * disc.x + cameraUpWS * disc.y) * sphereRadiusWS;
@@ -536,6 +537,7 @@ Shader "Light Volume Samples/Light Volume Debugger" {
             struct OverlayAttributes {
                 float4 posOS : POSITION;
                 float2 cardData : TEXCOORD0;
+                uint vertexID : SV_VertexID;
                 UNITY_VERTEX_INPUT_INSTANCE_ID
             };
 
@@ -744,7 +746,7 @@ Shader "Light Volume Samples/Light Volume Debugger" {
                 DisableOverlayVertex(o);
 
                 uint cardID = (uint)floor(v.cardData.x + 0.5);
-                float2 quad = v.posOS.xy;
+                float2 quad = float2(v.vertexID & 1u, (v.vertexID >> 1u) & 1u) * 2.0 - 1.0;
                 float3 posWS = 0.0;
                 half4 color = half4(1.0, 1.0, 1.0, 1.0);
                 half overlayType = LVDEBUG_OVERLAY_LINE;

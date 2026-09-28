@@ -14,6 +14,43 @@ namespace VRCLightVolumes {
         private const float PreviewBoundsSize = 1000000f;
         private const float VoxelRadiusScale = 0.33333334f * 0.7f;
         private const string PreviewShaderName = "Hidden/LightVolumesPreview";
+        private const string VoxelScalePreferenceKey = "VRCLightVolumes.Preview.VoxelScale";
+        private const string VoxelOpacityPreferenceKey = "VRCLightVolumes.Preview.VoxelOpacity";
+        internal const float MinVoxelScale = 0.1f;
+        internal const float MaxVoxelScale = 2f;
+
+        private static float _voxelScale = ClampVoxelScale(EditorPrefs.GetFloat(VoxelScalePreferenceKey, 1f));
+        private static float _voxelOpacity = ClampVoxelOpacity(EditorPrefs.GetFloat(VoxelOpacityPreferenceKey, 1f));
+
+        internal static float VoxelScale {
+            get => _voxelScale;
+            set {
+                float scale = ClampVoxelScale(value);
+                if (_voxelScale == scale) return;
+                _voxelScale = scale;
+                EditorPrefs.SetFloat(VoxelScalePreferenceKey, scale);
+                SceneView.RepaintAll();
+            }
+        }
+
+        private static float ClampVoxelScale(float scale) {
+            return Mathf.Clamp(float.IsNaN(scale) ? 1f : scale, MinVoxelScale, MaxVoxelScale);
+        }
+
+        internal static float VoxelOpacity {
+            get => _voxelOpacity;
+            set {
+                float opacity = ClampVoxelOpacity(value);
+                if (_voxelOpacity == opacity) return;
+                _voxelOpacity = opacity;
+                EditorPrefs.SetFloat(VoxelOpacityPreferenceKey, opacity);
+                SceneView.RepaintAll();
+            }
+        }
+
+        private static float ClampVoxelOpacity(float opacity) {
+            return Mathf.Clamp01(float.IsNaN(opacity) ? 1f : opacity);
+        }
 
         private static readonly int _previewTexture0ID = Shader.PropertyToID("_PreviewTexture0");
         private static readonly int _previewTexture1ID = Shader.PropertyToID("_PreviewTexture1");
@@ -27,6 +64,7 @@ namespace VRCLightVolumes {
         private static readonly int _previewInstancesPerDrawCallID = Shader.PropertyToID("_PreviewInstancesPerDrawCall");
         private static readonly int _previewDrawCallIdID = Shader.PropertyToID("_PreviewDrawCallId");
         private static readonly int _previewColorID = Shader.PropertyToID("_PreviewColor");
+        private static readonly int _previewZWriteID = Shader.PropertyToID("_PreviewZWrite");
         private static readonly int _previewCorrectionID = Shader.PropertyToID("_PreviewCorrection");
         private static readonly int _previewRotationID = Shader.PropertyToID("_PreviewRotation");
         private static readonly int _previewIsRotatedID = Shader.PropertyToID("_PreviewIsRotated");
@@ -128,6 +166,8 @@ namespace VRCLightVolumes {
         // Draws a card grid using optional Light Volume textures.
         private void Draw(LightVolumeInstance volume, PreviewDrawData data, Camera camera) {
             if (volume == null || volume.gameObject == null) return;
+            float opacity = VoxelOpacity;
+            if (opacity <= 0f) return;
 
             int voxelCount = GetVoxelCount(data.Resolution);
             if (voxelCount <= 0) return;
@@ -143,9 +183,14 @@ namespace VRCLightVolumes {
             EnsureResources();
             if (_material == null || _propertyBlock == null || _cardMesh == null) return;
 
+            bool opaque = opacity >= 1f;
+            _material.SetInt(_previewZWriteID, opaque ? 1 : 0);
+            _material.renderQueue = (int)(opaque ? RenderQueue.AlphaTest : RenderQueue.Transparent);
+            _material.SetOverrideTag("RenderType", opaque ? "TransparentCutout" : "Transparent");
+
             Camera resolvedCamera = ResolveCamera(camera);
             Matrix4x4 localToWorld = Matrix4x4.TRS(data.Position, data.VolumeRotation, data.Scale);
-            float voxelRadius = CalculateVoxelRadius(data.Scale, data.Resolution);
+            float voxelRadius = CalculateVoxelRadius(data.Scale, data.Resolution) * VoxelScale;
             bool hasTextureData = data.Texture0 != null && data.Texture1 != null && data.Texture2 != null;
 
             _propertyBlock.Clear();
@@ -162,7 +207,7 @@ namespace VRCLightVolumes {
             _propertyBlock.SetFloat(_previewVoxelRadiusID, voxelRadius);
             _propertyBlock.SetInt(_previewCardsPerInstanceID, CardsPerInstance);
             _propertyBlock.SetInt(_previewInstancesPerDrawCallID, InstancesPerDrawCall);
-            _propertyBlock.SetVector(_previewColorID, new Vector4(data.Color.r, data.Color.g, data.Color.b, 1f));
+            _propertyBlock.SetVector(_previewColorID, new Vector4(data.Color.r, data.Color.g, data.Color.b, opacity));
             _propertyBlock.SetVector(_previewCorrectionID, data.Correction);
             _propertyBlock.SetVector(_previewRotationID, new Vector4(data.ShRotation.x, data.ShRotation.y, data.ShRotation.z, data.ShRotation.w));
             _propertyBlock.SetInt(_previewIsRotatedID, data.IsRotated ? 1 : 0);
@@ -394,6 +439,7 @@ namespace VRCLightVolumes {
                 return;
             }
 
+            if (LightVolumePreviewRenderer.VoxelOpacity <= 0f) return;
             double time = EditorApplication.timeSinceStartup;
             if (time < _nextRepaintTime) return;
 

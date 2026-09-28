@@ -1,13 +1,17 @@
 Shader "Hidden/LightVolumesPreview" {
 
+    Properties {
+        [HideInInspector] _PreviewZWrite ("Depth Write", Float) = 1
+    }
+
     SubShader {
         Tags { "Queue" = "AlphaTest" "RenderType" = "TransparentCutout" "IgnoreProjector" = "True" }
 
         Pass {
-            ZWrite On
+            ZWrite [_PreviewZWrite]
             ZTest LEqual
             Cull Off
-            Blend Off
+            Blend SrcAlpha OneMinusSrcAlpha
 
             CGPROGRAM
             #pragma target 3.0
@@ -313,6 +317,9 @@ Shader "Hidden/LightVolumesPreview" {
                     return o;
                 }
 
+                // Reverse the shell order for transparent cards.
+                if (_PreviewColor.a < 1.0) cardId = voxelCount - 1u - cardId;
+
                 float3 voxelCoord = DecodeVoxelCoord(cardId);
                 float3 resolution = max(_PreviewResolution.xyz, float3(1.0, 1.0, 1.0));
                 float3 uvw = (voxelCoord + 0.5) / resolution;
@@ -348,13 +355,13 @@ Shader "Hidden/LightVolumesPreview" {
                 // Unbaked volumes are shown as neutral shaded cards.
                 if (_PreviewHasTextureData == 0) {
                     half shade = 0.28 + 0.72 * sphereZ;
-                    return half4((half3)i.L0 * shade, 1.0);
+                    return half4((half3)i.L0 * shade, _PreviewColor.a);
                 }
 
                 // Baked volumes show evaluated SH only, without editor ambient or fill light.
                 float3 normalWSFloat = (float3)normalWS;
                 float3 color = float3(EvaluateSH(i.L0.r, i.L1r, normalWSFloat), EvaluateSH(i.L0.g, i.L1g, normalWSFloat), EvaluateSH(i.L0.b, i.L1b, normalWSFloat));
-                return half4((half3)max(color, float3(0.0, 0.0, 0.0)), 1.0);
+                return half4((half3)max(color, float3(0.0, 0.0, 0.0)), _PreviewColor.a);
             }
             ENDCG
         }

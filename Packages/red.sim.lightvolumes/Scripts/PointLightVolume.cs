@@ -23,7 +23,7 @@ namespace VRCLightVolumes {
         [Min(0.001f)] public float SpotCookieAspect = 1f;
         public UnityEngine.Object Cubemap;
         public bool BakeIntoProbes = false;
-        public bool DebugRange = false;
+        [HideInInspector] public bool DebugRange = false;
 
         public bool Shadows = false;
         public bool BakeInGame = false;

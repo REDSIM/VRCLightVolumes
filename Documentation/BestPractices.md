@@ -58,7 +58,7 @@ See [Regular Light Volumes](./HowToUse_RegularLightVolumes.md) for blending cont
 
 ## Keep Point Light Ranges Tight
 
-Enable **Debug Range** and look at the whole affected area, not just the bright patch beside the lamp.
+Select the light with Scene view **Gizmos** enabled to check the whole affected area.
 
 For **Parametric** and **Custom** Point/Spot lights, effective range depends on **Light Source Size**, Transform scale, **Color**, **Intensity** and the Manager's **Brightness Cutoff**. **LUT** lights have an explicit **Range**.
 
@@ -66,7 +66,7 @@ Tune a light in this order:
 
 1. Set **Light Source Size** to a sensible emitter radius.
 2. Set color and intensity for the desired appearance.
-3. Check **Debug Range** for unnecessary overlap.
+3. In the Scene view, choose **Draw Mode > VRCLV Overdraw** to check for unnecessary overlap.
 4. Raise the Manager's **Brightness Cutoff** a little if imperceptibly dim light extends too far. This affects all lights that use the calculated cutoff.
 5. Disable lights in zones that cannot contribute to the current view.
 

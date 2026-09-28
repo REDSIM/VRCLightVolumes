@@ -7,10 +7,12 @@ namespace VRCLightVolumes {
     public class LightVolumeEditor : UnityEditor.Editor {
         private const string DebugFoldoutSessionKey = "VRCLightVolumes.LightVolumeEditor.DebugFoldout";
         private const float ToolbarButtonWidth = 150f;
+        private const float PreviewButtonWidth = 140f;
         private const float ActionButtonWidth = 170f;
         private const float InspectorSectionSpacing = 10f;
         private const float MinBoundsSize = 0.01f;
         private const float MinDivisorSize = 0.0001f;
+        private static readonly GUIContent PreviewSettingsContent = new GUIContent("\u25BE", "Voxel preview settings.");
 
         private bool _isEditMode;
         private bool _debugExpanded;
@@ -18,6 +20,11 @@ namespace VRCLightVolumes {
         private Tool _previousTool;
         private LightProbePlacerWindow _probePlacerWindow;
         private LightVolumeInstance _volume;
+        private GUIStyle _toolbarButtonStyle;
+        private GUIStyle _previewButtonStyle;
+        private GUIStyle _previewDropdownStyle;
+        private GUIContent _editBoundsContent;
+        private GUIContent _previewVoxelsContent;
 
         private AtlasState[] _atlasStates;
         private long[] _bakeryDependencyStates;
@@ -134,34 +141,74 @@ namespace VRCLightVolumes {
 
         // Draws Scene View bounds editing and voxel preview toggles.
         private void DrawToolbar() {
-            GUIContent editBounds = EditorGUIUtility.IconContent("EditCollider");
-            editBounds.text = " Edit Bounds";
-            editBounds.tooltip = "Resize the volume in the Scene view.";
-
-            GUIContent previewVoxels = EditorGUIUtility.IconContent("LightProbeGroup Gizmo");
-            previewVoxels.text = " Preview Voxels";
-            previewVoxels.tooltip = "Show the lighting grid in the Scene view.";
-
-            GUIStyle toggleStyle = new GUIStyle(GUI.skin.button) {
-                imagePosition = ImagePosition.ImageLeft,
-                fixedHeight = 20f,
-                fixedWidth = ToolbarButtonWidth
-            };
+            if (_toolbarButtonStyle == null) {
+                _toolbarButtonStyle = new GUIStyle(GUI.skin.button) {
+                    imagePosition = ImagePosition.ImageLeft,
+                    fixedHeight = 20f
+                };
+                _previewButtonStyle = new GUIStyle(EditorStyles.miniButtonLeft) {
+                    imagePosition = ImagePosition.ImageLeft,
+                    fixedHeight = 20f,
+                    font = _toolbarButtonStyle.font,
+                    fontSize = _toolbarButtonStyle.fontSize,
+                    fontStyle = _toolbarButtonStyle.fontStyle,
+                    alignment = _toolbarButtonStyle.alignment
+                };
+                _previewDropdownStyle = new GUIStyle(EditorStyles.miniButtonRight) { fixedHeight = 20f };
+                _editBoundsContent = new GUIContent(" Edit Bounds", EditorGUIUtility.IconContent("EditCollider").image, "Resize the volume in the Scene view.");
+                _previewVoxelsContent = new GUIContent(" Preview Voxels", EditorGUIUtility.IconContent("LightProbeGroup Gizmo").image, "Show the lighting grid in the Scene view.");
+            }
 
             GUILayout.Space(10f);
-            using (new EditorGUILayout.HorizontalScope()) {
-                GUILayout.FlexibleSpace();
-                bool newEditMode = GUILayout.Toggle(_isEditMode, editBounds, toggleStyle);
-                if (newEditMode != _isEditMode) SetEditMode(newEditMode);
+            Rect row = GUILayoutUtility.GetRect(0f, 20f, GUILayout.ExpandWidth(true));
+            float startX = row.x + Mathf.Max(0f, (row.width - ToolbarButtonWidth - PreviewButtonWidth - 10f) * 0.5f);
+            Rect editRect = new Rect(startX, row.y, ToolbarButtonWidth, 20f);
+            Rect previewRect = new Rect(editRect.xMax + 10f, row.y, PreviewButtonWidth, 20f);
+            Rect dropdownRect = new Rect(previewRect.xMax - 20f, row.y, 20f, 20f);
+            previewRect.width -= dropdownRect.width;
 
-                GUILayout.Space(10f);
+            bool newEditMode = GUI.Toggle(editRect, _isEditMode, _editBoundsContent, _toolbarButtonStyle);
+            if (newEditMode != _isEditMode) SetEditMode(newEditMode);
+
+            Vector2 previousIconSize = EditorGUIUtility.GetIconSize();
+            try {
+                EditorGUIUtility.SetIconSize(new Vector2(16f, 16f));
                 bool previewActive = LightVolumePreviewSceneRenderer.IsPreviewModeActive;
-                bool newPreviewActive = GUILayout.Toggle(previewActive, previewVoxels, toggleStyle);
+                bool newPreviewActive = GUI.Toggle(previewRect, previewActive, _previewVoxelsContent, _previewButtonStyle);
                 if (newPreviewActive != previewActive) {
                     LightVolumePreviewSceneRenderer.SetPreviewMode(newPreviewActive);
                     RepaintAll();
                 }
-                GUILayout.FlexibleSpace();
+                if (GUI.Button(dropdownRect, PreviewSettingsContent, _previewDropdownStyle)) {
+                    PopupWindow.Show(dropdownRect, new VoxelPreviewSettingsPopup());
+                }
+            } finally {
+                EditorGUIUtility.SetIconSize(previousIconSize);
+            }
+        }
+
+        private sealed class VoxelPreviewSettingsPopup : PopupWindowContent {
+            public override Vector2 GetWindowSize() => new Vector2(280f, 16f + EditorGUIUtility.singleLineHeight * 2f + EditorGUIUtility.standardVerticalSpacing);
+
+            public override void OnGUI(Rect rect) {
+                float previousLabelWidth = EditorGUIUtility.labelWidth;
+                float previousFieldWidth = EditorGUIUtility.fieldWidth;
+                try {
+                    EditorGUIUtility.labelWidth = 84f;
+                    EditorGUIUtility.fieldWidth = 40f;
+                    Rect sliderRect = new Rect(8f, 8f, rect.width - 16f, EditorGUIUtility.singleLineHeight);
+                    EditorGUI.BeginChangeCheck();
+                    float scale = EditorGUI.Slider(sliderRect, "Sphere Scale",
+                        LightVolumePreviewRenderer.VoxelScale, LightVolumePreviewRenderer.MinVoxelScale, LightVolumePreviewRenderer.MaxVoxelScale);
+                    if (EditorGUI.EndChangeCheck()) LightVolumePreviewRenderer.VoxelScale = scale;
+                    sliderRect.y += EditorGUIUtility.singleLineHeight + EditorGUIUtility.standardVerticalSpacing;
+                    EditorGUI.BeginChangeCheck();
+                    float opacity = EditorGUI.Slider(sliderRect, "Opacity", LightVolumePreviewRenderer.VoxelOpacity, 0f, 1f);
+                    if (EditorGUI.EndChangeCheck()) LightVolumePreviewRenderer.VoxelOpacity = opacity;
+                } finally {
+                    EditorGUIUtility.labelWidth = previousLabelWidth;
+                    EditorGUIUtility.fieldWidth = previousFieldWidth;
+                }
             }
         }
 

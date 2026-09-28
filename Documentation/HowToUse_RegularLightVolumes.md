@@ -139,7 +139,7 @@ Use these to match the room's lightmaps or remove unwanted ambient glow from an 
 | Parameter | What to use it for |
 | --- | --- |
 | **Edit Bounds** | Resize the volume with face handles in the Scene view. |
-| **Preview Voxels** | Show the lighting grid and, after baking, its stored lighting. |
+| **Preview Voxels** | Show the lighting grid and, after baking, its stored lighting. Click the arrow button beside **Preview Voxels** to adjust **Sphere Scale** and **Opacity**. |
 | **Size in VRAM / Size in bundle** | Estimate texture memory and compressed build size. |
 | **Dynamic** | Allow the stored lighting to move with the Transform in game. Also enable the Manager's **Auto Update Volumes**, or update the Transform through the API. |
 | **Additive** | Add this lighting on top of the base lighting. |

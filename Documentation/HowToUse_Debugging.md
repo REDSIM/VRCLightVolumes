@@ -17,7 +17,7 @@
 
 ## Inspect The Lighting In Scene View
 
-The Scene view's shading-mode menu, normally showing **Shaded**, contains the **Light Volumes Debug** modes. They show lighting, overlaps and clustering across the scene independently of its materials.
+The Scene view's **Draw Mode** menu, normally showing **Shaded**, contains the **Light Volumes Debug** modes. They show lighting, overlaps and clustering across the scene independently of its materials.
 
 | Mode | Description |
 | --- | --- |
@@ -84,6 +84,8 @@ Clustering colors identify groups of lights. They do not represent brightness or
 
 Click **Preview Voxels** in a Regular Light Volume's Inspector to display its baked lighting as a grid of spheres in the Scene view. This previews only that volume's data. Other volumes and **Point Light Volumes** do not affect it.
 
+Click the arrow button beside **Preview Voxels** to adjust **Sphere Scale** and **Opacity**. Lower **Opacity** to see through the spheres.
+
 ## Check Runtime State In The Inspector
 
 The **Light Volume**, **Point Light Volume** and **Light Volume Manager** components have a collapsible **Debug** section at the bottom of their Inspectors. It shows internal state, such as registration and active lighting data, and includes previews of textures and texture arrays where relevant. All displayed values are read-only. Some runtime values are available only in Play Mode.
@@ -114,7 +116,7 @@ The prefab may appear empty in the Editor: its activation animation assigns the 
 | --- | --- |
 | **Selected Volume** | The selected Regular or Additive volume's baked lighting samples. These exclude separate Point Light contributions. |
 | **All Volume Bounds** | Boxes around active volumes. Default colors are cyan for Regular and orange for Additive. |
-| **All Lights** | Point/Spot/Area light icons and Area emitter rectangles. For effective light ranges, use **Debug Range** on the world light in Unity. |
+| **All Lights** | Point/Spot/Area light icons and Area emitter rectangles. To inspect effective light ranges, select the world light in Unity with Scene view **Gizmos** enabled. |
 | **Auto Volume ID** | Automatically selects a volume containing the camera, preferring Regular volumes. If none contains it, the manual ID is used. |
 | **Volume ID** | Select a runtime volume slot manually with **Auto Volume ID** off. Slots can change as volumes are enabled or reordered. |
 | **Sphere Size / Draw Amount** | Make the sample display smaller or less crowded. Both must be above zero to see samples. |

@@ -5,7 +5,7 @@ using UnityEditorInternal;
 namespace VRCLightVolumes {
     [CanEditMultipleObjects]
     [CustomEditor(typeof(PointLightVolumeInstance))]
-    public class PointLightVolumeEditor : UnityEditor.Editor {
+    public partial class PointLightVolumeEditor : UnityEditor.Editor {
         private const string DebugFoldoutSessionKey = "VRCLightVolumes.PointLightVolumeEditor.DebugFoldout";
         private PointLightVolumeInstance PointLightVolume;
 
@@ -43,6 +43,7 @@ namespace VRCLightVolumes {
         // Removes the Undo callback owned by this inspector.
         private void OnDisable() {
             Undo.undoRedoPerformed -= OnUndoRedoPerformed;
+            SetLightEditMode(false);
         }
 
         // Draws type-specific authoring controls and synchronizes explicit changes.
@@ -54,6 +55,7 @@ namespace VRCLightVolumes {
             SerializedProperty projectionProperty = serializedObject.FindProperty("Projection");
             int lightType = Mathf.Clamp(lightTypeProperty.intValue, 0, 2);
             int projection = Mathf.Clamp(projectionProperty.intValue, 0, 2);
+            DrawLightEditToolbar();
             DrawSectionHeader("Light", false);
             bool lightTypeChanged = DrawPopup(lightTypeProperty, "Type", _lightTypeNames);
             lightType = Mathf.Clamp(lightTypeProperty.intValue, 0, 2);
@@ -62,7 +64,6 @@ namespace VRCLightVolumes {
             DrawProperty("Intensity");
             DrawProperty("ShadingStrength");
             DrawProperty("BakeIntoProbes");
-            DrawProperty("DebugRange");
 
             DrawSectionHeader("Projection", true);
             if (lightType != 2) {
@@ -473,34 +474,37 @@ namespace VRCLightVolumes {
             return pointLightVolume.LightVolumeManager != null ? pointLightVolume.LightVolumeManager.LightsBrightnessCutoff : 0.35f;
         }
 
-        // Draws the Scene View shape, range and optional debug bounds for one light.
+        // Draws the Scene View shape and range.
         private void DrawVolumeGUI(PointLightVolumeInstance pointLightVolume) {
 
             Transform t = pointLightVolume.transform;
             Vector3 origin = t.position;
-            Vector3 lscale = pointLightVolume.transform.lossyScale;
-            float scale = (lscale.x + lscale.y + lscale.z) / 3;
+            float scale = GetLightHandleScale(t);
             float range = pointLightVolume.LightType != 2 && (pointLightVolume.Projection != 1 || pointLightVolume.FalloffLUT == null) ? pointLightVolume.LightSourceSize : pointLightVolume.Range;
             range *= scale;
+            Color rangeVisibleColor = new Color(1f, 1f, 0f, 0.3f);
+            Color rangeHiddenColor = new Color(1f, 1f, 0f, 0.075f);
 
             if (pointLightVolume.LightType == 0) { // Point Light Visualization
 
                 // Calculating
                 float bounds = 0;
-                bool isDebug = pointLightVolume.DebugRange && (pointLightVolume.Projection != 1 || pointLightVolume.FalloffLUT == null);
-                if (isDebug) bounds = Mathf.Sqrt(ComputePointLightSquaredBoundingSphere(pointLightVolume.Color, pointLightVolume.Intensity, range, GetBrightnessCutoff(pointLightVolume)));
+                bool hasCalculatedRange = pointLightVolume.Projection != 1 || pointLightVolume.FalloffLUT == null;
+                if (hasCalculatedRange) TryGetIntensityHandleRange(pointLightVolume, GetBrightnessCutoff(pointLightVolume), out bounds);
 
                 // Drawing
                 Handles.zTest = UnityEngine.Rendering.CompareFunction.LessEqual;
-                Handles.color = new Color(1f, 1f, 0f, 0.6f);
+                Handles.color = hasCalculatedRange ? new Color(1f, 1f, 0f, 0.6f) : rangeVisibleColor;
                 DrawPointLight(origin, range);
-                if (isDebug) DrawPointLight(origin, bounds);
+                Handles.color = rangeVisibleColor;
+                if (hasCalculatedRange) DrawPointLight(origin, bounds);
                 DrawShadowClipGUI(pointLightVolume, origin, t);
 
                 Handles.zTest = UnityEngine.Rendering.CompareFunction.Greater;
-                Handles.color = new Color(1f, 1f, 0f, 0.15f);
+                Handles.color = hasCalculatedRange ? new Color(1f, 1f, 0f, 0.15f) : rangeHiddenColor;
                 DrawPointLight(origin, range);
-                if (isDebug) DrawPointLight(origin, bounds);
+                Handles.color = rangeHiddenColor;
+                if (hasCalculatedRange) DrawPointLight(origin, bounds);
                 DrawShadowClipGUI(pointLightVolume, origin, t);
 
             } else if (pointLightVolume.LightType == 1) { // Spot Light Visualization
@@ -512,41 +516,46 @@ namespace VRCLightVolumes {
                 float halfAngleRad = Mathf.Clamp(pointLightVolume.Angle, 0.05f * Mathf.Deg2Rad, Mathf.PI);
                 Vector3[] dirs = new Vector3[] { right, -right, up, -up };
                 float bounds = 0;
-                bool isDebug = pointLightVolume.DebugRange && (pointLightVolume.Projection != 1 || pointLightVolume.FalloffLUT == null);
-                if (isDebug) bounds = Mathf.Sqrt(ComputePointLightSquaredBoundingSphere(pointLightVolume.Color, pointLightVolume.Intensity, range, GetBrightnessCutoff(pointLightVolume)));
+                bool hasCalculatedRange = pointLightVolume.Projection != 1 || pointLightVolume.FalloffLUT == null;
+                if (hasCalculatedRange) TryGetIntensityHandleRange(pointLightVolume, GetBrightnessCutoff(pointLightVolume), out bounds);
 
                 // Drawing
                 Handles.zTest = UnityEngine.Rendering.CompareFunction.LessEqual;
-                Handles.color = new Color(1f, 1f, 0f, 0.6f);
+                Handles.color = hasCalculatedRange ? new Color(1f, 1f, 0f, 0.6f) : rangeVisibleColor;
                 DrawSpotLight(origin, forward, halfAngleRad, range, dirs);
 
-                if (isDebug) DrawSpotLight(origin, forward, halfAngleRad, bounds, dirs);
+                Handles.color = rangeVisibleColor;
+                if (hasCalculatedRange) DrawSpotLight(origin, forward, halfAngleRad, bounds, dirs);
                 DrawShadowClipGUI(pointLightVolume, origin, t);
 
                 Handles.zTest = UnityEngine.Rendering.CompareFunction.Greater;
-                Handles.color = new Color(1f, 1f, 0f, 0.15f);
+                Handles.color = hasCalculatedRange ? new Color(1f, 1f, 0f, 0.15f) : rangeHiddenColor;
                 DrawSpotLight(origin, forward, halfAngleRad, range, dirs);
 
-                if (isDebug) DrawSpotLight(origin, forward, halfAngleRad, bounds, dirs);
+                Handles.color = rangeHiddenColor;
+                if (hasCalculatedRange) DrawSpotLight(origin, forward, halfAngleRad, bounds, dirs);
                 DrawShadowClipGUI(pointLightVolume, origin, t);
 
             } else { // Area light
 
                 float x = Mathf.Max(Mathf.Abs(pointLightVolume.transform.lossyScale.x), 0.001f);
                 float y = Mathf.Max(Mathf.Abs(pointLightVolume.transform.lossyScale.y), 0.001f);
+                TryGetIntensityHandleRange(pointLightVolume, GetBrightnessCutoff(pointLightVolume), out float areaRange);
 
                 Handles.zTest = UnityEngine.Rendering.CompareFunction.LessEqual;
                 Handles.color = new Color(1f, 1f, 0f, 0.6f);
                 DrawAreaLight(origin, t.rotation, x, y);
 
-                if(pointLightVolume.DebugRange) DrawAreaLightDebug(origin, t.rotation, x, y, pointLightVolume.Color, pointLightVolume.Intensity, GetBrightnessCutoff(pointLightVolume));
+                Handles.color = rangeVisibleColor;
+                DrawAreaLightDebug(origin, t.rotation, areaRange);
                 DrawShadowClipGUI(pointLightVolume, origin, t);
 
                 Handles.zTest = UnityEngine.Rendering.CompareFunction.Greater;
                 Handles.color = new Color(1f, 1f, 0f, 0.15f);
                 DrawAreaLight(origin, t.rotation, x, y);
 
-                if (pointLightVolume.DebugRange) DrawAreaLightDebug(origin, t.rotation, x, y, pointLightVolume.Color, pointLightVolume.Intensity, GetBrightnessCutoff(pointLightVolume));
+                Handles.color = rangeHiddenColor;
+                DrawAreaLightDebug(origin, t.rotation, areaRange);
                 DrawShadowClipGUI(pointLightVolume, origin, t);
 
             }
@@ -555,9 +564,19 @@ namespace VRCLightVolumes {
 
         // Draws Scene View gizmos for every selected Point Light Volume.
         void OnSceneGUI() {
-            foreach (var obj in Selection.gameObjects) {
-                var volume = obj.GetComponent<PointLightVolumeInstance>();
-                if (volume != null) DrawVolumeGUI(volume);
+            var volume = target as PointLightVolumeInstance;
+            if (volume == null) return;
+            Color previousColor = Handles.color;
+            Matrix4x4 previousMatrix = Handles.matrix;
+            var previousZTest = Handles.zTest;
+            try {
+                DrawVolumeGUI(volume);
+                HandleLightEditModeState();
+                if (_isLightEditMode && Selection.activeGameObject == volume.gameObject) DrawLightEditHandles(volume);
+            } finally {
+                Handles.color = previousColor;
+                Handles.matrix = previousMatrix;
+                Handles.zTest = previousZTest;
             }
         }
 
@@ -677,17 +696,12 @@ namespace VRCLightVolumes {
         }
 
         // Draws the estimated culling sphere of an Area Light.
-        private void DrawAreaLightDebug(Vector3 center, Quaternion rotation, float width, float height, Color color, float intensity, float cutoff) {
+        private void DrawAreaLightDebug(Vector3 center, Quaternion rotation, float radius) {
 
             // Light normal
             Vector3 up = rotation * Vector3.up;
             Vector3 right = rotation * Vector3.right;
             Vector3 forward = rotation * Vector3.forward;
-
-            // Calculate the bounding sphere of the area light given the cutoff irradiance
-            float minSolidAngle = Mathf.Clamp(cutoff / (Mathf.Max(color.r, Mathf.Max(color.g, color.b)) * intensity * Mathf.PI), -Mathf.PI * 2f, Mathf.PI * 2);
-            float sqMaxDist = ComputeAreaLightSquaredBoundingSphere(width, height, minSolidAngle);
-            float radius = Mathf.Sqrt(sqMaxDist);
 
             Handles.DrawWireDisc(center, forward, radius);
             Handles.DrawWireArc(center, right, up * radius, 180f, radius);
@@ -696,7 +710,7 @@ namespace VRCLightVolumes {
         }
 
         // Calculates squared Area Light range from emitter dimensions and minimum solid angle.
-        float ComputeAreaLightSquaredBoundingSphere(float width, float height, float minSolidAngle) {
+        private static float ComputeAreaLightSquaredBoundingSphere(float width, float height, float minSolidAngle) {
             float A = width * height;
             float w2 = width * width;
             float h2 = height * height;
@@ -710,7 +724,7 @@ namespace VRCLightVolumes {
         }
 
         // Calculates squared Point Light range from brightness, source size and cutoff.
-        float ComputePointLightSquaredBoundingSphere(Color color, float intensity, float size, float cutoff) {
+        private static float ComputePointLightSquaredBoundingSphere(Color color, float intensity, float size, float cutoff) {
             float L = Mathf.Max(color.r, Mathf.Max(color.g, color.b));
             return Mathf.Max(Mathf.PI * 2 * L * Mathf.Abs(intensity) / (cutoff * cutoff) - 1, 0) * size * size;
         }

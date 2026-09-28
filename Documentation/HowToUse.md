@@ -96,7 +96,7 @@ See [Regular Light Volumes](./HowToUse_RegularLightVolumes.md) for density, over
 > [!TIP]
 > Scaling the light's GameObject also scales its light source. Set its size before adjusting **Intensity**.
 
-5. Enable **Debug Range** to see how far the light reaches. Raise **Brightness Cutoff** on the Manager to shorten light ranges and reduce overlap. Keep it low enough to avoid visible cutoffs.
+5. Select the light with Scene view **Gizmos** enabled to see how far it reaches. Raise **Brightness Cutoff** on the Manager to shorten light ranges and reduce overlap. Keep it low enough to avoid visible cutoffs.
 6. If the light will move, rotate or scale in game, enable **Dynamic** on it and **Auto Update Volumes** on the Manager.
 7. To add shadows, enable **Shadows > Enabled** and click **Bake Shadows**. Rebake after moving the light or shadow-casting geometry. Use a [runtime shadow baker](./HowToUse_Shadows.md#realtime-shadows) for real-time shadow updates.
 
@@ -108,7 +108,7 @@ Light Volumes are designed to run efficiently, but too many lights, excessive ov
 
 - For groups of stationary lights, use your lightmapper's lights and bake them into Regular Light Volumes. Don't use hundreds of Point Light Volumes for lighting that can stay baked.
 - Use Point Light Volumes where you need separate control. Disable lights in unused areas.
-- Keep light ranges local. Avoid stacking many Point Light Volumes over the same visible surfaces. Use **Debug Range** to check their overlap.
+- Keep light ranges local. Avoid stacking many Point Light Volumes over the same visible surfaces. Choose Scene view **Draw Mode > VRCLV Overdraw** to check overlap.
 - Use [**Froxel Clustering**](./HowToUse_FroxelClustering.md) for many lights spread across different areas. It helps less when they all illuminate the same surface.
 - Prefer baked shadows. Capture changes only when needed, and reserve continuous shadow updates for lights that need them.
 - Test the busiest areas on the intended device, especially Quest. Check performance as you add lights, including in mirrors.

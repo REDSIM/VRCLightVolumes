@@ -51,7 +51,17 @@ For artistic effects, you can make the source larger or smaller than the visible
 
 ![Light placement and affected ranges.](./Preview_5.png)
 
-Enable **Debug Range**, select the light and turn on Scene view **Gizmos** to see its range. The yellow outline includes dim lighting beyond the bright patch.
+Select the light and turn on Scene view **Gizmos** to see its range. The yellow outline includes dim lighting beyond the bright patch.
+
+Click **Edit Light** in the selected light's Inspector to adjust its shape in the Scene view:
+
+- **Point:** drag the radius handles to change **Light Source Size**, or **Range** with an assigned **LUT**.
+- **Spot:** drag the forward handle to change the source size or LUT range. Drag an edge handle on either cone to change **Angle**.
+- **Area:** drag a frame edge or corner. The opposite edge or corner stays in place. During the drag, hold **Alt** to resize from the center or **Shift** to keep proportions.
+
+Drag a cube handle on the range outline to change **Intensity**. These handles use **Color**, the source dimensions and the Manager's **Brightness Cutoff** to calculate brightness. They appear for lights with a nonblack color and a calculated range. **LUT** lights keep their manual **Range** handles.
+
+Hold **Ctrl** (**Cmd** on macOS) to snap to Unity's Move increments, or its Rotate increment for angles. Press **Escape** or select another tool to finish. With multiple lights selected, handles edit only the active light.
 
 Transform scale also changes the source size of Point and Spot lights. Larger sources produce larger specular highlights in shaders that support individual speculars.
 
@@ -59,7 +69,7 @@ Transform scale also changes the source size of Point and Spot lights. Larger so
 
 Larger or brighter sources reach farther. Raise the Manager's **Brightness Cutoff** to shorten calculated ranges, at the cost of dim lighting near the edges. **LUT** projection has a manual **Range** instead.
 
-Use the range outline to check overlap between lights. Shadows do not reduce the calculated range.
+Shadows do not reduce the calculated range.
 
 **Shading Strength** controls surface shading and shadow strength. At `1` they apply fully. At `0` they are disabled.
 
@@ -157,7 +167,7 @@ If scripts change a light type, cookie or shadows, retain those features in the 
 
 ## Keep It Performant
 
-Keep the active light count and overlap low. Use **Debug Range** to avoid lighting areas that don't need each light.
+Keep the active light count and overlap low. Choose Scene view **Draw Mode > VRCLV Overdraw** to see where lights and volumes overlap.
 
 > [!IMPORTANT]
 > **128 active Point Light Volumes** is a maximum, not a performance target. The Manager's **Additive Max Overdraw** also limits how many affect one pixel. Lights can be seen with visual artefacts where this limit is reached.

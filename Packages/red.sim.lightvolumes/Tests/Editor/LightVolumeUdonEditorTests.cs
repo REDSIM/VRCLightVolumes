@@ -1507,8 +1507,10 @@ namespace VRCLightVolumes.Tests {
             Assert.That(coordinatorType, Is.Not.Null);
             MethodInfo queueObject = coordinatorType.GetMethod("QueueObject", _staticMigrationMethodFlags);
             MethodInfo flush = coordinatorType.GetMethod("FlushPendingSceneChanges", _staticMigrationMethodFlags);
+            MethodInfo refreshPrimaryManager = coordinatorType.GetMethod("RefreshPrimaryManager", _staticMigrationMethodFlags);
             Assert.That(queueObject, Is.Not.Null);
             Assert.That(flush, Is.Not.Null);
+            Assert.That(refreshPrimaryManager, Is.Not.Null);
 
             // Do not let a refresh queued by the previous test update unrelated scene managers
             // after this test manager and overwrite process-wide shader globals.
@@ -1517,6 +1519,11 @@ namespace VRCLightVolumes.Tests {
 
             LightVolumeManager manager = CreateManager("Editor Change Coordinator Manager", false);
             PointLightVolumeInstance point = CreatePointLight(manager, "Editor Change Coordinator Point", true);
+            UnityEngine.SceneManagement.Scene fixtureScene = UnityEngine.SceneManagement.SceneManager.GetSceneAt(0);
+            UnityEngine.SceneManagement.SceneManager.MoveGameObjectToScene(manager.gameObject, fixtureScene);
+            UnityEngine.SceneManagement.SceneManager.MoveGameObjectToScene(point.gameObject, fixtureScene);
+            manager.transform.SetAsFirstSibling();
+            refreshPrimaryManager.Invoke(null, null);
             manager.PointLightVolumeInstances = new[] { point };
             point.transform.position = new Vector3(3.5f, -2f, 7.25f);
 
@@ -7479,6 +7486,66 @@ Shader ""Hidden/VRCLV/Tests/ShadowGrabPass"" {
             Assert.That(GetManagerField<bool>(manager, _clusterGeometryUploadPendingField), Is.True);
             Assert.That(GetManagerField<bool>(manager, _clusterMaskDirtyField), Is.False,
                 "Mask invalidation is deferred until geometry globals have been submitted.");
+        }
+
+        [TestCase(0, 0)]
+        [TestCase(0, 1)]
+        [TestCase(0, 2)]
+        [TestCase(1, 0)]
+        [TestCase(1, 1)]
+        [TestCase(1, 2)]
+        public void WideSpotClusteringUsesRangeSphereAcrossAuthoringAndSetters(int projectionMode, int updatePath) {
+            LightVolumeManager manager = CreateManager("Wide Spot Clustering Manager", false);
+            manager.CustomTexturesWidth = manager.CustomTexturesHeight = 4;
+            PointLightVolumeInstance point = CreatePointLight(manager, "Wide Spot Clustering Light", true);
+            point.LightType = 1;
+            point.Projection = projectionMode;
+            if (projectionMode == 1) {
+                point.FalloffLUT = CreateTexture2D("Wide Spot Clustering LUT");
+                point.SetCustomTexture((Texture)point.FalloffLUT);
+                point.SetLut();
+            }
+            manager.PointLightVolumeInstances = new[] { point };
+            FieldInfo clusteringLightsField = typeof(LightVolumeManager).GetField("_clusteringLights", _lifecycleMethodFlags);
+            Assert.That(clusteringLightsField, Is.Not.Null);
+            float expectedRadius = -1f;
+
+            foreach (float angle in new[] { 60f, 180f, 270f, 359.99f, 360f, 60f }) {
+                if (updatePath == 0) {
+                    point.Angle = angle * Mathf.Deg2Rad * 0.5f;
+                    point.EditorApplyAuthoringData(false, false, false);
+                } else if (updatePath == 1) point.SetSpotLight(angle);
+                else point.SetSpotLight(angle, 0.5f);
+                manager.UpdateVolumes();
+
+                Vector4 packed = ((Vector4[])clusteringLightsField.GetValue(manager))[0];
+                int shape = (int)packed.y >> 16;
+                if (angle < 180f) Assert.That(shape, Is.GreaterThan(1), angle + " degrees");
+                else Assert.That(shape, Is.Zero, angle + " degrees");
+                if (expectedRadius < 0f) expectedRadius = packed.x;
+                Assert.That(expectedRadius, Is.GreaterThan(0f));
+                Assert.That(packed.x, Is.EqualTo(expectedRadius).Within(Epsilon), angle + " degrees");
+                Assert.That(point.ProjectionMode, Is.EqualTo(projectionMode));
+            }
+        }
+
+        [Test]
+        public void NarrowSpotCookieClusteringIgnoresStaleOuterCosine() {
+            LightVolumeManager manager = CreateManager("Spot Cookie Clustering Manager", false);
+            manager.CustomTexturesWidth = manager.CustomTexturesHeight = 4;
+            PointLightVolumeInstance point = CreatePointLight(manager, "Spot Cookie Clustering Light", true);
+            point.SetCustomTexture(CreateTexture2D("Spot Clustering Cookie"));
+            point.SetSpotLight(60f);
+            point.OuterAngleCos = -1f;
+            manager.PointLightVolumeInstances = new[] { point };
+            manager.UpdateVolumes();
+
+            FieldInfo clusteringLightsField = typeof(LightVolumeManager).GetField("_clusteringLights", _lifecycleMethodFlags);
+            Assert.That(clusteringLightsField, Is.Not.Null);
+            Vector4 packed = ((Vector4[])clusteringLightsField.GetValue(manager))[0];
+            Assert.That(point.ProjectionMode, Is.EqualTo(2));
+            Assert.That((int)packed.y >> 16, Is.GreaterThan(1));
+            Assert.That(packed.x, Is.GreaterThan(0f));
         }
 
         [Test]

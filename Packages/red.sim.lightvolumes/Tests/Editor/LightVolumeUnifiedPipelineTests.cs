@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.Reflection;
 using NUnit.Framework;
 using UnityEditor;
+using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.Rendering;
 using UnityEngine.SceneManagement;
@@ -111,29 +112,44 @@ namespace VRCLightVolumes.Tests {
         // external editor code. Only atlases previously tracked by this backend may be destroyed.
         [Test]
         public void CompleteAtlasPreservesExternallyOwnedPreviousTexture() {
-            LightVolumeManager manager = CreateComponent<LightVolumeManager>("External Transient Atlas Owner");
-            manager.transform.SetAsFirstSibling();
-            Texture3D previous = CreateTexture3D("External Previous Atlas");
-            Texture3D replacement = CreateTexture3D("Backend Replacement Atlas");
-            manager.LightVolumeAtlasBase = previous;
-            manager.LightVolumeAtlas = previous;
-            MethodInfo completeAtlas = typeof(LightVolumeManagerEditorBackend).GetMethod("CompleteAtlas", _nonPublicStaticFlags);
-            MethodInfo onPlayModeStateChanged = typeof(LightVolumeManagerEditorBackend).GetMethod("OnPlayModeStateChanged", _nonPublicStaticFlags);
-            Assert.That(completeAtlas, Is.Not.Null);
-            Assert.That(onPlayModeStateChanged, Is.Not.Null);
+            Scene fixtureScene = SceneManager.GetActiveScene();
+            Assert.That(fixtureScene.path, Is.Empty, "This test requires the Test Runner's unsaved scene.");
+            Scene previousScene = default;
+            for (int i = 1; i < SceneManager.sceneCount; i++) {
+                if (SceneManager.GetSceneAt(i) == fixtureScene) previousScene = SceneManager.GetSceneAt(i - 1);
+            }
+            Scene originalRootScene = _root.gameObject.scene;
+            try {
+                if (previousScene.IsValid()) EditorSceneManager.MoveSceneBefore(fixtureScene, SceneManager.GetSceneAt(0));
+                SceneManager.MoveGameObjectToScene(_root.gameObject, fixtureScene);
 
-            completeAtlas.Invoke(null, new object[] {
-                manager,
-                new LightVolumeInstance[0],
-                new Atlas3D { Texture = replacement, BoundsUvwMin = new Vector3[0], BoundsUvwMax = new Vector3[0] }
-            });
+                LightVolumeManager manager = CreateComponent<LightVolumeManager>("External Transient Atlas Owner");
+                manager.transform.SetAsFirstSibling();
+                Texture3D previous = CreateTexture3D("External Previous Atlas");
+                Texture3D replacement = CreateTexture3D("Backend Replacement Atlas");
+                manager.LightVolumeAtlasBase = previous;
+                manager.LightVolumeAtlas = previous;
+                MethodInfo completeAtlas = typeof(LightVolumeManagerEditorBackend).GetMethod("CompleteAtlas", _nonPublicStaticFlags);
+                MethodInfo onPlayModeStateChanged = typeof(LightVolumeManagerEditorBackend).GetMethod("OnPlayModeStateChanged", _nonPublicStaticFlags);
+                Assert.That(completeAtlas, Is.Not.Null);
+                Assert.That(onPlayModeStateChanged, Is.Not.Null);
 
-            Assert.That(manager.LightVolumeAtlasBase, Is.SameAs(replacement));
-            Assert.That(previous == null, Is.False, "The backend must preserve an externally-owned transient atlas.");
+                completeAtlas.Invoke(null, new object[] {
+                    manager,
+                    new LightVolumeInstance[0],
+                    new Atlas3D { Texture = replacement, BoundsUvwMin = new Vector3[0], BoundsUvwMax = new Vector3[0] }
+                });
 
-            onPlayModeStateChanged.Invoke(null, new object[] { PlayModeStateChange.ExitingEditMode });
-            Assert.That(replacement == null, Is.True, "The backend must still release its own replacement atlas.");
-            Assert.That(previous == null, Is.False);
+                Assert.That(manager.LightVolumeAtlasBase, Is.SameAs(replacement));
+                Assert.That(previous == null, Is.False, "The backend must preserve an externally-owned transient atlas.");
+
+                onPlayModeStateChanged.Invoke(null, new object[] { PlayModeStateChange.ExitingEditMode });
+                Assert.That(replacement == null, Is.True, "The backend must still release its own replacement atlas.");
+                Assert.That(previous == null, Is.False);
+            } finally {
+                SceneManager.MoveGameObjectToScene(_root.gameObject, originalRootScene);
+                if (previousScene.IsValid()) EditorSceneManager.MoveSceneAfter(fixtureScene, previousScene);
+            }
         }
 
         [TestCase(-1f, 0.0001f)]

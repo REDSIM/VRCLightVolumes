@@ -145,7 +145,7 @@ namespace VRCLightVolumes {
         [HideInInspector] public UnityEngine.Object Cubemap;
         [Tooltip("Includes this light in baked Light Probes for objects without Light Volumes support. Use for static lights.")]
         [HideInInspector] public bool BakeIntoProbes = false;
-        [Tooltip("Shows the light range. Use it to reduce overlap between lights.")]
+        // Retained for serialized compatibility with older scenes.
         [HideInInspector] public bool DebugRange = false;
         [Tooltip("Enables shadows. Click Bake Shadows after changing the light or nearby objects.")]
         [HideInInspector] public bool Shadows = false;

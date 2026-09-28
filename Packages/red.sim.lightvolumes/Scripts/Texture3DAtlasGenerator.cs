@@ -78,6 +78,15 @@ namespace VRCLightVolumes {
 
                     int textureIndex = i * 3;
                     bool reserveUVSpace = !volume.Bake && volume.ReserveUVSpace;
+                    bool forceUnique = reserveUVSpace;
+#if UNITY_EDITOR && !COMPILER_UDONSHARP
+                    forceUnique |= !volume.AllowAtlasDeduplication;
+#endif
+                    if (forceUnique) {
+                        forceUniqueTextures[textureIndex] = true;
+                        forceUniqueTextures[textureIndex + 1] = true;
+                        forceUniqueTextures[textureIndex + 2] = true;
+                    }
 
                     if (reserveUVSpace) {
                         int w = GetReservedTextureSize(volume.Resolution.x, downscaleCount);
@@ -91,9 +100,6 @@ namespace VRCLightVolumes {
                         texs[textureIndex] = CreateReservedTextureData(w, h, d, new Color(1, 1, 1, 0));
                         texs[textureIndex + 1] = CreateReservedTextureData(w, h, d, Color.clear);
                         texs[textureIndex + 2] = CreateReservedTextureData(w, h, d, Color.clear);
-                        forceUniqueTextures[textureIndex] = true;
-                        forceUniqueTextures[textureIndex + 1] = true;
-                        forceUniqueTextures[textureIndex + 2] = true;
                         continue;
                     }
 

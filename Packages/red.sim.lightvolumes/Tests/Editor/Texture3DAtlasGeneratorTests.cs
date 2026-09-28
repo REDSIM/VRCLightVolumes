@@ -8,6 +8,11 @@ using UnityEngine;
 using UnityEngine.TestTools;
 
 namespace VRCLightVolumes.Tests {
+    [AddComponentMenu("")]
+    public sealed class AtlasDeduplicationOptOutTestVolume : LightVolumeInstance {
+        public override bool AllowAtlasDeduplication => false;
+    }
+
     [Category("Editor")]
     public class Texture3DAtlasGeneratorTests {
         private const float Epsilon = 0.001f;
@@ -70,10 +75,13 @@ namespace VRCLightVolumes.Tests {
         }
 
         // Verifies identical baked texture data shares atlas bounds across different volumes.
-        [Test]
-        public void CreateAtlasDeduplicatesIdenticalBakedTextures() {
+        [TestCase(false)]
+        [TestCase(true)]
+        public void CreateAtlasDeduplicatesIdenticalBakedTextures(bool additive) {
             LightVolumeInstance first = CreateBakedLightVolume("Dedup Volume A", new Color(0.2f, 0.3f, 0.4f, 0), new Color(0.05f, 0.01f, 0.02f, 0), new Color(0.03f, 0.04f, 0.01f, 0), 2, 2, 2);
             LightVolumeInstance second = CreateBakedLightVolume("Dedup Volume B", new Color(0.2f, 0.3f, 0.4f, 0), new Color(0.05f, 0.01f, 0.02f, 0), new Color(0.03f, 0.04f, 0.01f, 0), 2, 2, 2);
+            first.IsAdditive = additive;
+            second.IsAdditive = additive;
 
             Atlas3D atlas = RunAtlas(new[] { first, second });
 
@@ -81,6 +89,35 @@ namespace VRCLightVolumes.Tests {
             AssertVectorClose(atlas.BoundsUvwMax[0], atlas.BoundsUvwMax[3]);
             AssertVectorClose(atlas.BoundsUvwMin[1], atlas.BoundsUvwMin[4]);
             AssertVectorClose(atlas.BoundsUvwMin[2], atlas.BoundsUvwMin[5]);
+        }
+
+        // Keeps opted-out textures separate while ordinary volumes share identical data.
+        [TestCase(false)]
+        [TestCase(true)]
+        public void CreateAtlasKeepsOptedOutTexturesUniqueAmongDeduplicatedVolumes(bool additive) {
+            LightVolumeInstance[] volumes = new LightVolumeInstance[4];
+            for (int i = 0; i < volumes.Length; i++) {
+                volumes[i] = CreateBakedLightVolume("Mixed Dedup Volume " + i, new Color(0.2f, 0.3f, 0.4f, 0), Color.clear, Color.clear, 2, 2, 2, i % 2 == 0 ? typeof(AtlasDeduplicationOptOutTestVolume) : null);
+                volumes[i].IsAdditive = additive;
+            }
+
+            Atlas3D atlas = RunAtlas(volumes);
+
+            Assert.That(atlas.BoundsUvwMin, Has.Length.EqualTo(12));
+            Assert.That(atlas.BoundsUvwMax, Has.Length.EqualTo(12));
+            int[] uniqueIslands = { 0, 1, 2, 6, 7, 8 };
+            foreach (int island in uniqueIslands) {
+                AssertBoundsInsideAtlas(atlas.BoundsUvwMin[island], atlas.BoundsUvwMax[island]);
+                for (int other = 0; other < atlas.BoundsUvwMin.Length; other++) {
+                    if (other == island) continue;
+                    Assert.That(BoundsDiffer(atlas.BoundsUvwMin[island], atlas.BoundsUvwMin[other]), Is.True, $"Opted-out island {island} shares storage with island {other}.");
+                }
+            }
+            for (int slot = 0; slot < 3; slot++) {
+                AssertVectorClose(atlas.BoundsUvwMin[3 + slot], atlas.BoundsUvwMin[9 + slot]);
+                AssertVectorClose(atlas.BoundsUvwMax[3 + slot], atlas.BoundsUvwMax[9 + slot]);
+            }
+            AssertVectorClose(atlas.BoundsUvwMin[4], atlas.BoundsUvwMin[5]);
         }
 
         // Verifies different texture data remains unique instead of being merged by dimensions alone.
@@ -313,13 +350,13 @@ namespace VRCLightVolumes.Tests {
         }
 
         // Creates a baked volume from three solid textures.
-        private LightVolumeInstance CreateBakedLightVolume(string name, Color tex0Color, Color tex1Color, Color tex2Color, int width, int height, int depth) {
-            return CreateBakedLightVolume(name, CreateSolidTexture3D(name + " Tex0", width, height, depth, TextureFormat.RGBAHalf, tex0Color), CreateSolidTexture3D(name + " Tex1", width, height, depth, TextureFormat.RGBAHalf, tex1Color), CreateSolidTexture3D(name + " Tex2", width, height, depth, TextureFormat.RGBAHalf, tex2Color));
+        private LightVolumeInstance CreateBakedLightVolume(string name, Color tex0Color, Color tex1Color, Color tex2Color, int width, int height, int depth, Type componentType = null) {
+            return CreateBakedLightVolume(name, CreateSolidTexture3D(name + " Tex0", width, height, depth, TextureFormat.RGBAHalf, tex0Color), CreateSolidTexture3D(name + " Tex1", width, height, depth, TextureFormat.RGBAHalf, tex1Color), CreateSolidTexture3D(name + " Tex2", width, height, depth, TextureFormat.RGBAHalf, tex2Color), componentType);
         }
 
         // Creates a baked volume from explicit textures.
-        private LightVolumeInstance CreateBakedLightVolume(string name, Texture3D tex0, Texture3D tex1, Texture3D tex2) {
-            LightVolumeInstance volume = CreateSceneLightVolume(name);
+        private LightVolumeInstance CreateBakedLightVolume(string name, Texture3D tex0, Texture3D tex1, Texture3D tex2, Type componentType = null) {
+            LightVolumeInstance volume = CreateSceneLightVolume(name, componentType);
             volume.Bake = true;
             volume.Texture0 = tex0;
             volume.Texture1 = tex1;
@@ -343,10 +380,11 @@ namespace VRCLightVolumes.Tests {
         }
 
         // Creates a scene Light Volume component tracked by teardown.
-        private LightVolumeInstance CreateSceneLightVolume(string name) {
+        private LightVolumeInstance CreateSceneLightVolume(string name, Type componentType = null) {
             GameObject gameObject = new GameObject(name);
             _createdObjects.Add(gameObject);
-            return gameObject.AddComponent<LightVolumeInstance>();
+            if (componentType != null) gameObject.SetActive(false);
+            return (LightVolumeInstance)gameObject.AddComponent(componentType ?? typeof(LightVolumeInstance));
         }
 
         // Creates a solid Texture3D tracked by teardown.

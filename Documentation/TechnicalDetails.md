@@ -149,6 +149,8 @@ More voxels require more texture memory and bake time.
 A volume transform moves its stored light field.
 It does not calculate new light bounces from the surroundings.
 
+Identical baked texture data can share atlas space. If your integration processes each volume independently, use [`LightVolumeInstance.AllowAtlasDeduplication`](./UnityEditorAPI.md#atlas-deduplication) to request separate regions.
+
 See [Shader Functions](./ShaderFunctions.md) for the supported sample functions.
 Use [Custom Lightmapper Integration](./CustomLightmapperIntegration.md#sh-layout) for the submission format.
 

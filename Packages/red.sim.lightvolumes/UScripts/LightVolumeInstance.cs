@@ -96,6 +96,9 @@ namespace VRCLightVolumes {
         private bool _isRegisteredWithManager = false;
 
 #if UNITY_EDITOR && !COMPILER_UDONSHARP
+        // Override with false to keep all three baked textures in separate atlas regions.
+        public virtual bool AllowAtlasDeduplication => true;
+
         // Editor-only views of existing runtime state; no backing fields are added.
         internal bool RegisteredWithManagerPreview => _isRegisteredWithManager;
 #endif

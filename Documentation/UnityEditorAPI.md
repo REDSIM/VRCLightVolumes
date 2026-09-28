@@ -7,7 +7,7 @@
 | Menu |
 | --- |
 | [UdonSharp API](./ScriptingAPI.md) |
-| **Unity Editor API**<br />• [Setup](#setup)<br />• [Manager Context](#manager-context)<br />• [Authoring Operations](#authoring-operations)<br />• [Atlas Post-Processors](#atlas-post-processors)<br />• [Custom Lightmapper Operations](#custom-lightmapper-operations) |
+| **Unity Editor API**<br />• [Setup](#setup)<br />• [Manager Context](#manager-context)<br />• [Authoring Operations](#authoring-operations)<br />• [Atlas Post-Processors](#atlas-post-processors)<br />• [Atlas Deduplication](#atlas-deduplication)<br />• [Custom Lightmapper Operations](#custom-lightmapper-operations) |
 | [Custom Lightmapper Integration](./CustomLightmapperIntegration.md) |
 
 Use `manager.Editor` to bake shadows, repack volumes, process the atlas or connect a custom lightmapper.
@@ -37,7 +37,7 @@ using VRCLightVolumes;
 using VRCLightVolumes.Editor;
 ```
 
-The snippets below belong inside your Editor tool's methods. They assume `manager` is a non-null `LightVolumeManager`. Other inputs are described beside each snippet.
+Unless noted otherwise, the snippets belong inside your Editor tool's methods. They assume `manager` is a non-null `LightVolumeManager`. Other inputs are described beside each snippet.
 
 These APIs exist under `UNITY_EDITOR && !COMPILER_UDONSHARP`. Call them on Unity's main thread. Save the scene before writing baked assets.
 
@@ -100,6 +100,24 @@ This `void` method also works in Play Mode, where it schedules runtime bakes on 
 ## Atlas post-processors
 
 Each stage reads the previous 3D lighting atlas and writes a replacement. Stages run in registration order. The last output becomes `manager.LightVolumeAtlas`. The chain needs a base atlas before it can run.
+
+### Atlas deduplication
+
+`LightVolumeInstance.AllowAtlasDeduplication` is a virtual, read-only property that defaults to `true`. Identical baked texture data can share atlas space across Regular and Additive volumes.
+
+If your processor produces different lighting for each volume, such as lighting based on world position, give those volumes separate storage. Add this override inside your integration's existing `LightVolumeInstance` subclass:
+
+```csharp
+#if UNITY_EDITOR && !COMPILER_UDONSHARP
+public override bool AllowAtlasDeduplication => false;
+#endif
+```
+
+Returning `false` keeps all three SH textures separate from each other and every other volume's textures, even when their baked data matches. Other volumes still use deduplication. Volumes with **Bake** off and **Reserve UV Space** on already receive separate regions.
+
+Keep the guard because this property is only available in the Editor. The override belongs to your integration's component, which stays in its existing assembly.
+
+After adding the override, use **Pack Light Volumes** on the Manager or call [`manager.Editor.GenerateAtlas()`](#generateatlas). `RefreshPostProcessors()` alone does not change the atlas layout.
 
 ### Operations
 

@@ -73,7 +73,7 @@ namespace VRCLightVolumes {
                 else DrawProperty("LightSourceSize");
             }
             if (lightType == 1) DrawAngleDegrees();
-            if (lightType == 1 && projection == 0) DrawProperty("Falloff");
+            if (lightType == 1 && projection == 0) EditorGUILayout.Slider(serializedObject.FindProperty("Falloff"), 0f, 1f);
             if (lightType == 1 && projection == 2) DrawProperty("SpotCookieAspect");
             DrawActiveProjectionSourceField(lightType, projection);
 

@@ -583,7 +583,7 @@ namespace VRCLightVolumes {
             }
             EditorGUILayout.PropertyField(serializedObject.FindProperty("AutoUpdateVolumes"));
             if (hasPointLights) EditorGUILayout.PropertyField(serializedObject.FindProperty("AutoUpdateTextures"));
-            EditorGUILayout.PropertyField(serializedObject.FindProperty("AdditiveMaxOverdraw"));
+            EditorGUILayout.IntSlider(serializedObject.FindProperty("AdditiveMaxOverdraw"), 1, 128);
             EditorGUILayout.PropertyField(serializedObject.FindProperty("ForceSceneLighting"));
         }
 

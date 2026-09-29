@@ -10,6 +10,27 @@ using UnityEngine;
 namespace VRCLightVolumes.Tests {
     [Category("Editor")]
     public class LightVolumeShaderBufferLayoutTests {
+        // d4rkAvatarOptimizer counts braces before evaluating preprocessor conditions.
+        [TestCase("LightVolumes.cginc")]
+        [TestCase("LightVolumesBuildConfig.cginc")]
+        public void SharedIncludesHaveBalancedBracesBeforePreprocessing(string fileName) {
+            string source = File.ReadAllText(Path.Combine(Application.dataPath,
+                "../Packages/red.sim.lightvolumes/Shaders", fileName));
+            source = Regex.Replace(source, @"\\\r?\n", "");
+            source = Regex.Replace(source, @"/\*[\s\S]*?\*/|//[^\r\n]*", "");
+            source = Regex.Replace(source, @"(?m)^[ \t]*#[^\r\n]*", "");
+
+            int depth = 0;
+            foreach (char character in source) {
+                if (character == '{') depth++;
+                if (character == '}') {
+                    depth--;
+                    Assert.That(depth, Is.GreaterThanOrEqualTo(0), fileName + " closes a block before it opens.");
+                }
+            }
+            Assert.That(depth, Is.Zero, fileName + " must also balance with all preprocessor branches visible.");
+        }
+
         [TestCase(ShaderCompilerPlatform.D3D, BuildTarget.StandaloneWindows64, "3.5")]
         [TestCase(ShaderCompilerPlatform.D3D, BuildTarget.StandaloneWindows64, "5.0")]
         [TestCase(ShaderCompilerPlatform.GLES3x, BuildTarget.Android, "3.5")]

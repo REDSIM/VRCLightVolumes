@@ -485,16 +485,16 @@ inline float LV_PointLightShadow(uint id, float3 worldPos, float3 lightVector, f
     // The distance guard preserves legacy reprojection for a degenerate same-origin vector.
     #ifndef VRCLV_DISABLE_WORLD_SPACE_SHADOWS
     bool reuseLightVector = shadowIdData < 0 || (reuseWorldShadowOrigin && sqDistanceToLight > 0.0001);
-    [branch] if (reuseLightVector) {
-    #else
-    { // The scene has only local shadows, which always reuse the current light vector.
+    [branch] if (reuseLightVector)
     #endif
+    {
         // Area keeps its legacy cubemap inverse depth range in reprojection W; Point/Spot carry it in CustomID.W.
         #ifdef VRCLV_DISABLE_WORLD_SPACE_SHADOWS
-        if (forceCubemapShadow) {
+        if (forceCubemapShadow)
         #else
-        if (forceCubemapShadow && shadowIdData < 0) {
+        if (forceCubemapShadow && shadowIdData < 0)
         #endif
+        {
             shadowReprojectionData = _UdonPointLightVolumeShadowReprojectionData[id];
         }
         distanceToShadowCenter = lightDistance;
@@ -751,14 +751,13 @@ bool LV_PointLightVolumeContribution(uint id, float3 worldPos, float3 pointLight
         #endif
         #if VRCLV_POINT_LIGHTS_SUPPORTED
         #if VRCLV_SPOT_LIGHTS_SUPPORTED && VRCLV_AREA_LIGHTS_SUPPORTED
-        [branch] if (nonNegativeLight && color.w <= 1.5) { // Point light. Non-negative pos.w selects point-light sign, and color.w <= 1.5 excludes area lights
+        [branch] if (nonNegativeLight && color.w <= 1.5) // Point light. Non-negative pos.w selects point-light sign, and color.w <= 1.5 excludes area lights
         #elif VRCLV_SPOT_LIGHTS_SUPPORTED
-        [branch] if (nonNegativeLight) { // No Area lights: the position sign alone distinguishes Point and Spot.
+        [branch] if (nonNegativeLight) // No Area lights: the position sign alone distinguishes Point and Spot.
         #elif VRCLV_AREA_LIGHTS_SUPPORTED
-        [branch] if (color.w <= 1.5) { // No Spot lights: the color tag alone distinguishes Point and Area.
-        #else
-        { // The scene profile contains only Point lights; no runtime type dispatch is needed.
+        [branch] if (color.w <= 1.5) // No Spot lights: the color tag alone distinguishes Point and Area.
         #endif
+        {
             float invDist = rsqrt(distSq);
             float3 lightDir = dir * invDist;
 
@@ -804,10 +803,9 @@ bool LV_PointLightVolumeContribution(uint id, float3 worldPos, float3 pointLight
         { // Non-point light. Split into spot lights and area lights when both are present.
             #if VRCLV_SPOT_LIGHTS_SUPPORTED
             #if VRCLV_AREA_LIGHTS_SUPPORTED
-            [branch] if (!nonNegativeLight) { // Spot light. Negative pos.w selects spot-light sign, magnitude is source size or LUT inverse range
-            #else
-            { // Spot is the only remaining light type.
+            [branch] if (!nonNegativeLight) // Spot light. Negative pos.w selects spot-light sign, magnitude is source size or LUT inverse range
             #endif
+            {
 
                 float invDist = rsqrt(distSq);
                 float3 lightDir = dir * invDist;
@@ -818,10 +816,9 @@ bool LV_PointLightVolumeContribution(uint id, float3 worldPos, float3 pointLight
                 bool spotVisible = true;
 
                 #ifndef VRCLV_DISABLE_SPOT_COOKIES
-                [branch] if (customId >= 0) { // Parametric or LUT spot light. Direction vector and cone falloff are stored directly
-                #else
-                { // Every spot light uses its direction vector and cone falloff directly.
+                [branch] if (customId >= 0) // Parametric or LUT spot light. Direction vector and cone falloff are stored directly
                 #endif
+                {
                     float4 directionData = _UdonPointLightVolumeDirection[id]; // Dir + falloff
                     spotMask = dot(directionData.xyz, -lightDir) - angle;
                     spotVisible = spotMask >= 0;
@@ -1264,10 +1261,11 @@ void LV_LightVolumeRegularSH(float3 worldPos, inout float3 L0, inout float3 L1r,
 
     // Return A directly in its interior or when sharp bounds suppress missing-B blending.
     #ifdef VRCLV_DISABLE_SMOOTH_BOUNDS
-    [branch] if (mask == 1 || isNoB) {
+    [branch] if (mask == 1 || isNoB)
     #else
-    [branch] if (mask == 1 || (isNoB && _UdonLightVolumeSharpBounds)) {
+    [branch] if (mask == 1 || (isNoB && _UdonLightVolumeSharpBounds))
     #endif
+    {
         L0  += L0_A;
         L1r += L1r_A;
         L1g += L1g_A;

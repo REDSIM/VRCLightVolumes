@@ -20,7 +20,7 @@ float4 _UdonFroxelCoarse;
 #endif
 
 // Resolves the exact Fine cell used by the runtime lookup without pulling the complete
-// Light Volumes lighting implementation into these editor-only shaders.
+// Light Volumes lighting implementation into diagnostic shaders.
 inline void VRCLVPreviewWorldToFineCell(float3 worldPosition, inout uint3 fineCell, inout bool valid)
 {
     fineCell = 0u;

@@ -117,11 +117,23 @@ The prefab may appear empty in the Editor: its activation animation assigns the 
 | **Selected Volume** | The selected Regular or Additive volume's baked lighting samples. These exclude separate Point Light contributions. |
 | **All Volume Bounds** | Boxes around active volumes. Default colors are cyan for Regular and orange for Additive. |
 | **All Lights** | Point/Spot/Area light icons and Area emitter rectangles. To inspect effective light ranges, select the world light in Unity with Scene view **Gizmos** enabled. |
+| **Statistics** | A panel attached to the avatar's head, with the world's Light Volumes version, Regular and Additive volume counts, light count and active Froxel Clustering status. |
+| **Clustering** | Fine Clustering colors over the world, matching the Unity debug view. Visible while the camera is within 3 meters of the avatar's head. |
 | **Auto Volume ID** | Automatically selects a volume containing the camera, preferring Regular volumes. If none contains it, the manual ID is used. |
 | **Volume ID** | Select a runtime volume slot manually with **Auto Volume ID** off. Slots can change as volumes are enabled or reordered. |
 | **Sphere Size / Draw Amount** | Make the sample display smaller or less crowded. Both must be above zero to see samples. |
 | **Local Only** (Modular Avatar) | Show the debugger only to its wearer. Enabled by default. The VRCFury prefab does not include this menu control. |
 
-Modular Avatar places the three display modes under **Draw Mode**. VRCFury uses a **Mode** slider for the same displays. **Auto Volume ID** starts enabled in both prefabs.
+Modular Avatar places the display modes under **Draw Mode**. VRCFury uses a **Mode** slider for the three sample displays, with separate **Statistics** and **Clustering** toggles. **Auto Volume ID** starts enabled in both prefabs.
+
+In Modular Avatar, enable **Toggle**, then choose **Statistics** or **Clustering** under **Draw Mode**. Turn the selected option off to return to the previous sample display. In VRCFury, **Toggle**, **Statistics** and **Clustering** select separate displays. Enabling one turns the others off.
+
+Statistics detects major versions 1, 2 and 3. Counts show the world's active shader data, which can differ from the objects affecting your position. **NONE / OFF** means Light Volumes is absent or disabled. **Clustering** shows whether Froxel Clustering is active, rather than just enabled in the world's settings.
+
+Both prefabs automatically attach the debugger to the avatar's **Head** bone and keep it visible from first person. The Statistics panel starts 1 meter in front of that bone and follows head movement. To adjust its distance, size or height, edit **Distance (m)**, **Width (m)** and **Vertical Offset (m)** in `Extra/Light Volume Debugger/Light Volume Debugger Stats.mat`. Other cameras see the panel at the same position. In Modular Avatar, **Local Only** controls whether other players can see it.
+
+Clustering requires active Froxel Clustering in Light Volumes 3. Moving the camera beyond 3 meters hides the overlay. Within that radius, it shows both nearby and distant surfaces. Sky and surfaces outside the world's clustering grid retain their normal appearance. Transparent objects may show the clustering of the surface behind them.
+
+The Clustering toggle also enables a depth light. It can increase rendering cost in worlds that do not already provide camera depth. Turn the mode off when finished. If the overlay stays hidden, check that avatar Lights and shadows are allowed in your VRChat settings.
 
 Turn the debugger off when comparing normal appearance or measuring frame rate. See [Best Practices](./BestPractices.md) for lighting adjustments.

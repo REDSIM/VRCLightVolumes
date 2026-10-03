@@ -81,7 +81,7 @@ Shader "Light Volume Samples/Light Volume PBR"
 			o.Albedo = Albedo337;
 			float3 normalizeResult349 = normalize( (WorldNormalVector( i , tex2DNode5 )) );
 			float3 World_Normal112 = normalizeResult349;
-			float3 worldNormal2_g222 = World_Normal112;
+			float3 worldNormal2_g246 = World_Normal112;
 			float localLightVolumeSHSpecular1_g244 = ( 0.0 );
 			float3 ase_positionWS = i.worldPos;
 			float3 temp_output_6_0_g244 = ase_positionWS;
@@ -143,27 +143,27 @@ Shader "Light Volume Samples/Light Volume PBR"
 			#else
 				float3 staticSwitch472 = L01_g244;
 			#endif
-			float3 L02_g222 = staticSwitch472;
+			float3 L02_g246 = staticSwitch472;
 			#ifdef LIGHTMAP_ON
 				float3 staticSwitch93 = L1r9_g245;
 			#else
 				float3 staticSwitch93 = L1r1_g244;
 			#endif
-			float3 L1r2_g222 = staticSwitch93;
+			float3 L1r2_g246 = staticSwitch93;
 			#ifdef LIGHTMAP_ON
 				float3 staticSwitch94 = L1g9_g245;
 			#else
 				float3 staticSwitch94 = L1g1_g244;
 			#endif
-			float3 L1g2_g222 = staticSwitch94;
+			float3 L1g2_g246 = staticSwitch94;
 			#ifdef LIGHTMAP_ON
 				float3 staticSwitch95 = L1b9_g245;
 			#else
 				float3 staticSwitch95 = L1b1_g244;
 			#endif
-			float3 L1b2_g222 = staticSwitch95;
-			float3 localLightVolumeEvaluate2_g222 = LightVolumeEvaluate( worldNormal2_g222 , L02_g222 , L1r2_g222 , L1g2_g222 , L1b2_g222 );
-			float3 temp_output_406_0 = ( localLightVolumeEvaluate2_g222 * Albedo337 * ( 1.0 - Metallic334 ) );
+			float3 L1b2_g246 = staticSwitch95;
+			float3 localLightVolumeEvaluate2_g246 = LightVolumeEvaluate( worldNormal2_g246 , L02_g246 , L1r2_g246 , L1g2_g246 , L1b2_g246 );
+			float3 temp_output_406_0 = ( localLightVolumeEvaluate2_g246 * Albedo337 * ( 1.0 - Metallic334 ) );
 			#ifdef LIGHTMAP_ON
 				float3 staticSwitch512 = Specular9_g245;
 			#else
@@ -306,7 +306,7 @@ Node;AmplifyShaderEditor.GetLocalVarNode, AmplifyShaderEditor, Version=0.0.0.0, 
 Node;AmplifyShaderEditor.StaticSwitch, AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;93;-2704,-32;Inherit;False;Property;_AdditiveOnly;Additive Only;15;0;Create;True;0;0;0;False;0;False;0;0;0;True;;Toggle;2;Key0;Key1;Reference;472;True;True;All;9;1;FLOAT3;0,0,0;False;0;FLOAT3;0,0,0;False;2;FLOAT3;0,0,0;False;3;FLOAT3;0,0,0;False;4;FLOAT3;0,0,0;False;5;FLOAT3;0,0,0;False;6;FLOAT3;0,0,0;False;7;FLOAT3;0,0,0;False;8;FLOAT3;0,0,0;False;1;FLOAT3;0
 Node;AmplifyShaderEditor.GetLocalVarNode, AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;336;-2448,160;Inherit;False;334;Metallic;1;0;OBJECT;;False;1;FLOAT;0
 Node;AmplifyShaderEditor.RangedFloatNode, AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;56;-544,256;Inherit;False;Property;_OcclusionStrength;AO;5;0;Create;False;0;0;0;False;0;False;1;0;0;1;0;1;FLOAT;0
-Node;AmplifyShaderEditor.FunctionNode, AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;350;-2432,-112;Inherit;False;LightVolumeEvaluate;-1;;222;4919cc1d83093f24f802ce655e9f3303;0;5;5;FLOAT3;0,0,0;False;13;FLOAT3;1,1,1;False;14;FLOAT3;0,0,0;False;15;FLOAT3;0,0,0;False;16;FLOAT3;0,0,0;False;1;FLOAT3;0
+Node;AmplifyShaderEditor.FunctionNode, AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;350;-2432,-112;Inherit;False;LightVolumeEvaluate;-1;;246;4919cc1d83093f24f802ce655e9f3303;0;5;5;FLOAT3;0,0,0;False;13;FLOAT3;1,1,1;False;14;FLOAT3;0,0,0;False;15;FLOAT3;0,0,0;False;16;FLOAT3;0,0,0;False;1;FLOAT3;0
 Node;AmplifyShaderEditor.OneMinusNode, AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;80;-2272,160;Inherit;False;1;0;FLOAT;0;False;1;FLOAT;0
 Node;AmplifyShaderEditor.GetLocalVarNode, AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;338;-2368,64;Inherit;False;337;Albedo;1;0;OBJECT;;False;1;FLOAT3;0
 Node;AmplifyShaderEditor.WireNode, AmplifyShaderEditor, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null;532;-2144,256;Inherit;False;1;0;FLOAT3;0,0,0;False;1;FLOAT3;0
@@ -418,4 +418,4 @@ WireConnection;533;3;440;0
 WireConnection;533;4;441;0
 WireConnection;533;5;442;0
 ASEEND*/
-//CHKSM=A1322B0E461665A120DF470723D9B85FBD109513
+//CHKSM=D3592AD2A48EE5B60DD3446264BA43AB6653E859

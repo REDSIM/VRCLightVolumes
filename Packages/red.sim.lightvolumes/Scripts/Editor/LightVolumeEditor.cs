@@ -20,6 +20,7 @@ namespace VRCLightVolumes {
         private Tool _previousTool;
         private LightProbePlacerWindow _probePlacerWindow;
         private LightVolumeInstance _volume;
+        private UnityEngine.Object[] _sceneTargets;
         private GUIStyle _toolbarButtonStyle;
         private GUIStyle _previewButtonStyle;
         private GUIStyle _previewDropdownStyle;
@@ -87,12 +88,14 @@ namespace VRCLightVolumes {
         // Caches the selected volume, serialized fields and editor-only preview state.
         private void OnEnable() {
             _volume = target as LightVolumeInstance;
+            _sceneTargets = targets;
             _debugExpanded = SessionState.GetBool(DebugFoldoutSessionKey, false);
             _previousTool = Tools.current;
             CacheProperties();
             CacheAtlasStates();
             LightVolumePreviewSceneRenderer.RequestRefresh();
             Undo.undoRedoPerformed += OnUndoRedoPerformed;
+            SceneView.duringSceneGui += DrawSceneGUI;
         }
 
         // Draws authoring controls and synchronizes explicit inspector changes to runtime data.
@@ -452,33 +455,42 @@ namespace VRCLightVolumes {
             Handles.matrix = Matrix4x4.identity;
         }
 
-        // Draws selected volume bounds and interactive face handles in the Scene View.
-        protected void OnSceneGUI() {
-            if (_volume == null) return;
+        // Draws each inspected volume once per Scene View event without UdonSharp's repeated multi-object serialized updates.
+        private void DrawSceneGUI(SceneView sceneView) {
+            if (sceneView == null || !sceneView.drawGizmos || _sceneTargets == null) return;
+            HandleEditModeState();
+            bool repaint = Event.current.type == EventType.Repaint;
+            if (!repaint && !_isEditMode) return;
+            if (GizmoUtility.TryGetGizmoInfo(typeof(LightVolumeInstance), out GizmoInfo gizmoInfo) && gizmoInfo.hasGizmo && !gizmoInfo.gizmoEnabled) return;
 
-            GameObject[] selection = Selection.gameObjects;
-            for (int i = 0; i < selection.Length; i++) {
-                LightVolumeInstance volume = selection[i].GetComponent<LightVolumeInstance>();
-                if (volume != null) DrawVolumeBounds(volume);
+            Color previousColor = Handles.color;
+            Matrix4x4 previousMatrix = Handles.matrix;
+            var previousZTest = Handles.zTest;
+            try {
+                Handles.matrix = Matrix4x4.identity;
+                GameObject activeObject = Selection.activeGameObject;
+                var stage = UnityEditor.SceneManagement.StageUtility.GetCurrentStageHandle();
+                for (int i = 0; i < _sceneTargets.Length; i++) {
+                    LightVolumeInstance volume = _sceneTargets[i] as LightVolumeInstance;
+                    if (volume == null || !stage.Contains(volume.gameObject) || SceneVisibilityManager.instance.IsHidden(volume.gameObject)) continue;
+                    if (repaint) DrawVolumeBounds(volume);
+                    if (!_isEditMode || activeObject != volume.gameObject) continue;
+                    Tools.hidden = true;
+                    DrawBoundsHandles(volume);
+                }
+            } finally {
+                Handles.color = previousColor;
+                Handles.matrix = previousMatrix;
+                Handles.zTest = previousZTest;
             }
-
-            if (!_isEditMode) return;
-            Tools.hidden = true;
-            DrawBoundsHandles();
         }
 
         // Draws six axis-aligned face handles that resize bounds around the dragged face.
-        private void DrawBoundsHandles() {
-            Transform volumeTransform = _volume.transform;
-            Vector3 position = LightVolumeTools.GetPosition(_volume);
-            Quaternion rotation = LightVolumeTools.GetRotation(_volume);
-            Vector3 scale = LightVolumeTools.GetScale(_volume);
-
-            Color[] axisColors = {
-                Handles.xAxisColor,
-                Handles.yAxisColor,
-                Handles.zAxisColor
-            };
+        private void DrawBoundsHandles(LightVolumeInstance volume) {
+            Transform volumeTransform = volume.transform;
+            Vector3 position = LightVolumeTools.GetPosition(volume);
+            Quaternion rotation = LightVolumeTools.GetRotation(volume);
+            Vector3 scale = LightVolumeTools.GetScale(volume);
 
             for (int i = 0; i < 6; i++) {
                 int axis = i / 2;
@@ -488,7 +500,7 @@ namespace VRCLightVolumes {
 
                 Vector3 worldDirection = rotation * localDirection;
                 Vector3 worldUp = rotation * (axis == 1 ? Vector3.right : Vector3.up);
-                Handles.color = axisColors[axis];
+                Handles.color = axis == 0 ? Handles.xAxisColor : axis == 1 ? Handles.yAxisColor : Handles.zAxisColor;
 
                 Vector3 handlePosition = position + worldDirection * scale[axis] * 0.5f;
                 float handleSize = HandleUtility.GetHandleSize(handlePosition) * 0.2f;
@@ -529,11 +541,13 @@ namespace VRCLightVolumes {
                 }
 
                 Undo.RecordObject(volumeTransform, "Scale Bounds Size");
-                Undo.RecordObject(_volume, "Scale Bounds Size");
+                Undo.RecordObject(volume, "Scale Bounds Size");
                 // Derived from the clamped scale so the opposite face never drifts.
                 if (!symmetric) volumeTransform.position += worldDirection * (modifiedScale[axis] - oldSize) * 0.5f;
                 LVUtils.SetLossyScale(volumeTransform, modifiedScale);
-                SyncSingleTarget(_volume);
+                SyncSingleTarget(volume);
+                serializedObject.SetIsDifferentCacheDirty();
+                Repaint();
             }
         }
 
@@ -567,6 +581,8 @@ namespace VRCLightVolumes {
         // Releases editor hooks and restores the Unity tool hidden by bounds editing.
         private void OnDisable() {
             Undo.undoRedoPerformed -= OnUndoRedoPerformed;
+            SceneView.duringSceneGui -= DrawSceneGUI;
+            _sceneTargets = null;
             LightVolumePreviewSceneRenderer.RequestRefresh();
             Tools.hidden = false;
             if (!_isEditMode) return;

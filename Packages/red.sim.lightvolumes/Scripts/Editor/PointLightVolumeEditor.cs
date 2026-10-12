@@ -8,6 +8,7 @@ namespace VRCLightVolumes {
     public partial class PointLightVolumeEditor : UnityEditor.Editor {
         private const string DebugFoldoutSessionKey = "VRCLightVolumes.PointLightVolumeEditor.DebugFoldout";
         private PointLightVolumeInstance PointLightVolume;
+        private UnityEngine.Object[] _sceneTargets;
 
         private static readonly GUIContent _bakeShadowsButtonContent = new GUIContent("Bake Shadows", "Bake shadows for selected lights with Shadows enabled.");
         private static readonly GUIContent _clearShadowsButtonContent = new GUIContent("Clear Shadows", "Clear selected lights' shadow maps. Keep the saved assets.");
@@ -36,13 +37,17 @@ namespace VRCLightVolumes {
         // Caches the inspected light and restores its live debug foldout state.
         private void OnEnable() {
             PointLightVolume = target as PointLightVolumeInstance;
+            _sceneTargets = targets;
             _debugExpanded = SessionState.GetBool(DebugFoldoutSessionKey, false);
             Undo.undoRedoPerformed += OnUndoRedoPerformed;
+            SceneView.duringSceneGui += DrawSceneGUI;
         }
 
-        // Removes the Undo callback owned by this inspector.
+        // Removes this Inspector's callbacks and restores the transform tool.
         private void OnDisable() {
             Undo.undoRedoPerformed -= OnUndoRedoPerformed;
+            SceneView.duringSceneGui -= DrawSceneGUI;
+            _sceneTargets = null;
             SetLightEditMode(false);
         }
 
@@ -514,7 +519,6 @@ namespace VRCLightVolumes {
                 Vector3 right = t.right;
                 Vector3 up = t.up;
                 float halfAngleRad = Mathf.Clamp(pointLightVolume.Angle, 0.05f * Mathf.Deg2Rad, Mathf.PI);
-                Vector3[] dirs = new Vector3[] { right, -right, up, -up };
                 float bounds = 0;
                 bool hasCalculatedRange = pointLightVolume.Projection != 1 || pointLightVolume.FalloffLUT == null;
                 if (hasCalculatedRange) TryGetIntensityHandleRange(pointLightVolume, GetBrightnessCutoff(pointLightVolume), out bounds);
@@ -522,18 +526,18 @@ namespace VRCLightVolumes {
                 // Drawing
                 Handles.zTest = UnityEngine.Rendering.CompareFunction.LessEqual;
                 Handles.color = hasCalculatedRange ? new Color(1f, 1f, 0f, 0.6f) : rangeVisibleColor;
-                DrawSpotLight(origin, forward, halfAngleRad, range, dirs);
+                DrawSpotLight(origin, forward, halfAngleRad, range, right, up);
 
                 Handles.color = rangeVisibleColor;
-                if (hasCalculatedRange) DrawSpotLight(origin, forward, halfAngleRad, bounds, dirs);
+                if (hasCalculatedRange) DrawSpotLight(origin, forward, halfAngleRad, bounds, right, up);
                 DrawShadowClipGUI(pointLightVolume, origin, t);
 
                 Handles.zTest = UnityEngine.Rendering.CompareFunction.Greater;
                 Handles.color = hasCalculatedRange ? new Color(1f, 1f, 0f, 0.15f) : rangeHiddenColor;
-                DrawSpotLight(origin, forward, halfAngleRad, range, dirs);
+                DrawSpotLight(origin, forward, halfAngleRad, range, right, up);
 
                 Handles.color = rangeHiddenColor;
-                if (hasCalculatedRange) DrawSpotLight(origin, forward, halfAngleRad, bounds, dirs);
+                if (hasCalculatedRange) DrawSpotLight(origin, forward, halfAngleRad, bounds, right, up);
                 DrawShadowClipGUI(pointLightVolume, origin, t);
 
             } else { // Area light
@@ -562,17 +566,27 @@ namespace VRCLightVolumes {
 
         }
 
-        // Draws Scene View gizmos for every selected Point Light Volume.
-        void OnSceneGUI() {
-            var volume = target as PointLightVolumeInstance;
-            if (volume == null) return;
+        // Draws each inspected light once per Scene View event. UdonSharp repeats OnSceneGUI for every target without advancing the nested Editor's target.
+        private void DrawSceneGUI(SceneView sceneView) {
+            if (sceneView == null || !sceneView.drawGizmos || _sceneTargets == null) return;
+            HandleLightEditModeState();
+            bool repaint = Event.current.type == EventType.Repaint;
+            if (!repaint && !_isLightEditMode) return;
+            if (GizmoUtility.TryGetGizmoInfo(typeof(PointLightVolumeInstance), out GizmoInfo gizmoInfo) && gizmoInfo.hasGizmo && !gizmoInfo.gizmoEnabled) return;
+
             Color previousColor = Handles.color;
             Matrix4x4 previousMatrix = Handles.matrix;
             var previousZTest = Handles.zTest;
             try {
-                DrawVolumeGUI(volume);
-                HandleLightEditModeState();
-                if (_isLightEditMode && Selection.activeGameObject == volume.gameObject) DrawLightEditHandles(volume);
+                Handles.matrix = Matrix4x4.identity;
+                GameObject activeObject = Selection.activeGameObject;
+                var stage = UnityEditor.SceneManagement.StageUtility.GetCurrentStageHandle();
+                for (int i = 0; i < _sceneTargets.Length; i++) {
+                    PointLightVolumeInstance volume = _sceneTargets[i] as PointLightVolumeInstance;
+                    if (volume == null || !stage.Contains(volume.gameObject) || SceneVisibilityManager.instance.IsHidden(volume.gameObject)) continue;
+                    if (repaint) DrawVolumeGUI(volume);
+                    if (_isLightEditMode && activeObject == volume.gameObject) DrawLightEditHandles(volume);
+                }
             } finally {
                 Handles.color = previousColor;
                 Handles.matrix = previousMatrix;
@@ -581,7 +595,7 @@ namespace VRCLightVolumes {
         }
 
         // Draws a spotlight visualization using precalculated values
-        private void DrawSpotLight(Vector3 origin, Vector3 forward, float halfAngleRad, float range, Vector3[] dirs) {
+        private void DrawSpotLight(Vector3 origin, Vector3 forward, float halfAngleRad, float range, Vector3 right, Vector3 up) {
 
             float centerOffset = range * Mathf.Cos(halfAngleRad);
             Vector3 diskCenter = origin + forward * centerOffset;
@@ -590,11 +604,16 @@ namespace VRCLightVolumes {
 
             Handles.DrawWireDisc(diskCenter, forward, radius);
 
-            foreach (var dir in dirs) {
-                Vector3 edge = diskCenter + dir * radius;
-                Handles.DrawLine(origin, edge);
-                Handles.DrawWireArc(origin, dir, forward, angleDeg, range);
-            }
+            DrawSpotLightEdge(origin, diskCenter, right, forward, angleDeg, range, radius);
+            DrawSpotLightEdge(origin, diskCenter, -right, forward, angleDeg, range, radius);
+            DrawSpotLightEdge(origin, diskCenter, up, forward, angleDeg, range, radius);
+            DrawSpotLightEdge(origin, diskCenter, -up, forward, angleDeg, range, radius);
+        }
+
+        // Draws one cone edge and its spherical range arc without a temporary direction array.
+        private static void DrawSpotLightEdge(Vector3 origin, Vector3 diskCenter, Vector3 direction, Vector3 forward, float angle, float range, float radius) {
+            Handles.DrawLine(origin, diskCenter + direction * radius);
+            Handles.DrawWireArc(origin, direction, forward, angle, range);
         }
 
         // Draws a pointlight visualization
@@ -679,17 +698,16 @@ namespace VRCLightVolumes {
             Vector3 right = rotation * Vector3.right * (width * 0.5f);
             Vector3 up = rotation * Vector3.up * (height * 0.5f);
 
-            Vector3[] corners = new Vector3[4];
-            corners[0] = center + right + up; // Top Right
-            corners[1] = center - right + up; // Top Left
-            corners[2] = center - right - up; // Bottom Left
-            corners[3] = center + right - up; // Bottom Right
+            Vector3 topRight = center + right + up;
+            Vector3 topLeft = center - right + up;
+            Vector3 bottomLeft = center - right - up;
+            Vector3 bottomRight = center + right - up;
 
             // Draw the rectangle
-            Handles.DrawLine(corners[0], corners[1]);
-            Handles.DrawLine(corners[1], corners[2]);
-            Handles.DrawLine(corners[2], corners[3]);
-            Handles.DrawLine(corners[3], corners[0]);
+            Handles.DrawLine(topRight, topLeft);
+            Handles.DrawLine(topLeft, bottomLeft);
+            Handles.DrawLine(bottomLeft, bottomRight);
+            Handles.DrawLine(bottomRight, topRight);
             
             // Draw forward vector
             Handles.DrawLine(center, center + rotation * Vector3.forward * 0.5f);

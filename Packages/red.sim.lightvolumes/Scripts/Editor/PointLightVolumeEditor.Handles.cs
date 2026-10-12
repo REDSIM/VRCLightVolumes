@@ -103,6 +103,7 @@ namespace VRCLightVolumes {
             }
             LVUtils.MarkDirty(light);
             if (transformChanged) LVUtils.MarkDirty(light.transform);
+            serializedObject.SetIsDifferentCacheDirty();
             Repaint();
             SceneView.RepaintAll();
         }

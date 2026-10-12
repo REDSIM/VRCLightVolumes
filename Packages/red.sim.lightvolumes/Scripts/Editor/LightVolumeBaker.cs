@@ -21,7 +21,9 @@ namespace VRCLightVolumes {
 
         // List order defines Unity's additional-probe IDs for the lifetime of the active bake.
         private static readonly List<LightVolumeInstance> _progressiveVolumes = new List<LightVolumeInstance>();
+        private static readonly List<ProgressiveProbeResult> _progressiveProbeResults = new List<ProgressiveProbeResult>();
         private static bool _progressiveCompletionProbeRegistered;
+        private static bool _progressiveProbeResultsReady;
         private static LightVolumeManager _unityManager;
         private static LightProbes _unityInitialLightProbes;
         private static int _unityInitialLightProbesDirtyCount = -1;
@@ -35,8 +37,20 @@ namespace VRCLightVolumes {
         private static bool _bakeryL2ProbePostProcessPending;
         private static bool _bakeryCompletionQueued;
 
+        private sealed class ProgressiveProbeResult {
+            internal LightVolumeInstance Volume;
+            internal Vector3[] L0;
+            internal Vector3[] L1R;
+            internal Vector3[] L1G;
+            internal Vector3[] L1B;
+            internal float[] Validity;
+        }
+
         // Installs lightmapper lifecycle callbacks once per editor domain.
         static LightVolumeBaker() {
+#pragma warning disable CS0618
+            UnityEditor.Experimental.Lightmapping.additionalBakedProbesCompleted += OnAdditionalBakedProbesCompleted;
+#pragma warning restore CS0618
             Lightmapping.bakeStarted += OnUnityBakeStarted;
             Lightmapping.bakeCompleted += OnUnityBakeCompleted;
             EditorApplication.playModeStateChanged += OnPlayModeStateChanged;
@@ -48,6 +62,9 @@ namespace VRCLightVolumes {
 
         // Removes global callbacks, temporary probe groups and compute fallback textures.
         private static void Shutdown() {
+#pragma warning disable CS0618
+            UnityEditor.Experimental.Lightmapping.additionalBakedProbesCompleted -= OnAdditionalBakedProbesCompleted;
+#pragma warning restore CS0618
             Lightmapping.bakeStarted -= OnUnityBakeStarted;
             Lightmapping.bakeCompleted -= OnUnityBakeCompleted;
             EditorApplication.playModeStateChanged -= OnPlayModeStateChanged;
@@ -110,27 +127,75 @@ namespace VRCLightVolumes {
             }
         }
 
-        // Collects committed Progressive results after Unity has published its final Light Probes asset.
+        // Copies native results while they are available. Early removal also makes unchanged bakes repeat the additional-probe stage.
+        private static void OnAdditionalBakedProbesCompleted() {
+            if (Application.isPlaying || _unityManager == null || !_progressiveCompletionProbeRegistered) return;
+            try {
+                if (!HasProgressiveCompletionProbeResult()) return;
+                for (int i = 0; i < _progressiveVolumes.Count; i++) {
+                    LightVolumeInstance volume = _progressiveVolumes[i];
+                    try {
+                        if (volume == null || volume.LightVolumeManager != _unityManager) continue;
+                        ProgressiveProbeResult result = ReadProgressiveProbeResult(volume, GetAdditionalProbeId(i));
+                        if (result != null) _progressiveProbeResults.Add(result);
+                    } catch (Exception exception) {
+                        Debug.LogError($"[LightVolumes] {exception}", volume);
+                    }
+                }
+                _progressiveProbeResultsReady = true;
+                EditorApplication.update += WatchUnityBake;
+            } finally {
+                CleanupProgressiveProbeRegistrations();
+            }
+        }
+
+        // Unity can cancel after the probe stage without raising bakeCompleted. Release snapshots after pending callbacks.
+        private static void WatchUnityBake() {
+            if (Lightmapping.isRunning) return;
+            EditorApplication.update -= WatchUnityBake;
+            EditorApplication.delayCall += CleanupStoppedUnityBake;
+        }
+
+        private static void CleanupStoppedUnityBake() {
+            EditorApplication.delayCall -= CleanupStoppedUnityBake;
+            if (!Lightmapping.isRunning) ResetUnityBakeState();
+        }
+
+        // Allows reversed callback order within the same editor cycle before deciding that results are missing.
         private static void OnUnityBakeCompleted() {
+            if (!Application.isPlaying && _unityManager != null && !_progressiveProbeResultsReady) {
+                EditorApplication.delayCall -= CompleteUnityBake;
+                EditorApplication.delayCall += CompleteUnityBake;
+                return;
+            }
+            CompleteUnityBake();
+        }
+
+        // Saves copied results after Unity has published its final Light Probes asset.
+        private static void CompleteUnityBake() {
+            EditorApplication.delayCall -= CompleteUnityBake;
+            if (Lightmapping.isRunning) return;
             if (Application.isPlaying || _unityManager == null) {
                 ResetUnityBakeState();
                 return;
             }
 
             LightVolumeManager manager = _unityManager;
-            if (!HasProgressiveCompletionProbeResult()) {
+            if (!_progressiveProbeResultsReady) {
                 Debug.LogWarning("[LightVolumes] The Progressive bake did not finish. Light Volume data is unchanged.", manager);
                 ResetUnityBakeState();
                 return;
             }
             bool lightProbesCommitted = HaveUnityLightProbesChanged();
 
-            for (int i = 0; i < _progressiveVolumes.Count; i++) {
-                LightVolumeInstance volume = _progressiveVolumes[i];
-                int additionalProbeId = GetAdditionalProbeId(i);
+            for (int i = 0; i < _progressiveProbeResults.Count; i++) {
+                ProgressiveProbeResult result = _progressiveProbeResults[i];
+                _progressiveProbeResults[i] = null;
+                LightVolumeInstance volume = result.Volume;
                 try {
                     if (volume == null || volume.LightVolumeManager != manager) continue;
-                    if (!Save3DTexturesProgressive(volume, additionalProbeId)) continue;
+                    if (!SaveCustomProbesBaked(volume, result.L0, result.L1R, result.L1G, result.L1B,
+                        manager.DilateInvalidProbes ? result.Validity : null, manager.Denoise)) continue;
                     volume.InvBakedRotation = Quaternion.Inverse(LightVolumeTools.GetRotation(volume));
                     LVUtils.MarkDirty(volume);
                     LightVolumeManagerEditorBackend.CopyProxyToUdon(volume);
@@ -176,13 +241,18 @@ namespace VRCLightVolumes {
 
         // Cancels the active Progressive bake and removes every temporary additional-probe registration.
         private static void ResetUnityBakeState() {
+            EditorApplication.update -= WatchUnityBake;
+            EditorApplication.delayCall -= CleanupStoppedUnityBake;
+            EditorApplication.delayCall -= CompleteUnityBake;
+            _progressiveProbeResultsReady = false;
+            _progressiveProbeResults.Clear();
             CleanupProgressiveProbeRegistrations();
             _unityManager = null;
             _unityInitialLightProbes = null;
             _unityInitialLightProbesDirtyCount = -1;
         }
 
-        // Confirms that Unity committed the additional-probe stage rather than canceling before it.
+        // Checks the current bake's marker only inside Unity's additional-probe result callback.
         private static bool HasProgressiveCompletionProbeResult() {
             using (NativeArray<SphericalHarmonicsL2> probes = new NativeArray<SphericalHarmonicsL2>(1, Allocator.Temp))
             using (NativeArray<float> validity = new NativeArray<float>(1, Allocator.Temp)) {
@@ -240,41 +310,38 @@ namespace VRCLightVolumes {
 #pragma warning restore CS0618
         }
 
-        // Reads a Progressive probe group and saves its L0/L1 data as volume textures.
-        private static bool Save3DTexturesProgressive(LightVolumeInstance volume, int id) {
-            if (volume == null) return false;
-
+        // Copies one native probe group before its registration is removed. Persistence waits for bakeCompleted.
+        private static ProgressiveProbeResult ReadProgressiveProbeResult(LightVolumeInstance volume, int id) {
             int voxelCount = LightVolumeTools.GetVoxelCount(volume);
             if (voxelCount < 0) {
                 Debug.LogError($"[LightVolumes] Can't save {volume.gameObject.name}. Check Resolution or lower Voxels Per Unit.", volume);
-                return false;
+                return null;
             }
-
-            LightVolumeManager manager = volume.LightVolumeManager;
-            if (manager == null) return false;
 
             using (NativeArray<SphericalHarmonicsL2> probes = new NativeArray<SphericalHarmonicsL2>(voxelCount, Allocator.Temp))
             using (NativeArray<float> validity = new NativeArray<float>(voxelCount, Allocator.Temp)) {
 #pragma warning disable CS0618
                 if (!UnityEditor.Experimental.Lightmapping.GetAdditionalBakedProbes(id, probes, validity)) {
                     Debug.LogError("[LightVolumes] No baked probes were returned for this Light Volume.", volume);
-                    return false;
+                    return null;
                 }
 #pragma warning restore CS0618
 
-                Vector3[] l0 = new Vector3[voxelCount];
-                Vector3[] l1r = new Vector3[voxelCount];
-                Vector3[] l1g = new Vector3[voxelCount];
-                Vector3[] l1b = new Vector3[voxelCount];
+                ProgressiveProbeResult result = new ProgressiveProbeResult {
+                    Volume = volume,
+                    L0 = new Vector3[voxelCount],
+                    L1R = new Vector3[voxelCount],
+                    L1G = new Vector3[voxelCount],
+                    L1B = new Vector3[voxelCount],
+                    Validity = validity.ToArray()
+                };
                 for (int i = 0; i < voxelCount; i++) {
-                    l0[i] = new Vector3(probes[i][0, 0], probes[i][1, 0], probes[i][2, 0]);
-                    l1r[i] = new Vector3(probes[i][0, 3], probes[i][0, 1], probes[i][0, 2]);
-                    l1g[i] = new Vector3(probes[i][1, 3], probes[i][1, 1], probes[i][1, 2]);
-                    l1b[i] = new Vector3(probes[i][2, 3], probes[i][2, 1], probes[i][2, 2]);
+                    result.L0[i] = new Vector3(probes[i][0, 0], probes[i][1, 0], probes[i][2, 0]);
+                    result.L1R[i] = new Vector3(probes[i][0, 3], probes[i][0, 1], probes[i][0, 2]);
+                    result.L1G[i] = new Vector3(probes[i][1, 3], probes[i][1, 1], probes[i][1, 2]);
+                    result.L1B[i] = new Vector3(probes[i][2, 3], probes[i][2, 1], probes[i][2, 2]);
                 }
-
-                float[] probeValidity = manager.DilateInvalidProbes ? validity.ToArray() : null;
-                return SaveCustomProbesBaked(volume, l0, l1r, l1g, l1b, probeValidity, manager.Denoise);
+                return result;
             }
         }
 

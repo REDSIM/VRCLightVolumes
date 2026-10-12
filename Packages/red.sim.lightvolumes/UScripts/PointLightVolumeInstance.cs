@@ -418,6 +418,7 @@ namespace VRCLightVolumes {
         // Sets LUT mode
         public void SetLut() {
             ProjectionMode = 1; // 1: LUT
+            UpdateAuthoringProjectionSource();
             if (LightType == 1) OuterAngleTan = Mathf.Tan(Angle); // 1: spot
             OuterAngleCos = Mathf.Cos(Angle);
             UpdateRotationFromTransformCore();
@@ -491,6 +492,7 @@ namespace VRCLightVolumes {
             bool customTexturesChanged = CustomCookieStateChangesWithLightType(0);
             bool shadowTexturesChanged = !ShadowMapUsesCubemap && (ShadowMapID >= 0 || ShadowMapTexture != null || ShadowMapMaterial != null);
             LightType = 0; // 0: point
+            UpdateAuthoringProjectionSource();
             ShadowMapUsesCubemap = true;
             Position = position;
             if (ProjectionMode != 0) Rotation = Quaternion.Inverse(instanceTransform.rotation);
@@ -522,6 +524,7 @@ namespace VRCLightVolumes {
             }
             bool customTexturesChanged = CustomCookieStateChangesWithLightType(1);
             LightType = 1; // 1: spot
+            UpdateAuthoringProjectionSource();
             Angle = angle;
             OuterAngleTan = outerAngleTan;
             Position = position;
@@ -550,6 +553,7 @@ namespace VRCLightVolumes {
             }
             bool customTexturesChanged = CustomCookieStateChangesWithLightType(1);
             LightType = 1; // 1: spot
+            UpdateAuthoringProjectionSource();
             Angle = angle;
             OuterAngleTan = outerAngleTan;
             Position = position;
@@ -565,6 +569,7 @@ namespace VRCLightVolumes {
             Vector3 lossyScale = instanceTransform.lossyScale;
             Quaternion transformRotation = instanceTransform.rotation;
             LightType = 2; // 2: area
+            UpdateAuthoringProjectionSource();
             ShadowMapUsesCubemap = true;
             Position = instanceTransform.position;
             Width = Mathf.Max(Mathf.Abs(lossyScale.x), 0.001f);
@@ -645,19 +650,34 @@ namespace VRCLightVolumes {
             manager.NotifyPointLightColorRangeChanged(this);
         }
 
-        // Applies the internal custom projection mode without touching texture source fields
+        // Applies custom projection without replacing the runtime source.
         private void SetCustomProjectionMode() {
             ProjectionMode = 2; // 2: custom cookie or cubemap
+            UpdateAuthoringProjectionSource();
             if (LightType == 1) OuterAngleTan = Mathf.Tan(Angle); // 1: spot
             UpdateRotationFromTransformCore();
         }
 
-        // Applies the internal parametric projection mode without touching texture source fields
+        // Applies parametric projection without replacing the runtime source.
         private void SetParametricMode() {
             ProjectionMode = 0; // 0: parametric
+            UpdateAuthoringProjectionSource();
             if (LightType == 1) OuterAngleTan = Mathf.Tan(Angle); // 1: spot
             OuterAngleCos = Mathf.Cos(Angle);
             UpdateRotationFromTransformCore();
+        }
+
+        // Keeps Inspector source fields aligned with runtime API changes so later edits preserve the active projection.
+        private void UpdateAuthoringProjectionSource() {
+            Projection = ProjectionMode;
+            UnityEngine.Object source = CustomTexture;
+            if (source == null) source = CustomTextureMaterial;
+            if (LightType == 2) Cookie = ProjectionMode == 2 ? source : null;
+            else if (ProjectionMode == 1) FalloffLUT = source;
+            else if (ProjectionMode == 2) {
+                if (LightType == 0) Cubemap = source;
+                else Cookie = source;
+            }
         }
 
         // Updates data required for shader

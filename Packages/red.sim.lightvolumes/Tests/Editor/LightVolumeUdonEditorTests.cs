@@ -4767,6 +4767,197 @@ namespace VRCLightVolumes.Tests {
             AssertPointCustomData(point, -1, 0);
         }
 
+        // Scalar Inspector changes must retain runtime-assigned sources and explicit live or snapshot choices.
+        [TestCase(0, false, false)]
+        [TestCase(0, false, true)]
+        [TestCase(0, true, false)]
+        [TestCase(0, true, true)]
+        [TestCase(1, false, false)]
+        [TestCase(1, false, true)]
+        [TestCase(1, true, false)]
+        [TestCase(1, true, true)]
+        [TestCase(2, false, false)]
+        [TestCase(2, false, true)]
+        [TestCase(2, true, false)]
+        [TestCase(2, true, true)]
+        public void RuntimeCustomSourceSurvivesAuthoringEditsAndReplacement(int lightType, bool useMaterial, bool autoUpdate) {
+            LightVolumeManager manager = CreateManager("Late Custom Source Authoring Manager", false);
+            manager.CustomTexturesWidth = 4;
+            manager.CustomTexturesHeight = 4;
+            PointLightVolumeInstance point = CreatePointLight(manager, "Late Custom Source Authoring Light", true);
+            if (lightType == 1) point.SetSpotLight(60f, 0.5f);
+            else if (lightType == 2) point.SetAreaLight();
+            else point.SetPointLight();
+            point.EditorApplyAuthoringData(false, false, false);
+            manager.UpdateVolumes();
+            Assert.That(manager.CustomTextures, Is.Null);
+            Assert.That(manager.HasAutoCustomTextureUpdates, Is.False);
+
+            Texture texture = null;
+            Material material = null;
+            if (useMaterial) {
+                material = CreateMaterial("Unlit/Color");
+                point.SetCustomMaterial(material, autoUpdate);
+            } else {
+                texture = CreateRenderTexture("Late Custom Source Authoring Texture", 4, 4, 1,
+                    lightType == 0 ? TextureDimension.Cube : TextureDimension.Tex2D);
+                point.SetCustomTexture(texture, false, autoUpdate);
+            }
+
+            for (int edit = 0; edit < 2; edit++) {
+                if (edit == 0) point.Color = new Color(0.5f, 0.75f, 1f);
+                else point.LightSourceSize = 0.5f;
+                point.EditorApplyAuthoringData(point.HasEditorCustomTextureChanges(), false, false);
+                manager.UpdateVolumes();
+
+                Assert.That(point.CustomTexture, Is.SameAs(texture));
+                Assert.That(point.CustomTextureMaterial, Is.SameAs(material));
+                Assert.That(point.ProjectionMode, Is.EqualTo(2));
+                Assert.That(point.AutoUpdateCustomTexture, Is.EqualTo(autoUpdate));
+                Assert.That(manager.HasAutoCustomTextureUpdates, Is.EqualTo(autoUpdate));
+                Assert.That(manager.CustomTextures, Is.Not.Null);
+                Assert.That(manager.CustomTextures.volumeDepth, Is.EqualTo(lightType == 0 ? 6 : 1));
+                AssertPointCustomData(point, -1, 0);
+            }
+
+            Texture2D replacement = CreateTexture2D("Replacement Custom Source Authoring Texture");
+            if (lightType == 0) point.Cubemap = replacement;
+            else point.Cookie = replacement;
+            Assert.That(point.HasEditorCustomTextureChanges(), Is.True);
+            point.EditorApplyAuthoringData(point.HasEditorCustomTextureChanges(), false, false);
+            manager.UpdateVolumes();
+            Assert.That(point.CustomTexture, Is.SameAs(replacement));
+            Assert.That(point.CustomTextureMaterial, Is.Null);
+            Assert.That(point.ProjectionMode, Is.EqualTo(2));
+            Assert.That(point.AutoUpdateCustomTexture, Is.False);
+            Assert.That(manager.HasAutoCustomTextureUpdates, Is.False);
+            AssertPointCustomData(point, -1, 0);
+
+            if (lightType == 0) point.Cubemap = null;
+            else point.Cookie = null;
+            Assert.That(point.HasEditorCustomTextureChanges(), Is.True);
+            point.EditorApplyAuthoringData(point.HasEditorCustomTextureChanges(), false, false);
+            manager.UpdateVolumes();
+            Assert.That(point.CustomTexture, Is.Null);
+            Assert.That(point.CustomTextureMaterial, Is.Null);
+            Assert.That(point.ProjectionMode, Is.Zero);
+            Assert.That(point.AutoUpdateCustomTexture, Is.False);
+            Assert.That(manager.HasAutoCustomTextureUpdates, Is.False);
+            Assert.That(manager.CustomTextures, Is.Null);
+            AssertPointCustomData(point, 0, 0);
+        }
+
+        // Runtime mode and light-type changes must survive the same authoring refresh as a color edit.
+        [Test]
+        public void RuntimeProjectionTransitionsSurviveAuthoringRefresh() {
+            LightVolumeManager manager = CreateManager("Projection Transition Authoring Manager", false);
+            manager.CustomTexturesWidth = 4;
+            manager.CustomTexturesHeight = 4;
+            PointLightVolumeInstance point = CreatePointLight(manager, "Projection Transition Authoring Light", true);
+            point.SetSpotLight(60f, 0.5f);
+            Texture2D source = CreateTexture2D("Projection Transition Authoring Source");
+            point.CustomTexture = source;
+            point.AutoUpdateCustomTexture = true;
+            point.SetCustomTexture();
+            point.EditorApplyAuthoringData(point.HasEditorCustomTextureChanges(), false, false);
+            manager.UpdateVolumes();
+            Assert.That(point.CustomTexture, Is.SameAs(source));
+            Assert.That(point.ProjectionMode, Is.EqualTo(2));
+            Assert.That(point.AutoUpdateCustomTexture, Is.True);
+            AssertPointCustomData(point, -1, 0);
+
+            point.SetLut();
+            point.Color = new Color(0.75f, 0.5f, 1f);
+            point.EditorApplyAuthoringData(point.HasEditorCustomTextureChanges(), false, false);
+            manager.UpdateVolumes();
+            Assert.That(point.CustomTexture, Is.SameAs(source));
+            Assert.That(point.ProjectionMode, Is.EqualTo(1));
+            Assert.That(point.AutoUpdateCustomTexture, Is.True);
+            AssertPointCustomData(point, 1, 0);
+
+            point.SetParametric();
+            point.EditorApplyAuthoringData(point.HasEditorCustomTextureChanges(), false, false);
+            manager.UpdateVolumes();
+            Assert.That(point.ProjectionMode, Is.Zero);
+            Assert.That(manager.CustomTextures, Is.Null);
+            AssertPointCustomData(point, 0, 0);
+
+            point.SetCustomTexture(source, false, false);
+            for (int transition = 0; transition < 4; transition++) {
+                if (transition == 0 || transition == 2) point.SetPointLight();
+                else if (transition == 1) point.SetAreaLight();
+                else point.SetSpotLight(60f);
+                point.LightSourceSize = 0.25f;
+                point.EditorApplyAuthoringData(point.HasEditorCustomTextureChanges(), false, false);
+                manager.UpdateVolumes();
+                Assert.That(point.CustomTexture, Is.SameAs(source));
+                Assert.That(point.ProjectionMode, Is.EqualTo(2));
+                Assert.That(point.AutoUpdateCustomTexture, Is.False);
+                Assert.That(manager.HasAutoCustomTextureUpdates, Is.False);
+                Assert.That(manager.CustomTextures.volumeDepth, Is.EqualTo(point.LightType == 0 ? 6 : 1));
+                AssertPointCustomData(point, -1, 0);
+            }
+
+            point.SetAreaLight();
+            point.SetParametric();
+            point.EditorApplyAuthoringData(point.HasEditorCustomTextureChanges(), false, false);
+            manager.UpdateVolumes();
+            Assert.That(point.ProjectionMode, Is.Zero);
+            Assert.That(manager.CustomTextures, Is.Null);
+            AssertPointCustomData(point, 0, 0);
+        }
+
+        // A cookie assigned after Manager initialization must keep updating after scalar authoring edits.
+        [Test]
+        public void RuntimeLateSpotCookieUpdatesPixelsAfterAuthoringEdits() {
+            LightVolumeManager manager = CreateManager("Late Spot Cookie Pixel Manager", false);
+            manager.CustomTexturesWidth = 4;
+            manager.CustomTexturesHeight = 4;
+            PointLightVolumeInstance point = CreatePointLight(manager, "Late Spot Cookie Pixel Light", true);
+            point.SetSpotLight(60f, 0.5f);
+            point.EditorApplyAuthoringData(false, false, false);
+            manager.UpdateVolumes();
+            Assert.That(manager.CustomTextures, Is.Null);
+            Assert.That(manager.HasAutoCustomTextureUpdates, Is.False);
+
+            RenderTexture source = CreateRenderTexture("Late Spot Cookie Pixel Source", 4, 4, 1, TextureDimension.Tex2D);
+            RenderTexture previousActive = RenderTexture.active;
+            try {
+                Graphics.SetRenderTarget(source);
+                GL.Clear(false, true, Color.red);
+                point.SetCustomTexture(source);
+                manager.UpdateVolumes();
+                RenderTexture atlas = manager.CustomTextures;
+                Assert.That(atlas, Is.Not.Null);
+                Assert.That(manager.HasAutoCustomTextureUpdates, Is.True);
+                Assert.That(ReadRenderTextureArrayPixels(atlas)[0][0].r, Is.GreaterThan(0.9f));
+
+                point.Color = new Color(0.5f, 0.75f, 1f);
+                point.EditorApplyAuthoringData(point.HasEditorCustomTextureChanges(), false, false);
+                manager.UpdateVolumes();
+                Graphics.SetRenderTarget(source);
+                GL.Clear(false, true, Color.blue);
+                manager.UpdateAutoCustomTextures();
+                Assert.That(point.CustomTexture, Is.SameAs(source));
+                Assert.That(point.AutoUpdateCustomTexture, Is.True);
+                Assert.That(manager.HasAutoCustomTextureUpdates, Is.True);
+                Assert.That(manager.CustomTextures, Is.SameAs(atlas));
+                Assert.That(ReadRenderTextureArrayPixels(atlas)[0][0].b, Is.GreaterThan(0.9f));
+
+                point.LightSourceSize = 0.5f;
+                point.EditorApplyAuthoringData(point.HasEditorCustomTextureChanges(), false, false);
+                manager.UpdateVolumes();
+                Graphics.SetRenderTarget(source);
+                GL.Clear(false, true, Color.green);
+                manager.UpdateAutoCustomTextures();
+                Assert.That(point.AutoUpdateCustomTexture, Is.True);
+                Assert.That(manager.CustomTextures, Is.SameAs(atlas));
+                Assert.That(ReadRenderTextureArrayPixels(atlas)[0][0].g, Is.GreaterThan(0.9f));
+            } finally {
+                RenderTexture.active = previousActive;
+            }
+        }
+
         // An auto-update pass must update RenderTexture sources in place without recopying immutable Texture assets.
         [Test]
         public void AutoCustomTextureUpdateLeavesStaticSliceUntouched() {

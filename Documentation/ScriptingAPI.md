@@ -270,6 +270,8 @@ Assign a cookie and select custom projection. RenderTexture-derived sources upda
 Lamp.SetCustomTexture(cookieRenderTexture);
 ```
 
+Use this setter for runtime assignments. `Cookie`, `Cubemap` and `FalloffLUT` store Inspector setup and do not update the runtime source when assigned from scripts. A Render Texture assignment also enables `AutoUpdateCustomTexture`, shown as **Dynamic Source** in the debug view.
+
 Keep Manager **Auto Update Textures** enabled for live sources. Pass `null` to clear the source and return to parametric mode:
 
 ```csharp

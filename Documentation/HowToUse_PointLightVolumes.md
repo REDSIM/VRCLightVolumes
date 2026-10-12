@@ -163,6 +163,8 @@ Leave it off for lights that move or change: ordinary baked probes keep the old 
 
 Use the [UdonSharp API](./ScriptingAPI.md#pointlightvolumeinstance) to change a light from scripts. Color, intensity and on/off changes work without **Auto Update Volumes**. Enable it with **Dynamic** for movement.
 
+Assign cookies at runtime with [`SetCustomTexture(texture)` or `SetCustomMaterial(material)`](./ScriptingAPI.md#cookies-materials-and-luts). Keep **Auto Update Textures** enabled for animated sources.
+
 If scripts change a light type, cookie or shadows, retain those features in the Manager's **Shader Stripping** settings. Automatic detection cannot predict later script changes.
 
 ## Keep It Performant

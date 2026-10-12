@@ -1,3 +1,4 @@
+using System.Collections;
 using System.Collections.Generic;
 using System.Reflection;
 using NUnit.Framework;
@@ -238,6 +239,173 @@ namespace VRCLightVolumes.Tests {
                 reset.Invoke(null, null);
                 Lightmapping.lightingSettings = previousSettings;
                 Object.DestroyImmediate(settings);
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator UnityBakeWithoutAdditionalProbeResultsPreservesExistingTextures() {
+            LightVolumeManager manager = CreateComponent<LightVolumeManager>("Interrupted Unity Bake Manager");
+            manager.BakingMode = 0;
+            LightVolumeInstance volume = CreateComponent<LightVolumeInstance>("Interrupted Unity Bake Volume");
+            volume.LightVolumeManager = manager;
+            volume.AdaptiveResolution = false;
+            volume.Resolution = Vector3Int.one;
+            Texture3D previousTexture = CreateTexture3D("Previous Progressive Texture");
+            volume.Texture0 = previousTexture;
+            volume.Texture1 = previousTexture;
+            volume.Texture2 = previousTexture;
+            manager.LightVolumeInstances = new[] { volume };
+            Assert.That(LightVolumeManagerEditorBackend.GetPrimaryManager(), Is.SameAs(manager));
+            Lightmapping.TryGetLightingSettings(out LightingSettings previousSettings);
+            LightingSettings settings = new LightingSettings { bakedGI = true, lightmapper = LightingSettings.Lightmapper.ProgressiveCPU };
+            MethodInfo reset = typeof(LightVolumeBaker).GetMethod("ResetUnityBakeState", _nonPublicStaticFlags);
+            MethodInfo started = typeof(LightVolumeBaker).GetMethod("OnUnityBakeStarted", _nonPublicStaticFlags);
+            MethodInfo completed = typeof(LightVolumeBaker).GetMethod("OnUnityBakeCompleted", _nonPublicStaticFlags);
+            MethodInfo complete = typeof(LightVolumeBaker).GetMethod("CompleteUnityBake", _nonPublicStaticFlags);
+            FieldInfo unityManager = typeof(LightVolumeBaker).GetField("_unityManager", _nonPublicStaticFlags);
+            FieldInfo completionRegistered = typeof(LightVolumeBaker).GetField("_progressiveCompletionProbeRegistered", _nonPublicStaticFlags);
+            try {
+                reset.Invoke(null, null);
+                Lightmapping.lightingSettings = settings;
+                LogAssert.Expect(LogType.Log, "[LightVolumes] Added Progressive probes for \"Interrupted Unity Bake Volume\" (group 1280704512).");
+                started.Invoke(null, null);
+                Assert.That(completionRegistered.GetValue(null), Is.True);
+
+                completed.Invoke(null, null);
+                Assert.That(unityManager.GetValue(null), Is.SameAs(manager));
+                LogAssert.NoUnexpectedReceived();
+                LogAssert.Expect(LogType.Warning, "[LightVolumes] The Progressive bake did not finish. Light Volume data is unchanged.");
+                complete.Invoke(null, null);
+                yield return null;
+
+                Assert.That(volume.Texture0, Is.SameAs(previousTexture));
+                Assert.That(volume.Texture1, Is.SameAs(previousTexture));
+                Assert.That(volume.Texture2, Is.SameAs(previousTexture));
+                Assert.That(unityManager.GetValue(null), Is.Null);
+                Assert.That(completionRegistered.GetValue(null), Is.False);
+                completed.Invoke(null, null);
+                LogAssert.NoUnexpectedReceived();
+            } finally {
+                reset.Invoke(null, null);
+                Lightmapping.lightingSettings = previousSettings;
+                Object.DestroyImmediate(settings);
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator UnityBakeRepeatedSceneAndLateCancellationPreserveResultLifetime() {
+            string scenePath = AssetDatabase.GenerateUniqueAssetPath("Assets/VRCLightVolumesProgressiveRepeatTest.unity");
+            string settingsPath = AssetDatabase.GenerateUniqueAssetPath("Assets/VRCLightVolumesProgressiveRepeatTest.lighting");
+            string sceneDataPath = System.IO.Path.ChangeExtension(scenePath, null).Replace('\\', '/');
+            Scene scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+            GameObject root = new GameObject("Progressive Repeat Tests");
+            _createdObjects.Add(root);
+            _root = root.transform;
+            LightVolumeManager manager = CreateComponent<LightVolumeManager>("Progressive Repeat Manager");
+            manager.BakingMode = 0;
+            manager.Denoise = false;
+            manager.DilateInvalidProbes = false;
+            LightVolumeInstance volume = CreateComponent<LightVolumeInstance>("Progressive Repeat Volume");
+            volume.LightVolumeManager = manager;
+            volume.AdaptiveResolution = false;
+            volume.Resolution = new Vector3Int(2, 2, 2);
+            volume.transform.position = Vector3.up;
+            manager.LightVolumeInstances = new[] { volume };
+            manager.PointLightVolumeInstances = new PointLightVolumeInstance[0];
+            Light light = CreateComponent<Light>("Progressive Repeat Sun");
+            light.type = LightType.Directional;
+            light.lightmapBakeType = LightmapBakeType.Baked;
+            light.transform.rotation = Quaternion.Euler(45f, 20f, 0f);
+            GameObject floor = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            _createdObjects.Add(floor);
+            floor.transform.localScale = new Vector3(5f, 0.2f, 5f);
+            floor.transform.position = new Vector3(0f, -0.2f, 0f);
+            GameObjectUtility.SetStaticEditorFlags(floor, StaticEditorFlags.ContributeGI);
+            LightingSettings settings = new LightingSettings {
+                bakedGI = true, realtimeGI = false, autoGenerate = false,
+                lightmapper = LightingSettings.Lightmapper.ProgressiveCPU,
+                lightmapResolution = 2f, lightmapMaxSize = 32,
+                directSampleCount = 8, indirectSampleCount = 8, environmentSampleCount = 8,
+                lightProbeSampleCountMultiplier = 1f,
+                filteringMode = LightingSettings.FilterMode.None
+            };
+            MethodInfo reset = typeof(LightVolumeBaker).GetMethod("ResetUnityBakeState", _nonPublicStaticFlags);
+            MethodInfo additionalCompleted = typeof(LightVolumeBaker).GetMethod("OnAdditionalBakedProbesCompleted", _nonPublicStaticFlags);
+            FieldInfo completionRegistered = typeof(LightVolumeBaker).GetField("_progressiveCompletionProbeRegistered", _nonPublicStaticFlags);
+            FieldInfo results = typeof(LightVolumeBaker).GetField("_progressiveProbeResults", _nonPublicStaticFlags);
+            int resultCallbacks = 0;
+            bool registrationsRemovedAtResult = true;
+            bool texturesPreservedAtResult = true;
+            bool snapshotCaptured = true;
+            Texture3D textureBeforeBake = null;
+            bool cancelAfterResults = false;
+            bool cancellationSent = false;
+            System.Action cancelOnUpdate = null;
+            cancelOnUpdate = () => {
+                EditorApplication.update -= cancelOnUpdate.Invoke;
+                cancellationSent = Lightmapping.isRunning;
+                if (cancellationSent) Lightmapping.Cancel();
+            };
+            System.Action onResults = () => {
+                resultCallbacks++;
+                registrationsRemovedAtResult &= !(bool)completionRegistered.GetValue(null);
+                texturesPreservedAtResult &= volume.Texture0 == textureBeforeBake;
+                snapshotCaptured &= ((ICollection)results.GetValue(null)).Count == 1;
+                additionalCompleted.Invoke(null, null);
+                if (cancelAfterResults) EditorApplication.update += cancelOnUpdate.Invoke;
+            };
+            try {
+                reset.Invoke(null, null);
+                AssetDatabase.CreateAsset(settings, settingsPath);
+                Lightmapping.lightingSettings = settings;
+                Assert.That(EditorSceneManager.SaveScene(scene, scenePath), Is.True);
+#pragma warning disable CS0618
+                UnityEditor.Experimental.Lightmapping.additionalBakedProbesCompleted += onResults;
+#pragma warning restore CS0618
+                for (int bake = 0; bake < 2; bake++) {
+                    textureBeforeBake = volume.Texture0;
+                    Assert.That(Lightmapping.BakeAsync(), Is.True);
+                    double deadline = EditorApplication.timeSinceStartup + 90.0;
+                    while (Lightmapping.isRunning && EditorApplication.timeSinceStartup < deadline) yield return null;
+                    Assert.That(Lightmapping.isRunning, Is.False, "The test bake timed out.");
+                    yield return null;
+
+                    Assert.That(resultCallbacks, Is.EqualTo(bake + 1), "Each unchanged bake must return fresh additional probes.");
+                    Assert.That(registrationsRemovedAtResult, Is.True);
+                    Assert.That(texturesPreservedAtResult, Is.True, "Volume textures must wait for generic bake completion.");
+                    Assert.That(snapshotCaptured, Is.True);
+                    Assert.That(volume.Texture0, Is.Not.Null);
+                    Assert.That(volume.Texture1, Is.Not.Null);
+                    Assert.That(volume.Texture2, Is.Not.Null);
+                    Assert.That(EditorUtility.IsPersistent(volume.Texture0), Is.True);
+                    Assert.That(((ICollection)results.GetValue(null)).Count, Is.Zero);
+                }
+
+                cancelAfterResults = true;
+                textureBeforeBake = volume.Texture0;
+                Color[] colorsBeforeCancel = textureBeforeBake.GetPixels();
+                Assert.That(Lightmapping.BakeAsync(), Is.True);
+                double cancelDeadline = EditorApplication.timeSinceStartup + 90.0;
+                while (Lightmapping.isRunning && EditorApplication.timeSinceStartup < cancelDeadline) yield return null;
+                Assert.That(Lightmapping.isRunning, Is.False, "The cancellation test timed out.");
+                double cleanupDeadline = EditorApplication.timeSinceStartup + 5.0;
+                while (((ICollection)results.GetValue(null)).Count != 0 && EditorApplication.timeSinceStartup < cleanupDeadline) yield return null;
+                Assert.That(cancellationSent, Is.True, "Cancel must run between the probe and generic completion callbacks.");
+                Assert.That(resultCallbacks, Is.EqualTo(3));
+                Assert.That(volume.Texture0, Is.SameAs(textureBeforeBake));
+                Assert.That(volume.Texture0.GetPixels(), Is.EqualTo(colorsBeforeCancel));
+                Assert.That(((ICollection)results.GetValue(null)).Count, Is.Zero, "Cancellation must release pending SH arrays.");
+            } finally {
+                EditorApplication.update -= cancelOnUpdate.Invoke;
+#pragma warning disable CS0618
+                UnityEditor.Experimental.Lightmapping.additionalBakedProbesCompleted -= onResults;
+#pragma warning restore CS0618
+                if (Lightmapping.isRunning) Lightmapping.Cancel();
+                reset.Invoke(null, null);
+                EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+                AssetDatabase.DeleteAsset(sceneDataPath);
+                AssetDatabase.DeleteAsset(scenePath);
+                AssetDatabase.DeleteAsset(settingsPath);
             }
         }
 

@@ -913,8 +913,7 @@ namespace VRCLightVolumes {
             destination.FroxelSlices = source.FroxelSlices;
             destination.FroxelCoarse = source.FroxelCoarse;
             destination.ClusteringMinLights = source.ClusteringMinLights;
-            // Legacy clustering had no shadow-assisted switch. Preserve the current default explicitly instead of inheriting an arbitrary pre-existing destination value.
-            destination.ShadowCulling = true;
+            // Settings absent from the legacy Setup keep their Manager defaults or existing serialized values.
             destination.BakingMode = (int)source.BakingMode;
             destination.VolumeBitmask = source.VolumeBitmask;
             destination.ProbeBitmask = source.ProbeBitmask;

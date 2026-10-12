@@ -23,11 +23,12 @@ namespace VRCLightVolumes {
         public float ShadowMinVariance = 0f;
         public float ShadowMinVarianceMobile = 1f;
 
-        public bool Clustering;
-        public float FroxelDensity = 0.25f;
-        public int FroxelSlices = 32;
+        // Fields absent from 2.x data use the current Manager defaults. Serialized early-3.x values still take precedence.
+        public bool Clustering = true;
+        public float FroxelDensity = 1f;
+        public int FroxelSlices = 100;
         public int FroxelCoarse = 4;
-        public int ClusteringMinLights = 16;
+        public int ClusteringMinLights = 8;
 
         public Baking BakingMode = Baking.Progressive;
         [FormerlySerializedAs("BakeryBitmask")]

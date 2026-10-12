@@ -61,7 +61,7 @@ namespace VRCLightVolumes.Tests {
             Assert.That(instanceRoot.GetComponent<PointLightVolume>(), Is.Null);
             Assert.That(instanceRoot.GetComponent<PointLightVolumeInstance>(), Is.SameAs(point));
             Assert.That(point.Intensity, Is.EqualTo(654f));
-            Assert.That(manager.ShadowCulling, Is.True);
+            Assert.That(manager.ShadowCulling, Is.False);
             Assert.That(PrefabUtility.GetPrefabInstanceStatus(instanceRoot), Is.EqualTo(PrefabInstanceStatus.Connected));
 
             var removedComponents = PrefabUtility.GetRemovedComponents(instanceRoot);

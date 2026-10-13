@@ -79,7 +79,12 @@ namespace VRCLightVolumes {
             }
             if (lightType == 1) DrawAngleDegrees();
             if (lightType == 1 && projection == 0) EditorGUILayout.Slider(serializedObject.FindProperty("Falloff"), 0f, 1f);
-            if (lightType == 1 && projection == 2) DrawProperty("SpotCookieAspect");
+            if (lightType == 1 && projection == 2) {
+                SerializedProperty aspectProperty = serializedObject.FindProperty("SpotCookieAspect");
+                EditorGUI.BeginChangeCheck();
+                EditorGUILayout.PropertyField(aspectProperty, true);
+                if (EditorGUI.EndChangeCheck()) aspectProperty.floatValue = Mathf.Max(1f, aspectProperty.floatValue);
+            }
             DrawActiveProjectionSourceField(lightType, projection);
 
             DrawSectionHeader("Shadows", true);

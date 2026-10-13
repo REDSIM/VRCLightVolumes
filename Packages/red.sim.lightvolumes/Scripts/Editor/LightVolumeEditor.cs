@@ -13,6 +13,7 @@ namespace VRCLightVolumes {
         private const float MinBoundsSize = 0.01f;
         private const float MinDivisorSize = 0.0001f;
         private static readonly GUIContent PreviewSettingsContent = new GUIContent("\u25BE", "Voxel preview settings.");
+        private static readonly System.Action LegacySceneGUI = delegate { };
 
         private bool _isEditMode;
         private bool _debugExpanded;
@@ -84,6 +85,11 @@ namespace VRCLightVolumes {
         private SerializedProperty _adaptiveResolution;
         private SerializedProperty _voxelsPerUnit;
         private SerializedProperty _resolution;
+
+        // Keeps LTCGI 1.7.3's base.OnSceneGUI() call source-compatible.
+        // A delegate property avoids UdonSharp's per-target callback and SerializedObject.Update.
+        // SceneView.duringSceneGui owns the drawing.
+        protected System.Action OnSceneGUI => LegacySceneGUI;
 
         // Caches the selected volume, serialized fields and editor-only preview state.
         private void OnEnable() {

@@ -50,6 +50,23 @@ namespace VRCLightVolumes.Tests {
             Assert.That(editorType.GetMethod("OnSceneGUI", InstanceFlags, null, Type.EmptyTypes, null), Is.Null);
         }
 
+        // Released LTCGI Inspectors forward this call before Light Volumes draws through its own subscription.
+        [Test]
+        public void LegacySceneCallbackPreservesPendingInspectorChangesAndSingleSubscription() {
+            Object[] targets = CreateTargets(3);
+            LegacyLightVolumeEditor editor = (LegacyLightVolumeEditor)UnityEditor.Editor.CreateEditor(targets, typeof(LegacyLightVolumeEditor));
+            _resources.Add(editor);
+            LightVolumeInstance volume = (LightVolumeInstance)targets[0];
+            float intensity = volume.Intensity;
+            editor.serializedObject.FindProperty(nameof(LightVolumeInstance.Intensity)).floatValue = intensity + 1f;
+
+            editor.ForwardSceneGUI();
+
+            Assert.That(editor.serializedObject.hasModifiedProperties, Is.True);
+            Assert.That(volume.Intensity, Is.EqualTo(intensity));
+            Assert.That(CountSceneCallbacks(editor), Is.EqualTo(1));
+        }
+
         // One Inspector owns one Scene View subscription regardless of the selection size.
         [TestCase(false)]
         [TestCase(true)]
@@ -74,10 +91,11 @@ namespace VRCLightVolumes.Tests {
         [TestCase(2)]
         [TestCase(3)]
         [TestCase(4)]
+        [TestCase(5)]
         public void MassSelectionDrawsEveryInspectedObjectAndPreservesHandleState(int kind) {
             if (SystemInfo.graphicsDeviceType == GraphicsDeviceType.Null) Assert.Ignore("A graphics device is required to verify Scene View wireframes.");
-            Object[] targets = CreateTargets(kind);
-            Type editorType = kind == 3 ? typeof(LightVolumeEditor) : typeof(PointLightVolumeEditor);
+            Object[] targets = CreateTargets(kind == 5 ? 3 : kind);
+            Type editorType = kind == 5 ? typeof(LegacyLightVolumeEditor) : kind == 3 ? typeof(LightVolumeEditor) : typeof(PointLightVolumeEditor);
             UnityEditor.Editor editor = UnityEditor.Editor.CreateEditor(targets, editorType);
             _resources.Add(editor);
             SceneView sceneView = ScriptableObject.CreateInstance<SceneView>();
@@ -91,7 +109,7 @@ namespace VRCLightVolumes.Tests {
             camera.targetTexture = texture;
             Texture2D readback = new Texture2D(ImageSize, ImageSize, TextureFormat.RGBA32, false);
             _resources.Add(readback);
-            MethodInfo draw = editorType.GetMethod("DrawSceneGUI", InstanceFlags);
+            MethodInfo draw = (kind == 5 ? typeof(LightVolumeEditor) : editorType).GetMethod("DrawSceneGUI", InstanceFlags);
             Assert.That(draw, Is.Not.Null);
             SceneGizmoTestWindow window = ScriptableObject.CreateInstance<SceneGizmoTestWindow>();
             _resources.Add(window);
@@ -213,6 +231,17 @@ namespace VRCLightVolumes.Tests {
             // Dispatches the test draw only while the fixture requests it.
             private void OnGUI() {
                 Draw?.Invoke();
+            }
+        }
+
+        // Matches LTCGI 1.7.3's inherited callback without a dependency on that package.
+        private class LegacyLightVolumeEditor : LightVolumeEditor {
+            public void ForwardSceneGUI() {
+                OnSceneGUI();
+            }
+
+            new protected void OnSceneGUI() {
+                base.OnSceneGUI();
             }
         }
 

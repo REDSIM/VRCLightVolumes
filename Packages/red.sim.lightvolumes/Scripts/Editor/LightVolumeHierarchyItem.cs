@@ -1,3 +1,6 @@
+#if UDONSHARP
+using UdonSharpEditor;
+#endif
 using UnityEditor;
 using UnityEngine;
 
@@ -5,48 +8,49 @@ namespace VRCLightVolumes {
     public static class HierarchyMenu {
 
         [MenuItem("GameObject/Light Volume", false, 9999)]
-        private static void CreateLightVolume(MenuCommand cmd) {
+        // Creates and initializes a unified Light Volume under the current hierarchy selection.
+        private static void CreateLightVolume(MenuCommand command) {
+            GameObject gameObject = CreateGameObject("Light Volume", command);
+#if UDONSHARP
+            LightVolumeInstance volume = UdonSharpUndo.AddComponent<LightVolumeInstance>(gameObject);
+#else
+            LightVolumeInstance volume = Undo.AddComponent<LightVolumeInstance>(gameObject);
+#endif
 
-            var go = new GameObject(GetUniqueName("Light Volume"));
-
-            LightVolume volume = go.AddComponent<LightVolume>();
-
-            GameObjectUtility.SetParentAndAlign(go, cmd.context as GameObject);
-
-            volume.Reset();
-
-            Undo.RegisterCreatedObjectUndo(go, $"Create new Light Volume");
-
-            Selection.activeObject = go;
-
+            Transform parent = volume.transform.parent;
+            bool initializedFromProbe = parent != null && parent.TryGetComponent(out ReflectionProbe _);
+            LightVolumeTools.ResetFromParentReflectionProbe(volume);
+            if (!initializedFromProbe) LightVolumeTools.ApplyRuntimeState(volume, false);
+            LightVolumeSceneSetup.OnboardHierarchy(gameObject, out _);
+            LightVolumeManagerEditorBackend.CopyProxyToUdon(volume);
+            Selection.activeGameObject = gameObject;
         }
 
         [MenuItem("GameObject/Point Light Volume", false, 9999)]
-        private static void CreatePointLightVolume(MenuCommand cmd) {
+        // Creates and initializes a unified Point Light Volume under the current hierarchy selection.
+        private static void CreatePointLightVolume(MenuCommand command) {
+            GameObject gameObject = CreateGameObject("Point Light Volume", command);
+#if UDONSHARP
+            PointLightVolumeInstance volume = UdonSharpUndo.AddComponent<PointLightVolumeInstance>(gameObject);
+#else
+            PointLightVolumeInstance volume = Undo.AddComponent<PointLightVolumeInstance>(gameObject);
+#endif
 
-            var go = new GameObject(GetUniqueName("Point Light Volume"));
-
-            PointLightVolume volume = go.AddComponent<PointLightVolume>();
-
-            GameObjectUtility.SetParentAndAlign(go, cmd.context as GameObject);
-
-            Undo.RegisterCreatedObjectUndo(go, $"Create new Point Light Volume");
-
-            Selection.activeObject = go;
-
+            LightVolumeSceneSetup.OnboardHierarchy(gameObject, out _);
+            PointLightVolumeEditorUtility.Sync(volume);
+            Selection.activeGameObject = gameObject;
         }
 
-        private static string GetUniqueName(string baseName) {
-            if (GameObject.Find(baseName) == null)
-                return baseName;
+        // Creates an Undo-aware uniquely named GameObject aligned to the selected parent.
+        private static GameObject CreateGameObject(string baseName, MenuCommand command) {
+            GameObject parent = command.context as GameObject;
+            Transform parentTransform = parent != null ? parent.transform : null;
+            string name = GameObjectUtility.GetUniqueNameForSibling(parentTransform, baseName);
+            GameObject gameObject = new GameObject(name);
 
-            int idx = 1;
-            string candidate;
-            do {
-                candidate = $"{baseName} ({idx++})";
-            } while (GameObject.Find(candidate) != null);
-
-            return candidate;
+            Undo.RegisterCreatedObjectUndo(gameObject, $"Create {baseName}");
+            GameObjectUtility.SetParentAndAlign(gameObject, parent);
+            return gameObject;
         }
 
     }

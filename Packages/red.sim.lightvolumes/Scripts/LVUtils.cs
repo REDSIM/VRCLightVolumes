@@ -1,22 +1,25 @@
-﻿using UnityEngine;
-using UnityEditor;
-using System.Collections.Generic;
+using UnityEngine;
 using UnityEngine.Rendering;
 
 #if UNITY_EDITOR
 using System.IO;
+using UnityEditor;
 using UnityEditor.SceneManagement;
+#endif
+
+#if UNITY_EDITOR
+[assembly: System.Runtime.CompilerServices.InternalsVisibleTo("red.sim.LightVolumesUdon.EditorTests")]
 #endif
 
 namespace VRCLightVolumes {
     public class LVUtils {
 
-        // Transforms point with specified Position, Rotation and Scale
+        // Transforms a point with the specified position, rotation, and scale
         public static Vector3 TransformPoint(Vector3 point, Vector3 position, Quaternion rotation, Vector3 scale) {
             return rotation * Vector3.Scale(point, scale) + position;
         }
 
-        // Setting lossy scale to a specified transform
+        // Sets lossy scale on the specified transform
         public static void SetLossyScale(Transform transform, Vector3 targetLossyScale, int maxIterations = 20) {
             Vector3 guess = transform.localScale;
             for (int i = 0; i < maxIterations; i++) {
@@ -31,14 +34,14 @@ namespace VRCLightVolumes {
             }
         }
 
-        // Plane vertices for drawing a square
+        // Returns plane vertices for drawing a square
         public static Vector3[] GetPlaneVertices(Vector3 center, Quaternion rotation, float size) {
             Vector3 right = rotation * Vector3.right * size;
             Vector3 up = rotation * Vector3.up * size;
             return new Vector3[] { center - right - up, center - right + up, center + right + up, center + right - up };
         }
 
-        // Check if it's previewed as a prefab, or it's a part of a scene
+        // Checks whether this object is previewed as a prefab or is part of a scene
         public static bool IsInPrefabAsset(Object obj) {
 #if UNITY_EDITOR
             var prefabStage = PrefabStageUtility.GetCurrentPrefabStage();
@@ -50,6 +53,7 @@ namespace VRCLightVolumes {
 #endif
         }
 
+        // Marks an editor object and its prefab instance overrides dirty without affecting play mode.
         public static void MarkDirty(Object obj) {
 #if UNITY_EDITOR
             if (EditorApplication.isPlayingOrWillChangePlaymode) return;
@@ -59,19 +63,37 @@ namespace VRCLightVolumes {
 #endif
         }
 
-        // Apply voxels to a 3D Texture
+        // Captures serialized editor state so no-op synchronization does not mark scenes dirty.
+        public static string GetSerializedState(Object obj) {
+#if UNITY_EDITOR
+            if (obj == null || EditorApplication.isPlayingOrWillChangePlaymode) return null;
+            return EditorJsonUtility.ToJson(obj);
+#else
+            return null;
+#endif
+        }
+
+        // Marks an object dirty only when its serialized editor state actually changed.
+        public static void MarkDirtyIfSerializedStateChanged(Object obj, string previousState) {
+#if UNITY_EDITOR
+            if (obj == null || EditorApplication.isPlayingOrWillChangePlaymode) return;
+            if (previousState == null || previousState != EditorJsonUtility.ToJson(obj)) MarkDirty(obj);
+#endif
+        }
+
+        // Applies voxels to a 3D texture
         public static bool Apply3DTextureData(Texture3D texture, Color[] colors) {
             try {
                 texture.SetPixels(colors);
                 texture.Apply(updateMipmaps: false);
                 return true;
             } catch (UnityException ex) {
-                Debug.LogError($"[LightVolumeUtils] Failed to SetPixels in the Texture3D. Error: {ex.Message}");
+                Debug.LogError($"[LightVolumes] Could not write the volume texture: {ex.Message}");
                 return false;
             }
         }
 
-        // Remaps value
+        // Remaps a value
         public static float Remap(float value, float MinOld, float MaxOld, float MinNew, float MaxNew) {
             return MinNew + (value - MinOld) * (MaxNew - MinNew) / (MaxOld - MinOld);
         }
@@ -81,48 +103,102 @@ namespace VRCLightVolumes {
             return (value - MinOld) / (MaxOld - MinOld);
         }
 
+        // Schedules asset creation for the next editor update and reports whether it succeeded.
         public static void SaveAsAssetDelayed(Object asset, string assetPath, System.Action<bool> callback = null) {
 #if UNITY_EDITOR
             if (asset == null || string.IsNullOrEmpty(assetPath)) {
-                Debug.LogError("[LightVolumeUtils] Invalid input for saving asset.");
+                Debug.LogError("[LightVolumes] Cannot save an asset without an object and path.");
                 callback?.Invoke(false);
                 return;
             }
+            // Creates the asset after the current editor callback has completed.
             void DelayedSave() {
                 EditorApplication.update -= DelayedSave;
                 try {
+                    assetPath = EscapeAssetPathFileName(assetPath);
                     string dir = Path.GetDirectoryName(assetPath);
                     if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir)) Directory.CreateDirectory(dir);
                     AssetDatabase.CreateAsset(asset, assetPath);
                     EditorUtility.SetDirty(asset);
                     callback?.Invoke(true);
                 } catch (System.Exception e) {
-                    Debug.LogError($"[LightVolumeUtils] Save failed: {e.Message}");
+                    Debug.LogError($"[LightVolumes] Save failed: {e.Message}");
                     callback?.Invoke(false);
                 }
             }
             EditorApplication.update += DelayedSave;
 #else
-            Debug.LogError($"[LightVolumeUtils] You can only save asset in editor!");
+            Debug.LogError($"[LightVolumes] Assets can only be saved in the Editor.");
 #endif
         }
 
+        // Escapes unsupported characters in the file-name segment of a Unity asset path.
+        public static string EscapeAssetPathFileName(string assetPath) {
+            if (string.IsNullOrEmpty(assetPath)) return assetPath;
+
+            int separatorIndex = assetPath.LastIndexOf('/');
+            string fileName = assetPath.Substring(separatorIndex + 1);
+            string escapedFileName = EscapeFileName(fileName);
+            if (escapedFileName == fileName) return assetPath;
+
+            return separatorIndex < 0 ? escapedFileName : assetPath.Substring(0, separatorIndex + 1) + escapedFileName;
+        }
+
+        // Escapes only characters that cannot be stored inside a file name.
+        public static string EscapeFileName(string fileName) {
+            if (string.IsNullOrEmpty(fileName)) return fileName;
+
+            System.Text.StringBuilder builder = null;
+            for (int i = 0; i < fileName.Length; i++) {
+                char character = fileName[i];
+                if (!IsInvalidFileNameCharacter(character)) {
+                    if (builder != null) builder.Append(character);
+                    continue;
+                }
+
+                if (builder == null) {
+                    builder = new System.Text.StringBuilder(fileName.Length + 8);
+                    builder.Append(fileName, 0, i);
+                }
+                builder.Append('%');
+                builder.Append(((int)character).ToString("X2"));
+            }
+
+            return builder == null ? fileName : builder.ToString();
+        }
+
+        // Checks if the character is not supported by Windows file names or Unity asset path separators.
+        private static bool IsInvalidFileNameCharacter(char character) {
+            return character < 32 ||
+                character == '<' ||
+                character == '>' ||
+                character == ':' ||
+                character == '"' ||
+                character == '/' ||
+                character == '\\' ||
+                character == '|' ||
+                character == '?' ||
+                character == '*';
+        }
+
+        // Saves an object as a Unity asset after sanitizing and creating its destination path.
         public static void SaveAsAsset(Object asset, string assetPath) {
 #if UNITY_EDITOR
             if (asset == null || string.IsNullOrEmpty(assetPath)) {
-                Debug.LogError("[LightVolumeUtils] Invalid input for saving asset.");
+                Debug.LogError("[LightVolumes] Cannot save an asset without an object and path.");
                 return;
             }
             try {
+                assetPath = EscapeAssetPathFileName(assetPath);
                 string dir = Path.GetDirectoryName(assetPath);
                 if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir)) Directory.CreateDirectory(dir);
                 AssetDatabase.CreateAsset(asset, assetPath);
                 EditorUtility.SetDirty(asset);
             } catch (System.Exception e) {
-                Debug.LogError($"[LightVolumeUtils] Save failed: {e.Message}");
+                Debug.LogError($"[LightVolumes] Save failed: {e.Message}");
             }
 #else
-            Debug.LogError($"[LightVolumeUtils] You can only save asset in editor!");
+            Debug.LogError($"[LightVolumes] Assets can only be saved in the Editor.");
 #endif
         }
 
@@ -130,42 +206,166 @@ namespace VRCLightVolumes {
         public static Vector3[] BilateralDenoise3D(Vector3[] input, int w, int h, int d, float sigmaSpatial = 1f, float sigmaRange = 0.1f) {
             Vector3[] output = new Vector3[input.Length];
             int r = Mathf.CeilToInt(2f * sigmaSpatial);
+            float spatialDivisor = 2f * sigmaSpatial * sigmaSpatial;
+            float rangeDivisor = 2f * sigmaRange * sigmaRange;
+            int sliceSize = w * h;
 
-            for (int z = 0; z < d; z++)
-                for (int y = 0; y < h; y++)
-                    for (int x = 0; x < w; x++) {
-                        int centerIdx = x + y * w + z * w * h;
-                        Vector3 center = input[centerIdx];
-                        Vector3 sum = Vector3.zero;
-                        float weightSum = 0f;
+            System.Threading.Tasks.Parallel.For(0, input.Length, centerIdx => {
+                int z = centerIdx / sliceSize;
+                int sliceIndex = centerIdx - z * sliceSize;
+                int y = sliceIndex / w;
+                int x = sliceIndex - y * w;
+                Vector3 center = input[centerIdx];
+                Vector3 sum = Vector3.zero;
+                float weightSum = 0f;
 
-                        for (int dz = -r; dz <= r; dz++)
-                            for (int dy = -r; dy <= r; dy++)
-                                for (int dx = -r; dx <= r; dx++) {
-                                    int xx = x + dx;
-                                    int yy = y + dy;
-                                    int zz = z + dz;
-                                    if (xx < 0 || yy < 0 || zz < 0 || xx >= w || yy >= h || zz >= d) continue;
+                for (int dz = -r; dz <= r; dz++)
+                    for (int dy = -r; dy <= r; dy++)
+                        for (int dx = -r; dx <= r; dx++) {
+                            int xx = x + dx;
+                            int yy = y + dy;
+                            int zz = z + dz;
+                            if (xx < 0 || yy < 0 || zz < 0 || xx >= w || yy >= h || zz >= d) continue;
 
-                                    int nIdx = xx + yy * w + zz * w * h;
-                                    Vector3 neighbor = input[nIdx];
+                            int nIdx = xx + yy * w + zz * sliceSize;
+                            Vector3 neighbor = input[nIdx];
 
-                                    float spatialDist2 = dx * dx + dy * dy + dz * dz;
-                                    float rangeDist2 = (neighbor - center).sqrMagnitude;
+                            float spatialDist2 = dx * dx + dy * dy + dz * dz;
+                            float rangeDist2 = (neighbor - center).sqrMagnitude;
 
-                                    float spatialWeight = Mathf.Exp(-spatialDist2 / (2f * sigmaSpatial * sigmaSpatial));
-                                    float rangeWeight = Mathf.Exp(-rangeDist2 / (2f * sigmaRange * sigmaRange));
+                            float spatialWeight = Mathf.Exp(-spatialDist2 / spatialDivisor);
+                            float rangeWeight = Mathf.Exp(-rangeDist2 / rangeDivisor);
 
-                                    float weight = spatialWeight * rangeWeight;
-                                    sum += neighbor * weight;
-                                    weightSum += weight;
-                                }
+                            float weight = spatialWeight * rangeWeight;
+                            sum += neighbor * weight;
+                            weightSum += weight;
+                        }
 
-                        output[centerIdx] = weightSum > 0f ? sum / weightSum : center;
-                    }
+                output[centerIdx] = weightSum > 0f ? sum / weightSum : center;
+            });
 
             return output;
         }
+
+#if UNITY_EDITOR
+        // Validates, optionally postprocesses and packs external or Progressive L0/L1 probe arrays into Light Volume texture channels.
+        public static bool TryPrepareLightVolumeProbeData(Vector3[] l0, Vector3[] l1r, Vector3[] l1g, Vector3[] l1b, float[] validity, int w, int h, int d, int dilationIterations, float dilationBackfaceBias, bool denoise, out Color[][] textureColors, out string error) {
+            textureColors = null;
+            error = null;
+
+            int voxelCount = GetVoxelCount(w, h, d);
+            if (voxelCount < 0) {
+                error = "Resolution is invalid or the voxel count is too large.";
+                return false;
+            }
+            if (l0 == null || l1r == null || l1g == null || l1b == null) {
+                error = "SH arrays cannot be null.";
+                return false;
+            }
+            if (l0.Length != voxelCount || l1r.Length != voxelCount || l1g.Length != voxelCount || l1b.Length != voxelCount) {
+                error = $"Every SH array must contain exactly {voxelCount} elements.";
+                return false;
+            }
+            if (validity != null && validity.Length != voxelCount) {
+                error = $"The validity array must contain exactly {voxelCount} elements.";
+                return false;
+            }
+
+            Vector3[] processedL0 = l0;
+            Vector3[] processedL1r = l1r;
+            Vector3[] processedL1g = l1g;
+            Vector3[] processedL1b = l1b;
+            if (validity != null && dilationIterations > 0) DilateLightVolumeProbes(ref processedL0, ref processedL1r, ref processedL1g, ref processedL1b, validity, w, h, d, dilationIterations, dilationBackfaceBias);
+            if (denoise) {
+                processedL0 = BilateralDenoise3D(processedL0, w, h, d, 1f, 0.05f);
+                processedL1r = BilateralDenoise3D(processedL1r, w, h, d, 1f, 0.05f);
+                processedL1g = BilateralDenoise3D(processedL1g, w, h, d, 1f, 0.05f);
+                processedL1b = BilateralDenoise3D(processedL1b, w, h, d, 1f, 0.05f);
+            }
+
+            const float coeff = 1.65f; // Preserves the existing Bakery-compatible L1 scale used by Progressive.
+            textureColors = new[] { new Color[voxelCount], new Color[voxelCount], new Color[voxelCount] };
+            for (int i = 0; i < voxelCount; i++) {
+                textureColors[0][i] = new Color(processedL0[i].x, processedL0[i].y, processedL0[i].z, processedL1r[i].z * coeff);
+                textureColors[1][i] = new Color(processedL1r[i].x * coeff, processedL1g[i].x * coeff, processedL1b[i].x * coeff, processedL1g[i].z * coeff);
+                textureColors[2][i] = new Color(processedL1r[i].y * coeff, processedL1g[i].y * coeff, processedL1b[i].y * coeff, processedL1b[i].z * coeff);
+            }
+            return true;
+        }
+
+        // Calculates a safe positive voxel count for probe array validation.
+        private static int GetVoxelCount(int w, int h, int d) {
+            if (w <= 0 || h <= 0 || d <= 0 || w > int.MaxValue / h) return -1;
+            int sliceSize = w * h;
+            return sliceSize > int.MaxValue / d ? -1 : sliceSize * d;
+        }
+
+        // Dilates valid L0/L1 values into invalid voxels without mutating caller-owned arrays.
+        private static void DilateLightVolumeProbes(ref Vector3[] l0, ref Vector3[] l1r, ref Vector3[] l1g, ref Vector3[] l1b, float[] sourceValidity, int w, int h, int d, int iterations, float backfaceBias) {
+            int voxelCount = l0.Length;
+            int sliceSize = w * h;
+            float[] validity = (float[])sourceValidity.Clone();
+            float[] validityDilated = (float[])sourceValidity.Clone();
+            Vector3[] processedL0 = (Vector3[])l0.Clone();
+            Vector3[] processedL1r = (Vector3[])l1r.Clone();
+            Vector3[] processedL1g = (Vector3[])l1g.Clone();
+            Vector3[] processedL1b = (Vector3[])l1b.Clone();
+            Vector3[] l0Dilated = (Vector3[])l0.Clone();
+            Vector3[] l1rDilated = (Vector3[])l1r.Clone();
+            Vector3[] l1gDilated = (Vector3[])l1g.Clone();
+            Vector3[] l1bDilated = (Vector3[])l1b.Clone();
+
+            for (int iteration = 0; iteration < iterations; iteration++) {
+                System.Threading.Tasks.Parallel.For(0, voxelCount, centerIndex => {
+                    if (validity[centerIndex] < backfaceBias) return;
+
+                    int voxelZ = centerIndex / sliceSize;
+                    int sliceIndex = centerIndex - voxelZ * sliceSize;
+                    int voxelY = sliceIndex / w;
+                    int voxelX = sliceIndex - voxelY * w;
+                    Vector3 l0Sum = Vector3.zero;
+                    Vector3 l1rSum = Vector3.zero;
+                    Vector3 l1gSum = Vector3.zero;
+                    Vector3 l1bSum = Vector3.zero;
+                    int validCount = 0;
+                    for (int dz = -1; dz <= 1; dz++)
+                        for (int dy = -1; dy <= 1; dy++)
+                            for (int dx = -1; dx <= 1; dx++) {
+                                int x = voxelX + dx;
+                                int y = voxelY + dy;
+                                int z = voxelZ + dz;
+                                if (x < 0 || y < 0 || z < 0 || x >= w || y >= h || z >= d) continue;
+
+                                int neighborIndex = x + y * w + z * sliceSize;
+                                if (validity[neighborIndex] >= backfaceBias) continue;
+                                validCount++;
+                                l0Sum += processedL0[neighborIndex];
+                                l1rSum += processedL1r[neighborIndex];
+                                l1gSum += processedL1g[neighborIndex];
+                                l1bSum += processedL1b[neighborIndex];
+                            }
+
+                    if (validCount == 0) return;
+                    l0Dilated[centerIndex] = l0Sum / validCount;
+                    l1rDilated[centerIndex] = l1rSum / validCount;
+                    l1gDilated[centerIndex] = l1gSum / validCount;
+                    l1bDilated[centerIndex] = l1bSum / validCount;
+                    validityDilated[centerIndex] = 0f;
+                });
+
+                System.Array.Copy(validityDilated, validity, voxelCount);
+                System.Array.Copy(l0Dilated, processedL0, voxelCount);
+                System.Array.Copy(l1rDilated, processedL1r, voxelCount);
+                System.Array.Copy(l1gDilated, processedL1g, voxelCount);
+                System.Array.Copy(l1bDilated, processedL1b, voxelCount);
+            }
+
+            l0 = processedL0;
+            l1r = processedL1r;
+            l1g = processedL1g;
+            l1b = processedL1b;
+        }
+#endif
 
         // Bounds of a transformed 1x1x1 cube
         public static Bounds BoundsFromTRS(Matrix4x4 trs) {
@@ -181,68 +381,6 @@ namespace VRCLightVolumes {
             return new Bounds(center, extents * 2f);
         }
 
-        // Generates an IcoSphere mesh
-        public static Mesh GenerateIcoSphere(float radius = 0.5f, int subdivisions = 2) {
-
-            const float t = 0.850650808f;   // ≈ φ/√5
-            const float s = 0.525731112f;   // ≈ 1/(2φ)
-
-            Vector3[] baseVerts = {
-            new Vector3(-s,  t,  0), new Vector3( s,  t,  0), new Vector3(-s, -t,  0), new Vector3( s, -t,  0),
-            new Vector3( 0, -s,  t), new Vector3( 0,  s,  t), new Vector3( 0, -s, -t), new Vector3( 0,  s, -t),
-            new Vector3( t,  0, -s), new Vector3( t,  0,  s), new Vector3(-t,  0, -s), new Vector3(-t,  0,  s)
-        };
-
-            int[] baseTris = {
-             0,11, 5, 0, 5, 1, 0, 1, 7, 0, 7,10, 0,10,11,
-             1, 5, 9, 5,11, 4,11,10, 2,10, 7, 6, 7, 1, 8,
-             3, 9, 4, 3, 4, 2, 3, 2, 6, 3, 6, 8, 3, 8, 9,
-             4, 9, 5, 2, 4,11, 6, 2,10, 8, 6, 7, 9, 8, 1
-        };
-
-            var verts = new List<Vector3>(baseVerts);
-            var tris = new List<int>(baseTris);
-            var cache = new Dictionary<long, int>();
-
-            subdivisions = Mathf.Clamp(subdivisions, 0, 8);   // 20·4⁸ ≈ 327 k tri max
-
-            for (int level = 0; level < subdivisions; ++level) {
-                cache.Clear();
-                var newTris = new List<int>(tris.Count * 4);
-
-                for (int i = 0; i < tris.Count; i += 3) {
-                    int i0 = tris[i], i1 = tris[i + 1], i2 = tris[i + 2];
-
-                    int a = Midpoint(i0, i1);
-                    int b = Midpoint(i1, i2);
-                    int c = Midpoint(i2, i0);
-
-                    newTris.AddRange(new[] { i0, a, c, i1, b, a, i2, c, b, a, b, c });
-                }
-                tris = newTris;
-            }
-
-            for (int i = 0; i < verts.Count; ++i)
-                verts[i] = verts[i].normalized * radius;
-
-            var mesh = new Mesh { name = $"IcoSphere_{subdivisions}" };
-            mesh.SetVertices(verts);
-            mesh.SetTriangles(tris, 0);
-            mesh.RecalculateNormals();
-            mesh.RecalculateBounds();
-            return mesh;
-
-            int Midpoint(int ia, int ib) {
-                long key = ia < ib ? ((long)ia << 32) | (uint)ib : ((long)ib << 32) | (uint)ia;
-                if (cache.TryGetValue(key, out int idx)) return idx;
-                Vector3 mid = (verts[ia] + verts[ib]).normalized;
-                idx = verts.Count;
-                cache[key] = idx;
-                verts.Add(mid);
-                return idx;
-            }
-        }
-
         // Fixes bakery L1 probe channel
         public static Vector3 DeringSingleSH(float L0, Vector3 L1) {
             L1 = L1 * 0.5f;
@@ -253,7 +391,7 @@ namespace VRCLightVolumes {
             return L1;
         }
 
-        // Fizes bakery L1 probe
+        // Fixes a Bakery L1 probe
         public static SphericalHarmonicsL2 DeringSH(SphericalHarmonicsL2 sh) {
 
             const int r = 0;
@@ -291,13 +429,14 @@ namespace VRCLightVolumes {
         // Checks if any L2 data is provided in SphericalHarmonicsL2
         public static bool CheckSHL2(SphericalHarmonicsL2 sh) {
             for(int rgb = 0; rgb < 3; rgb++) { // Iterating RGB color components
-                for(int coeff = 4; coeff < 9; coeff++) { // Iterating L1 and L2 coeffs
+                for(int coeff = 4; coeff < 9; coeff++) { // Iterating L2 coefficients
                     if(sh[rgb, coeff] != 0) return true;
                 }
             }
             return false;
         }
 
+        // Changes a texture asset's Read/Write import setting only when necessary.
         public static void TextureSetReadWrite(Texture texture, bool enabled) {
 #if UNITY_EDITOR
             if (texture == null) {
@@ -321,6 +460,7 @@ namespace VRCLightVolumes {
 #endif
         }
 
+        // Creates a half-resolution 3D texture by averaging each source voxel block.
         public static Texture3D DownscaleTexture3D(Texture3D source) {
 
             if (source == null) {
@@ -330,11 +470,6 @@ namespace VRCLightVolumes {
             int newWidth = Mathf.Max(1, source.width / 2);
             int newHeight = Mathf.Max(1, source.height / 2);
             int newDepth = Mathf.Max(1, source.depth / 2);
-
-            Texture3D result = new Texture3D(newWidth, newHeight, newDepth, source.format, source.mipmapCount > 1);
-            result.wrapMode = source.wrapMode;
-            result.filterMode = FilterMode.Trilinear;
-            result.anisoLevel = source.anisoLevel;
 
             Color[] sourcePixels = source.GetPixels();
             Color[] resultPixels = new Color[newWidth * newHeight * newDepth];
@@ -378,10 +513,19 @@ namespace VRCLightVolumes {
                 }
             }
 
-            result.SetPixels(resultPixels);
-            result.Apply();
-
-            return result;
+            Texture3D result = new Texture3D(newWidth, newHeight, newDepth, source.format, source.mipmapCount > 1);
+            try {
+                result.wrapMode = source.wrapMode;
+                result.filterMode = FilterMode.Trilinear;
+                result.anisoLevel = source.anisoLevel;
+                result.SetPixels(resultPixels);
+                result.Apply();
+                return result;
+            } catch {
+                if (Application.isPlaying) Object.Destroy(result);
+                else Object.DestroyImmediate(result);
+                throw;
+            }
 
         }
 

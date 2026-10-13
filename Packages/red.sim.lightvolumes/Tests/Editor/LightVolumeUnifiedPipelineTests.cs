@@ -1,0 +1,1017 @@
+using System.Collections;
+using System.Collections.Generic;
+using System.Reflection;
+using NUnit.Framework;
+using UnityEditor;
+using UnityEditor.SceneManagement;
+using UnityEngine;
+using UnityEngine.Rendering;
+using UnityEngine.SceneManagement;
+using UnityEngine.TestTools;
+using VRCLightVolumes.Editor;
+
+namespace VRCLightVolumes.Tests {
+    [Category("Editor")]
+    public class LightVolumeUnifiedPipelineTests {
+        private const float Epsilon = 0.0001f;
+        private static readonly BindingFlags _nonPublicStaticFlags = BindingFlags.Static | BindingFlags.NonPublic;
+
+        private readonly List<Object> _createdObjects = new List<Object>();
+        private Transform _root;
+
+        // Primary Manager selection follows loaded-scene order, independently of the active scene.
+        [SetUp]
+        public void SetUp() {
+            GameObject root = new GameObject("Light Volumes Pipeline Tests");
+            _createdObjects.Add(root);
+            SceneManager.MoveGameObjectToScene(root, SceneManager.GetSceneAt(0));
+            _root = root.transform;
+            _root.SetAsFirstSibling();
+        }
+
+        [TearDown]
+        public void TearDown() {
+            for (int i = _createdObjects.Count - 1; i >= 0; i--) {
+                Object target = _createdObjects[i];
+                if (target != null) Object.DestroyImmediate(target);
+            }
+            _createdObjects.Clear();
+            _root = null;
+        }
+
+        // Asset generation still depends on deterministic escaping after authoring moved to Udon components.
+        [Test]
+        public void AssetFileNameEscapingPreservesValidSegmentsAndEscapesInvalidCharacters() {
+            string validName = "Valid Name (1) #%.[]{}+=,;!@'`~.asset";
+            string invalidName = "<>:\"/\\|?*\u0001";
+
+            Assert.That(LVUtils.EscapeFileName(validName), Is.EqualTo(validName));
+            Assert.That(LVUtils.EscapeFileName(invalidName), Is.EqualTo("%3C%3E%3A%22%2F%5C%7C%3F%2A%01"));
+            Assert.That(
+                LVUtils.EscapeAssetPathFileName("Assets/Valid Folder/Name:Bad?.asset"),
+                Is.EqualTo("Assets/Valid Folder/Name%3ABad%3F.asset"));
+        }
+
+        // A completed atlas still belongs to the backend until a live Manager accepts it.
+        [Test]
+        public void CompleteAtlasDestroysTextureRejectedWithoutManager() {
+            Texture3D texture = CreateTexture3D("Rejected Atlas Texture");
+            MethodInfo completeAtlas = typeof(LightVolumeManagerEditorBackend).GetMethod("CompleteAtlas", _nonPublicStaticFlags);
+            Assert.That(completeAtlas, Is.Not.Null);
+
+            completeAtlas.Invoke(null, new object[] {
+                null,
+                new LightVolumeInstance[0],
+                new Atlas3D { Texture = texture, BoundsUvwMin = new Vector3[0], BoundsUvwMax = new Vector3[0] }
+            });
+
+            Assert.That(texture == null, Is.True, "A rejected native atlas must be destroyed instead of losing its owner.");
+        }
+
+        // A completed non-persistent atlas can outlive its generator while the scene is unsaved.
+        // Entering Play Mode must release that backend-owned native texture even with domain reload disabled.
+        [Test]
+        public void PlayTransitionReleasesBackendOwnedTransientAtlas() {
+            LightVolumeManager manager = CreateComponent<LightVolumeManager>("Transient Atlas Owner");
+            Texture3D texture = CreateTexture3D("Accepted Unsaved Atlas Texture");
+            manager.LightVolumeAtlasBase = texture;
+            manager.LightVolumeAtlas = texture;
+            MethodInfo trackTransientAtlas = typeof(LightVolumeManagerEditorBackend).GetMethod("TrackTransientAtlas", _nonPublicStaticFlags);
+            MethodInfo onPlayModeStateChanged = typeof(LightVolumeManagerEditorBackend).GetMethod("OnPlayModeStateChanged", _nonPublicStaticFlags);
+            Assert.That(trackTransientAtlas, Is.Not.Null);
+            Assert.That(onPlayModeStateChanged, Is.Not.Null);
+
+            trackTransientAtlas.Invoke(null, new object[] { manager, texture });
+            onPlayModeStateChanged.Invoke(null, new object[] { PlayModeStateChange.ExitingEditMode });
+
+            Assert.That(manager.LightVolumeAtlasBase, Is.Null);
+            Assert.That(manager.LightVolumeAtlas, Is.Null);
+            Assert.That(texture == null, Is.True, "Play transition must destroy an unsaved native atlas owned by the editor backend.");
+        }
+
+        // EnteredPlayMode can precede live Udon heap initialization. Runtime resources must be
+        // published on a delayed editor turn instead of relying on an already-open Inspector to
+        // copy its proxy after Udon becomes ready.
+        [Test]
+        public void EnteredPlayModeDefersRuntimeDependencyPublication() {
+            System.Type preprocessorType = GetLightVolumePreprocessorType();
+            MethodInfo onPlayModeStateChanged = preprocessorType.GetMethod("OnPlayModeStateChanged", _nonPublicStaticFlags);
+            MethodInfo cancelQueued = preprocessorType.GetMethod("CancelQueuedPrimaryRuntimeDependencies", _nonPublicStaticFlags);
+            FieldInfo queuedField = preprocessorType.GetField("_playModeRuntimePrepareQueued", _nonPublicStaticFlags);
+            Assert.That(onPlayModeStateChanged, Is.Not.Null);
+            Assert.That(cancelQueued, Is.Not.Null);
+            Assert.That(queuedField, Is.Not.Null);
+
+            onPlayModeStateChanged.Invoke(null, new object[] { PlayModeStateChange.EnteredPlayMode });
+            Assert.That((bool)queuedField.GetValue(null), Is.True);
+
+            cancelQueued.Invoke(null, null);
+            Assert.That((bool)queuedField.GetValue(null), Is.False);
+        }
+
+        // Replacing an atlas must not make the backend the owner of a transient texture supplied by
+        // external editor code. Only atlases previously tracked by this backend may be destroyed.
+        [Test]
+        public void CompleteAtlasPreservesExternallyOwnedPreviousTexture() {
+            Scene fixtureScene = SceneManager.GetActiveScene();
+            Assert.That(fixtureScene.path, Is.Empty, "This test requires the Test Runner's unsaved scene.");
+            Scene previousScene = default;
+            for (int i = 1; i < SceneManager.sceneCount; i++) {
+                if (SceneManager.GetSceneAt(i) == fixtureScene) previousScene = SceneManager.GetSceneAt(i - 1);
+            }
+            Scene originalRootScene = _root.gameObject.scene;
+            try {
+                if (previousScene.IsValid()) EditorSceneManager.MoveSceneBefore(fixtureScene, SceneManager.GetSceneAt(0));
+                SceneManager.MoveGameObjectToScene(_root.gameObject, fixtureScene);
+
+                LightVolumeManager manager = CreateComponent<LightVolumeManager>("External Transient Atlas Owner");
+                manager.transform.SetAsFirstSibling();
+                Texture3D previous = CreateTexture3D("External Previous Atlas");
+                Texture3D replacement = CreateTexture3D("Backend Replacement Atlas");
+                manager.LightVolumeAtlasBase = previous;
+                manager.LightVolumeAtlas = previous;
+                MethodInfo completeAtlas = typeof(LightVolumeManagerEditorBackend).GetMethod("CompleteAtlas", _nonPublicStaticFlags);
+                MethodInfo onPlayModeStateChanged = typeof(LightVolumeManagerEditorBackend).GetMethod("OnPlayModeStateChanged", _nonPublicStaticFlags);
+                Assert.That(completeAtlas, Is.Not.Null);
+                Assert.That(onPlayModeStateChanged, Is.Not.Null);
+
+                completeAtlas.Invoke(null, new object[] {
+                    manager,
+                    new LightVolumeInstance[0],
+                    new Atlas3D { Texture = replacement, BoundsUvwMin = new Vector3[0], BoundsUvwMax = new Vector3[0] }
+                });
+
+                Assert.That(manager.LightVolumeAtlasBase, Is.SameAs(replacement));
+                Assert.That(previous == null, Is.False, "The backend must preserve an externally-owned transient atlas.");
+
+                onPlayModeStateChanged.Invoke(null, new object[] { PlayModeStateChange.ExitingEditMode });
+                Assert.That(replacement == null, Is.True, "The backend must still release its own replacement atlas.");
+                Assert.That(previous == null, Is.False);
+            } finally {
+                SceneManager.MoveGameObjectToScene(_root.gameObject, originalRootScene);
+                if (previousScene.IsValid()) EditorSceneManager.MoveSceneAfter(fixtureScene, previousScene);
+            }
+        }
+
+        [TestCase(-1f, 0.0001f)]
+        [TestCase(0f, 0.0001f)]
+        [TestCase(0.5f, 0.01f)]
+        [TestCase(1f, 1f)]
+        [TestCase(2f, 1f)]
+        public void ShadowVarianceSliderUsesLogarithmicScaleAndClampsToRange(float slider, float expected) {
+            Assert.That(LightVolumeManagerEditorBackend.GetShadowMinVarianceValue(slider), Is.EqualTo(expected).Within(0.0000001f));
+        }
+
+        // External lightmappers consume manager-scoped unified volumes and world-space voxel centers.
+        [Test]
+        public void ManagerCustomProbeApiUsesUnifiedRegistryAndWorldSpaceVoxelCenters() {
+            LightVolumeManager manager = CreateComponent<LightVolumeManager>("Custom Probe Manager");
+            LightVolumeInstance volume = CreateComponent<LightVolumeInstance>("Custom Probe Volume");
+            volume.LightVolumeManager = manager;
+            volume.Bake = true;
+            volume.AdaptiveResolution = false;
+            volume.Resolution = new Vector3Int(2, 1, 1);
+            volume.transform.SetPositionAndRotation(new Vector3(5f, 2f, -3f), Quaternion.Euler(0f, 90f, 0f));
+            volume.transform.localScale = new Vector3(4f, 2f, 2f);
+            manager.LightVolumeInstances = new[] { volume };
+
+            Assert.That(LightVolumeManagerEditorBackend.GetPrimaryManager(), Is.SameAs(manager), "The test Manager must own the primary scene.");
+            Assert.That(manager.Editor.GetCustomProbesCount(), Is.EqualTo(1));
+            Vector3[] probes = manager.Editor.GetCustomProbes(0);
+            Assert.That(probes, Has.Length.EqualTo(2));
+            AssertVector3Close(new Vector3(5f, 2f, -2f), probes[0]);
+            AssertVector3Close(new Vector3(5f, 2f, -4f), probes[1]);
+
+            LogAssert.Expect(LogType.Error, "[LightVolumes] Custom probe Light Volume ID -1 is invalid. Available volume count: 1.");
+            Assert.That(manager.Editor.GetCustomProbes(-1), Is.Empty);
+
+            volume.Bake = false;
+            Assert.That(manager.Editor.GetCustomProbesCount(), Is.Zero);
+            volume.Bake = true;
+            volume.gameObject.SetActive(false);
+            Assert.That(manager.Editor.GetCustomProbesCount(), Is.Zero);
+        }
+
+        // A canonical manager pass after scene load must not make an already-normalized scene dirty.
+        [Test]
+        public void ManagerAuthoringNoOpDoesNotMarkUnifiedProxyDirty() {
+            LightVolumeManager manager = CreateComponent<LightVolumeManager>("No Op Authoring Manager");
+            LightVolumeManagerEditorBackend.ApplySettings(manager, true, updateVolumes: false);
+            EditorUtility.ClearDirty(manager);
+
+            LightVolumeManagerEditorBackend.ApplySettings(manager, true, updateVolumes: false);
+
+            Assert.That(EditorUtility.IsDirty(manager), Is.False);
+
+            manager.CustomTexturesWidth = 31;
+            LightVolumeManagerEditorBackend.ApplySettings(manager, true, updateVolumes: false);
+            Assert.That(manager.CustomTexturesWidth, Is.EqualTo(31));
+            Assert.That(manager.CustomTexturesHeight, Is.EqualTo(31));
+            Assert.That(EditorUtility.IsDirty(manager), Is.True);
+        }
+
+        [TestCase(false, LightingSettings.Lightmapper.ProgressiveGPU)]
+#pragma warning disable CS0618
+        [TestCase(true, LightingSettings.Lightmapper.Enlighten)]
+#pragma warning restore CS0618
+        public void UnityBakeSkipsUnsupportedLightingSettings(bool bakedGI, LightingSettings.Lightmapper lightmapper) {
+            LightVolumeManager manager = CreateComponent<LightVolumeManager>("Skipped Unity Bake Manager");
+            manager.BakingMode = 0;
+            Assert.That(LightVolumeManagerEditorBackend.GetPrimaryManager(), Is.SameAs(manager));
+            Lightmapping.TryGetLightingSettings(out LightingSettings previousSettings);
+            LightingSettings settings = new LightingSettings { bakedGI = bakedGI, realtimeGI = true, lightmapper = lightmapper };
+            MethodInfo reset = typeof(LightVolumeBaker).GetMethod("ResetUnityBakeState", _nonPublicStaticFlags);
+            MethodInfo started = typeof(LightVolumeBaker).GetMethod("OnUnityBakeStarted", _nonPublicStaticFlags);
+            MethodInfo completed = typeof(LightVolumeBaker).GetMethod("OnUnityBakeCompleted", _nonPublicStaticFlags);
+            FieldInfo unityManager = typeof(LightVolumeBaker).GetField("_unityManager", _nonPublicStaticFlags);
+            try {
+                reset.Invoke(null, null);
+                Lightmapping.lightingSettings = settings;
+                started.Invoke(null, null);
+
+                Assert.That(unityManager.GetValue(null), Is.Null);
+                completed.Invoke(null, null);
+                reset.Invoke(null, null);
+                LogAssert.NoUnexpectedReceived();
+            } finally {
+                settings.bakedGI = true;
+                settings.lightmapper = LightingSettings.Lightmapper.ProgressiveCPU;
+                reset.Invoke(null, null);
+                Lightmapping.lightingSettings = previousSettings;
+                Object.DestroyImmediate(settings);
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator UnityBakeWithoutAdditionalProbeResultsPreservesExistingTextures() {
+            LightVolumeManager manager = CreateComponent<LightVolumeManager>("Interrupted Unity Bake Manager");
+            manager.BakingMode = 0;
+            LightVolumeInstance volume = CreateComponent<LightVolumeInstance>("Interrupted Unity Bake Volume");
+            volume.LightVolumeManager = manager;
+            volume.AdaptiveResolution = false;
+            volume.Resolution = Vector3Int.one;
+            Texture3D previousTexture = CreateTexture3D("Previous Progressive Texture");
+            volume.Texture0 = previousTexture;
+            volume.Texture1 = previousTexture;
+            volume.Texture2 = previousTexture;
+            manager.LightVolumeInstances = new[] { volume };
+            Assert.That(LightVolumeManagerEditorBackend.GetPrimaryManager(), Is.SameAs(manager));
+            Lightmapping.TryGetLightingSettings(out LightingSettings previousSettings);
+            LightingSettings settings = new LightingSettings { bakedGI = true, lightmapper = LightingSettings.Lightmapper.ProgressiveCPU };
+            MethodInfo reset = typeof(LightVolumeBaker).GetMethod("ResetUnityBakeState", _nonPublicStaticFlags);
+            MethodInfo started = typeof(LightVolumeBaker).GetMethod("OnUnityBakeStarted", _nonPublicStaticFlags);
+            MethodInfo completed = typeof(LightVolumeBaker).GetMethod("OnUnityBakeCompleted", _nonPublicStaticFlags);
+            MethodInfo complete = typeof(LightVolumeBaker).GetMethod("CompleteUnityBake", _nonPublicStaticFlags);
+            FieldInfo unityManager = typeof(LightVolumeBaker).GetField("_unityManager", _nonPublicStaticFlags);
+            FieldInfo completionRegistered = typeof(LightVolumeBaker).GetField("_progressiveCompletionProbeRegistered", _nonPublicStaticFlags);
+            try {
+                reset.Invoke(null, null);
+                Lightmapping.lightingSettings = settings;
+                LogAssert.Expect(LogType.Log, "[LightVolumes] Added Progressive probes for \"Interrupted Unity Bake Volume\" (group 1280704512).");
+                started.Invoke(null, null);
+                Assert.That(completionRegistered.GetValue(null), Is.True);
+
+                completed.Invoke(null, null);
+                Assert.That(unityManager.GetValue(null), Is.SameAs(manager));
+                LogAssert.NoUnexpectedReceived();
+                LogAssert.Expect(LogType.Warning, "[LightVolumes] The Progressive bake did not finish. Light Volume data is unchanged.");
+                complete.Invoke(null, null);
+                yield return null;
+
+                Assert.That(volume.Texture0, Is.SameAs(previousTexture));
+                Assert.That(volume.Texture1, Is.SameAs(previousTexture));
+                Assert.That(volume.Texture2, Is.SameAs(previousTexture));
+                Assert.That(unityManager.GetValue(null), Is.Null);
+                Assert.That(completionRegistered.GetValue(null), Is.False);
+                completed.Invoke(null, null);
+                LogAssert.NoUnexpectedReceived();
+            } finally {
+                reset.Invoke(null, null);
+                Lightmapping.lightingSettings = previousSettings;
+                Object.DestroyImmediate(settings);
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator UnityBakeRepeatedSceneAndLateCancellationPreserveResultLifetime() {
+            string scenePath = AssetDatabase.GenerateUniqueAssetPath("Assets/VRCLightVolumesProgressiveRepeatTest.unity");
+            string settingsPath = AssetDatabase.GenerateUniqueAssetPath("Assets/VRCLightVolumesProgressiveRepeatTest.lighting");
+            string sceneDataPath = System.IO.Path.ChangeExtension(scenePath, null).Replace('\\', '/');
+            Scene scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+            GameObject root = new GameObject("Progressive Repeat Tests");
+            _createdObjects.Add(root);
+            _root = root.transform;
+            LightVolumeManager manager = CreateComponent<LightVolumeManager>("Progressive Repeat Manager");
+            manager.BakingMode = 0;
+            manager.Denoise = false;
+            manager.DilateInvalidProbes = false;
+            LightVolumeInstance volume = CreateComponent<LightVolumeInstance>("Progressive Repeat Volume");
+            volume.LightVolumeManager = manager;
+            volume.AdaptiveResolution = false;
+            volume.Resolution = new Vector3Int(2, 2, 2);
+            volume.transform.position = Vector3.up;
+            manager.LightVolumeInstances = new[] { volume };
+            manager.PointLightVolumeInstances = new PointLightVolumeInstance[0];
+            Light light = CreateComponent<Light>("Progressive Repeat Sun");
+            light.type = LightType.Directional;
+            light.lightmapBakeType = LightmapBakeType.Baked;
+            light.transform.rotation = Quaternion.Euler(45f, 20f, 0f);
+            GameObject floor = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            _createdObjects.Add(floor);
+            floor.transform.localScale = new Vector3(5f, 0.2f, 5f);
+            floor.transform.position = new Vector3(0f, -0.2f, 0f);
+            GameObjectUtility.SetStaticEditorFlags(floor, StaticEditorFlags.ContributeGI);
+            LightingSettings settings = new LightingSettings {
+                bakedGI = true, realtimeGI = false, autoGenerate = false,
+                lightmapper = LightingSettings.Lightmapper.ProgressiveCPU,
+                lightmapResolution = 2f, lightmapMaxSize = 32,
+                directSampleCount = 8, indirectSampleCount = 8, environmentSampleCount = 8,
+                lightProbeSampleCountMultiplier = 1f,
+                filteringMode = LightingSettings.FilterMode.None
+            };
+            MethodInfo reset = typeof(LightVolumeBaker).GetMethod("ResetUnityBakeState", _nonPublicStaticFlags);
+            MethodInfo additionalCompleted = typeof(LightVolumeBaker).GetMethod("OnAdditionalBakedProbesCompleted", _nonPublicStaticFlags);
+            FieldInfo completionRegistered = typeof(LightVolumeBaker).GetField("_progressiveCompletionProbeRegistered", _nonPublicStaticFlags);
+            FieldInfo results = typeof(LightVolumeBaker).GetField("_progressiveProbeResults", _nonPublicStaticFlags);
+            int resultCallbacks = 0;
+            bool registrationsRemovedAtResult = true;
+            bool texturesPreservedAtResult = true;
+            bool snapshotCaptured = true;
+            Texture3D textureBeforeBake = null;
+            bool cancelAfterResults = false;
+            bool cancellationSent = false;
+            System.Action cancelOnUpdate = null;
+            cancelOnUpdate = () => {
+                EditorApplication.update -= cancelOnUpdate.Invoke;
+                cancellationSent = Lightmapping.isRunning;
+                if (cancellationSent) Lightmapping.Cancel();
+            };
+            System.Action onResults = () => {
+                resultCallbacks++;
+                registrationsRemovedAtResult &= !(bool)completionRegistered.GetValue(null);
+                texturesPreservedAtResult &= volume.Texture0 == textureBeforeBake;
+                snapshotCaptured &= ((ICollection)results.GetValue(null)).Count == 1;
+                additionalCompleted.Invoke(null, null);
+                if (cancelAfterResults) EditorApplication.update += cancelOnUpdate.Invoke;
+            };
+            try {
+                reset.Invoke(null, null);
+                AssetDatabase.CreateAsset(settings, settingsPath);
+                Lightmapping.lightingSettings = settings;
+                Assert.That(EditorSceneManager.SaveScene(scene, scenePath), Is.True);
+#pragma warning disable CS0618
+                UnityEditor.Experimental.Lightmapping.additionalBakedProbesCompleted += onResults;
+#pragma warning restore CS0618
+                for (int bake = 0; bake < 2; bake++) {
+                    textureBeforeBake = volume.Texture0;
+                    Assert.That(Lightmapping.BakeAsync(), Is.True);
+                    double deadline = EditorApplication.timeSinceStartup + 90.0;
+                    while (Lightmapping.isRunning && EditorApplication.timeSinceStartup < deadline) yield return null;
+                    Assert.That(Lightmapping.isRunning, Is.False, "The test bake timed out.");
+                    yield return null;
+
+                    Assert.That(resultCallbacks, Is.EqualTo(bake + 1), "Each unchanged bake must return fresh additional probes.");
+                    Assert.That(registrationsRemovedAtResult, Is.True);
+                    Assert.That(texturesPreservedAtResult, Is.True, "Volume textures must wait for generic bake completion.");
+                    Assert.That(snapshotCaptured, Is.True);
+                    Assert.That(volume.Texture0, Is.Not.Null);
+                    Assert.That(volume.Texture1, Is.Not.Null);
+                    Assert.That(volume.Texture2, Is.Not.Null);
+                    Assert.That(EditorUtility.IsPersistent(volume.Texture0), Is.True);
+                    Assert.That(((ICollection)results.GetValue(null)).Count, Is.Zero);
+                }
+
+                cancelAfterResults = true;
+                textureBeforeBake = volume.Texture0;
+                Color[] colorsBeforeCancel = textureBeforeBake.GetPixels();
+                Assert.That(Lightmapping.BakeAsync(), Is.True);
+                double cancelDeadline = EditorApplication.timeSinceStartup + 90.0;
+                while (Lightmapping.isRunning && EditorApplication.timeSinceStartup < cancelDeadline) yield return null;
+                Assert.That(Lightmapping.isRunning, Is.False, "The cancellation test timed out.");
+                double cleanupDeadline = EditorApplication.timeSinceStartup + 5.0;
+                while (((ICollection)results.GetValue(null)).Count != 0 && EditorApplication.timeSinceStartup < cleanupDeadline) yield return null;
+                Assert.That(cancellationSent, Is.True, "Cancel must run between the probe and generic completion callbacks.");
+                Assert.That(resultCallbacks, Is.EqualTo(3));
+                Assert.That(volume.Texture0, Is.SameAs(textureBeforeBake));
+                Assert.That(volume.Texture0.GetPixels(), Is.EqualTo(colorsBeforeCancel));
+                Assert.That(((ICollection)results.GetValue(null)).Count, Is.Zero, "Cancellation must release pending SH arrays.");
+            } finally {
+                EditorApplication.update -= cancelOnUpdate.Invoke;
+#pragma warning disable CS0618
+                UnityEditor.Experimental.Lightmapping.additionalBakedProbesCompleted -= onResults;
+#pragma warning restore CS0618
+                if (Lightmapping.isRunning) Lightmapping.Cancel();
+                reset.Invoke(null, null);
+                EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+                AssetDatabase.DeleteAsset(sceneDataPath);
+                AssetDatabase.DeleteAsset(scenePath);
+                AssetDatabase.DeleteAsset(settingsPath);
+            }
+        }
+
+        [TestCase(LightingSettings.Lightmapper.ProgressiveCPU)]
+        [TestCase(LightingSettings.Lightmapper.ProgressiveGPU)]
+        public void UnityBakeReleasesCompletionProbeOnlyOnce(LightingSettings.Lightmapper lightmapper) {
+            LightVolumeManager manager = CreateComponent<LightVolumeManager>("Unity Probe Cleanup Manager");
+            manager.BakingMode = 0;
+            Assert.That(LightVolumeManagerEditorBackend.GetPrimaryManager(), Is.SameAs(manager));
+            Lightmapping.TryGetLightingSettings(out LightingSettings previousSettings);
+            LightingSettings settings = new LightingSettings { bakedGI = true, lightmapper = lightmapper };
+            MethodInfo reset = typeof(LightVolumeBaker).GetMethod("ResetUnityBakeState", _nonPublicStaticFlags);
+            MethodInfo started = typeof(LightVolumeBaker).GetMethod("OnUnityBakeStarted", _nonPublicStaticFlags);
+            FieldInfo completionRegistered = typeof(LightVolumeBaker).GetField("_progressiveCompletionProbeRegistered", _nonPublicStaticFlags);
+            try {
+                reset.Invoke(null, null);
+                Lightmapping.lightingSettings = settings;
+                started.Invoke(null, null);
+
+                Assert.That(completionRegistered.GetValue(null), Is.True);
+                reset.Invoke(null, null);
+                Assert.That(completionRegistered.GetValue(null), Is.False);
+
+                settings.bakedGI = false;
+                reset.Invoke(null, null);
+                LogAssert.NoUnexpectedReceived();
+            } finally {
+                settings.bakedGI = true;
+                reset.Invoke(null, null);
+                Lightmapping.lightingSettings = previousSettings;
+                Object.DestroyImmediate(settings);
+            }
+        }
+
+        // Deferred Bakery bakes can destroy every pre-bake scene object before loading the scene again.
+        [Test]
+        public void BakeryCompletionResolvesPrimaryManagerFromRestoredSceneInsteadOfDestroyedCache() {
+            LightVolumeManager restoredManager = CreateComponent<LightVolumeManager>("Restored Bakery Manager");
+            restoredManager.BakingMode = 1;
+
+            LightVolumeManager destroyedManager = CreateComponent<LightVolumeManager>("Destroyed Bakery Manager");
+            destroyedManager.BakingMode = 1;
+            Object.DestroyImmediate(destroyedManager.gameObject);
+
+            Assert.That(LightVolumeManagerEditorBackend.GetPrimaryManager(), Is.SameAs(restoredManager), "The restored test Manager must own the primary scene.");
+            System.Type bakerType = typeof(LightVolumeManagerEditorBackend).Assembly.GetType("VRCLightVolumes.LightVolumeBaker");
+            FieldInfo cachedManagerField = bakerType?.GetField("_bakeryManager", _nonPublicStaticFlags);
+            MethodInfo resolveManager = bakerType?.GetMethod("ResolveBakeryCompletionManager", _nonPublicStaticFlags);
+            Assert.That(bakerType, Is.Not.Null);
+            Assert.That(cachedManagerField, Is.Not.Null);
+            Assert.That(resolveManager, Is.Not.Null);
+
+            object previousCache = cachedManagerField.GetValue(null);
+            try {
+                cachedManagerField.SetValue(null, destroyedManager);
+                LightVolumeManager result = (LightVolumeManager)resolveManager.Invoke(null, null);
+
+                Assert.That(result, Is.SameAs(restoredManager));
+                Assert.That(ReferenceEquals(result, destroyedManager), Is.False);
+            } finally {
+                cachedManagerField.SetValue(null, previousCache);
+            }
+        }
+
+        // Bakery's Legacy probe command does not raise the full-render event. Its dedicated
+        // completion callback must still schedule the same final SH post-process.
+        [Test]
+        public void BakeryLegacyProbeCompletionQueuesProbePostProcess() {
+            MethodInfo reset = typeof(LightVolumeBaker).GetMethod("ResetBakeryBakeState", _nonPublicStaticFlags);
+            MethodInfo finishedProbes = typeof(LightVolumeBaker).GetMethod("OnBakeryProbesFinished", _nonPublicStaticFlags);
+            FieldInfo probePending = typeof(LightVolumeBaker).GetField("_bakeryProbePostProcessPending", _nonPublicStaticFlags);
+            FieldInfo completionQueued = typeof(LightVolumeBaker).GetField("_bakeryCompletionQueued", _nonPublicStaticFlags);
+            Assert.That(reset, Is.Not.Null);
+            Assert.That(finishedProbes, Is.Not.Null);
+            Assert.That(probePending, Is.Not.Null);
+            Assert.That(completionQueued, Is.Not.Null);
+
+            reset.Invoke(null, null);
+            try {
+                finishedProbes.Invoke(null, new object[] { null, System.EventArgs.Empty });
+
+                Assert.That((bool)probePending.GetValue(null), Is.True);
+                Assert.That((bool)completionQueued.GetValue(null), Is.True);
+            } finally {
+                reset.Invoke(null, null);
+            }
+        }
+
+        [Test]
+        public void BakeryProbeCompletionPolicyMatchesSupportedModes() {
+            Assert.That(BakeryEditorBridge.ClassifyProbeRender("L1", true, true, false, false, true), Is.EqualTo(BakeryEditorBridge.ProbeRenderMode.L1));
+            Assert.That(BakeryEditorBridge.ClassifyProbeRender("L2", true, true, false, false, true), Is.EqualTo(BakeryEditorBridge.ProbeRenderMode.L2));
+            Assert.That(BakeryEditorBridge.ClassifyProbeRender("Legacy", true, true, false, false, true), Is.EqualTo(BakeryEditorBridge.ProbeRenderMode.None));
+            Assert.That(BakeryEditorBridge.ClassifyProbeRender("L1", false, true, false, false, true), Is.EqualTo(BakeryEditorBridge.ProbeRenderMode.None));
+            Assert.That(BakeryEditorBridge.ClassifyProbeRender("L1", true, false, false, false, true), Is.EqualTo(BakeryEditorBridge.ProbeRenderMode.None));
+            Assert.That(BakeryEditorBridge.ClassifyProbeRender("L1", true, true, true, false, true), Is.EqualTo(BakeryEditorBridge.ProbeRenderMode.None));
+            Assert.That(BakeryEditorBridge.ClassifyProbeRender("L1", true, true, false, true, false), Is.EqualTo(BakeryEditorBridge.ProbeRenderMode.None));
+            Assert.That(BakeryEditorBridge.ClassifyProbeRender("L1", true, true, false, true, true), Is.EqualTo(BakeryEditorBridge.ProbeRenderMode.L1));
+        }
+
+        // Deferred Bakery renders reload the scene settings and their attached preset.
+        [TestCase(true, false, false)]
+        [TestCase(false, true, false)]
+        [TestCase(false, false, true)]
+        [TestCase(true, true, true)]
+        [TestCase(false, false, false)]
+        public void BakeryVolumeCompressionStaysDisabledAfterPresetReload(bool liveCompression, bool storedCompression, bool presetCompression) {
+            System.Type rendererType = GetBakeryRendererType();
+            FieldInfo compression = rendererType.GetField("compressVolumes", BindingFlags.Static | BindingFlags.Public);
+            FieldInfo storageField = rendererType.GetField("renderSettingsStorage");
+            FieldInfo forceExport = rendererType.GetField("forceRebuildGeometry", BindingFlags.Instance | BindingFlags.NonPublic);
+            System.Type storageType = storageField.FieldType;
+            System.Type presetType = storageType.Assembly.GetType("ftSettingsAsset");
+            Assert.That(presetType, Is.Not.Null);
+            Assert.That(forceExport, Is.Not.Null);
+
+            // Avoid EditorWindow.OnEnable, which loads and changes the current scene's Bakery settings.
+            object renderer = System.Runtime.Serialization.FormatterServices.GetUninitializedObject(rendererType);
+            GameObject storageObject = CreateGameObject("Compression Test Storage");
+            storageObject.SetActive(false);
+            Component storage = storageObject.AddComponent(storageType);
+            ScriptableObject preset = ScriptableObject.CreateInstance(presetType);
+            _createdObjects.Add(preset);
+            FieldInfo storedFlag = storageType.GetField("renderSettingsCompressVolumes");
+            FieldInfo presetFlag = presetType.GetField("renderSettingsCompressVolumes");
+            FieldInfo storedExport = storageType.GetField("renderSettingsForceRebuildGeometry");
+            FieldInfo presetExport = presetType.GetField("renderSettingsForceRebuildGeometry");
+            storedFlag.SetValue(storage, storedCompression);
+            presetFlag.SetValue(preset, presetCompression);
+            storedExport.SetValue(storage, false);
+            presetExport.SetValue(preset, false);
+            storageType.GetField("renderSettingsAsset").SetValue(storage, preset);
+            storageField.SetValue(renderer, storage);
+            EditorUtility.ClearDirty(storage);
+            EditorUtility.ClearDirty(preset);
+
+            object previousCompression = compression.GetValue(null);
+            try {
+                compression.SetValue(null, liveCompression);
+                bool changed = liveCompression || storedCompression || presetCompression;
+                Assert.That(BakeryEditorBridge.DisableVolumeCompression(renderer), Is.EqualTo(changed));
+                Assert.That(compression.GetValue(null), Is.False);
+                Assert.That(storedFlag.GetValue(storage), Is.False);
+                Assert.That(presetFlag.GetValue(preset), Is.False);
+                Assert.That(forceExport.GetValue(renderer), Is.EqualTo(changed));
+                Assert.That(storedExport.GetValue(storage), Is.EqualTo(changed));
+                Assert.That(presetExport.GetValue(preset), Is.EqualTo(changed));
+                Assert.That(EditorUtility.IsDirty(storage), Is.EqualTo(changed));
+                Assert.That(EditorUtility.IsDirty(preset), Is.EqualTo(changed));
+
+                MethodInfo copySettings = storageType.GetMethod("CopySettings", new[] { presetType, storageType });
+                Assert.That(copySettings, Is.Not.Null);
+                copySettings.Invoke(null, new object[] { preset, storage });
+                Assert.That(storedFlag.GetValue(storage), Is.False, "Reloading the attached preset must preserve uncompressed volume output.");
+                Assert.That(storedExport.GetValue(storage), Is.EqualTo(changed), "Reloading the attached preset must preserve the required geometry export.");
+
+                forceExport.SetValue(renderer, false);
+                storedExport.SetValue(storage, false);
+                presetExport.SetValue(preset, false);
+                EditorUtility.ClearDirty(storage);
+                EditorUtility.ClearDirty(preset);
+                Assert.That(BakeryEditorBridge.DisableVolumeCompression(renderer), Is.False);
+                Assert.That(forceExport.GetValue(renderer), Is.False, "An unchanged bake must preserve the geometry export setting.");
+                Assert.That(storedExport.GetValue(storage), Is.False);
+                Assert.That(presetExport.GetValue(preset), Is.False);
+                Assert.That(EditorUtility.IsDirty(storage), Is.False);
+                Assert.That(EditorUtility.IsDirty(preset), Is.False);
+            } finally {
+                compression.SetValue(null, previousCompression);
+            }
+        }
+
+        [TestCase("Eligible", true)]
+        [TestCase("PointLightsOnly", false)]
+        [TestCase("BakeDisabled", false)]
+        [TestCase("Inactive", false)]
+        [TestCase("EditorOnly", false)]
+        [TestCase("OtherManager", false)]
+        public void BakeryVolumeCompressionChangesOnlyForVolumesIncludedInBake(string volumeState, bool expectedChange) {
+            System.Type rendererType = GetBakeryRendererType();
+            FieldInfo compression = rendererType.GetField("compressVolumes", BindingFlags.Static | BindingFlags.Public);
+            object renderer = System.Runtime.Serialization.FormatterServices.GetUninitializedObject(rendererType);
+            LightVolumeManager manager = CreateComponent<LightVolumeManager>("Compression Test Manager");
+            manager.BakingMode = 1;
+            if (volumeState == "PointLightsOnly") {
+                PointLightVolumeInstance point = CreateComponent<PointLightVolumeInstance>("Compression Test Point");
+                point.LightVolumeManager = manager;
+                manager.PointLightVolumeInstances = new[] { point };
+                manager.LightVolumeInstances = new LightVolumeInstance[0];
+            } else {
+                LightVolumeInstance volume = CreateComponent<LightVolumeInstance>("Compression Test Volume");
+                volume.LightVolumeManager = volumeState == "OtherManager"
+                    ? CreateComponent<LightVolumeManager>("Other Compression Test Manager") : manager;
+                volume.Bake = volumeState != "BakeDisabled";
+                if (volumeState == "Inactive") volume.gameObject.SetActive(false);
+                if (volumeState == "EditorOnly") volume.gameObject.tag = "EditorOnly";
+                manager.LightVolumeInstances = new[] { volume };
+            }
+
+            MethodInfo configure = typeof(LightVolumeBaker).GetMethod("ConfigureExistingBakeryVolumes", _nonPublicStaticFlags);
+            Assert.That(configure, Is.Not.Null);
+            object previousCompression = compression.GetValue(null);
+            try {
+                compression.SetValue(null, true);
+                if (expectedChange) {
+                    LogAssert.Expect(LogType.Log, "[LightVolumes] Disabled Bakery's Compress volumes option and enabled Export geometry and maps. Light Volumes require uncompressed volume textures.");
+                }
+                configure.Invoke(null, new[] { (object)manager, renderer });
+                Assert.That(compression.GetValue(null), Is.EqualTo(!expectedChange));
+            } finally {
+                compression.SetValue(null, previousCompression);
+            }
+        }
+
+        // Unified authoring infers the update default only when the source changes and preserves manual overrides during broader cache invalidations.
+        [Test]
+        public void PointLightAuthoringResolvesProjectionSourcesWithoutOverwritingManualAutoUpdate() {
+            PointLightVolumeInstance point = CreateComponent<PointLightVolumeInstance>("Unified Projection Point");
+            Texture2D staticCookie = CreateTexture2D("Static Cookie");
+            RenderTexture animatedCookie = CreateRenderTexture("Animated Cookie", 4, 4, 1, TextureDimension.Tex2D);
+            RenderTexture animatedCubemap = CreateRenderTexture("Animated Cubemap", 4, 4, 1, TextureDimension.Cube);
+
+            point.LightType = 1; // spot
+            point.Projection = 2; // custom
+            point.Cookie = staticCookie;
+            point.EditorApplyAuthoringData(true, false, false);
+            Assert.That(point.CustomTexture, Is.SameAs(staticCookie));
+            Assert.That(point.ProjectionMode, Is.EqualTo(2));
+            Assert.That(point.AutoUpdateCustomTexture, Is.False);
+
+            point.Cookie = animatedCookie;
+            point.EditorApplyAuthoringData(true, false, false);
+            Assert.That(point.CustomTexture, Is.SameAs(animatedCookie));
+            Assert.That(point.AutoUpdateCustomTexture, Is.True);
+
+            point.AutoUpdateCustomTexture = false;
+            point.Intensity = 2f;
+            point.EditorApplyAuthoringData(false, false, false);
+            Assert.That(point.AutoUpdateCustomTexture, Is.False);
+            point.EditorApplyAuthoringData(true, false, false);
+            Assert.That(point.AutoUpdateCustomTexture, Is.False, "A layout-only invalidation overwrote the manual snapshot choice.");
+
+            point.LightType = 0; // point
+            point.Cubemap = animatedCubemap;
+            point.EditorApplyAuthoringData(true, false, false);
+            Assert.That(point.CustomTexture, Is.SameAs(animatedCubemap));
+            Assert.That(point.CustomTexture.dimension, Is.EqualTo(TextureDimension.Cube));
+            Assert.That(point.AutoUpdateCustomTexture, Is.True);
+
+            point.LightType = 2; // area always uses Cookie as its projection source
+            point.Cookie = staticCookie;
+            point.EditorApplyAuthoringData(true, false, false);
+            Assert.That(point.CustomTexture, Is.SameAs(staticCookie));
+            Assert.That(point.ProjectionMode, Is.EqualTo(2));
+            Assert.That(point.AutoUpdateCustomTexture, Is.False);
+        }
+
+        // Spot shadow layout, animated source metadata and the public Shadows toggle share one unified source of truth.
+        [Test]
+        public void PointLightAuthoringResolvesSpotShadowLayoutAndDisabledState() {
+            PointLightVolumeInstance point = CreateComponent<PointLightVolumeInstance>("Unified Shadow Point");
+            Texture2D planarShadow = CreateTexture2D("Planar Shadow");
+            RenderTexture cubemapShadow = CreateRenderTexture("Cubemap Shadow", 4, 4, 1, TextureDimension.Cube);
+
+            point.LightType = 1; // spot
+            point.Angle = 30f * Mathf.Deg2Rad;
+            point.Shadows = true;
+            point.ShadowMap = planarShadow;
+            point.EditorApplyAuthoringData(false, true, false);
+
+            Assert.That(point.ShouldBakeCubemapShadows(), Is.False);
+            Assert.That(point.ShadowMapTexture, Is.SameAs(planarShadow));
+            Assert.That(point.ShadowMapUsesCubemap, Is.False);
+            Assert.That(point.AutoUpdateShadowMap, Is.False);
+            Assert.That(point.ShadowMapID, Is.EqualTo(0f).Within(Epsilon));
+
+            point.ShadowMap = cubemapShadow;
+            point.EditorApplyAuthoringData(false, true, false);
+            Assert.That(point.ShadowMapTextureIsCubemap, Is.True);
+            Assert.That(point.ShadowMapUsesCubemap, Is.True);
+            Assert.That(point.AutoUpdateShadowMap, Is.True);
+
+            point.Shadows = false;
+            point.EditorApplyAuthoringData(false, true, false);
+            Assert.That(point.ShadowMapTexture, Is.Null);
+            Assert.That(point.ShadowMapMaterial, Is.Null);
+            Assert.That(point.ShadowMapUsesCubemap, Is.False);
+            Assert.That(point.AutoUpdateShadowMap, Is.False);
+            Assert.That(point.ShadowMapID, Is.EqualTo(-1f).Within(Epsilon));
+        }
+
+        // Shared and readback-only point-light dependencies are runtime caches, never scene payload.
+        [Test]
+        public void PointLightRuntimeCachesAreNotSerialized() {
+            AssertRuntimeCacheFieldIsNonSerialized(nameof(PointLightVolumeInstance.RuntimeShadowCamera));
+            AssertRuntimeCacheFieldIsNonSerialized(nameof(PointLightVolumeInstance.RuntimeShadowDepthEncodeMaterial));
+            AssertRuntimeCacheFieldIsNonSerialized(nameof(PointLightVolumeInstance.RuntimeShadowBlurMaterial));
+            AssertRuntimeCacheFieldIsNonSerialized(nameof(PointLightVolumeInstance.AreaLightFallbackColor));
+            AssertRuntimeCacheFieldIsNonSerialized(nameof(PointLightVolumeInstance.AreaCookieAverageCustomId));
+            AssertRuntimeCacheFieldIsNonSerialized(nameof(PointLightVolumeInstance.AreaCookieAverageReadbackPending));
+            AssertRuntimeCacheFieldIsNonSerialized(nameof(PointLightVolumeInstance.AreaCookieAverageReadbackDirty));
+        }
+
+        // Registration reuses the manager-owned runtime shadow dependencies instead of creating per-light copies.
+        [Test]
+        public void ManagerAssignsSharedRuntimeShadowDependenciesToRegisteredPointLight() {
+            LightVolumeManager manager = CreateComponent<LightVolumeManager>("Shared Shadow Manager");
+            manager.EnsureRuntimeShadowCamera();
+            manager.RuntimeShadowDepthEncodeMaterial = CreateMaterial("Hidden/VRCLV/PointLightShadowDepthEncode");
+            manager.RuntimeShadowBlurMaterial = CreateMaterial("Hidden/VRCLV/PointLightShadowRuntimeBlur");
+            PointLightVolumeInstance point = CreateComponent<PointLightVolumeInstance>("Shared Shadow Point");
+
+            point.LightVolumeManager = manager;
+            point.RuntimeShadowCamera = null;
+            point.RuntimeShadowDepthEncodeMaterial = null;
+            point.RuntimeShadowBlurMaterial = null;
+            manager.InitializePointLightVolume(point);
+
+            Assert.That(point.RuntimeShadowCamera, Is.SameAs(manager.RuntimeShadowCamera));
+            Assert.That(point.RuntimeShadowDepthEncodeMaterial, Is.SameAs(manager.RuntimeShadowDepthEncodeMaterial));
+            Assert.That(point.RuntimeShadowBlurMaterial, Is.SameAs(manager.RuntimeShadowBlurMaterial));
+            Assert.That(manager.PointLightVolumeInstances, Has.Member(point));
+        }
+
+        // Build cleanup strips duplicate editor payload while preserving final atlas, registries and runtime texture sources.
+        [Test]
+        public void BuildCleanupStripsUnifiedAuthoringReferencesAndPreservesRuntimePayload() {
+            LightVolumeManager manager = CreateComponent<LightVolumeManager>("Build Cleanup Manager");
+            LightVolumeInstance volume = CreateChildComponent<LightVolumeInstance>(manager.transform, "Build Cleanup Volume");
+            PointLightVolumeInstance point = CreateChildComponent<PointLightVolumeInstance>(manager.transform, "Build Cleanup Point");
+            GameObject excludedObject = CreateGameObject("Build Cleanup Shadow Exclusion");
+            MeshRenderer excludedRenderer = excludedObject.AddComponent<MeshRenderer>();
+            Texture3D atlasBase = CreateTexture3D("Build Cleanup Base Atlas");
+            Texture3D finalAtlas = CreateTexture3D("Build Cleanup Final Atlas");
+            Texture3D volumeTexture0 = CreateTexture3D("Build Cleanup Volume 0");
+            Texture3D volumeTexture1 = CreateTexture3D("Build Cleanup Volume 1");
+            Texture3D volumeTexture2 = CreateTexture3D("Build Cleanup Volume 2");
+            Texture2D falloff = CreateTexture2D("Build Cleanup Falloff");
+            Texture2D cookie = CreateTexture2D("Build Cleanup Cookie");
+            Cubemap cubemap = CreateCubemap("Build Cleanup Cubemap");
+            Texture2D shadow = CreateTexture2D("Build Cleanup Shadow");
+            RenderTexture customArray = CreateRenderTexture("Build Cleanup Custom Array", 4, 4, 1, TextureDimension.Tex2DArray);
+            RenderTexture shadowArray = CreateRenderTexture("Build Cleanup Shadow Array", 4, 4, 1, TextureDimension.Tex2DArray);
+            RenderTexture processorTarget = CreateRenderTexture("Build Cleanup Processor", 4, 4, 1, TextureDimension.Tex3D);
+            Material processorMaterial = CreateMaterial("Hidden/CubeFace");
+
+            manager.LightVolumeAtlasBase = atlasBase;
+            manager.LightVolumeAtlas = finalAtlas;
+            manager.CustomTextures = customArray;
+            manager.ShadowTextures = shadowArray;
+            manager.AtlasPostProcessorTargets = new[] { processorTarget };
+            manager.AtlasPostProcessorMaterials = new[] { processorMaterial };
+            manager.AtlasPostProcessorTextureNames = new[] { "_MainTex" };
+            manager.LightVolumeInstances = new[] { volume };
+            manager.PointLightVolumeInstances = new[] { point };
+
+            volume.Texture0 = volumeTexture0;
+            volume.Texture1 = volumeTexture1;
+            volume.Texture2 = volumeTexture2;
+            point.FalloffLUT = falloff;
+            point.Cookie = cookie;
+            point.Cubemap = cubemap;
+            point.ShadowMap = shadow;
+            point.ExclusionMask = new Renderer[] { excludedRenderer };
+            point.CustomTexture = cookie;
+            point.CustomTextureMaterial = null;
+            point.ProjectionMode = 2;
+            point.AutoUpdateCustomTexture = true;
+            point.ShadowMapTexture = shadow;
+            point.ShadowMapMaterial = null;
+            point.AutoUpdateShadowMap = true;
+            point.ShadowMapID = 0f;
+            point.ShadowMapTextureIsCubemap = true;
+            point.ShadowMapTextureHasDepthSlices = true;
+            point.ShadowBakeResolution = 256;
+            point.RuntimeShadowBlurSamplePreset = 1;
+            point.RuntimeShadowSphericalBlur = false;
+
+            InvokePreprocessor("ClearManagerBuildOnlySerializedReferences", manager);
+            InvokePreprocessor("ClearBuildOnlySerializedReferences", manager.gameObject);
+
+            Assert.That(manager.LightVolumeAtlas, Is.SameAs(finalAtlas));
+            Assert.That(manager.LightVolumeAtlasBase, Is.Null);
+            Assert.That(manager.CustomTextures, Is.Null);
+            Assert.That(manager.ShadowTextures, Is.Null);
+            Assert.That(manager.AtlasPostProcessorTargets, Is.Empty);
+            Assert.That(manager.AtlasPostProcessorMaterials, Is.Empty);
+            Assert.That(manager.AtlasPostProcessorTextureNames, Is.Empty);
+            Assert.That(manager.LightVolumeInstances, Is.EqualTo(new[] { volume }));
+            Assert.That(manager.PointLightVolumeInstances, Is.EqualTo(new[] { point }));
+            Assert.That(volume.Texture0, Is.Null);
+            Assert.That(volume.Texture1, Is.Null);
+            Assert.That(volume.Texture2, Is.Null);
+            Assert.That(point.FalloffLUT, Is.Null);
+            Assert.That(point.Cookie, Is.Null);
+            Assert.That(point.Cubemap, Is.Null);
+            Assert.That(point.ShadowMap, Is.Null);
+            Assert.That(point.ExclusionMask, Is.EqualTo(new Renderer[] { excludedRenderer }));
+            Assert.That(point.CustomTexture, Is.SameAs(cookie));
+            Assert.That(point.ProjectionMode, Is.EqualTo(2));
+            Assert.That(point.AutoUpdateCustomTexture, Is.True);
+            Assert.That(point.ShadowMapTexture, Is.SameAs(shadow));
+            Assert.That(point.AutoUpdateShadowMap, Is.True);
+            Assert.That(point.ShadowMapID, Is.EqualTo(0f).Within(Epsilon));
+            Assert.That(point.ShadowMapTextureIsCubemap, Is.True);
+            Assert.That(point.ShadowMapTextureHasDepthSlices, Is.True);
+            Assert.That(point.ShadowBakeResolution, Is.EqualTo(256));
+            Assert.That(point.RuntimeShadowBlurSamplePreset, Is.EqualTo(1));
+            Assert.That(point.RuntimeShadowSphericalBlur, Is.False);
+        }
+
+        // Bake In Game keeps its editor source before build stripping but starts with an empty runtime shadow source.
+        [Test]
+        public void BuildPreparationClearsBakeInGameRuntimeShadowSourceBeforeAuthoringStrip() {
+            LightVolumeManager manager = CreateComponent<LightVolumeManager>("Build Runtime Shadow Manager");
+            PointLightVolumeInstance point = CreateComponent<PointLightVolumeInstance>("Build Runtime Shadow Point");
+            Texture2D shadow = CreateTexture2D("Build Runtime Shadow Source");
+            manager.ShadowTexturesWidth = 512;
+            manager.ShadowTexturesHeight = 512;
+            point.LightVolumeManager = manager;
+            point.Shadows = true;
+            point.BakeInGame = true;
+            point.RuntimeShadowBlurSamplePreset = 1;
+            point.RuntimeShadowSphericalBlur = false;
+            point.ShadowBakeResolution = 128;
+            point.ShadowMap = shadow;
+            point.ShadowMapTexture = shadow;
+            point.AutoUpdateShadowMap = true;
+            point.ShadowMapID = 0f;
+            point.ShadowMapTextureIsCubemap = true;
+            point.ShadowMapTextureHasDepthSlices = true;
+
+            MethodInfo prepare = GetLightVolumePreprocessorType().GetMethod("PreparePointLightForRuntime", _nonPublicStaticFlags);
+            Assert.That(prepare, Is.Not.Null);
+            prepare.Invoke(null, new object[] { point, manager, true });
+
+            Assert.That(point.ShadowMap, Is.SameAs(shadow));
+            Assert.That(point.BakeInGame, Is.True);
+            Assert.That(point.RuntimeShadowResolution, Is.EqualTo(128));
+            Assert.That(point.RuntimeShadowBlurSamplePreset, Is.EqualTo(1));
+            Assert.That(point.RuntimeShadowSphericalBlur, Is.False);
+            Assert.That(point.RuntimeShadowDirectOutput, Is.False);
+            Assert.That(point.RuntimeShadowCamera, Is.SameAs(manager.RuntimeShadowCamera));
+            Assert.That(point.ShadowMapTexture, Is.Null);
+            Assert.That(point.ShadowMapMaterial, Is.Null);
+            Assert.That(point.AutoUpdateShadowMap, Is.False);
+            Assert.That(point.ShadowMapID, Is.EqualTo(-1f).Within(Epsilon));
+            Assert.That(point.ShadowMapTextureIsCubemap, Is.False);
+            Assert.That(point.ShadowMapTextureHasDepthSlices, Is.False);
+
+            MethodInfo strip = GetLightVolumePreprocessorType().GetMethod("ClearPointLightBuildOnlySerializedReferences", _nonPublicStaticFlags);
+            Assert.That(strip, Is.Not.Null);
+            strip.Invoke(null, new object[] { point });
+            Assert.That(point.ShadowMap, Is.Null);
+        }
+
+        // The shared authoring selector inherits the Manager size at Default and overrides both editor and runtime bake resolution explicitly.
+        [Test]
+        public void ShadowBakeResolutionResolverUsesManagerDefaultAndPerLightOverride() {
+            LightVolumeManager manager = CreateComponent<LightVolumeManager>("Shadow Resolution Resolver Manager");
+            PointLightVolumeInstance point = CreateComponent<PointLightVolumeInstance>("Shadow Resolution Resolver Point");
+            manager.ShadowTexturesWidth = 512;
+
+            point.ShadowBakeResolution = 0;
+            Assert.That(PointLightShadowBaker.ResolveShadowBakeResolution(point, manager), Is.EqualTo(512));
+
+            point.ShadowBakeResolution = 128;
+            Assert.That(PointLightShadowBaker.ResolveShadowBakeResolution(point, manager), Is.EqualTo(128));
+
+            point.ShadowBakeResolution = -1;
+            Assert.That(PointLightShadowBaker.ResolveShadowBakeResolution(point, manager), Is.EqualTo(512));
+
+            point.ShadowBakeResolution = 1;
+            Assert.That(PointLightShadowBaker.ResolveShadowBakeResolution(point, manager), Is.EqualTo(16));
+
+            point.ShadowBakeResolution = 4096;
+            Assert.That(PointLightShadowBaker.ResolveShadowBakeResolution(point, manager), Is.EqualTo(2048));
+
+            point.ShadowBakeResolution = 0;
+            point.RuntimeShadowResolution = 4096;
+            Assert.That(PointLightShadowBaker.ResolveShadowBakeResolution(point, null), Is.EqualTo(2048));
+            Assert.That(PointLightShadowBaker.ResolveShadowBakeResolution(null, null), Is.EqualTo(16));
+        }
+
+        // Manager-created texture arrays must never become serialized scene or asset payload.
+        [Test]
+        public void RuntimeTextureArraysUseHideAndDontSave() {
+            LightVolumeManager manager = CreateComponent<LightVolumeManager>("Runtime Texture Cache Manager");
+            PointLightVolumeInstance point = CreateComponent<PointLightVolumeInstance>("Runtime Texture Cache Point");
+            RenderTexture customSource = CreateRenderTexture("Runtime Cookie Source", 4, 4, 1, TextureDimension.Tex2D);
+            RenderTexture shadowSource = CreateRenderTexture("Runtime Shadow Source", 4, 4, 6, TextureDimension.Tex2DArray);
+            manager.CustomTexturesWidth = 4;
+            manager.CustomTexturesHeight = 4;
+            manager.ShadowTexturesWidth = 4;
+            manager.ShadowTexturesHeight = 4;
+            point.LightVolumeManager = manager;
+            point.IsActive = true;
+            point.LightType = 1; // spot keeps the cookie in one 2D array slice
+            point.SetCustomTexture(customSource);
+            point.ShadowMapID = 0f;
+            point.ShadowMapTexture = shadowSource;
+            point.AutoUpdateShadowMap = true;
+            point.ShadowMapTextureHasDepthSlices = true;
+            point.ShadowMapUsesCubemap = true;
+            manager.PointLightVolumeInstances = new[] { point };
+
+            manager.ReinitializeCustomTextures();
+            manager.ReinitializeShadowTextures();
+
+            Assert.That(manager.CustomTextures, Is.Not.Null);
+            Assert.That(manager.ShadowTextures, Is.Not.Null);
+            Assert.That(manager.CustomTextures.hideFlags, Is.EqualTo(HideFlags.HideAndDontSave));
+            Assert.That(manager.ShadowTextures.hideFlags, Is.EqualTo(HideFlags.HideAndDontSave));
+        }
+
+        private T CreateComponent<T>(string name) where T : Component {
+            return CreateGameObject(name).AddComponent<T>();
+        }
+
+        private T CreateChildComponent<T>(Transform parent, string name) where T : Component {
+            GameObject gameObject = CreateGameObject(name);
+            gameObject.transform.SetParent(parent, false);
+            return gameObject.AddComponent<T>();
+        }
+
+        private GameObject CreateGameObject(string name) {
+            GameObject gameObject = new GameObject(name);
+            _createdObjects.Add(gameObject);
+            SceneManager.MoveGameObjectToScene(gameObject, _root.gameObject.scene);
+            gameObject.transform.SetParent(_root, false);
+            return gameObject;
+        }
+
+        private Texture2D CreateTexture2D(string name) {
+            Texture2D texture = new Texture2D(4, 4, TextureFormat.RGBA32, false) { name = name };
+            _createdObjects.Add(texture);
+            return texture;
+        }
+
+        private Texture3D CreateTexture3D(string name) {
+            Texture3D texture = new Texture3D(1, 1, 1, TextureFormat.RGBAHalf, false) { name = name };
+            _createdObjects.Add(texture);
+            return texture;
+        }
+
+        private Cubemap CreateCubemap(string name) {
+            Cubemap texture = new Cubemap(4, TextureFormat.RGBA32, false) { name = name };
+            _createdObjects.Add(texture);
+            return texture;
+        }
+
+        private RenderTexture CreateRenderTexture(string name, int width, int height, int depth, TextureDimension dimension) {
+            RenderTexture texture = new RenderTexture(width, height, 0, RenderTextureFormat.ARGBHalf, RenderTextureReadWrite.Linear) {
+                name = name,
+                dimension = dimension,
+                volumeDepth = depth
+            };
+            texture.Create();
+            _createdObjects.Add(texture);
+            return texture;
+        }
+
+        private Material CreateMaterial(string shaderName) {
+            Shader shader = Shader.Find(shaderName);
+            Assert.That(shader, Is.Not.Null, $"Required test shader '{shaderName}' was not found.");
+            Material material = new Material(shader);
+            _createdObjects.Add(material);
+            return material;
+        }
+
+        private static void InvokePreprocessor(string methodName, object argument) {
+            MethodInfo method = GetLightVolumePreprocessorType().GetMethod(methodName, _nonPublicStaticFlags);
+            Assert.That(method, Is.Not.Null);
+            method.Invoke(null, new[] { argument });
+        }
+
+        private static System.Type GetLightVolumePreprocessorType() {
+            System.Reflection.Assembly[] assemblies = System.AppDomain.CurrentDomain.GetAssemblies();
+            for (int i = 0; i < assemblies.Length; i++) {
+                System.Type type = assemblies[i].GetType("VRCLightVolumes.LightVolumePreprocessor");
+                if (type != null) return type;
+            }
+
+            Assert.Fail("LightVolumePreprocessor type was not found.");
+            return null;
+        }
+
+        private static System.Type GetBakeryRendererType() {
+            FieldInfo field = typeof(BakeryEditorBridge).GetField("BakeryRendererType", _nonPublicStaticFlags);
+            System.Type type = field?.GetValue(null) as System.Type;
+            if (type?.GetField("compressVolumes", BindingFlags.Static | BindingFlags.Public)?.FieldType != typeof(bool)) {
+                Assert.Ignore("This test requires a Bakery version with volume compression.");
+            }
+            return type;
+        }
+
+        private static void AssertRuntimeCacheFieldIsNonSerialized(string fieldName) {
+            FieldInfo field = typeof(PointLightVolumeInstance).GetField(fieldName, BindingFlags.Instance | BindingFlags.Public);
+            Assert.That(field, Is.Not.Null);
+            Assert.That(field.IsNotSerialized, Is.True, $"{fieldName} must stay a runtime-only cache.");
+        }
+
+        private static void AssertVector3Close(Vector3 expected, Vector3 actual) {
+            Assert.That(actual.x, Is.EqualTo(expected.x).Within(Epsilon));
+            Assert.That(actual.y, Is.EqualTo(expected.y).Within(Epsilon));
+            Assert.That(actual.z, Is.EqualTo(expected.z).Within(Epsilon));
+        }
+    }
+}

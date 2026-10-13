@@ -1,550 +1,541 @@
+#if !UDONSHARP && COMPILER_UDONSHARP
+#define UDONSHARP
+#endif
+
 using UnityEngine;
-using System;
 
 #if UDONSHARP
 using VRC.SDKBase;
 using UdonSharp;
-#else
-using System.Collections;
-using VRCShader = UnityEngine.Shader;
 #endif
 
 namespace VRCLightVolumes {
+
+    // LightVolumeManager.*.cs companion partials organize the implementation and must not receive separate UdonSharpProgramAsset files.
+    // - LightVolumeManager.cs: constants, serialized Inspector/runtime state and shader property IDs.
+    // - ~.Core.cs: shared calculations, change notifications, initialization and lifecycle.
+    // - ~.Registries.cs: component registration, stable ordering and compact runtime registries.
+    // - ~.Buffers.cs: frame update orchestration, data packing and shader-global uploads.
+    // - ~.Textures.cs: runtime cookie/custom/shadow texture caches and rendering.
+    // - ~.Clustering.cs: camera-relative froxel clustering and cluster-mask generation.
+    // - ~.Editor.cs: Editor-only state, atlas post-processors, probe baking and preview helpers.
+    // - ~.LegacyEditor.cs: temporary source-compatible editor API retained for existing integrations.
+    // - ~.EditorHandle.cs: supporting manager.Editor handle and public post-processor descriptor; this file does not add another Manager partial.
+
+    [AddComponentMenu("VRC Light Volumes/Light Volume Manager")]
+    [DisallowMultipleComponent]
 #if UDONSHARP
     [UdonBehaviourSyncMode(BehaviourSyncMode.None)]
-    public class LightVolumeManager : UdonSharpBehaviour
+    public partial class LightVolumeManager : UdonSharpBehaviour
 #else
-    public class LightVolumeManager : MonoBehaviour
+    public partial class LightVolumeManager : MonoBehaviour
 #endif
     {
-        public const float Version = 2; // VRC Light Volumes Current version. This value used in shaders (_UdonLightVolumeEnabled) to determine which features are can be used
-        [Tooltip("Combined texture containing all Light Volumes' textures.")]
-        public Texture LightVolumeAtlas;
-        [Tooltip("Combined Texture3D containing all baked Light Volume data. This field is not used at runtime, see LightVolumeAtlas instead. It specifies the base for the post process chain, if given.")]
-        public Texture3D LightVolumeAtlasBase;
-        [Tooltip("When enabled, areas outside Light Volumes fall back to light probes. Otherwise, the Light Volume with the smallest weight is used as fallback. It also improves performance.")]
-        public bool LightProbesBlending = true;
-        [Tooltip("Disables smooth blending with areas outside Light Volumes. Use it if your entire scene's play area is covered by Light Volumes. It also improves performance.")]
-        public bool SharpBounds = true;
-        [Tooltip("Automatically updates most of the volumes properties in runtime. Enabling/Disabling, Color and Intensity updates automatically even without this option enabled. Position, Rotation and Scale gets updated only for volumes that are marked dynamic.")]
-        public bool AutoUpdateVolumes = false;
-        [Tooltip("Limits the maximum number of additive volumes that can affect a single pixel. If you have many dynamic additive volumes that may overlap, it's good practice to limit overdraw to maintain performance.")]
-        public int AdditiveMaxOverdraw = 4;
-        [Tooltip("Disables min/max brightness limits for modern avatar shaders such as lilToon or Poiyomi. Check this only if you're sure your scene lighting is properly configured.")]
-        public bool ForceSceneLighting = false;
-        [Tooltip("The minimum brightness at a point due to lighting from a Point Light Volume, before the light is culled. Larger values will result in better performance, but light attenuation will be less physically correct.")]
-        public float LightsBrightnessCutoff = 0.35f;
-        [Tooltip("All Light Volume instances sorted in decreasing order by weight. You can enable or disable volumes game objects at runtime. Manually disabling unnecessary volumes improves performance.")]
-        public LightVolumeInstance[] LightVolumeInstances = new LightVolumeInstance[0];
-        [Tooltip("All Point Light Volume instances. You can enable or disable point light volumes game objects at runtime. Manually disabling unnecessary point light volumes improves performance.")]
-        public PointLightVolumeInstance[] PointLightVolumeInstances = new PointLightVolumeInstance[0];
-        [Tooltip("A texture array that can be used for as Cubemaps, LUT or Cookies")]
-        public Texture CustomTextures;
-        [Tooltip("Cubemaps count that stored in CustomTextures. Cubemap array elements starts from the beginning, 6 elements each.")]
-        public int CubemapsCount = 0;
-        [HideInInspector] public bool IsRangeDirty = false;
+#region Constants
+        private const float Version = 3; // Current VRC Light Volumes shader feature version
+        private const int MaxLightVolumeCount = 32;
+        private const int MaxPointLightCount = 128;
+        private const int DefaultRegistryOrder = 2147483647;
+        private const int MaxLightVolumeRotationVectors = MaxLightVolumeCount * 2;
+        private const int MaxLightVolumeUvwScaleVectors = MaxLightVolumeCount * 3;
+        private const int MaxLightVolumeLegacyUvwVectors = MaxLightVolumeCount * 6;
+        private const RenderTextureFormat FixedCustomTexturesFormat = RenderTextureFormat.ARGBHalf;
+        private const RenderTextureFormat ClusterMaskFormat = RenderTextureFormat.ARGBInt;
+        private const float DisabledShadingShadowId = 10000f;
+        private const int PointLightUpdateColorRange = 1;
+        private const int PointLightUpdateFull = 2;
+        private const int PointLightUploadPosition = 1;
+        private const int PointLightUploadColor = 2;
+        private const int PointLightUploadExtraData = 4;
+        private const int PointLightUploadDirection = 8;
+        private const int PointLightUploadCustomId = 16;
+        private const int PointLightUploadShadowReprojection = 32;
+        private const int PointLightUploadShadowRotation = 64;
+        private const int PointLightUploadFroxelShadowMetadata = 128;
+        private const int ShadowTextureFormatHalf = 0;
+        private const string RuntimeShadowCameraName = "Runtime Shadow Camera";
+        private const string ClusteringShaderName = "Hidden/VRCLV/FroxelClusteringBuild";
+        private const string ShadowCullingShaderName = "Hidden/VRCLV/FroxelShadowCullPyramid";
+        private const RenderTextureFormat ShadowCullPyramidFormat = RenderTextureFormat.RFloat;
+        private const int MaxShadowCullMipCount = 12;
+        // Leading reductions are fused into the EVSM pass and the final three into packing. Five
+        // scratch levels cover the automatic 128 cap even for a 4096 source shadow map.
+        private const int MaxShadowCullBuildLevelCount = 5;
+        private const int MaxShadowCullAtlasSize = 4096;
+        private const int MaxFroxelShadowCullResolution = 128;
+        // Keeps the conservative EVSM proof useful when receiver bleed reduction is zero without
+        // exposing a second, visually ambiguous threshold in the Manager UI.
+        private const float ShadowCullProbabilityFloor = 0.00390625f; // 1 / 256
+        private const int MaxFroxelTileShift = 4;
+        private const int MaxFroxelSize = 256;
+        private const int MaxFroxelAtlasSize = 4096;
+        private const int MinFroxelCoarse = 2;
+        private const int MaxFroxelCoarse = 8;
+        private const float DefaultFroxelFov = 90f;
+        private const float DefaultFroxelAspect = 1.7777778f;
+        // Hi-Z masks are built for a small conservative sweep around the current camera. The
+        // published grid remains valid throughout that sweep, so normal VR head motion does not
+        // force two full-screen clustering draws every frame.
+        private const float FroxelCameraGuardAngleDegrees = 1.5f;
+        private const float FroxelCameraGuardRotationDot = 0.999914328f; // cos(1.5 degrees / 2)
+        private const float FroxelCameraGuardRadius = 0.1f;
+        private const float FroxelCameraGuardCoordinateEpsilon = 0.0005f;
+        private const int ClusterAxisScale = 255;
+        private const int ClusterAxisStride = 256;
+        private const int ClusterShapeStride = 65536;
+        private const float ClusterAxisPad = 0.020002667f; // tan(0.02 radians)
+        private const float ClusterMaxTangent = 254f;
+#endregion
 
-        private bool _isInitialized = false;
-        private float _prevLightsBrightnessCutoff = 0.35f;
+#region Inspector And Runtime References
+
+        [Header("Light Volume Atlas")]
+        [Tooltip("Packed baked lighting before atlas post-processors. Runtime rendering uses Light Volume Atlas.")]
+        public Texture3D LightVolumeAtlasBase;
+        [Tooltip("Final lighting atlas used by materials. Filled when the baked volumes are packed.")]
+        public Texture LightVolumeAtlas;
+
+        [Header("Point Light Volumes")]
+        [Tooltip("Resolution used for projected cookies, LUTs and cubemaps.")]
+        public int CustomTexturesWidth = 512;
+        [Tooltip("Height of each projected image in the shared texture array.")]
+        public int CustomTexturesHeight = 512;
+        [Tooltip("Higher values shorten light ranges and reduce overlap. Keep low enough to avoid visible light cutoffs.")]
+        public float LightsBrightnessCutoff = 0.35f;
+        [Tooltip("Resolution of each shadow image. Increase it for sharper shadow detail.")]
+        public int ShadowTexturesWidth = 256;
+        [Tooltip("Height of each shadow image in the shared texture array.")]
+        public int ShadowTexturesHeight = 256;
+        [Tooltip("Shadow precision: 0 = ARGBHalf, 1 = ARGBFloat. Use Float if Half produces artifacts.")]
+        public int ShadowTextureFormat = 1;
+        [Tooltip("Reduces light leaking through shadows. Higher values make shadows darker and sharper.")]
+        public float ShadowBleedReduction = 0.2f;
+        [Tooltip("Raw shadow stability value. Use Shadow Min Variance in the Manager Inspector for normal setup.")]
+        public float ShadowMinVariance = 0.0001f;
+
+        [Tooltip("Skips lights that cannot reach the visible surface. Try it when many lights are active and compare the frame rate.")]
+        public bool Clustering = true;
+        [Tooltip("Clustering grid detail across the view. Higher values separate nearby lights more precisely but take more time to process.")]
+        [Range(0.05f, 3f)] public float FroxelDensity = 1f;
+        [Tooltip("Clustering grid detail with distance. Increase if lights at different depths are grouped too broadly.")]
+        [Range(8, MaxFroxelSize)] public int FroxelSlices = 100;
+        [Tooltip("Size of the coarse grid cells relative to the fine grid. Uses 2, 4 or 8. Start with 4.")]
+        [Range(MinFroxelCoarse, MaxFroxelCoarse)] public int FroxelCoarse = 4;
+        [Tooltip("Clustering starts when this many Point Light Volumes are active. Below this count, shaders use the normal light list.")]
+        [Range(1, MaxPointLightCount)] public int ClusteringMinLights = 8;
+        [Tooltip("Skips lights where their shadows fully cover a grid cell. Try it in rooms with large blockers and compare the frame rate.")]
+        public bool ShadowCulling = false;
+
+        [Tooltip("Uses Unity Light Probes outside the volumes. When off, the lowest-weight Regular volume supplies the lighting there.")]
+        public bool LightProbesBlending = true;
+        [Tooltip("Keeps outer volume edges sharp. Turn off for a smooth transition where no other volume overlaps.")]
+        public bool SharpBounds = true;
+        [Tooltip("Follows moving volumes marked Dynamic. Color, intensity and enabled state update without this option.")]
+        public bool AutoUpdateVolumes = true;
+        [Tooltip("Refreshes projection and shadow sources marked for automatic updates. Turn off when all sources are static.")]
+        public bool AutoUpdateTextures = true;
+        [Tooltip("Maximum Additive volumes and Point lights per pixel, counted separately. Lower values can improve the frame rate but may hide lights.")]
+        public int AdditiveMaxOverdraw = 4;
+        [Tooltip("Removes avatar shader brightness limits at startup where supported. Use when avatar lighting should match the scene.")]
+        public bool ForceSceneLighting = false;
+
+        // Shader authoring settings share the runtime schema so UdonSharp proxies and backing behaviours retain the same serialized fields.
+        [Tooltip("Removes unused shader features in Play Mode and builds. Turn off to keep all features. Edit Mode always keeps all features.")]
+        [HideInInspector] public bool ShaderStripping = true;
+        [Tooltip("Chooses shader features from the current scene. Turn off and keep extra features if scripts enable them in game.")]
+        [HideInInspector] public bool AutoShaderFeatures = true;
+        [Tooltip("Features to keep when Auto is off. Include anything your scripts may enable in game.")]
+        [HideInInspector] public int ShaderFeatures = 131071;
+        // Schema zero keeps newly introduced features for old manual masks until the user explicitly edits the expanded selection.
+        [HideInInspector] public int ShaderFeaturesSchema = 0;
+
+        // Persistent authoring settings live on the Udon proxy as well. Keeping them here removes the editor-only Setup component without adding runtime work; heavy asset references are cleared from the temporary build scene by the build preprocessor.
+        private const int BakingModeProgressive = 0;
+        private const int BakingModeBakery = 1;
+        [Tooltip("Choose the lightmapper you use for this scene.")]
+        [HideInInspector] public int BakingMode = BakingModeProgressive; // 0 = Progressive, 1 = Bakery, 2 = Custom Lightmapper
+        [Tooltip("Bakery lights with a matching bitmask affect the volumes.")]
+        [HideInInspector] public int VolumeBitmask = 1;
+        [Tooltip("Bakery lights with a matching bitmask affect Light Probes.")]
+        [HideInInspector] public int ProbeBitmask = 1;
+        [Tooltip("Smooths noise in the baked lighting. Turn off if it removes detail you need.")]
+        [HideInInspector] public bool Denoise = true;
+        [Tooltip("Fills invalid samples, such as those inside walls, from nearby valid samples to reduce light leaks.")]
+        [HideInInspector] public bool DilateInvalidProbes = true;
+        [Tooltip("How far valid lighting spreads into invalid samples. More passes take longer to bake.")]
+        [HideInInspector] public int DilationIterations = 1;
+        [Tooltip("Threshold for filling invalid lighting samples. Lower values mark more samples as invalid.")]
+        [HideInInspector] public float DilationBackfaceBias = 0.1f;
+        [Tooltip("Reduces harsh, burned-looking Bakery Light Probes. May slightly reduce contrast.")]
+        [HideInInspector] public bool FixLightProbesL1 = true;
+        [Tooltip("Uses a smaller baked grid in the atlas. Useful for a lower-detail mobile version.")]
+        [HideInInspector] public int DownscaleVolumes = 0; // 0 = None, 1 = x2, 2 = x4, 3 = x8
+        // The mobile slider is authoring-only. ShadowMinVariance remains the resolved raw runtime value.
+        [Tooltip("Reduces shadow noise on PC. Higher values can make shadows look less attached to objects.")]
+        [HideInInspector] public float ShadowMinVarianceDesktop = 0f;
+        [Tooltip("Reduces shadow noise on mobile. Higher values can make shadows look less attached to objects.")]
+        [HideInInspector] public float ShadowMinVarianceMobile = 1f;
+        // Serializable RT/material/name projection for editor atlas processors. Delegate callbacks remain in transient editor state and must re-register after reload.
+        [HideInInspector] public RenderTexture[] AtlasPostProcessorTargets = new RenderTexture[0];
+        [HideInInspector] public Material[] AtlasPostProcessorMaterials = new Material[0];
+        [HideInInspector] public string[] AtlasPostProcessorTextureNames = new string[0];
+
+        [Header("Runtime Registries")]
+        [Tooltip("Registered baked volumes. Disable unneeded volume GameObjects to reduce work in game.")]
+        public LightVolumeInstance[] LightVolumeInstances = new LightVolumeInstance[0];
+        [Tooltip("Registered Point, Spot and Area lights. Disable unneeded light GameObjects to reduce work in game.")]
+        public PointLightVolumeInstance[] PointLightVolumeInstances = new PointLightVolumeInstance[0];
+
+        [Tooltip("Shared texture array for active cookies, LUTs and cubemaps.")]
+        public RenderTexture CustomTextures;
+        [Tooltip("Number of cubemaps in the projection texture array.")]
+        public int CubemapsCount = 0;
+        [Tooltip("Shared texture array for active shadow maps.")]
+        public RenderTexture ShadowTextures;
+        [Tooltip("Number of cubemap shadows in the shadow texture array.")]
+        public int ShadowCubemapsCount = 0;
+        [Tooltip("Number of shadow maps. Each cubemap counts as one map.")]
+        public int ShadowMapsCount = 0;
+
+        // Material used to copy cubemap source faces into the shared projection texture array
+        [HideInInspector] public Material CubemapFaceMaterial;
+        // Shared disabled camera used by all runtime point light shadow bakes
+        [HideInInspector] public Camera RuntimeShadowCamera;
+        // Shared material used by all runtime point light shadow bakes to encode camera depth
+        [HideInInspector] public Material RuntimeShadowDepthEncodeMaterial;
+        // Shared material used by all runtime point light shadow bakes to blur encoded shadows
+        [HideInInspector] public Material RuntimeShadowBlurMaterial;
+        // Cached quality keyword state for the shared runtime shadow blur material
+        [HideInInspector] public int RuntimeShadowBlurQualityPreset = -1;
+        // Cached uniform-radius keyword state for the shared runtime shadow blur material
+        [HideInInspector] public int RuntimeShadowBlurUniformKeyword = -1;
+        // Cached single-slice direct-projection keyword state for the shared runtime shadow blur material
+        [HideInInspector] public int RuntimeShadowBlurDirectKeyword = -1;
+        // Cached spherical blur keyword state for the shared runtime shadow blur material
+        [HideInInspector] public int RuntimeShadowBlurSphericalKeyword = -1;
+        // Shared material used to build the Coarse and Fine clustered-light masks in packed 2D integer atlases
+        [HideInInspector] public Material ClusteringMaterial;
+        // Shared material used to build the conservative EVSM zero-reach max pyramid consumed by Fine clustering
+        [HideInInspector] public Material ShadowCullingMaterial;
+#endregion
+
+#region Runtime Texture Cache
+
+        // PROJECTION TEXTURES
+        // Counts describe active prefixes, arrays stay reusable to avoid runtime allocations
+        private bool _customTexturesInitialized = false;
+        private int _customTextureArrayDepth = 0;
+        private int _customCubemapTextureCount = 0;
+        private int _customCubemapMaterialCount = 0;
+        private int _customSingleTextureCount = 0;
+        private int _customSingleMaterialCount = 0;
+        private bool _customTexturesUseMipMap = false;
+
+        // Unique custom projection sources split by destination shape and source class
+        private Texture[] _customCubemapTextures = new Texture[0];
+        private Material[] _customCubemapMaterials = new Material[0];
+        private Texture[] _customSingleTextures = new Texture[0];
+        private Material[] _customSingleMaterials = new Material[0];
+
+        // Auto-update flags are cached once per unique source/update-mode pair during a rebuild.
+        private bool[] _customCubemapTextureAutoUpdates = new bool[0];
+        private bool[] _customCubemapMaterialAutoUpdates = new bool[0];
+        private bool[] _customSingleTextureAutoUpdates = new bool[0];
+        private bool[] _customSingleMaterialAutoUpdates = new bool[0];
+        private PointLightVolumeInstance[] _customSingleAreaCookieReceivers = new PointLightVolumeInstance[0];
+        private int[] _customSingleAreaCookieReceiverIndices = new int[0];
+
+        private int[] _pointLightCustomIDs = new int[0];
+        private Color[] _pointLightAreaCookieAverageColors = new Color[0];
+        private bool _areaCookieAverageReadbackScheduled = false;
+        private bool _areaCookieAverageReadbackForceAll = false;
+        [HideInInspector] public bool HasAutoCustomTextureUpdates = false;
+
+        // SHADOW TEXTURES
+        // Counts describe active prefixes, arrays stay reusable to avoid runtime allocations
+        private bool _shadowTexturesInitialized = false;
+        // A failed atlas allocation must not be retried from the per-frame auto-update loop. Explicit source/configuration work calls ReinitializeShadowTextures and clears the latch.
+        private bool _shadowTextureAllocationFailed = false;
+        private int _shadowTextureArrayDepth = 0;
+        private int _shadowCubemapTextureCount = 0;
+        private int _shadowCubemapMaterialCount = 0;
+        private int _shadowSingleTextureCount = 0;
+        private int _shadowSingleMaterialCount = 0;
+
+        // Unique shadow sources and resolved per-point-light shadow IDs
+        private Texture[] _shadowCubemapTextures = new Texture[0];
+        private Material[] _shadowCubemapMaterials = new Material[0];
+        private Texture[] _shadowSingleTextures = new Texture[0];
+        private Material[] _shadowSingleMaterials = new Material[0];
+        private bool[] _shadowCubemapTextureAutoUpdates = new bool[0];
+        private bool[] _shadowCubemapMaterialAutoUpdates = new bool[0];
+        private bool[] _shadowSingleTextureAutoUpdates = new bool[0];
+        private bool[] _shadowSingleMaterialAutoUpdates = new bool[0];
+        private int[] _pointLightShadowIDs = new int[0];
+        private int[] _shadowSourceTypes = new int[0]; // Source types per point light: 0 = none, 1/2 = cubemap texture/material, 3/4 = single texture/material, 5/6 = source-less direct cubemap/single
+        // Direct owners from the last published shadow layout. The public registry can be compacted before the next rebuild, so preserving direct atlas ranges by registry index alone is unsafe.
+        private PointLightVolumeInstance[] _shadowSourceOwners = new PointLightVolumeInstance[0];
+        // A small transient array keeps only source-less direct ranges alive while the shared atlas is resized or remapped. It avoids double-buffering the entire (potentially very large) atlas.
+        private RenderTexture _directShadowPreservationTexture;
+        private PointLightVolumeInstance[] _preservedDirectShadowOwners = new PointLightVolumeInstance[0];
+        private int[] _preservedDirectShadowSliceCounts = new int[0];
+        private int _preservedDirectShadowCount = 0;
+        [HideInInspector] public bool HasAutoShadowTextureUpdates = false;
+#if !UNITY_EDITOR && !COMPILER_UDONSHARP
+        // Standalone non-Udon execution still owns these runtime values directly.
+        private Material _generatedClusteringMaterial;
+        private Material _generatedShadowCullingMaterial;
+        private RenderTexture _shadowCullPyramidSource;
+        private Vector4 _editorFroxelDepthParams;
+#endif
 #if UDONSHARP
-        private bool _isUpdateRequested = false; // Flag that specifies if volumes update requested.
-#else
-        private Coroutine _updateCoroutine = null; // Coroutine that auto-updates volumes if auto-update enabled (Non-Udon only)
+        private RenderTexture _dummyRT; // Small source texture used only for Udon destination-binding blits
 #endif
 
-        // Light Volumes Data
+#endregion
+
+#region Volume State And Shader Buffers
+
+        private bool _isInitialized = false; // Tracks one-time shader array initialization at runtime while still allowing editor property IDs to refresh
+        private bool _isRangeDirty = false; // Global state mirrors and dirty flags
+
+        // Compact shader buffers are the runtime source of truth. These flags only decide whether to upload them.
+        private bool _lightVolumeArraysDirty = false;
+        private bool _updateAllLightVolumeBuffers = false;
+        private bool _updateLightVolumeBuffers = false;
+        private bool _updateLightVolumeEdgeBuffer = false;
+        private int _pointLightArrayUploadMask = 0;
+        private bool _updateNeedsVolumeRebuild = false;
+
+        // Light Volume shader upload buffers
         private int _enabledCount = 0;
-        private int _lastEnabledCount = -1;
         private int _additiveCount = 0;
-        private int _occlusionCount = 0;
+        private Vector4[] _invLocalEdgeSmooth = new Vector4[MaxLightVolumeCount];
+        private Vector4[] _colors = new Vector4[MaxLightVolumeCount];
+        private Vector4[] _boundsUvwScale = new Vector4[MaxLightVolumeUvwScaleVectors];
+        private Vector4[] _boundsUvw = new Vector4[MaxLightVolumeLegacyUvwVectors];
+        private Vector4[] _relativeRotation = new Vector4[MaxLightVolumeRotationVectors];
 
-        private Vector4[] _invLocalEdgeSmooth = new Vector4[0];
-        private Vector4[] _colors = new Vector4[0];
-        private Vector4[] _boundsUvwScale = new Vector4[0];
-        private Vector4[] _boundsOcclusionUvw = new Vector4[0];
-        private Vector4[] _relativeRotationQuaternion = new Vector4[0];
-
-        // Point Lights Data
+        // Point Light Volume shader upload buffers
         private int _pointLightCount = 0;
-        private int _lastPointLightCount = -1;
-        private int[] _enabledPointIDs = new int[128];
-        private Vector4[] _pointLightPosition;
-        private Vector4[] _pointLightColor;
-        private Vector4[] _pointLightDirection;
-        private Vector4[] _pointLightCustomId;
+        private int _activeShadowCount = 0;
+        // Full-strength shadow receivers are the only lights for which a Hi-Z proof can remove a bit.
+        private int _activeShadowCullCount = 0;
+        private int[] _enabledPointIDs = new int[MaxPointLightCount];
+        // Rebuilt with compact buffers. Every lookup validates the hint against _enabledPointIDs before using it, so registry mutations can only cause a slower fallback, never a wrong slot.
+        private int[] _pointLightRegistryToShaderIndex = new int[0];
+        // End-of-frame notification queue. A zero update mask is also the slot's not-queued marker. Fixed-size storage keeps animated setters allocation-free.
+        private int[] _dirtyPointLightShaderIndices = new int[MaxPointLightCount];
+        private int[] _dirtyPointLightUpdateFlags = new int[MaxPointLightCount];
+        private int _dirtyPointLightCount = 0;
+        private Vector4[] _pointLightPosition = new Vector4[MaxPointLightCount];
+        private Vector4[] _pointLightColor = new Vector4[MaxPointLightCount];
+        private Vector4[] _pointLightExtraData = new Vector4[MaxPointLightCount];
+        private Vector4[] _pointLightDirection = new Vector4[MaxPointLightCount];
+        private Vector4[] _pointLightCustomId = new Vector4[MaxPointLightCount];
+        private Vector4[] _clusteringLights = new Vector4[MaxPointLightCount / 2];
+        private Vector4[] _pointLightShadowReprojectionData = new Vector4[MaxPointLightCount];
+        private Vector4[] _pointLightShadowRotationData = new Vector4[MaxPointLightCount];
+        // Clustering-only shadow data is predecoded once per light. Sign bits carry the four
+        // cold-path flags; magnitudes stay strictly positive for every culling-eligible light.
+        private Vector4[] _froxelShadowMetadata = new Vector4[MaxPointLightCount];
+        private bool _clusteringLightsDirty = true;
 
-        // Legacy support Data
-        private Matrix4x4[] _invWorldMatrix = new Matrix4x4[0];
-        private Vector4[] _boundsUvw = new Vector4[0];
-        private Vector4[] _relativeRotation = new Vector4[0];
+        // Matrix upload buffer for active regular volumes
+        private Matrix4x4[] _invWorldMatrix = new Matrix4x4[MaxLightVolumeCount];
 
-        // Other
-        private int[] _enabledIDs = new int[32];
-        private Vector4[] _boundsScale = new Vector4[3];
-        private Vector4[] _bounds = new Vector4[6]; // Legacy
+        // Dynamic transform watch arrays point directly at final shader slots.
+        private int _dynamicLightVolumeCount = 0;
+        private int _dynamicPointLightVolumeCount = 0;
+        private LightVolumeInstance[] _dynamicLightVolumeInstances = new LightVolumeInstance[MaxLightVolumeCount];
+        private PointLightVolumeInstance[] _dynamicPointLightVolumeInstances = new PointLightVolumeInstance[MaxPointLightCount];
+        private Transform[] _dynamicLightVolumeTransforms = new Transform[MaxLightVolumeCount];
+        private Transform[] _dynamicPointLightVolumeTransforms = new Transform[MaxPointLightCount];
+        private int[] _dynamicLightVolumeShaderIndices = new int[MaxLightVolumeCount];
+        private int[] _dynamicPointLightVolumeShaderIndices = new int[MaxPointLightCount];
+        private Matrix4x4[] _dynamicLightVolumeMatrices = new Matrix4x4[MaxLightVolumeCount];
+        private Matrix4x4[] _dynamicPointLightVolumeMatrices = new Matrix4x4[MaxPointLightCount];
 
-        // Public API for other U# scripts
+        // Active registry index buffers for compact shader uploads
+        private int[] _selectedLightVolumeIDs = new int[MaxLightVolumeCount];
+        private float[] _selectionLightVolumeWeights = new float[MaxLightVolumeCount];
+        private int[] _selectionLightVolumeOrders = new int[MaxLightVolumeCount];
+        private int[] _enabledIDs = new int[MaxLightVolumeCount];
+
+        // Public API for other UdonSharp scripts
         public int EnabledCount => _enabledCount;
         public int[] EnabledIDs => _enabledIDs;
 
+        private float _prevLightsBrightnessCutoff = 0.35f;
+
+        // Froxel clustering resources are generated at runtime and never serialized into the world.
+        private RenderTexture _clusterMask;
+        private RenderTexture _coarseClusterMask;
+        private RenderTexture _clusteringSource;
+        private bool _clusteringActive = false;
+        private bool _clusteringUnsupported = false;
+        private bool _clusteringAllocationFailed = false;
+        private bool _froxelLayoutValid = false;
+        private bool _froxelDepthValid = false;
+        private bool _froxelProjectionValid = false;
+        private bool _clusterMaskDirty = true;
+        private bool _clusterMaskValid = false;
+        private bool _clusterGeometryUploadPending = false;
+#if !COMPILER_UDONSHARP
+        // Standalone benchmark diagnostics. These fields are excluded from the Udon program so production Udon pays no counter increment or heap cost.
+        // Static storage also keeps the UdonSharp proxy serializer from looking for standalone-only fields in the Udon heap.
+        [System.NonSerialized]
+        private static int _clusterMaskBuildCount = 0;
+        [System.NonSerialized]
+        private static int _shadowCullPyramidBuildCount = 0;
+        [System.NonSerialized]
+        private static int _shadowCullPyramidBlitCount = 0;
+#endif
+        // The finished hierarchy is one compact linear mip-tail atlas. Per-level textures exist only as build scratch and are released immediately after the final packing blit.
+        private RenderTexture _shadowCullPyramid;
+        private RenderTexture[] _shadowCullBuildLevels = new RenderTexture[MaxShadowCullBuildLevelCount];
+        private bool _shadowCullPyramidDirty = true;
+        private bool _shadowCullPyramidValid = false;
+        private bool _shadowCullPyramidUnsupported = false;
+        private bool _shadowCullPyramidAllocationFailed = false;
+        private bool _shadowCullPyramidSuspendedForAutoUpdates = false;
+        private int _shadowCullPyramidResolution = 0;
+        private int _shadowCullPyramidFirstLevel = 0;
+        private int _shadowCullPyramidLevelCount = 0;
+        private int _shadowCullPyramidSliceCount = 0;
+        private int _shadowCullPyramidAtlasWidthShift = 0;
+        private int _shadowCullPyramidNodeCount = 0;
+        private bool _shadowCullSettingsInitialized = false;
+        private bool _shadowCullSettingsEnabled = false;
+        private float _shadowCullAuthoredBleedReduction = -1f;
+        private float _shadowCullAuthoredMinVariance = -1f;
+        private float _shadowCullBleedReduction = -1f;
+        private float _shadowCullPositiveVarianceScale = -1f;
+        private float _shadowCullNegativeVarianceScale = -1f;
+        private bool _shadowCullMaterialBindingDirty = true;
+        private Material _boundClusteringMaterial;
+        private float _froxelLayoutFov;
+        private float _froxelLayoutAspect;
+        private float _froxelLayoutHorizontalFov;
+        private float _froxelSourceTanHalfHorizontal;
+        private float _froxelSourceTanHalfVertical;
+        private float _froxelLayoutDensity;
+        private int _froxelLayoutSlices;
+        private int _froxelLayoutCoarse;
+        private float _froxelNearClip;
+        private float _froxelFarClip;
+        private float _froxelHorizontalPadding;
+        private float _froxelVerticalPadding;
+        private float _froxelTanHalfHorizontal;
+        private float _froxelTanHalfVertical;
+        private int _fineAtlasWidth;
+        private int _fineAtlasHeight;
+        private int _coarseAtlasWidth;
+        private int _coarseAtlasHeight;
+        private Vector4 _fineGridParams;
+        private Vector4 _coarseGridParams;
+        private Vector4 _coarseReductionParams;
+        private Vector3 _froxelCameraPosition;
+        private Vector3 _froxelCameraRight;
+        private Vector3 _froxelCameraUp;
+        private Vector3 _froxelCameraForward;
+        private Quaternion _froxelCameraRotation;
+        private bool _froxelCameraAnchorValid = false;
+        private bool _froxelCameraAnchorGuarded = false;
+        private float _froxelAnchorSourceNearClip;
+        private float _froxelAnchorSourceFarClip;
+        private float _froxelAnchorSourceHorizontalPadding;
+        private float _froxelAnchorSourceVerticalPadding;
+
+#endregion
+
+
+#region Update Process State
+
+        // Unified delayed update process state
+        private bool _volumeDataUpdateRequested = false;
+        private bool _isUpdatingVolumes = false;
+        // Empty runtime-only ring buffer. Bake In Game lights append themselves from Start. No light references are collected into this queue during build preparation.
+        private PointLightVolumeInstance[] _bakeInGameQueue = new PointLightVolumeInstance[MaxPointLightCount];
+        private int _bakeInGameQueueHead = 0;
+        private int _bakeInGameQueueCount = 0;
+#if UDONSHARP
+        private bool _isUpdateProcessRunning = false; // True while the single delayed update process is scheduled or running
+#else
+        private Coroutine _updateCoroutine = null; // Coroutine that auto-updates volume data and runtime textures when needed (Non-Udon only)
+#endif
+
+#endregion
+
 #region Shader Property IDs
+
         // Light Volumes
-        private int lightVolumeInvLocalEdgeSmoothID;
-        private int lightVolumeColorID;
-        private int lightVolumeCountID;
-        private int lightVolumeAdditiveCountID;
-        private int lightVolumeAdditiveMaxOverdrawID;
-        private int lightVolumeEnabledID;
-        private int lightVolumeVersionID;
-        private int lightVolumeProbesBlendID;
-        private int lightVolumeSharpBoundsID;
-        private int lightVolumeID;
-        private int lightVolumeRotationQuaternionID;
-        private int lightVolumeInvWorldMatrixID;
-        private int lightVolumeUvwScaleID;
-        private int lightVolumeOcclusionUvwID;
-        private int lightVolumeOcclusionCountID;
+        private int _lightVolumeInvLocalEdgeSmoothID;
+        private int _lightVolumeColorID;
+        private int _lightVolumeCountID;
+        private int _lightVolumeAdditiveCountID;
+        private int _lightVolumeAdditiveMaxOverdrawID;
+        private int _lightVolumeEnabledID;
+        private int _lightVolumeVersionID;
+        private int _lightVolumeProbesBlendID;
+        private int _lightVolumeSharpBoundsID;
+        private int _lightVolumeID;
+        private int _lightVolumeRotationID;
+        private int _lightVolumeInvWorldMatrixID;
+        private int _lightVolumeUvwScaleID;
+        private int _lightVolumeUvwID;
+        private int _lightVolumeOcclusionCountID;
         // Point Lights
         private int _pointLightPositionID;
         private int _pointLightColorID;
+        private int _pointLightExtraDataID;
         private int _pointLightDirectionID;
         private int _pointLightCustomIdID;
         private int _pointLightCountID;
         private int _pointLightCubeCountID;
         private int _pointLightTextureID;
+        private int _pointLightTextureTexelCountID;
+        private int _pointLightTextureMaxMipID;
+        private int _pointLightShadowReprojectionDataID;
+        private int _pointLightShadowRotationDataID;
+        private int _pointLightShadowCountID;
+        private int _pointLightShadowCubeCountID;
+        private int _pointLightShadowTextureID;
+        private int _pointLightShadowReceiverParamsID;
+        private int _clusteringLightsID;
+        private int _froxelShadowMetadataID;
         private int _lightBrightnessCutoffID;
-        // Legacy support
-        private int _areaLightBrightnessCutoffID;
-        private int lightVolumeRotationID;
-        private int lightVolumeUvwID;
+        // Froxel Clustering
+        private int _clusteringEnabledID;
+        private int _clusterMaskID;
+        private int _froxelGridID;
+        private int _froxelDepthID;
+        private int _froxelDepthStepID;
+        private int _froxelGridInverseID;
+        private int _coarseClusterMaskID;
+        private int _froxelCoarseGridID;
+        private int _froxelFineGridID;
+        private int _froxelCoarseID;
+        private int _froxelProjectionID;
+        private int _froxelRightID;
+        private int _froxelUpID;
+        private int _froxelForwardID;
+        private int _froxelShadowCullID;
+        private int _shadowCullBuildParamsID;
+        private int _shadowCullReceiverParamsID;
+        private int _shadowCullPreviousID;
+        private int _shadowCullPackParamsID;
+        private int _shadowCullHierarchyID;
+        private int[] _shadowCullMipIDs = new int[MaxShadowCullBuildLevelCount];
         // Other
-        private int forceSceneLightingID;
-        
-        // Initializing gloabal shader arrays if needed 
-        private void TryInitialize() {
+        private int _forceSceneLightingID;
+        private int _cubemapMainTexID;
+        private int _cubemapSourceTexID;
+        private int _cubemapFaceIndexID;
+        private int _cubemapArraySourceTexID;
+        private int _cubemapArraySourceBaseSliceID;
+        private int _cubemapArraySourceResolutionID;
 
-#if !UNITY_EDITOR
-            if (_isInitialized) return;
-#endif
-            // Light Volumes
-            lightVolumeInvLocalEdgeSmoothID = VRCShader.PropertyToID("_UdonLightVolumeInvLocalEdgeSmooth");
-            lightVolumeInvWorldMatrixID = VRCShader.PropertyToID("_UdonLightVolumeInvWorldMatrix");
-            lightVolumeColorID = VRCShader.PropertyToID("_UdonLightVolumeColor");
-            lightVolumeCountID = VRCShader.PropertyToID("_UdonLightVolumeCount");
-            lightVolumeAdditiveCountID = VRCShader.PropertyToID("_UdonLightVolumeAdditiveCount");
-            lightVolumeAdditiveMaxOverdrawID = VRCShader.PropertyToID("_UdonLightVolumeAdditiveMaxOverdraw");
-            lightVolumeEnabledID = VRCShader.PropertyToID("_UdonLightVolumeEnabled");
-            lightVolumeVersionID = VRCShader.PropertyToID("_UdonLightVolumeVersion");
-            lightVolumeProbesBlendID = VRCShader.PropertyToID("_UdonLightVolumeProbesBlend");
-            lightVolumeSharpBoundsID = VRCShader.PropertyToID("_UdonLightVolumeSharpBounds");
-            lightVolumeID = VRCShader.PropertyToID("_UdonLightVolume");
-            lightVolumeRotationQuaternionID = VRCShader.PropertyToID("_UdonLightVolumeRotationQuaternion");
-            lightVolumeUvwScaleID = VRCShader.PropertyToID("_UdonLightVolumeUvwScale");
-            lightVolumeOcclusionUvwID = VRCShader.PropertyToID("_UdonLightVolumeOcclusionUvw");
-            lightVolumeOcclusionCountID = VRCShader.PropertyToID("_UdonLightVolumeOcclusionCount");
-            // Point Lights
-            _pointLightPositionID = VRCShader.PropertyToID("_UdonPointLightVolumePosition");
-            _pointLightColorID = VRCShader.PropertyToID("_UdonPointLightVolumeColor");
-            _pointLightDirectionID = VRCShader.PropertyToID("_UdonPointLightVolumeDirection");
-            _pointLightCountID = VRCShader.PropertyToID("_UdonPointLightVolumeCount");
-            _pointLightCustomIdID = VRCShader.PropertyToID("_UdonPointLightVolumeCustomID");
-            _pointLightCubeCountID = VRCShader.PropertyToID("_UdonPointLightVolumeCubeCount");
-            _pointLightTextureID = VRCShader.PropertyToID("_UdonPointLightVolumeTexture");
-            _lightBrightnessCutoffID = VRCShader.PropertyToID("_UdonLightBrightnessCutoff");
-            // Legacy support
-            _areaLightBrightnessCutoffID = VRCShader.PropertyToID("_UdonAreaLightBrightnessCutoff");
-            lightVolumeRotationID = VRCShader.PropertyToID("_UdonLightVolumeRotation");
-            lightVolumeUvwID = VRCShader.PropertyToID("_UdonLightVolumeUvw");
-            // Other
-            forceSceneLightingID = VRCShader.PropertyToID("_UdonForceSceneLighting");
-
-#if UNITY_EDITOR
-            if (_isInitialized) return;
-#endif
-            // Light Volumes
-            VRCShader.SetGlobalVectorArray(lightVolumeInvLocalEdgeSmoothID, new Vector4[32]);
-            VRCShader.SetGlobalVectorArray(lightVolumeColorID, new Vector4[32]);
-            VRCShader.SetGlobalMatrixArray(lightVolumeInvWorldMatrixID, new Matrix4x4[32]);
-            VRCShader.SetGlobalVectorArray(lightVolumeRotationQuaternionID, new Vector4[32]);
-            VRCShader.SetGlobalVectorArray(lightVolumeUvwScaleID, new Vector4[96]);
-            VRCShader.SetGlobalVectorArray(lightVolumeOcclusionUvwID, new Vector4[32]);
-            // Point Lights
-            VRCShader.SetGlobalVectorArray(_pointLightPositionID, new Vector4[128]);
-            VRCShader.SetGlobalVectorArray(_pointLightColorID, new Vector4[128]);
-            VRCShader.SetGlobalVectorArray(_pointLightDirectionID, new Vector4[128]);
-            VRCShader.SetGlobalVectorArray(_pointLightCustomIdID, new Vector4[128]);
-            // Legacy support
-            VRCShader.SetGlobalVectorArray(lightVolumeRotationID, new Vector4[64]);
-            VRCShader.SetGlobalVectorArray(lightVolumeUvwID, new Vector4[192]);
-
-            _isInitialized = true;
-        }
-
-        #endregion
-
-        private bool _old_AutoUpdateVolumes = false;
-
-#if UDONSHARP
-        // Works only when changing values directly on UdonBehaviour
-        // Low level Udon hacks:
-        // _old_(Name) variables are the old values of the variables.
-        // _onVarChange_(Name) methods (events) are called when the variable changes.
-        public void _onVarChange_AutoUpdateVolumes() {
-            if (!_old_AutoUpdateVolumes && AutoUpdateVolumes) RequestUpdateVolumes();
-        }
-#endif
-
-#if !UDONSHARP || UNITY_EDITOR
-        // To make it work when changing values on UdonSharpBehaviour in editor
-        private void Update() {
-            if (_old_AutoUpdateVolumes != AutoUpdateVolumes) {
-                _old_AutoUpdateVolumes = AutoUpdateVolumes;
-                if (AutoUpdateVolumes) {
-                    RequestUpdateVolumes();
-                }
-            }
-        }
-#endif
-
-        private void OnDisable() {
-            TryInitialize();
-#if !UDONSHARP
-            if (_updateCoroutine != null) {
-                StopCoroutine(_updateCoroutine);
-                _updateCoroutine = null;
-            }
-#endif
-            VRCShader.SetGlobalFloat(lightVolumeEnabledID, 0);
-        }
-
-        private void OnEnable() {
-            RequestUpdateVolumes();
-        }
-
-        private void Start() {
-            _isInitialized = false;
-            UpdateVolumes(); // Force update volumes first time at start even if auto update is disabled
-        }
-
-        // Initrializes Light Volume by adding it to the light volumes array. Automalycally calls in runtime on object spawn
-        public void InitializeLightVolume(LightVolumeInstance lightVolume) {
-            int count = LightVolumeInstances.Length;
-            // If there's an empty element in the array, use it!
-            for (int i = 0; i < count; i++) {
-                if (LightVolumeInstances[i] == null) {
-                    LightVolumeInstances[i] = lightVolume;
-                    lightVolume.LightVolumeManager = this;
-                    lightVolume.IsInitialized = true;
-                    return;
-                }
-            }
-            // No empty element, then increase the array size
-            LightVolumeInstance[] targetArray = new LightVolumeInstance[count + 1];
-            Array.Copy(LightVolumeInstances, targetArray, count);
-            targetArray[count] = lightVolume;
-            lightVolume.IsInitialized = true;
-            lightVolume.LightVolumeManager = this;
-            LightVolumeInstances = targetArray;
-        }
-        public void InitializePointLightVolume(PointLightVolumeInstance pointLightVolume) {
-            int count = PointLightVolumeInstances.Length;
-            // If there's an empty element in the array, use it!
-            for (int i = 0; i < count; i++) {
-                if (PointLightVolumeInstances[i] == null) {
-                    PointLightVolumeInstances[i] = pointLightVolume;
-                    pointLightVolume.LightVolumeManager = this;
-                    pointLightVolume.IsInitialized = true;
-                    return;
-                }
-            }
-            // No empty element, then increase the array size
-            PointLightVolumeInstance[] targetArray = new PointLightVolumeInstance[count + 1];
-            Array.Copy(PointLightVolumeInstances, targetArray, count);
-            targetArray[count] = pointLightVolume;
-            pointLightVolume.IsInitialized = true;
-            pointLightVolume.LightVolumeManager = this;
-            PointLightVolumeInstances = targetArray;
-        }
-
-        // Requests to update volumes next frame
-        public void RequestUpdateVolumes() {
-#if UDONSHARP
-            if (_isUpdateRequested) return; // Prevent multiple requests
-            _isUpdateRequested = true;
-            SendCustomEventDelayedFrames(nameof(UpdateVolumesProcess), 1);
-#else
-            if (_updateCoroutine != null || !isActiveAndEnabled) return;
-            _updateCoroutine = StartCoroutine(UpdateVolumesCoroutine());
-#endif
-        }
-
-#if UDONSHARP
-        // Internal method to auto update volumes every frame recursively
-        public void UpdateVolumesProcess() {
-            if (AutoUpdateVolumes && enabled && gameObject.activeInHierarchy) {
-                SendCustomEventDelayedFrames(nameof(UpdateVolumesProcess), 1); // Auto schedule next update if AutoUpdateVolumes is enabled
-            } else {
-                _isUpdateRequested = false;
-            }
-            UpdateVolumes(); // Actually update volumes
-        }
-#else
-        private IEnumerator UpdateVolumesCoroutine() {
-            do {
-                yield return null;
-                UpdateVolumes();
-            } while (AutoUpdateVolumes);
-            _updateCoroutine = null;
-        }
-#endif
-
-        // Main processing method that recalculates all the volumes data and sets it to the shader variables
-        public void UpdateVolumes() {
-
-            TryInitialize();
-            
-            // Defines if Force Scene Lighting Feature is enabled in scene. 0 if disabled.
-            VRCShader.SetGlobalInteger(forceSceneLightingID, ForceSceneLighting ? 1 : 0);
-
-            if (!enabled || !gameObject.activeInHierarchy) {
-                VRCShader.SetGlobalFloat(lightVolumeEnabledID, 0);
-                return;
-            }
-
-            // Recalculate all lights ranges if LightsBrightnessCutoff changed
-            if (_prevLightsBrightnessCutoff != LightsBrightnessCutoff) {
-                _prevLightsBrightnessCutoff = LightsBrightnessCutoff;
-                IsRangeDirty = true;
-            }
-
-            // Searching for enabled volumes. Counting Additive volumes.
-            _enabledCount = 0;
-            _additiveCount = 0;
-            _occlusionCount = 0;
-            for (int i = 0; i < LightVolumeInstances.Length && _enabledCount < 32; i++) {
-                LightVolumeInstance instance = LightVolumeInstances[i];
-                if (instance == null) continue;
-                if (instance.gameObject.activeInHierarchy && instance.Intensity != 0 && instance.Color != Color.black && !instance.IsIterartedThrough) {
-#if UDONSHARP
-    #if COMPILER_UDONSHARP
-                    if (instance.IsDynamic) instance.UpdateTransform();
-    #else
-                    instance.UpdateTransform();
-    #endif
-#else
-                    if (Application.isPlaying) {
-                        if (instance.IsDynamic) instance.UpdateTransform();
-                    } else {
-                        instance.UpdateTransform();
-                    }
-#endif
-                    if (instance.IsAdditive) _additiveCount++;
-                    if (instance.BakeOcclusion) _occlusionCount++;
-                    _enabledIDs[_enabledCount] = i;
-                    _enabledCount++;
-                    instance.IsIterartedThrough = true;
-                } else {
-                    instance.IsIterartedThrough = false;
-                }
-            }
-
-            // Initializing required arrays
-            if (_enabledCount != _lastEnabledCount) {
-                _invLocalEdgeSmooth = new Vector4[_enabledCount];
-                _relativeRotationQuaternion = new Vector4[_enabledCount];
-                _boundsUvwScale = new Vector4[_enabledCount * 3];
-                _boundsOcclusionUvw = new Vector4[_enabledCount];
-                _colors = new Vector4[_enabledCount];
-
-                // Legacy data arrays
-                _invWorldMatrix = new Matrix4x4[_enabledCount];
-                _relativeRotation = new Vector4[_enabledCount * 2];
-                _boundsUvw = new Vector4[_enabledCount * 6];
-                _lastEnabledCount = _enabledCount;
-            }
-
-            // Filling arrays with enabled volumes
-            for (int i = 0; i < _enabledCount; i++) {
-
-                int enabledId = _enabledIDs[i];
-                int i2 = i * 2;
-                int i3 = i * 3;
-                int i6 = i * 6;
-
-                LightVolumeInstance instance = LightVolumeInstances[enabledId];
-
-                // Reset iterated flag
-                instance.IsIterartedThrough = false;
-
-                // Setting volume transform
-                _invWorldMatrix[i] = instance.InvWorldMatrix;
-                _invLocalEdgeSmooth[i] = instance.InvLocalEdgeSmoothing; // Setting volume edge smoothing
-
-                Vector4 c = instance.Color.linear * instance.Intensity; // Changing volume color
-                c.w = instance.IsRotated ? 1 : 0; // Color alpha stores if volume rotated or not
-                _colors[i] = c;
-
-                // Setting volume relative rotation
-                _relativeRotationQuaternion[i] = instance.RelativeRotation;
-                _relativeRotation[i2] = instance.RelativeRotationRow0; // Legacy
-                _relativeRotation[i2 + 1] = instance.RelativeRotationRow1; // Legacy
-
-                // Setting volume UVW bounds
-                _boundsScale[0] = instance.BoundsUvwMin0;
-                _boundsScale[1] = instance.BoundsUvwMin1;
-                _boundsScale[2] = instance.BoundsUvwMin2;
-                _boundsOcclusionUvw[i] = instance.BakeOcclusion ? instance.BoundsUvwMinOcclusion : -Vector4.one;
-                // Legacy
-                _bounds[0] = instance.BoundsUvwMin0;
-                _bounds[1] = instance.BoundsUvwMax0;
-                _bounds[2] = instance.BoundsUvwMin1;
-                _bounds[3] = instance.BoundsUvwMax1;
-                _bounds[4] = instance.BoundsUvwMin2;
-                _bounds[5] = instance.BoundsUvwMax2;
-
-                Array.Copy(_boundsScale, 0, _boundsUvwScale, i3, 3);
-                Array.Copy(_bounds, 0, _boundsUvw, i6, 6); // Legacy
-
-            }
-
-            // Searching for enabled point light volumes
-            _pointLightCount = 0;
-            for (int i = 0; i < PointLightVolumeInstances.Length && _pointLightCount < 128; i++) {
-                PointLightVolumeInstance instance = PointLightVolumeInstances[i];
-                if (instance == null) continue;
-                if (IsRangeDirty) { // If Brightness cutoff changed, force recalculate every light's range
-                    instance.UpdateRange();
-                }
-                if (instance.gameObject.activeInHierarchy && instance.Intensity != 0 && instance.Color != Color.black && !instance.IsIterartedThrough) {
-#if UDONSHARP
-    #if COMPILER_UDONSHARP
-                    if (instance.IsDynamic) instance.UpdateTransform();
-    #else
-                    instance.UpdateTransform();
-    #endif
-#else
-                    if (Application.isPlaying) {
-                        if (instance.IsDynamic) instance.UpdateTransform();
-                    } else {
-                        instance.UpdateTransform();
-                    }
-#endif
-                    _enabledPointIDs[_pointLightCount] = i;
-                    _pointLightCount++;
-                    instance.IsIterartedThrough = true;
-                } else {
-                    instance.IsIterartedThrough = false;
-                }
-            }
-
-            IsRangeDirty = false; // reset range dirtyness
-
-            // Initializing required arrays
-            if (_pointLightCount != _lastPointLightCount) {
-                _pointLightPosition = new Vector4[_pointLightCount];
-                _pointLightColor = new Vector4[_pointLightCount];
-                _pointLightDirection = new Vector4[_pointLightCount];
-                _pointLightCustomId = new Vector4[_pointLightCount];
-                _lastPointLightCount = _pointLightCount;
-            }
-
-            // Filling arrays with enabled point light volumes
-            for (int i = 0; i < _pointLightCount; i++) {
-                PointLightVolumeInstance instance = PointLightVolumeInstances[_enabledPointIDs[i]];
-
-                // Recalculate squared range of the light light if dirty
-                if (IsRangeDirty || instance.IsRangeDirty) {
-                    instance.UpdateRange();
-                }
-
-                // Reset iterated flag
-                instance.IsIterartedThrough = false;
-
-                Vector4 pos = instance.PositionData;
-                if (!instance.IsAreaLight()) {
-                    if (instance.IsLut()) pos.w /= instance.SquaredScale;
-                    else pos.w *= instance.SquaredScale;
-                }
-                _pointLightPosition[i] = pos;
-
-                Vector4 c = instance.Color.linear * instance.Intensity;
-                c.w = instance.AngleData;
-                _pointLightColor[i] = c;
-
-                _pointLightDirection[i] = instance.DirectionData;
-                _pointLightCustomId[i].x = instance.CustomID;
-                _pointLightCustomId[i].y = instance.ShadowmaskIndex;
-                _pointLightCustomId[i].z = instance.SquaredRange;
-            }
-
-            bool isAtlas = LightVolumeAtlas != null;
-
-            // Setting light volumes version
-            VRCShader.SetGlobalFloat(lightVolumeVersionID, Version);
-
-            // Disabling light volumes system if no atlas or no volumes
-            if ((!isAtlas || _enabledCount == 0) && _pointLightCount == 0) {
-                VRCShader.SetGlobalFloat(lightVolumeEnabledID, 0);
-                return;
-            }
-
-            // 3D texture and it's parameters
-            if (isAtlas) {
-                VRCShader.SetGlobalTexture(lightVolumeID, LightVolumeAtlas);
-            }
-
-            // Regular Light Volumes
-            VRCShader.SetGlobalFloat(lightVolumeCountID, _enabledCount);
-            VRCShader.SetGlobalFloat(lightVolumeAdditiveCountID, _additiveCount);
-            VRCShader.SetGlobalFloat(lightVolumeOcclusionCountID, _occlusionCount);
-            
-            // Defines if Light Probes Blending enabled in scene
-            VRCShader.SetGlobalFloat(lightVolumeProbesBlendID, LightProbesBlending ? 1 : 0);
-            VRCShader.SetGlobalFloat(lightVolumeSharpBoundsID, SharpBounds ? 1 : 0);
-
-            // Max Overdraw
-            VRCShader.SetGlobalFloat(lightVolumeAdditiveMaxOverdrawID, AdditiveMaxOverdraw);
-
-            if (_enabledCount != 0) {
-                // All light volumes inv Edge smooth
-                VRCShader.SetGlobalVectorArray(lightVolumeInvLocalEdgeSmoothID, _invLocalEdgeSmooth);
-
-                // All light volumes UVW
-                VRCShader.SetGlobalVectorArray(lightVolumeUvwScaleID, _boundsUvwScale);
-                VRCShader.SetGlobalVectorArray(lightVolumeOcclusionUvwID, _boundsOcclusionUvw);
-
-                // Volume Transform Matrix
-                VRCShader.SetGlobalMatrixArray(lightVolumeInvWorldMatrixID, _invWorldMatrix);
-
-                // Volume's relative rotation
-                VRCShader.SetGlobalVectorArray(lightVolumeRotationQuaternionID, _relativeRotationQuaternion);
-
-                // Volume's color correction
-                VRCShader.SetGlobalVectorArray(lightVolumeColorID, _colors);
-
-                // Legacy data setting
-                VRCShader.SetGlobalVectorArray(lightVolumeUvwID, _boundsUvw);
-                VRCShader.SetGlobalVectorArray(lightVolumeRotationID, _relativeRotation);
-            }
-
-            // Point Lights
-            VRCShader.SetGlobalFloat(_pointLightCountID, _pointLightCount);
-            VRCShader.SetGlobalFloat(_pointLightCubeCountID, CubemapsCount);
-            if (_pointLightCount != 0) {
-                VRCShader.SetGlobalVectorArray(_pointLightColorID, _pointLightColor);
-                VRCShader.SetGlobalVectorArray(_pointLightPositionID, _pointLightPosition);
-                VRCShader.SetGlobalVectorArray(_pointLightDirectionID, _pointLightDirection);
-                VRCShader.SetGlobalVectorArray(_pointLightCustomIdID, _pointLightCustomId);
-                VRCShader.SetGlobalFloat(_lightBrightnessCutoffID, LightsBrightnessCutoff);
-                VRCShader.SetGlobalFloat(_areaLightBrightnessCutoffID, LightsBrightnessCutoff); // Legacy
-            }
-            if(CustomTextures != null) {
-                VRCShader.SetGlobalTexture(_pointLightTextureID, CustomTextures);
-            }
-
-            // Defines if Light Volumes enabled in scene. 0 if disabled. And a version number if enabled
-            VRCShader.SetGlobalFloat(lightVolumeEnabledID, 1);
-
-        }
+#endregion
     }
 }

@@ -1,0 +1,1091 @@
+using System;
+using System.Collections;
+using System.Collections.Generic;
+using System.Text.RegularExpressions;
+using NUnit.Framework;
+using UdonSharpEditor;
+using UnityEditor;
+using UnityEditor.SceneManagement;
+using UnityEngine;
+using UnityEngine.SceneManagement;
+using UnityEngine.TestTools;
+using VRC.Udon;
+
+#pragma warning disable CS0618
+
+namespace VRCLightVolumes.Tests {
+    [Category("Editor")]
+    public class LightVolumeSceneSetupTests {
+        private Scene _scene;
+        private string _prefabAssetPath;
+        private string _sceneAssetPath;
+
+        [TearDown]
+        public void TearDown() {
+            LightVolumeEditorUpdater.FlushPendingSceneChanges();
+            if (_scene.IsValid() && _scene.isLoaded) EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+            if (!string.IsNullOrEmpty(_sceneAssetPath)) AssetDatabase.DeleteAsset(_sceneAssetPath);
+            if (!string.IsNullOrEmpty(_prefabAssetPath)) AssetDatabase.DeleteAsset(_prefabAssetPath);
+        }
+
+        [Test]
+        public void UnifiedPrefabCreatesOneManagerAndRegistersBothVolumeTypes() {
+            _scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+            GameObject prefabAsset = CreatePrefab(includeLegacyHelpers: false, includeUnifiedComponents: true);
+            Hash128 assetHash = AssetDatabase.GetAssetDependencyHash(_prefabAssetPath);
+
+            GameObject instanceRoot = (GameObject)PrefabUtility.InstantiatePrefab(prefabAsset, _scene);
+            QueueAndFlush(instanceRoot);
+
+            LightVolumeManager manager = GetSingleSceneComponent<LightVolumeManager>();
+            LightVolumeInstance volume = instanceRoot.GetComponentInChildren<LightVolumeInstance>(true);
+            PointLightVolumeInstance pointLight = instanceRoot.GetComponentInChildren<PointLightVolumeInstance>(true);
+            AssertRegistered(manager, volume, pointLight);
+            AssertBackingManager(volume, manager);
+            AssertBackingManager(pointLight, manager);
+
+            QueueAndFlush(instanceRoot);
+            Assert.That(GetSceneComponents<LightVolumeManager>(), Has.Count.EqualTo(1));
+            AssertRegistered(manager, volume, pointLight);
+
+            AssetDatabase.SaveAssets();
+            Assert.That(AssetDatabase.GetAssetDependencyHash(_prefabAssetPath), Is.EqualTo(assetHash));
+            GameObject unchangedAsset = AssetDatabase.LoadAssetAtPath<GameObject>(_prefabAssetPath);
+            Assert.That(unchangedAsset.GetComponentInChildren<LightVolumeInstance>(true).LightVolumeManager, Is.Null);
+            Assert.That(unchangedAsset.GetComponentInChildren<PointLightVolumeInstance>(true).LightVolumeManager, Is.Null);
+
+            SaveAndReopenScene();
+            instanceRoot = FindPrefabInstanceRoot();
+            manager = GetSingleSceneComponent<LightVolumeManager>();
+            volume = instanceRoot.GetComponentInChildren<LightVolumeInstance>(true);
+            pointLight = instanceRoot.GetComponentInChildren<PointLightVolumeInstance>(true);
+            Assert.That(PrefabUtility.GetPrefabInstanceStatus(instanceRoot), Is.EqualTo(PrefabInstanceStatus.Connected));
+            AssertRegistered(manager, volume, pointLight);
+            AssertBackingManager(volume, manager);
+            AssertBackingManager(pointLight, manager);
+        }
+
+        [Test]
+        public void DuplicateManagersUseFirstHierarchyEntryForOnboarding() {
+            _scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+            GameObject firstObject = new GameObject("Primary Manager");
+            SceneManager.MoveGameObjectToScene(firstObject, _scene);
+            LightVolumeManager first = UdonSharpUndo.AddComponent<LightVolumeManager>(firstObject);
+            GameObject secondObject = new GameObject("Ignored Manager");
+            SceneManager.MoveGameObjectToScene(secondObject, _scene);
+            LightVolumeManager second = UdonSharpUndo.AddComponent<LightVolumeManager>(secondObject);
+            GameObject prefabAsset = CreatePrefab(includeLegacyHelpers: false, includeUnifiedComponents: true);
+            GameObject instanceRoot = (GameObject)PrefabUtility.InstantiatePrefab(prefabAsset, _scene);
+
+            QueueAndFlush(instanceRoot);
+
+            LightVolumeInstance volume = instanceRoot.GetComponentInChildren<LightVolumeInstance>(true);
+            PointLightVolumeInstance pointLight = instanceRoot.GetComponentInChildren<PointLightVolumeInstance>(true);
+            Assert.That(LightVolumeManagerEditorBackend.GetPrimaryManager(out int count), Is.SameAs(first));
+            Assert.That(count, Is.EqualTo(2));
+            AssertRegistered(first, volume, pointLight);
+            Assert.That(second.LightVolumeInstances, Is.Empty);
+            Assert.That(second.PointLightVolumeInstances, Is.Empty);
+        }
+
+        [Test]
+        public void DisabledEditorOnlyManagerPreventsAutomaticDuplicateCreation() {
+            _scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+            GameObject managerObject = new GameObject("Excluded Light Volume Manager") { tag = "EditorOnly" };
+            SceneManager.MoveGameObjectToScene(managerObject, _scene);
+            LightVolumeManager manager = UdonSharpUndo.AddComponent<LightVolumeManager>(managerObject);
+            managerObject.SetActive(false);
+            GameObject prefabAsset = CreatePrefab(includeLegacyHelpers: false, includeUnifiedComponents: true);
+            GameObject instanceRoot = (GameObject)PrefabUtility.InstantiatePrefab(prefabAsset, _scene);
+            LightVolumeInstance volume = instanceRoot.GetComponentInChildren<LightVolumeInstance>(true);
+            PointLightVolumeInstance pointLight = instanceRoot.GetComponentInChildren<PointLightVolumeInstance>(true);
+            manager.LightVolumeInstances = new[] { volume };
+            manager.PointLightVolumeInstances = new[] { pointLight };
+            volume.LightVolumeManager = manager;
+            pointLight.LightVolumeManager = manager;
+            LightVolumeManagerEditorBackend.CopyProxyToUdon(volume);
+            LightVolumeManagerEditorBackend.CopyProxyToUdon(pointLight);
+            LightVolumeManagerEditorBackend.CopyProxyToUdon(manager);
+            instanceRoot.tag = "EditorOnly";
+            instanceRoot.SetActive(false);
+
+            QueueAndFlush(instanceRoot);
+
+            Assert.That(GetSceneComponents<LightVolumeManager>(), Is.EqualTo(new[] { manager }));
+            Assert.That(LightVolumeManagerEditorBackend.GetPrimaryManager(out int count), Is.SameAs(manager));
+            Assert.That(count, Is.EqualTo(1));
+            AssertRegistered(manager, volume, pointLight);
+        }
+
+        [Test]
+        public void PrimaryManagerUsesLoadedSceneOrderBeforeHierarchyOrder() {
+            _scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+            GameObject firstObject = new GameObject("First Loaded Scene Manager");
+            SceneManager.MoveGameObjectToScene(firstObject, _scene);
+            LightVolumeManager first = UdonSharpUndo.AddComponent<LightVolumeManager>(firstObject);
+
+            _sceneAssetPath = AssetDatabase.GenerateUniqueAssetPath("Assets/VRCLightVolumesPrimaryManagerSceneOrderTest.unity");
+            Assert.That(EditorSceneManager.SaveScene(_scene, _sceneAssetPath), Is.True);
+
+            Scene secondScene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Additive);
+            GameObject secondObject = new GameObject("Active Additive Scene Manager");
+            SceneManager.MoveGameObjectToScene(secondObject, secondScene);
+            UdonSharpUndo.AddComponent<LightVolumeManager>(secondObject);
+
+            Assert.That(SceneManager.GetActiveScene(), Is.EqualTo(secondScene));
+            Assert.That(LightVolumeManagerEditorBackend.GetPrimaryManager(out int count), Is.SameAs(first));
+            Assert.That(count, Is.EqualTo(2));
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void UnifiedSingleTypePrefabRegistersOnlyItsPresentType(bool pointLightOnly) {
+            _scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+            GameObject prefabAsset = CreatePrefab(
+                includeLegacyHelpers: false,
+                includeUnifiedComponents: true,
+                includeVolume: !pointLightOnly,
+                includePointLight: pointLightOnly);
+            GameObject instanceRoot = (GameObject)PrefabUtility.InstantiatePrefab(prefabAsset, _scene);
+
+            QueueAndFlush(instanceRoot);
+
+            LightVolumeManager manager = GetSingleSceneComponent<LightVolumeManager>();
+            Assert.That(manager.BakingMode, Is.EqualTo(BakeryEditorBridge.IsAvailable ? 1 : 0));
+            LightVolumeInstance volume = instanceRoot.GetComponentInChildren<LightVolumeInstance>(true);
+            PointLightVolumeInstance pointLight = instanceRoot.GetComponentInChildren<PointLightVolumeInstance>(true);
+            if (pointLightOnly) {
+                Assert.That(manager.LightVolumeInstances ?? Array.Empty<LightVolumeInstance>(), Is.Empty);
+                Assert.That(manager.PointLightVolumeInstances, Is.EqualTo(new[] { pointLight }));
+            } else {
+                Assert.That(manager.LightVolumeInstances, Is.EqualTo(new[] { volume }));
+                Assert.That(manager.PointLightVolumeInstances ?? Array.Empty<PointLightVolumeInstance>(), Is.Empty);
+            }
+            AssertBackingManager(pointLightOnly ? (Component)pointLight : volume, manager);
+        }
+
+        [Test]
+        public void RecreatedManagerRegistersEveryExistingSceneVolume() {
+            _scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+            GameObject oldVolumeObject = new GameObject("Existing Volume");
+            SceneManager.MoveGameObjectToScene(oldVolumeObject, _scene);
+            LightVolumeInstance oldVolume = UdonSharpUndo.AddComponent<LightVolumeInstance>(oldVolumeObject);
+            GameObject oldPointObject = new GameObject("Existing Point Light");
+            SceneManager.MoveGameObjectToScene(oldPointObject, _scene);
+            PointLightVolumeInstance oldPoint = UdonSharpUndo.AddComponent<PointLightVolumeInstance>(oldPointObject);
+            oldPointObject.SetActive(false);
+
+            QueueAndFlush(oldVolumeObject);
+            QueueAndFlush(oldPointObject);
+            LightVolumeManager previousManager = GetSingleSceneComponent<LightVolumeManager>();
+            Undo.DestroyObjectImmediate(previousManager.gameObject);
+            Assert.That(GetSceneComponents<LightVolumeManager>(), Is.Empty);
+            Assert.That(oldVolume.LightVolumeManager == null, Is.True);
+            Assert.That(oldPoint.LightVolumeManager == null, Is.True);
+
+            GameObject newVolumeObject = new GameObject("New Volume");
+            SceneManager.MoveGameObjectToScene(newVolumeObject, _scene);
+            LightVolumeInstance newVolume = UdonSharpUndo.AddComponent<LightVolumeInstance>(newVolumeObject);
+            QueueAndFlush(newVolumeObject);
+
+            LightVolumeManager manager = GetSingleSceneComponent<LightVolumeManager>();
+            Assert.That(manager.LightVolumeInstances, Is.EqualTo(new[] { oldVolume, newVolume }));
+            Assert.That(manager.PointLightVolumeInstances, Is.EqualTo(new[] { oldPoint }));
+            Assert.That(oldVolume.RegistryOrder, Is.Zero);
+            Assert.That(newVolume.RegistryOrder, Is.EqualTo(1));
+            Assert.That(oldPoint.RegistryOrder, Is.Zero);
+            Assert.That(oldVolume.LightVolumeManager, Is.SameAs(manager));
+            Assert.That(newVolume.LightVolumeManager, Is.SameAs(manager));
+            Assert.That(oldPoint.LightVolumeManager, Is.SameAs(manager));
+            AssertBackingManager(oldVolume, manager);
+            AssertBackingManager(newVolume, manager);
+            AssertBackingManager(oldPoint, manager);
+
+            QueueAndFlush(newVolumeObject);
+            Assert.That(manager.LightVolumeInstances, Is.EqualTo(new[] { oldVolume, newVolume }));
+            Assert.That(manager.PointLightVolumeInstances, Is.EqualTo(new[] { oldPoint }));
+        }
+
+        [Test]
+        public void UnifiedPrefabCreatesItsBakeryDependencyWhenTheSceneManagerUsesBakery() {
+            if (FindBakeryVolumeType() == null) Assert.Ignore("Bakery is not installed.");
+            _scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+            GameObject managerObject = new GameObject("Existing Light Volume Manager");
+            SceneManager.MoveGameObjectToScene(managerObject, _scene);
+            LightVolumeManager manager = UdonSharpUndo.AddComponent<LightVolumeManager>(managerObject);
+            manager.BakingMode = 1;
+            LightVolumeManagerEditorBackend.CopyProxyToUdon(manager);
+            GameObject prefabAsset = CreatePrefab(
+                includeLegacyHelpers: false,
+                includeUnifiedComponents: true,
+                includePointLight: false);
+            GameObject instanceRoot = (GameObject)PrefabUtility.InstantiatePrefab(prefabAsset, _scene);
+
+            QueueAndFlush(instanceRoot);
+            QueueAndFlush(instanceRoot);
+
+            LightVolumeInstance volume = instanceRoot.GetComponentInChildren<LightVolumeInstance>(true);
+            Assert.That(GetSceneComponents<LightVolumeManager>(), Is.EqualTo(new[] { manager }));
+            Assert.That(manager.LightVolumeInstances, Is.EqualTo(new[] { volume }));
+            Transform bakeryHelper = volume.transform.Find($"Bakery Volume - {volume.gameObject.name}");
+            Assert.That(bakeryHelper, Is.Not.Null);
+            Assert.That(bakeryHelper.CompareTag("EditorOnly"), Is.True);
+            Assert.That(bakeryHelper.GetComponent("BakeryVolume"), Is.Not.Null);
+        }
+
+        [Test]
+        public void ProgressiveOnboardingPreservesAnInheritedBakeryDependency() {
+            if (FindBakeryVolumeType() == null) Assert.Ignore("Bakery is not installed.");
+            _scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+            GameObject managerObject = new GameObject("Progressive Light Volume Manager");
+            SceneManager.MoveGameObjectToScene(managerObject, _scene);
+            LightVolumeManager progressiveManager = UdonSharpUndo.AddComponent<LightVolumeManager>(managerObject);
+            progressiveManager.BakingMode = 0;
+            LightVolumeManagerEditorBackend.CopyProxyToUdon(progressiveManager);
+            CreatePrefab(
+                includeLegacyHelpers: false,
+                includeUnifiedComponents: true,
+                includePointLight: false,
+                includeBakeryDependency: true);
+            GameObject prefabAsset = AssetDatabase.LoadAssetAtPath<GameObject>(_prefabAssetPath);
+            GameObject instanceRoot = (GameObject)PrefabUtility.InstantiatePrefab(prefabAsset, _scene);
+            LightVolumeInstance volume = instanceRoot.GetComponentInChildren<LightVolumeInstance>(true);
+            Component inheritedDependency = volume.BakeryVolume;
+
+            QueueAndFlush(instanceRoot);
+
+            LightVolumeManager manager = GetSingleSceneComponent<LightVolumeManager>();
+            Assert.That(manager, Is.SameAs(progressiveManager));
+            Assert.That(manager.IsBakeryMode, Is.False);
+            Assert.That(volume.BakeryVolume, Is.SameAs(inheritedDependency));
+            Assert.That(inheritedDependency, Is.Not.Null);
+            Assert.That(PrefabUtility.GetCorrespondingObjectFromSource(inheritedDependency), Is.Not.Null);
+            Assert.That(PrefabUtility.GetRemovedComponents(instanceRoot), Is.Empty);
+        }
+
+        [UnityTest]
+        public IEnumerator PrefabInstantiationEventRunsAutomaticOnboarding() {
+            _scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+            GameObject prefabAsset = CreatePrefab(includeLegacyHelpers: false, includeUnifiedComponents: true);
+            yield return null;
+            yield return null;
+            LightVolumeEditorUpdater.FlushPendingSceneChanges();
+            Assert.That(GetSceneComponents<LightVolumeManager>(), Is.Empty);
+            GameObject instanceRoot = (GameObject)PrefabUtility.InstantiatePrefab(prefabAsset, _scene);
+            Undo.RegisterCreatedObjectUndo(instanceRoot, "Instantiate Light Volumes Prefab");
+            LightVolumeInstance volume = instanceRoot.GetComponentInChildren<LightVolumeInstance>(true);
+            PointLightVolumeInstance pointLight = instanceRoot.GetComponentInChildren<PointLightVolumeInstance>(true);
+            yield return WaitForAutomaticEditorChange(
+                () => volume.LightVolumeManager != null && pointLight.LightVolumeManager == volume.LightVolumeManager,
+                "prefab instances to receive their scene Manager");
+
+            List<LightVolumeManager> managers = GetSceneComponents<LightVolumeManager>();
+            Assert.That(managers, Has.Count.EqualTo(1));
+            LightVolumeManager manager = managers[0];
+            AssertRegistered(manager, volume, pointLight);
+        }
+
+        [UnityTest]
+        public IEnumerator PrefabAssetUpdateOnboardsEveryOpenSceneInstance() {
+            _scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+            GameObject managerObject = new GameObject("Existing Light Volume Manager");
+            SceneManager.MoveGameObjectToScene(managerObject, _scene);
+            LightVolumeManager manager = UdonSharpUndo.AddComponent<LightVolumeManager>(managerObject);
+            GameObject prefabAsset = CreatePrefab(
+                includeLegacyHelpers: false,
+                includeUnifiedComponents: false,
+                includeVolume: false,
+                includePointLight: false);
+            GameObject firstInstance = (GameObject)PrefabUtility.InstantiatePrefab(prefabAsset, _scene);
+            GameObject secondInstance = (GameObject)PrefabUtility.InstantiatePrefab(prefabAsset, _scene);
+            yield return null;
+            LightVolumeEditorUpdater.FlushPendingSceneChanges();
+
+            GameObject contentsRoot = PrefabUtility.LoadPrefabContents(_prefabAssetPath);
+            try {
+                GameObject volumeObject = new GameObject("Volume");
+                volumeObject.transform.SetParent(contentsRoot.transform, false);
+                UdonSharpUndo.AddComponent<LightVolumeInstance>(volumeObject);
+                GameObject pointObject = new GameObject("Point Light");
+                pointObject.transform.SetParent(contentsRoot.transform, false);
+                UdonSharpUndo.AddComponent<PointLightVolumeInstance>(pointObject);
+                PrefabUtility.SaveAsPrefabAsset(contentsRoot, _prefabAssetPath);
+            } finally {
+                PrefabUtility.UnloadPrefabContents(contentsRoot);
+            }
+
+            yield return WaitForAutomaticEditorChange(
+                () => manager.LightVolumeInstances.Length >= 2 && manager.PointLightVolumeInstances.Length >= 2,
+                "updated prefab instances to register both volume types");
+            LightVolumeEditorUpdater.FlushPendingSceneChanges();
+
+            LightVolumeInstance firstVolume = firstInstance.GetComponentInChildren<LightVolumeInstance>(true);
+            LightVolumeInstance secondVolume = secondInstance.GetComponentInChildren<LightVolumeInstance>(true);
+            PointLightVolumeInstance firstPoint = firstInstance.GetComponentInChildren<PointLightVolumeInstance>(true);
+            PointLightVolumeInstance secondPoint = secondInstance.GetComponentInChildren<PointLightVolumeInstance>(true);
+            Assert.That(manager.LightVolumeInstances, Is.EquivalentTo(new[] { firstVolume, secondVolume }));
+            Assert.That(manager.PointLightVolumeInstances, Is.EquivalentTo(new[] { firstPoint, secondPoint }));
+            Assert.That(firstVolume.LightVolumeManager, Is.SameAs(manager));
+            Assert.That(secondVolume.LightVolumeManager, Is.SameAs(manager));
+            Assert.That(firstPoint.LightVolumeManager, Is.SameAs(manager));
+            Assert.That(secondPoint.LightVolumeManager, Is.SameAs(manager));
+        }
+
+        [UnityTest]
+        public IEnumerator AddingComponentsRunsAutomaticOnboarding() {
+            _scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+            GameObject volumeObject = new GameObject("Volume Target");
+            GameObject pointLightObject = new GameObject("Point Light Target");
+            Undo.RegisterCreatedObjectUndo(volumeObject, "Create Volume Target");
+            Undo.RegisterCreatedObjectUndo(pointLightObject, "Create Point Light Target");
+            yield return null;
+            yield return null;
+            LightVolumeEditorUpdater.FlushPendingSceneChanges();
+            Assert.That(GetSceneComponents<LightVolumeManager>(), Is.Empty);
+
+            LightVolumeInstance volume = UdonSharpUndo.AddComponent<LightVolumeInstance>(volumeObject);
+            yield return WaitForAutomaticEditorChange(
+                () => volume.LightVolumeManager != null,
+                "the added Light Volume to receive its scene Manager");
+
+            LightVolumeManager manager = GetSingleSceneComponent<LightVolumeManager>();
+            Assert.That(manager.LightVolumeInstances, Is.EqualTo(new[] { volume }));
+            Assert.That(volume.LightVolumeManager, Is.SameAs(manager));
+            AssertBackingManager(volume, manager);
+
+            PointLightVolumeInstance pointLight = UdonSharpUndo.AddComponent<PointLightVolumeInstance>(pointLightObject);
+            yield return WaitForAutomaticEditorChange(
+                () => pointLight.LightVolumeManager != null,
+                "the added Point Light Volume to receive its scene Manager");
+
+            Assert.That(GetSceneComponents<LightVolumeManager>(), Is.EqualTo(new[] { manager }));
+            Assert.That(manager.LightVolumeInstances, Is.EqualTo(new[] { volume }));
+            Assert.That(manager.PointLightVolumeInstances, Is.EqualTo(new[] { pointLight }));
+            Assert.That(pointLight.LightVolumeManager, Is.SameAs(manager));
+            AssertBackingManager(pointLight, manager);
+        }
+
+        [UnityTest]
+        public IEnumerator DeletingAndUndoingPointLightDoesNotConsumeTransformUndoOrLoseRegistration() {
+            _scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+            UnityEngine.Object previousSelection = Selection.activeObject;
+            GameObject managerObject = new GameObject("Undo Registration Manager");
+            GameObject pointObject = new GameObject("Undo Registration Point Light");
+            SceneManager.MoveGameObjectToScene(managerObject, _scene);
+            SceneManager.MoveGameObjectToScene(pointObject, _scene);
+
+            try {
+                // Keep setup out of Unity's Undo stack so the test measures only the user's move,
+                // delete, and the editor's automatic registry repair.
+                Selection.activeObject = null;
+                LightVolumeManager manager = managerObject.AddUdonSharpComponent<LightVolumeManager>();
+                PointLightVolumeInstance pointLight = pointObject.AddUdonSharpComponent<PointLightVolumeInstance>();
+                manager.LightVolumeInstances = Array.Empty<LightVolumeInstance>();
+                manager.PointLightVolumeInstances = new[] { pointLight };
+                pointLight.LightVolumeManager = manager;
+                pointLight.RegistryOrder = 0;
+                Vector3 originalPosition = new Vector3(1f, 2f, 3f);
+                Vector3 movedPosition = new Vector3(4f, 5f, 6f);
+                pointObject.transform.position = originalPosition;
+                LightVolumeManagerEditorBackend.CopyProxyToUdon(pointLight);
+                LightVolumeManagerEditorBackend.CopyProxyToUdon(manager);
+                yield return DrainAutomaticEditorChanges();
+                AssertPointRegistered(manager, pointLight);
+
+                Undo.IncrementCurrentGroup();
+                int moveGroup = Undo.GetCurrentGroup();
+                Undo.SetCurrentGroupName("Move Point Light Volume");
+                Undo.RecordObject(pointLight.transform, "Move Point Light Volume");
+                pointLight.transform.position = movedPosition;
+                Undo.FlushUndoRecordObjects();
+                Undo.CollapseUndoOperations(moveGroup);
+                yield return DrainAutomaticEditorChanges();
+
+                Undo.IncrementCurrentGroup();
+                int deleteGroup = Undo.GetCurrentGroup();
+                Undo.SetCurrentGroupName("Delete Point Light Volume");
+                Undo.DestroyObjectImmediate(pointLight.gameObject);
+                Undo.CollapseUndoOperations(deleteGroup);
+                yield return DrainAutomaticEditorChanges();
+                bool registryWasEmptyAfterDelete = (manager.PointLightVolumeInstances ?? Array.Empty<PointLightVolumeInstance>()).Length == 0;
+
+                Undo.PerformUndo();
+                yield return DrainAutomaticEditorChanges();
+                pointLight = GetSingleSceneComponent<PointLightVolumeInstance>();
+                pointObject = pointLight.gameObject;
+                Assert.That(registryWasEmptyAfterDelete, Is.True);
+                Assert.That(pointLight.transform.position, Is.EqualTo(movedPosition));
+                AssertPointRegistered(manager, pointLight);
+
+                // Automatic reconciliation must not sit above the move as a hidden Undo record.
+                Undo.PerformUndo();
+                yield return DrainAutomaticEditorChanges();
+                pointLight = GetSingleSceneComponent<PointLightVolumeInstance>();
+                pointObject = pointLight.gameObject;
+                Assert.That(pointLight.transform.position, Is.EqualTo(originalPosition));
+                AssertPointRegistered(manager, pointLight);
+            } finally {
+                Selection.activeObject = previousSelection;
+                ClearHierarchyUndo(pointObject);
+                ClearHierarchyUndo(managerObject);
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator EditorChangesRepairAnOrphanedPointLightRegistration() {
+            _scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+            UnityEngine.Object previousSelection = Selection.activeObject;
+            GameObject managerObject = new GameObject("Registration Repair Manager");
+            GameObject pointObject = new GameObject("Registration Repair Point Light");
+            SceneManager.MoveGameObjectToScene(managerObject, _scene);
+            SceneManager.MoveGameObjectToScene(pointObject, _scene);
+            try {
+                Selection.activeObject = null;
+                LightVolumeManager manager = managerObject.AddUdonSharpComponent<LightVolumeManager>();
+                PointLightVolumeInstance pointLight = pointObject.AddUdonSharpComponent<PointLightVolumeInstance>();
+                manager.LightVolumeInstances = Array.Empty<LightVolumeInstance>();
+                manager.PointLightVolumeInstances = new[] { pointLight };
+                pointLight.LightVolumeManager = manager;
+                pointLight.RegistryOrder = 0;
+                LightVolumeManagerEditorBackend.CopyProxyToUdon(pointLight);
+                LightVolumeManagerEditorBackend.CopyProxyToUdon(manager);
+                yield return DrainAutomaticEditorChanges();
+
+                manager.PointLightVolumeInstances = Array.Empty<PointLightVolumeInstance>();
+                Undo.RecordObject(pointLight.transform, "Move Orphaned Point Light Volume");
+                pointLight.transform.position += Vector3.one;
+                Undo.FlushUndoRecordObjects();
+                yield return DrainAutomaticEditorChanges();
+                AssertPointRegistered(manager, pointLight);
+
+                manager.PointLightVolumeInstances = Array.Empty<PointLightVolumeInstance>();
+                Undo.RecordObject(pointLight.gameObject, "Disable Orphaned Point Light Volume");
+                pointLight.gameObject.SetActive(false);
+                Undo.FlushUndoRecordObjects();
+                yield return DrainAutomaticEditorChanges();
+                AssertPointRegistered(manager, pointLight);
+                Undo.RecordObject(pointLight.gameObject, "Enable Point Light Volume");
+                pointLight.gameObject.SetActive(true);
+                Undo.FlushUndoRecordObjects();
+                yield return DrainAutomaticEditorChanges();
+                AssertPointRegistered(manager, pointLight);
+
+                manager.PointLightVolumeInstances = Array.Empty<PointLightVolumeInstance>();
+                Undo.RecordObject(pointLight, "Disable Point Light Volume Component");
+                pointLight.enabled = false;
+                Undo.FlushUndoRecordObjects();
+                yield return DrainAutomaticEditorChanges();
+                AssertPointRegistered(manager, pointLight);
+                Undo.RecordObject(pointLight, "Enable Point Light Volume Component");
+                pointLight.enabled = true;
+                Undo.FlushUndoRecordObjects();
+                yield return DrainAutomaticEditorChanges();
+                AssertPointRegistered(manager, pointLight);
+
+                manager.PointLightVolumeInstances = Array.Empty<PointLightVolumeInstance>();
+                Undo.RecordObject(manager, "Disable Light Volume Manager");
+                manager.enabled = false;
+                Undo.FlushUndoRecordObjects();
+                yield return DrainAutomaticEditorChanges();
+                AssertPointRegistered(manager, pointLight);
+                Undo.RecordObject(manager, "Enable Light Volume Manager");
+                manager.enabled = true;
+                Undo.FlushUndoRecordObjects();
+                yield return DrainAutomaticEditorChanges();
+                AssertPointRegistered(manager, pointLight);
+            } finally {
+                Selection.activeObject = previousSelection;
+                ClearHierarchyUndo(pointObject);
+                ClearHierarchyUndo(managerObject);
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator OpeningSceneRepairsMissingPointRegistrationWithExistingManager() {
+            _scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+            GameObject managerObject = new GameObject("Reopen Registration Manager");
+            GameObject pointObject = new GameObject("Reopen Registration Point Light");
+            SceneManager.MoveGameObjectToScene(managerObject, _scene);
+            SceneManager.MoveGameObjectToScene(pointObject, _scene);
+            LightVolumeManager manager = managerObject.AddUdonSharpComponent<LightVolumeManager>();
+            PointLightVolumeInstance pointLight = pointObject.AddUdonSharpComponent<PointLightVolumeInstance>();
+            manager.LightVolumeInstances = Array.Empty<LightVolumeInstance>();
+            manager.PointLightVolumeInstances = new[] { pointLight };
+            pointLight.LightVolumeManager = manager;
+            pointLight.RegistryOrder = 0;
+            LightVolumeManagerEditorBackend.CopyProxyToUdon(pointLight);
+            LightVolumeManagerEditorBackend.CopyProxyToUdon(manager);
+            yield return DrainAutomaticEditorChanges();
+            AssertPointRegistered(manager, pointLight);
+
+            // Establish the corrupt serialized state only after all creation callbacks are drained,
+            // so scene-open reconciliation is the sole repair path measured below.
+            manager.PointLightVolumeInstances = Array.Empty<PointLightVolumeInstance>();
+            LVUtils.MarkDirty(manager);
+            LightVolumeManagerEditorBackend.CopyProxyToUdon(manager);
+            Assert.That(manager.PointLightVolumeInstances, Is.Empty);
+
+            _sceneAssetPath = AssetDatabase.GenerateUniqueAssetPath("Assets/VRCLightVolumesOrphanRegistrationReopenTest.unity");
+            Assert.That(EditorSceneManager.SaveScene(_scene, _sceneAssetPath), Is.True);
+            EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+            _scene = EditorSceneManager.OpenScene(_sceneAssetPath, OpenSceneMode.Single);
+            yield return DrainAutomaticEditorChanges();
+
+            manager = GetSingleSceneComponent<LightVolumeManager>();
+            pointLight = GetSingleSceneComponent<PointLightVolumeInstance>();
+            AssertPointRegistered(manager, pointLight);
+        }
+
+        [Test]
+        public void AutomaticRegistrationRepairRestoresStablePointLightOrder() {
+            _scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+            GameObject managerObject = new GameObject("Stable Repair Manager");
+            SceneManager.MoveGameObjectToScene(managerObject, _scene);
+            LightVolumeManager manager = managerObject.AddUdonSharpComponent<LightVolumeManager>();
+            PointLightVolumeInstance[] pointLights = new PointLightVolumeInstance[4];
+            for (int i = 0; i < pointLights.Length; i++) {
+                GameObject pointObject = new GameObject($"Stable Repair Point {i}");
+                SceneManager.MoveGameObjectToScene(pointObject, _scene);
+                PointLightVolumeInstance pointLight = pointObject.AddUdonSharpComponent<PointLightVolumeInstance>();
+                pointLight.LightVolumeManager = manager;
+                pointLight.RegistryOrder = i;
+                pointLights[i] = pointLight;
+            }
+            manager.LightVolumeInstances = Array.Empty<LightVolumeInstance>();
+            manager.PointLightVolumeInstances = new[] { pointLights[0], pointLights[3] };
+
+            // Restore the later missing entry first to prove recovery does not depend on callback order.
+            bool registeredLater = LightVolumeManagerEditorBackend.EnsureRegistered(
+                manager,
+                pointLights[2],
+                "Repair Point Light Registration",
+                false,
+                out bool changedLater);
+            bool registeredEarlier = LightVolumeManagerEditorBackend.EnsureRegistered(
+                manager,
+                pointLights[1],
+                "Repair Point Light Registration",
+                false,
+                out bool changedEarlier);
+            LightVolumeManagerEditorBackend.SynchronizeRegistryMetadata(manager);
+
+            Assert.That(registeredLater, Is.True);
+            Assert.That(changedLater, Is.True);
+            Assert.That(registeredEarlier, Is.True);
+            Assert.That(changedEarlier, Is.True);
+            Assert.That(manager.PointLightVolumeInstances, Is.EqualTo(pointLights));
+            for (int i = 0; i < pointLights.Length; i++) {
+                Assert.That(pointLights[i].LightVolumeManager, Is.SameAs(manager));
+                Assert.That(pointLights[i].RegistryOrder, Is.EqualTo(i));
+            }
+
+            pointLights[0].RegistryOrder = 7;
+            Assert.That(LightVolumeManagerEditorBackend.EnsureRegistered(
+                manager,
+                pointLights[0],
+                "Repair Point Light Metadata",
+                false,
+                out bool metadataChanged), Is.True);
+            Assert.That(metadataChanged, Is.True);
+            Assert.That(pointLights[0].RegistryOrder, Is.Zero);
+        }
+
+        [UnityTest]
+        public IEnumerator OpeningSceneReconcilesManagerlessPrefabAfterLegacyMigrationPass() {
+            _scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+            GameObject prefabAsset = CreatePrefab(includeLegacyHelpers: false, includeUnifiedComponents: true);
+            PrefabUtility.InstantiatePrefab(prefabAsset, _scene);
+            _sceneAssetPath = AssetDatabase.GenerateUniqueAssetPath("Assets/VRCLightVolumesSceneSetupReopenTest.unity");
+            Assert.That(EditorSceneManager.SaveScene(_scene, _sceneAssetPath), Is.True);
+            Assert.That(GetSceneComponents<LightVolumeManager>(), Is.Empty);
+
+            EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+            _scene = EditorSceneManager.OpenScene(_sceneAssetPath, OpenSceneMode.Single);
+            yield return WaitForAutomaticEditorChange(
+                () => GetSceneComponents<LightVolumeManager>().Count != 0,
+                "the reopened scene to receive its Manager");
+
+            GameObject instanceRoot = FindPrefabInstanceRoot();
+            LightVolumeManager manager = GetSingleSceneComponent<LightVolumeManager>();
+            AssertRegistered(
+                manager,
+                instanceRoot.GetComponentInChildren<LightVolumeInstance>(true),
+                instanceRoot.GetComponentInChildren<PointLightVolumeInstance>(true));
+        }
+
+        [UnityTest]
+        public IEnumerator OpeningRegisteredSceneDoesNotMarkItDirty() {
+            _scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+            GameObject prefabAsset = CreatePrefab(includeLegacyHelpers: false, includeUnifiedComponents: true);
+            GameObject instanceRoot = (GameObject)PrefabUtility.InstantiatePrefab(prefabAsset, _scene);
+            QueueAndFlush(instanceRoot);
+
+            // Drain setup object-change events before the save that establishes the clean baseline.
+            yield return null;
+            yield return null;
+            LightVolumeEditorUpdater.FlushPendingSceneChanges();
+            LightVolumeManager manager = GetSingleSceneComponent<LightVolumeManager>();
+            AssertRegistered(
+                manager,
+                instanceRoot.GetComponentInChildren<LightVolumeInstance>(true),
+                instanceRoot.GetComponentInChildren<PointLightVolumeInstance>(true));
+
+            _sceneAssetPath = AssetDatabase.GenerateUniqueAssetPath("Assets/VRCLightVolumesSceneSetupCleanReopenTest.unity");
+            Assert.That(EditorSceneManager.SaveScene(_scene, _sceneAssetPath), Is.True);
+            Assert.That(_scene.isDirty, Is.False);
+            EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+            _scene = EditorSceneManager.OpenScene(_sceneAssetPath, OpenSceneMode.Single);
+
+            // Unity and UdonSharp may dirty a scene synchronously while reconstructing Udon proxies
+            // during OpenScene. Save the temporary test scene after those external callbacks so the
+            // assertion below measures only our queued migration and onboarding pipeline.
+            Assert.That(EditorSceneManager.SaveScene(_scene), Is.True);
+            Assert.That(_scene.isDirty, Is.False);
+
+            // sceneOpened queues migration, onboarding, and any resulting object-change batch on
+            // successive editor turns. Dirty is sticky, so the final assertion observes every phase.
+            for (int i = 0; i < 4; i++) {
+                yield return null;
+                LightVolumeEditorUpdater.FlushPendingSceneChanges();
+            }
+
+            instanceRoot = FindPrefabInstanceRoot();
+            manager = GetSingleSceneComponent<LightVolumeManager>();
+            AssertRegistered(
+                manager,
+                instanceRoot.GetComponentInChildren<LightVolumeInstance>(true),
+                instanceRoot.GetComponentInChildren<PointLightVolumeInstance>(true));
+            Assert.That(_scene.isDirty, Is.False, "Opening an already reconciled scene must not serialize setup state again.");
+        }
+
+        [Test]
+        public void LegacyPrefabHelpersMigrateAsInstanceOverridesWithoutChangingAsset() {
+            _scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+            GameObject prefabAsset = CreatePrefab(includeLegacyHelpers: true, includeUnifiedComponents: true);
+            Hash128 assetHash = AssetDatabase.GetAssetDependencyHash(_prefabAssetPath);
+
+            GameObject instanceRoot = (GameObject)PrefabUtility.InstantiatePrefab(prefabAsset, _scene);
+            LightVolume legacyVolume = instanceRoot.GetComponentInChildren<LightVolume>(true);
+            PointLightVolume legacyPoint = instanceRoot.GetComponentInChildren<PointLightVolume>(true);
+            legacyVolume.Dynamic = true;
+            legacyVolume.Intensity = 7.25f;
+            legacyVolume.AdaptiveResolution = false;
+            legacyVolume.Resolution = new Vector3Int(11, 12, 13);
+            legacyVolume.enabled = false;
+            legacyPoint.Dynamic = true;
+            legacyPoint.Type = PointLightVolume.LightType.SpotLight;
+            legacyPoint.Projection = PointLightVolume.LightProjection.Custom;
+            legacyPoint.Intensity = 987f;
+            legacyPoint.Range = 23f;
+            legacyPoint.Angle = 74f;
+            legacyPoint.enabled = false;
+            PrefabUtility.RecordPrefabInstancePropertyModifications(legacyVolume);
+            PrefabUtility.RecordPrefabInstancePropertyModifications(legacyPoint);
+
+            QueueAndFlush(instanceRoot);
+
+            LightVolumeManager manager = GetSingleSceneComponent<LightVolumeManager>();
+            LightVolumeInstance volume = instanceRoot.GetComponentInChildren<LightVolumeInstance>(true);
+            PointLightVolumeInstance pointLight = instanceRoot.GetComponentInChildren<PointLightVolumeInstance>(true);
+            Assert.That(instanceRoot.GetComponentInChildren<LightVolume>(true), Is.Null);
+            Assert.That(instanceRoot.GetComponentInChildren<PointLightVolume>(true), Is.Null);
+            Assert.That(volume.IsDynamic, Is.True);
+            Assert.That(volume.Intensity, Is.EqualTo(7.25f));
+            Assert.That(volume.AdaptiveResolution, Is.False);
+            Assert.That(volume.Resolution, Is.EqualTo(new Vector3Int(11, 12, 13)));
+            Assert.That(volume.enabled, Is.False);
+            Assert.That(pointLight.IsDynamic, Is.True);
+            Assert.That(pointLight.LightType, Is.EqualTo(1));
+            Assert.That(pointLight.Projection, Is.EqualTo(2));
+            Assert.That(pointLight.Intensity, Is.EqualTo(987f));
+            Assert.That(pointLight.Range, Is.EqualTo(23f));
+            Assert.That(pointLight.Angle, Is.EqualTo(74f * Mathf.Deg2Rad * 0.5f).Within(0.0001f));
+            Assert.That(pointLight.enabled, Is.False);
+            AssertRegistered(manager, volume, pointLight);
+            Assert.That(UdonSharpEditorUtility.GetBackingUdonBehaviour(volume), Is.Not.Null);
+            Assert.That(UdonSharpEditorUtility.GetBackingUdonBehaviour(pointLight), Is.Not.Null);
+            var removedComponents = PrefabUtility.GetRemovedComponents(instanceRoot);
+            Assert.That(removedComponents, Has.Count.EqualTo(2));
+            Assert.That(removedComponents.Exists(item => item.assetComponent is LightVolume), Is.True);
+            Assert.That(removedComponents.Exists(item => item.assetComponent is PointLightVolume), Is.True);
+            Assert.That(PrefabUtility.GetPrefabInstanceStatus(instanceRoot), Is.EqualTo(PrefabInstanceStatus.Connected));
+
+            AssetDatabase.SaveAssets();
+            Assert.That(AssetDatabase.GetAssetDependencyHash(_prefabAssetPath), Is.EqualTo(assetHash));
+            GameObject unchangedAsset = AssetDatabase.LoadAssetAtPath<GameObject>(_prefabAssetPath);
+            Assert.That(unchangedAsset.GetComponentInChildren<LightVolume>(true).Intensity, Is.EqualTo(2f));
+            Assert.That(unchangedAsset.GetComponentInChildren<PointLightVolume>(true).Intensity, Is.EqualTo(100f));
+            Assert.That(unchangedAsset.GetComponentInChildren<LightVolumeInstance>(true).LightVolumeManager, Is.Null);
+            Assert.That(unchangedAsset.GetComponentInChildren<PointLightVolumeInstance>(true).LightVolumeManager, Is.Null);
+
+            SaveAndReopenScene();
+            instanceRoot = FindPrefabInstanceRoot();
+            manager = GetSingleSceneComponent<LightVolumeManager>();
+            volume = instanceRoot.GetComponentInChildren<LightVolumeInstance>(true);
+            pointLight = instanceRoot.GetComponentInChildren<PointLightVolumeInstance>(true);
+            Assert.That(instanceRoot.GetComponentInChildren<LightVolume>(true), Is.Null);
+            Assert.That(instanceRoot.GetComponentInChildren<PointLightVolume>(true), Is.Null);
+            Assert.That(volume.Intensity, Is.EqualTo(7.25f));
+            Assert.That(pointLight.Intensity, Is.EqualTo(987f));
+            AssertRegistered(manager, volume, pointLight);
+            AssertBackingManager(volume, manager);
+            AssertBackingManager(pointLight, manager);
+            removedComponents = PrefabUtility.GetRemovedComponents(instanceRoot);
+            Assert.That(removedComponents, Has.Count.EqualTo(2));
+            Assert.That(removedComponents.Exists(item => item.assetComponent is LightVolume), Is.True);
+            Assert.That(removedComponents.Exists(item => item.assetComponent is PointLightVolume), Is.True);
+        }
+
+        [Test]
+        public void LegacySetupPrefabMigratesManagerSettingsRegistriesAndWeightsAsOverrides() {
+            _scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+            GameObject prefabAsset = CreateLegacySetupPrefab();
+            Hash128 assetHash = AssetDatabase.GetAssetDependencyHash(_prefabAssetPath);
+            GameObject instanceRoot = (GameObject)PrefabUtility.InstantiatePrefab(prefabAsset, _scene);
+
+            QueueAndFlush(instanceRoot);
+
+            LightVolumeManager manager = instanceRoot.GetComponent<LightVolumeManager>();
+            LightVolumeInstance volume = instanceRoot.GetComponentInChildren<LightVolumeInstance>(true);
+            PointLightVolumeInstance pointLight = instanceRoot.GetComponentInChildren<PointLightVolumeInstance>(true);
+            Assert.That(instanceRoot.GetComponentInChildren<LightVolumeSetup>(true), Is.Null);
+            Assert.That(instanceRoot.GetComponentInChildren<LightVolume>(true), Is.Null);
+            Assert.That(instanceRoot.GetComponentInChildren<PointLightVolume>(true), Is.Null);
+            Assert.That(manager.CustomTexturesWidth, Is.EqualTo(128));
+            Assert.That(manager.CustomTexturesHeight, Is.EqualTo(128));
+            Assert.That(manager.LightsBrightnessCutoff, Is.EqualTo(0.71f));
+            Assert.That(manager.AutoUpdateTextures, Is.False);
+            Assert.That(volume.Intensity, Is.EqualTo(6.25f));
+            Assert.That(volume.RegistryWeight, Is.EqualTo(4.5f));
+            Assert.That(pointLight.Intensity, Is.EqualTo(321f));
+            Assert.That(pointLight.Range, Is.EqualTo(18f));
+            AssertRegistered(manager, volume, pointLight);
+            AssertBackingManager(volume, manager);
+            AssertBackingManager(pointLight, manager);
+            var removedComponents = PrefabUtility.GetRemovedComponents(instanceRoot);
+            Assert.That(removedComponents, Has.Count.EqualTo(3));
+            Assert.That(removedComponents.Exists(item => item.assetComponent is LightVolumeSetup), Is.True);
+            Assert.That(removedComponents.Exists(item => item.assetComponent is LightVolume), Is.True);
+            Assert.That(removedComponents.Exists(item => item.assetComponent is PointLightVolume), Is.True);
+
+            AssetDatabase.SaveAssets();
+            Assert.That(AssetDatabase.GetAssetDependencyHash(_prefabAssetPath), Is.EqualTo(assetHash));
+            GameObject unchangedAsset = AssetDatabase.LoadAssetAtPath<GameObject>(_prefabAssetPath);
+            Assert.That(unchangedAsset.GetComponentInChildren<LightVolumeSetup>(true), Is.Not.Null);
+            Assert.That(unchangedAsset.GetComponentInChildren<LightVolume>(true).Intensity, Is.EqualTo(6.25f));
+            Assert.That(unchangedAsset.GetComponentInChildren<PointLightVolume>(true).Intensity, Is.EqualTo(321f));
+
+            SaveAndReopenScene();
+            instanceRoot = FindPrefabInstanceRoot();
+            manager = instanceRoot.GetComponent<LightVolumeManager>();
+            volume = instanceRoot.GetComponentInChildren<LightVolumeInstance>(true);
+            pointLight = instanceRoot.GetComponentInChildren<PointLightVolumeInstance>(true);
+            Assert.That(instanceRoot.GetComponentInChildren<LightVolumeSetup>(true), Is.Null);
+            Assert.That(manager.LightsBrightnessCutoff, Is.EqualTo(0.71f));
+            Assert.That(manager.AutoUpdateTextures, Is.False);
+            Assert.That(volume.RegistryWeight, Is.EqualTo(4.5f));
+            AssertRegistered(manager, volume, pointLight);
+            AssertBackingManager(volume, manager);
+            AssertBackingManager(pointLight, manager);
+        }
+
+        [Test]
+        public void PrefabPreviewContentsAreNeverOnboardedOrMigrated() {
+            _scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+            CreatePrefab(includeLegacyHelpers: true, includeUnifiedComponents: true);
+            Hash128 assetHash = AssetDatabase.GetAssetDependencyHash(_prefabAssetPath);
+            GameObject persistentAsset = AssetDatabase.LoadAssetAtPath<GameObject>(_prefabAssetPath);
+            Assert.That(LightVolumeSceneSetup.OnboardHierarchy(persistentAsset, out LightVolumeManager persistentManager), Is.False);
+            Assert.That(persistentManager, Is.Null);
+
+            GameObject contentsRoot = PrefabUtility.LoadPrefabContents(_prefabAssetPath);
+            try {
+                Scene previewScene = contentsRoot.scene;
+                Assert.That(EditorSceneManager.IsPreviewScene(previewScene), Is.True);
+                bool wasDirty = previewScene.isDirty;
+                Assert.That(wasDirty, Is.False);
+
+                QueueAndFlush(contentsRoot);
+                int blocked = 0;
+                int removed = LightVolumeMigration.MigrateScene(previewScene, ref blocked);
+
+                Assert.That(removed, Is.Zero);
+                Assert.That(blocked, Is.Zero);
+                Assert.That(contentsRoot.GetComponentInChildren<LightVolume>(true), Is.Not.Null);
+                Assert.That(contentsRoot.GetComponentInChildren<PointLightVolume>(true), Is.Not.Null);
+                Assert.That(GetSceneComponents<LightVolumeManager>(previewScene), Is.Empty);
+                Assert.That(contentsRoot.GetComponentInChildren<LightVolumeInstance>(true).LightVolumeManager, Is.Null);
+                Assert.That(contentsRoot.GetComponentInChildren<PointLightVolumeInstance>(true).LightVolumeManager, Is.Null);
+                Assert.That(previewScene.isDirty, Is.EqualTo(wasDirty));
+            } finally {
+                PrefabUtility.UnloadPrefabContents(contentsRoot);
+            }
+
+            AssetDatabase.SaveAssets();
+            Assert.That(AssetDatabase.GetAssetDependencyHash(_prefabAssetPath), Is.EqualTo(assetHash));
+        }
+
+        [Test]
+        public void IncompleteHelperOnlyPrefabIsLeftIntactToPreventDataLoss() {
+            _scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+            GameObject prefabAsset = CreatePrefab(includeLegacyHelpers: true, includeUnifiedComponents: false);
+            Hash128 assetHash = AssetDatabase.GetAssetDependencyHash(_prefabAssetPath);
+            GameObject instanceRoot = (GameObject)PrefabUtility.InstantiatePrefab(prefabAsset, _scene);
+            _sceneAssetPath = AssetDatabase.GenerateUniqueAssetPath("Assets/VRCLightVolumesSceneSetupSafetyTest.unity");
+            Assert.That(EditorSceneManager.SaveScene(_scene, _sceneAssetPath), Is.True);
+            Assert.That(_scene.isDirty, Is.False);
+
+            LogAssert.Expect(LogType.Warning, new Regex("Left 2 legacy helper component\\(s\\).*unchanged"));
+            QueueAndFlush(instanceRoot);
+
+            Assert.That(GetSceneComponents<LightVolumeManager>(), Is.Empty);
+            Assert.That(instanceRoot.GetComponentInChildren<LightVolume>(true), Is.Not.Null);
+            Assert.That(instanceRoot.GetComponentInChildren<PointLightVolume>(true), Is.Not.Null);
+            Assert.That(instanceRoot.GetComponentInChildren<LightVolumeInstance>(true), Is.Null);
+            Assert.That(instanceRoot.GetComponentInChildren<PointLightVolumeInstance>(true), Is.Null);
+            Assert.That(PrefabUtility.GetPrefabInstanceStatus(instanceRoot), Is.EqualTo(PrefabInstanceStatus.Connected));
+            Assert.That(_scene.isDirty, Is.False);
+            AssetDatabase.SaveAssets();
+            Assert.That(AssetDatabase.GetAssetDependencyHash(_prefabAssetPath), Is.EqualTo(assetHash));
+        }
+
+        [Test]
+        public void LooseLegacySceneHierarchyCreatesUnifiedComponentsBeforeRemovingHelpers() {
+            _scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+            GameObject root = new GameObject("Loose Legacy Hierarchy");
+            SceneManager.MoveGameObjectToScene(root, _scene);
+            GameObject volumeObject = new GameObject("Legacy Volume");
+            volumeObject.transform.SetParent(root.transform, false);
+            LightVolume legacyVolume = volumeObject.AddComponent<LightVolume>();
+            legacyVolume.AdaptiveResolution = false;
+            legacyVolume.Intensity = 4.5f;
+            legacyVolume.Resolution = new Vector3Int(6, 7, 8);
+            GameObject pointObject = new GameObject("Legacy Point");
+            pointObject.transform.SetParent(root.transform, false);
+            PointLightVolume legacyPoint = pointObject.AddComponent<PointLightVolume>();
+            legacyPoint.Intensity = 456f;
+            legacyPoint.Range = 17f;
+
+            QueueAndFlush(root);
+
+            LightVolumeManager manager = GetSingleSceneComponent<LightVolumeManager>();
+            LightVolumeInstance volume = volumeObject.GetComponent<LightVolumeInstance>();
+            PointLightVolumeInstance pointLight = pointObject.GetComponent<PointLightVolumeInstance>();
+            Assert.That(volumeObject.GetComponent<LightVolume>(), Is.Null);
+            Assert.That(pointObject.GetComponent<PointLightVolume>(), Is.Null);
+            Assert.That(volume, Is.Not.Null);
+            Assert.That(pointLight, Is.Not.Null);
+            Assert.That(volume.Intensity, Is.EqualTo(4.5f));
+            Assert.That(volume.Resolution, Is.EqualTo(new Vector3Int(6, 7, 8)));
+            Assert.That(pointLight.Intensity, Is.EqualTo(456f));
+            Assert.That(pointLight.Range, Is.EqualTo(17f));
+            AssertRegistered(manager, volume, pointLight);
+            AssertBackingManager(volume, manager);
+            AssertBackingManager(pointLight, manager);
+        }
+
+        private GameObject CreatePrefab(bool includeLegacyHelpers, bool includeUnifiedComponents, bool includeVolume = true,
+            bool includePointLight = true, bool includeBakeryDependency = false) {
+            _prefabAssetPath = AssetDatabase.GenerateUniqueAssetPath("Assets/VRCLightVolumesSceneSetupTest.prefab");
+            GameObject root = new GameObject("Light Volumes Prefab");
+            SceneManager.MoveGameObjectToScene(root, _scene);
+            GameObject volumeObject = null;
+            if (includeVolume) {
+                volumeObject = new GameObject("Volume");
+                volumeObject.transform.SetParent(root.transform, false);
+            }
+            GameObject pointObject = null;
+            if (includePointLight) {
+                pointObject = new GameObject("Point Light");
+                pointObject.transform.SetParent(root.transform, false);
+            }
+
+            if (includeLegacyHelpers) {
+                if (includeVolume) {
+                    LightVolume legacyVolume = volumeObject.AddComponent<LightVolume>();
+                    legacyVolume.Intensity = 2f;
+                    legacyVolume.Resolution = new Vector3Int(4, 5, 6);
+                }
+                if (includePointLight) {
+                    PointLightVolume legacyPoint = pointObject.AddComponent<PointLightVolume>();
+                    legacyPoint.Intensity = 100f;
+                    legacyPoint.Range = 10f;
+                }
+            }
+            LightVolumeInstance unifiedVolume = null;
+            if (includeUnifiedComponents) {
+                if (includeVolume) unifiedVolume = UdonSharpUndo.AddComponent<LightVolumeInstance>(volumeObject);
+                if (includePointLight) UdonSharpUndo.AddComponent<PointLightVolumeInstance>(pointObject);
+            }
+            if (includeBakeryDependency) {
+                Assert.That(unifiedVolume, Is.Not.Null);
+                Type bakeryVolumeType = FindBakeryVolumeType();
+                Assert.That(bakeryVolumeType, Is.Not.Null);
+                GameObject helper = new GameObject($"Bakery Volume - {volumeObject.name}") { tag = "EditorOnly" };
+                helper.transform.SetParent(volumeObject.transform, false);
+                unifiedVolume.BakeryVolume = helper.AddComponent(bakeryVolumeType);
+                LightVolumeManagerEditorBackend.CopyProxyToUdon(unifiedVolume);
+            }
+
+            PrefabUtility.SaveAsPrefabAsset(root, _prefabAssetPath);
+            UnityEngine.Object.DestroyImmediate(root);
+            AssetDatabase.SaveAssets();
+            return AssetDatabase.LoadAssetAtPath<GameObject>(_prefabAssetPath);
+        }
+
+        private GameObject CreateLegacySetupPrefab() {
+            _prefabAssetPath = AssetDatabase.GenerateUniqueAssetPath("Assets/VRCLightVolumesLegacySetupTest.prefab");
+            GameObject root = new GameObject("Legacy Light Volumes Setup");
+            SceneManager.MoveGameObjectToScene(root, _scene);
+            LightVolumeManager manager = UdonSharpUndo.AddComponent<LightVolumeManager>(root);
+            LightVolumeSetup setup = root.AddComponent<LightVolumeSetup>();
+            setup.CookieResolution = LightVolumeSetup.TextureArrayResolution._128x128;
+            setup.BrightnessCutoff = 0.71f;
+            setup.AutoUpdateTextures = false;
+            setup.LightVolumeManager = manager;
+
+            GameObject volumeObject = new GameObject("Volume");
+            volumeObject.transform.SetParent(root.transform, false);
+            LightVolume legacyVolume = volumeObject.AddComponent<LightVolume>();
+            legacyVolume.Intensity = 6.25f;
+            LightVolumeInstance volume = UdonSharpUndo.AddComponent<LightVolumeInstance>(volumeObject);
+            legacyVolume.LightVolumeSetup = setup;
+            legacyVolume.LightVolumeInstance = volume;
+
+            GameObject pointObject = new GameObject("Point Light");
+            pointObject.transform.SetParent(root.transform, false);
+            PointLightVolume legacyPoint = pointObject.AddComponent<PointLightVolume>();
+            legacyPoint.Intensity = 321f;
+            legacyPoint.Range = 18f;
+            PointLightVolumeInstance pointLight = UdonSharpUndo.AddComponent<PointLightVolumeInstance>(pointObject);
+            legacyPoint.LightVolumeSetup = setup;
+            legacyPoint.PointLightVolumeInstance = pointLight;
+
+            setup.LightVolumes.Add(legacyVolume);
+            setup.LightVolumesWeights.Add(4.5f);
+            setup.PointLightVolumes.Add(legacyPoint);
+            manager.LightVolumeInstances = new[] { volume };
+            manager.PointLightVolumeInstances = new[] { pointLight };
+            volume.LightVolumeManager = manager;
+            pointLight.LightVolumeManager = manager;
+            LightVolumeManagerEditorBackend.CopyProxyToUdon(volume);
+            LightVolumeManagerEditorBackend.CopyProxyToUdon(pointLight);
+            LightVolumeManagerEditorBackend.CopyProxyToUdon(manager);
+
+            PrefabUtility.SaveAsPrefabAsset(root, _prefabAssetPath);
+            UnityEngine.Object.DestroyImmediate(root);
+            AssetDatabase.SaveAssets();
+            return AssetDatabase.LoadAssetAtPath<GameObject>(_prefabAssetPath);
+        }
+
+        private static Type FindBakeryVolumeType() {
+            foreach (Type componentType in TypeCache.GetTypesDerivedFrom<Component>()) {
+                if (componentType.Name == "BakeryVolume") return componentType;
+            }
+            return null;
+        }
+
+        private static void QueueAndFlush(GameObject root) {
+            LightVolumeEditorUpdater.QueueHierarchyOnboarding(root);
+            LightVolumeEditorUpdater.FlushPendingSceneChanges();
+        }
+
+        private static IEnumerator WaitForAutomaticEditorChange(Func<bool> condition, string description) {
+            // Editor update counts do not guarantee that object-change events and delayCall have run.
+            // Keep the real automatic path: do not queue onboarding or flush the updater from this wait.
+            double deadline = EditorApplication.timeSinceStartup + 10d;
+            while (!condition() && EditorApplication.timeSinceStartup < deadline) {
+                EditorApplication.QueuePlayerLoopUpdate();
+                yield return null;
+            }
+            Assert.That(condition(), Is.True, $"Timed out waiting for {description}.");
+        }
+
+        private static IEnumerator DrainAutomaticEditorChanges(int editorTurns = 4) {
+            for (int i = 0; i < editorTurns; i++) {
+                yield return null;
+                LightVolumeEditorUpdater.FlushPendingSceneChanges();
+            }
+        }
+
+        private void SaveAndReopenScene() {
+            _sceneAssetPath = AssetDatabase.GenerateUniqueAssetPath("Assets/VRCLightVolumesSceneSetupTest.unity");
+            Assert.That(EditorSceneManager.SaveScene(_scene, _sceneAssetPath), Is.True);
+            EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+            _scene = EditorSceneManager.OpenScene(_sceneAssetPath, OpenSceneMode.Single);
+        }
+
+        private GameObject FindPrefabInstanceRoot() {
+            GameObject[] roots = _scene.GetRootGameObjects();
+            for (int i = 0; i < roots.Length; i++) {
+                if (PrefabUtility.GetPrefabInstanceStatus(roots[i]) == PrefabInstanceStatus.Connected) return roots[i];
+            }
+            Assert.Fail("Prefab instance root was not found.");
+            return null;
+        }
+
+        private T GetSingleSceneComponent<T>() where T : Component {
+            List<T> components = GetSceneComponents<T>();
+            Assert.That(components, Has.Count.EqualTo(1));
+            return components[0];
+        }
+
+        private List<T> GetSceneComponents<T>() where T : Component {
+            return GetSceneComponents<T>(_scene);
+        }
+
+        private static List<T> GetSceneComponents<T>(Scene scene) where T : Component {
+            List<T> result = new List<T>();
+            List<T> buffer = new List<T>();
+            GameObject[] roots = scene.GetRootGameObjects();
+            for (int i = 0; i < roots.Length; i++) {
+                buffer.Clear();
+                roots[i].GetComponentsInChildren(true, buffer);
+                result.AddRange(buffer);
+            }
+            return result;
+        }
+
+        private static void AssertRegistered(LightVolumeManager manager, LightVolumeInstance volume, PointLightVolumeInstance pointLight) {
+            Assert.That(manager.LightVolumeInstances, Is.EqualTo(new[] { volume }));
+            Assert.That(manager.PointLightVolumeInstances, Is.EqualTo(new[] { pointLight }));
+            Assert.That(volume.LightVolumeManager, Is.SameAs(manager));
+            Assert.That(pointLight.LightVolumeManager, Is.SameAs(manager));
+            Assert.That(volume.RegistryOrder, Is.Zero);
+            Assert.That(pointLight.RegistryOrder, Is.Zero);
+        }
+
+        private static void AssertPointRegistered(LightVolumeManager manager, PointLightVolumeInstance pointLight) {
+            Assert.That(manager.PointLightVolumeInstances, Is.EqualTo(new[] { pointLight }));
+            Assert.That(pointLight.LightVolumeManager, Is.SameAs(manager));
+            Assert.That(pointLight.RegistryOrder, Is.Zero);
+            AssertBackingManager(pointLight, manager);
+
+            UdonBehaviour managerBacking = UdonSharpEditorUtility.GetBackingUdonBehaviour(manager);
+            UdonBehaviour pointBacking = UdonSharpEditorUtility.GetBackingUdonBehaviour(pointLight);
+            Assert.That(managerBacking.publicVariables.TryGetVariableValue("PointLightVolumeInstances", out object serializedPoints), Is.True);
+            Assert.That(serializedPoints, Is.EqualTo(new[] { pointBacking }));
+        }
+
+        private static void ClearHierarchyUndo(GameObject root) {
+            if (root == null) return;
+            Transform[] transforms = root.GetComponentsInChildren<Transform>(true);
+            for (int i = 0; i < transforms.Length; i++) Undo.ClearUndo(transforms[i].gameObject);
+            Component[] components = root.GetComponentsInChildren<Component>(true);
+            for (int i = 0; i < components.Length; i++) {
+                if (components[i] != null) Undo.ClearUndo(components[i]);
+            }
+        }
+
+        private static void AssertBackingManager(Component component, LightVolumeManager manager) {
+            UdonBehaviour componentBacking = UdonSharpEditorUtility.GetBackingUdonBehaviour(component as UdonSharp.UdonSharpBehaviour);
+            UdonBehaviour managerBacking = UdonSharpEditorUtility.GetBackingUdonBehaviour(manager);
+            Assert.That(componentBacking, Is.Not.Null);
+            Assert.That(managerBacking, Is.Not.Null);
+            Assert.That(componentBacking.publicVariables.TryGetVariableValue("LightVolumeManager", out object serializedManager), Is.True);
+            Assert.That(serializedManager, Is.SameAs(managerBacking));
+        }
+    }
+}
+
+#pragma warning restore CS0618

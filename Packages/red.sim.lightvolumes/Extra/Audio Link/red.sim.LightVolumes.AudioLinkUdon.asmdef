@@ -1,0 +1,25 @@
+{
+    "name": "red.sim.LightVolumes.AudioLinkUdon",
+    "rootNamespace": "",
+    "references": [
+        "GUID:a7ff01b0ae211b5439bf8d957d1583a8",
+        "GUID:99835874ee819da44948776e0df4ff1d",
+        "GUID:e1a67d4778ffb214390ddafa61c1a557",
+        "GUID:3c1bc1267eab5884ebe7f232c09ee0d9"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [
+        {
+            "name": "com.vrchat.worlds",
+            "expression": "0.0.0",
+            "define": "UDONSHARP"
+        }
+    ],
+    "noEngineReferences": false
+}

@@ -1,0 +1,166 @@
+#if !UDONSHARP && COMPILER_UDONSHARP
+#define UDONSHARP
+#endif
+
+using UnityEngine;
+
+#if UDONSHARP
+using UdonSharp;
+#endif
+
+namespace VRCLightVolumes {
+    [DisallowMultipleComponent]
+#if UDONSHARP
+    [UdonBehaviourSyncMode(BehaviourSyncMode.None)]
+    public class PointLightShadowRuntimeBaker : UdonSharpBehaviour
+#else
+    public class PointLightShadowRuntimeBaker : MonoBehaviour
+#endif
+    {
+        [Tooltip("Point, Spot or Area light whose shadows this component updates.")]
+        public PointLightVolumeInstance TargetPointLightVolume;
+        [Tooltip("Captures shadows once when this component is enabled.")]
+        public bool BakeOnEnable = true;
+        [Tooltip("Updates shadows repeatedly while enabled. Use for a moving light or moving shadow casters.")]
+        public bool Realtime = false;
+
+        private PointLightVolumeInstance _configuredTargetPointLightVolume;
+        private bool _configuredDirectOutput = false;
+#if UDONSHARP
+        private bool _realtimeLoopScheduled = false;
+#else
+        private bool _hasStarted = false;
+#endif
+
+#if !UDONSHARP
+        // Starts runtime baking once regular MonoBehaviour startup order is stable.
+        private void Start() {
+            _hasStarted = true;
+            if (Realtime) StartTargetRealtimeBakeLoop();
+            else if (BakeOnEnable) BakeShadows();
+        }
+#endif
+
+        // Starts one-shot or realtime target baking when this external baker becomes active.
+        private void OnEnable() {
+#if UDONSHARP
+            if (Realtime) StartTargetRealtimeBakeLoop();
+            else if (BakeOnEnable) BakeShadows();
+#else
+            if (!_hasStarted) return;
+            if (Realtime) StartTargetRealtimeBakeLoop();
+            else if (BakeOnEnable) BakeShadows();
+#endif
+        }
+
+        // Releases retained scratch resources. A queued Udon event owns the scheduled flag until it runs; keeping the flag prevents a quick disable-enable cycle from creating a second loop.
+        private void OnDisable() {
+            ReleaseConfiguredTarget();
+        }
+
+#if !UDONSHARP
+        // Drives the target point light once per frame in regular Unity runtime.
+        private void Update() {
+            if (!Realtime || TargetPointLightVolume == null) {
+                ReleaseConfiguredTarget();
+                return;
+            }
+            PointLightVolumeInstance target = TargetPointLightVolume;
+            ConfigureTargetBake(target, true);
+            if (target.IsActive) target.BakeShadows();
+        }
+#endif
+
+        // Writes one-shot bake fields to the target point light instance and triggers its native runtime bake.
+        public void BakeShadows() {
+            if (TargetPointLightVolume == null) {
+                ReleaseConfiguredTarget();
+                return;
+            }
+            PointLightVolumeInstance target = TargetPointLightVolume;
+            ConfigureTargetBake(target, false);
+            target.BakeShadows();
+        }
+
+        // Delayed Udon realtime loop that only triggers the target point light.
+        public void _RealtimeBakeLoop() {
+#if UDONSHARP
+            _realtimeLoopScheduled = false;
+            if (!IsUdonRuntimeAvailable()) return;
+#endif
+            if (!enabled || !gameObject.activeInHierarchy || !Realtime) {
+                ReleaseConfiguredTarget();
+                return;
+            }
+            if (TargetPointLightVolume != null) {
+                PointLightVolumeInstance target = TargetPointLightVolume;
+                ConfigureTargetBake(target, true);
+                if (target.IsActive) target.BakeShadows();
+            } else ReleaseConfiguredTarget();
+#if UDONSHARP
+            if (!IsUdonRuntimeAvailable()) return;
+            _realtimeLoopScheduled = true;
+            SendCustomEventDelayedFrames(nameof(_RealtimeBakeLoop), 1);
+#endif
+        }
+
+        // Writes realtime bake fields to the target and starts the external trigger loop.
+        private void StartTargetRealtimeBakeLoop() {
+#if UDONSHARP
+            if (!IsUdonRuntimeAvailable()) return;
+#endif
+            if (TargetPointLightVolume == null) {
+                ReleaseConfiguredTarget();
+                return;
+            }
+            ConfigureTargetBake(TargetPointLightVolume, true);
+#if UDONSHARP
+            if (_realtimeLoopScheduled) return;
+            _realtimeLoopScheduled = true;
+            SendCustomEventDelayedFrames(nameof(_RealtimeBakeLoop), 1);
+#endif
+        }
+
+#if UDONSHARP
+        // VRChat can clear the local player before scene teardown callbacks finish.
+        private bool IsUdonRuntimeAvailable() {
+#if COMPILER_UDONSHARP
+            return VRC.SDKBase.Utilities.IsValid(VRC.SDKBase.Networking.LocalPlayer);
+#else
+            return true;
+#endif
+        }
+#endif
+
+        // Selects only the output path; resolution and blur settings remain owned by the target light.
+        private void ConfigureTargetBake(PointLightVolumeInstance target, bool directOutput) {
+            if (_configuredTargetPointLightVolume != target) ReleaseConfiguredTarget();
+            if (_configuredTargetPointLightVolume == target && _configuredDirectOutput == directOutput) return;
+            bool modeChanged = target.RuntimeShadowDirectOutput != directOutput;
+            target.RuntimeShadowDirectOutput = directOutput;
+            _configuredTargetPointLightVolume = target;
+            _configuredDirectOutput = directOutput;
+            if (!modeChanged || !target.IsActive) return;
+            LightVolumeManager manager = target.LightVolumeManager;
+            if (manager == null) return;
+            if (directOutput) manager.UpdateVolumes();
+            else if (target.ShadowMapTexture != null || target.ShadowMapMaterial != null) manager.ReinitializeShadowTextures();
+        }
+
+        // Gives retained camera and blur scratch back when realtime baking stops or changes targets.
+        private void ReleaseConfiguredTarget() {
+            PointLightVolumeInstance target = _configuredTargetPointLightVolume;
+            if (target != null) {
+                bool restoreStaticSource = target.RuntimeShadowDirectOutput && (target.ShadowMapTexture != null || target.ShadowMapMaterial != null);
+                target.RuntimeShadowDirectOutput = false;
+                if (restoreStaticSource && target.IsActive) {
+                    LightVolumeManager manager = target.LightVolumeManager;
+                    if (manager != null) manager.ReinitializeShadowTextures();
+                }
+                target._ReleaseRuntimeShadowBakeResources();
+            }
+            _configuredTargetPointLightVolume = null;
+            _configuredDirectOutput = false;
+        }
+    }
+}

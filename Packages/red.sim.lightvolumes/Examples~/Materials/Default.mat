@@ -13,11 +13,12 @@ Material:
   m_ModifiedSerializedProperties: 0
   m_ValidKeywords:
   - _LIGHTVOLUMES_ON
+  - _SPECULARS_ON
   m_InvalidKeywords:
   - _ADDITIVEONLY_ON
   - _EMISSION
   - _LIGHTVOLUMES1_ON
-  m_LightmapFlags: 0
+  m_LightmapFlags: 4
   m_EnableInstancingVariants: 0
   m_DoubleSidedGI: 0
   m_CustomRenderQueue: -1
@@ -85,27 +86,33 @@ Material:
     - _Float0: 0
     - _Gamma: 1.23
     - _GlossMapScale: 1
-    - _Glossiness: 0
+    - _Glossiness: 0.774
     - _GlossyReflections: 1
     - _Keyword0: 0
     - _LightVolumes: 1
     - _LightVolumes1: 1
-    - _LightVolumesBias: 0.06
+    - _LightVolumesBias: 0
+    - _LightVolumesNormal: 1.5
     - _Metallic: 0
     - _Metalness: 0
     - _Mode: 0
     - _NormalPower: 1
-    - _OcclusionStrength: 1
+    - _OcclusionStrength: 0
     - _Parallax: 0.02
+    - _PointLightVolumesShading: 2
+    - _ShadingHardness: 0
+    - _ShadingOpacity: 1
+    - _ShadingShift: 0
+    - _ShadowHardness: 0
     - _Smoothness: 0
     - _SmoothnessTextureChannel: 0
     - _SpecularHighlights: 1
-    - _Speculars: 0
+    - _Speculars: 1
     - _SrcBlend: 1
     - _UVSec: 0
     - _ZWrite: 0
     - __dirty: 0
     m_Colors:
-    - _Color: {r: 1, g: 1, b: 1, a: 0.49019608}
+    - _Color: {r: 1, g: 1, b: 1, a: 1}
     - _EmissionColor: {r: 0, g: 0, b: 0, a: 1}
   m_BuildTextureStacks: []

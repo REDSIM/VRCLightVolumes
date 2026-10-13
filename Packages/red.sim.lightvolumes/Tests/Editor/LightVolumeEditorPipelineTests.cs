@@ -1,0 +1,781 @@
+using System.IO;
+using System.Reflection;
+using NUnit.Framework;
+using UnityEditor;
+using UnityEngine;
+
+namespace VRCLightVolumes.Tests {
+    [Category("Editor")]
+    public class LightVolumeEditorPipelineTests {
+
+        private const float Epsilon = 0.0001f;
+        private const string DirectUdonSharpCompilerGuard = "#if !UDONSHARP && COMPILER_UDONSHARP\n#define UDONSHARP\n#endif";
+
+        private static readonly string[] UdonSharpSourcePaths = {
+            "Packages/red.sim.lightvolumes/UScripts/LightVolumeManager.cs",
+            "Packages/red.sim.lightvolumes/UScripts/LightVolumeManager.Buffers.cs",
+            "Packages/red.sim.lightvolumes/UScripts/LightVolumeManager.Clustering.cs",
+            "Packages/red.sim.lightvolumes/UScripts/LightVolumeManager.Core.cs",
+            "Packages/red.sim.lightvolumes/UScripts/LightVolumeManager.Textures.cs",
+            "Packages/red.sim.lightvolumes/UScripts/LightVolumeInstance.cs",
+            "Packages/red.sim.lightvolumes/UScripts/PointLightVolumeInstance.cs",
+            "Packages/red.sim.lightvolumes/UScripts/PointLightVolumeInstance.ShadowBaking.cs",
+            "Packages/red.sim.lightvolumes/Extra/Audio Link/LightVolumeAudioLink.cs",
+            "Packages/red.sim.lightvolumes/Extra/TV Global Illumination/LightVolumeTVGI.cs",
+            "Packages/red.sim.lightvolumes/Extra/Shadow Runtime Baker/PointLightShadowRuntimeBaker.cs"
+        };
+
+        private static readonly string[] UdonSharpAssemblyPaths = {
+            "Packages/red.sim.lightvolumes/UScripts/red.sim.LightVolumesUdon.asmdef",
+            "Packages/red.sim.lightvolumes/Scripts/Editor/red.sim.LightVolumesEditor.asmdef",
+            "Packages/red.sim.lightvolumes/Extra/Audio Link/red.sim.LightVolumes.AudioLinkUdon.asmdef",
+            "Packages/red.sim.lightvolumes/Tests/Editor/red.sim.LightVolumesUdon.EditorTests.asmdef"
+        };
+
+        private GameObject _legacyObject;
+        private GameObject _unifiedObject;
+
+        [TearDown]
+        public void TearDown() {
+            if (_legacyObject != null) UnityEngine.Object.DestroyImmediate(_legacyObject);
+            if (_unifiedObject != null) UnityEngine.Object.DestroyImmediate(_unifiedObject);
+        }
+
+        // The unified Udon component owns every persistent Light Volume authoring value.
+        [Test]
+        public void MigrationCopiesLegacyLightVolumePersistentData() {
+            _legacyObject = new GameObject("Legacy Light Volume");
+            _unifiedObject = new GameObject("Unified Light Volume");
+            LightVolume legacy = _legacyObject.AddComponent<LightVolume>();
+            LightVolumeInstance unified = _unifiedObject.AddComponent<LightVolumeInstance>();
+            Texture3D texture0 = new Texture3D(1, 1, 1, TextureFormat.RGBAHalf, false);
+            Texture3D texture1 = new Texture3D(1, 1, 1, TextureFormat.RGBAHalf, false);
+            Texture3D texture2 = new Texture3D(1, 1, 1, TextureFormat.RGBAHalf, false);
+
+            legacy.Dynamic = true;
+            legacy.Additive = true;
+            legacy.Color = new Color(0.25f, 0.5f, 0.75f);
+            legacy.Intensity = 2.5f;
+            legacy.SmoothBlending = 0.4f;
+            legacy.Texture0 = texture0;
+            legacy.Texture1 = texture1;
+            legacy.Texture2 = texture2;
+            legacy.Exposure = 1.25f;
+            legacy.Shadows = -0.2f;
+            legacy.Highlights = 0.3f;
+            legacy.Bake = false;
+            legacy.ReserveUVSpace = true;
+            legacy.AdaptiveResolution = false;
+            legacy.VoxelsPerUnit = 4.5f;
+            legacy.Resolution = new Vector3Int(7, 8, 9);
+
+            MethodInfo copy = typeof(LightVolumeMigration).GetMethod("CopyLegacyLightVolume", BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.That(copy, Is.Not.Null);
+            copy.Invoke(null, new object[] { legacy, unified });
+
+            Assert.That(unified.IsDynamic, Is.True);
+            Assert.That(unified.IsAdditive, Is.True);
+            Assert.That(unified.Color, Is.EqualTo(legacy.Color));
+            Assert.That(unified.Intensity, Is.EqualTo(legacy.Intensity).Within(Epsilon));
+            Assert.That(unified.SmoothBlending, Is.EqualTo(legacy.SmoothBlending).Within(Epsilon));
+            Assert.That(unified.Texture0, Is.SameAs(texture0));
+            Assert.That(unified.Texture1, Is.SameAs(texture1));
+            Assert.That(unified.Texture2, Is.SameAs(texture2));
+            Assert.That(unified.Exposure, Is.EqualTo(legacy.Exposure).Within(Epsilon));
+            Assert.That(unified.Shadows, Is.EqualTo(legacy.Shadows).Within(Epsilon));
+            Assert.That(unified.Highlights, Is.EqualTo(legacy.Highlights).Within(Epsilon));
+            Assert.That(unified.Bake, Is.False);
+            Assert.That(unified.ReserveUVSpace, Is.True);
+            Assert.That(unified.AdaptiveResolution, Is.False);
+            Assert.That(unified.VoxelsPerUnit, Is.EqualTo(legacy.VoxelsPerUnit).Within(Epsilon));
+            Assert.That(unified.Resolution, Is.EqualTo(legacy.Resolution));
+
+            UnityEngine.Object.DestroyImmediate(texture0);
+            UnityEngine.Object.DestroyImmediate(texture1);
+            UnityEngine.Object.DestroyImmediate(texture2);
+        }
+
+        // Direct U# compilation supplies COMPILER_UDONSHARP. Regular Editor compilation gets UDONSHARP from the assembly's Worlds SDK version define instead of enabling U# in every Editor project.
+        [Test]
+        public void UdonSharpSourcesDoNotEnableUdonSharpForAvatarProjects() {
+            for (int i = 0; i < UdonSharpSourcePaths.Length; i++) {
+                string path = UdonSharpSourcePaths[i];
+                string source = File.ReadAllText(path).Replace("\r\n", "\n");
+                Assert.That(source, Does.StartWith(DirectUdonSharpCompilerGuard), path + " must select its U# branch during direct UdonSharp compilation.");
+                Assert.That(source, Does.Not.Contain("UNITY_EDITOR || COMPILER_UDONSHARP"), path + " must keep its MonoBehaviour fallback in avatar projects without UdonSharp.");
+            }
+        }
+
+        // The Worlds package version define is assembly-local, stable across build-target reloads, and absent from avatar projects. This preserves U# proxy types without regressing avatar support.
+        [Test]
+        public void UdonSharpAssembliesDefineUdonSharpOnlyWithWorldsSdk() {
+            for (int i = 0; i < UdonSharpAssemblyPaths.Length; i++) {
+                string path = UdonSharpAssemblyPaths[i];
+                AssemblyDefinition assemblyDefinition = JsonUtility.FromJson<AssemblyDefinition>(File.ReadAllText(path));
+                VersionDefine[] udonDefines = System.Array.FindAll(assemblyDefinition.versionDefines, item => item.define == "UDONSHARP");
+                Assert.That(udonDefines, Has.Length.EqualTo(1), path);
+                Assert.That(udonDefines[0].name, Is.EqualTo("com.vrchat.worlds"), path);
+                Assert.That(udonDefines[0].expression, Is.EqualTo("0.0.0"), path);
+            }
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void RuntimePreparationPreservesProjectionImportSettings(bool editorTemporary) {
+            string path = AssetDatabase.GenerateUniqueAssetPath("Assets/VRCLightVolumesRuntimeProjection.exr");
+            System.Type preprocessor = typeof(LightVolumeMigration).Assembly.GetType("VRCLightVolumes.LightVolumePreprocessor");
+            MethodInfo prepare = preprocessor?.GetMethod("PrepareRuntimeDependencies", BindingFlags.Static | BindingFlags.NonPublic);
+            MethodInfo clear = preprocessor?.GetMethod("ClearRuntimeDependencies", BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.That(prepare, Is.Not.Null);
+            Assert.That(clear, Is.Not.Null);
+            _legacyObject = new GameObject("Runtime Projection Manager");
+            _unifiedObject = new GameObject("Runtime Projection Light");
+            LightVolumeManager manager = _legacyObject.AddComponent<LightVolumeManager>();
+            PointLightVolumeInstance pointLight = _unifiedObject.AddComponent<PointLightVolumeInstance>();
+            GameObject[] roots = { _legacyObject, _unifiedObject };
+            try {
+                CreateExrImport(path);
+                pointLight.LightVolumeManager = manager;
+                pointLight.LightType = 1;
+                pointLight.Projection = 2;
+                pointLight.Cookie = AssetDatabase.LoadAssetAtPath<Texture>(path);
+                Assert.That(pointLight.Cookie, Is.Not.Null);
+                manager.PointLightVolumeInstances = new[] { pointLight };
+                string importSettings = File.ReadAllText(path + ".meta");
+
+                prepare.Invoke(null, new object[] { roots, editorTemporary, manager });
+
+                AssertMisconfiguredExrImport(path);
+                Assert.That(File.ReadAllText(path + ".meta"), Is.EqualTo(importSettings));
+            } finally {
+                clear.Invoke(null, new object[] { roots, manager });
+                AssetDatabase.DeleteAsset(path);
+            }
+        }
+
+        // Assigning an HDR source configures only that active Light Volumes projection. Detection uses the source data rather than its extension, while LDR and unrelated assets stay intact.
+        [Test]
+        public void AssigningHdrProjectionConfiguresOnlyTheAssignedAsset() {
+            string assignedPath = AssetDatabase.GenerateUniqueAssetPath("Assets/VRCLightVolumesAssignedProjection.hdr");
+            string unrelatedPath = AssetDatabase.GenerateUniqueAssetPath("Assets/VRCLightVolumesUnrelatedProjection.exr");
+            string existingHdrPath = AssetDatabase.GenerateUniqueAssetPath("Assets/VRCLightVolumesExistingHdrProjection.exr");
+            string ldrPath = AssetDatabase.GenerateUniqueAssetPath("Assets/VRCLightVolumesLdrProjection.png");
+            try {
+                CreateRadianceHdrImport(assignedPath);
+                CreateExrImport(unrelatedPath);
+                CreateExrImport(existingHdrPath);
+                CreatePngImport(ldrPath);
+                SetAndroidHdrOverride(existingHdrPath, TextureImporterFormat.RGBAFloat);
+                Texture assignedTexture = AssetDatabase.LoadAssetAtPath<Texture>(assignedPath);
+                Assert.That(assignedTexture, Is.Not.Null);
+
+                _unifiedObject = new GameObject("Projection Import Test");
+                PointLightVolumeInstance pointLight = _unifiedObject.AddComponent<PointLightVolumeInstance>();
+                pointLight.LightType = 1;
+                pointLight.Projection = 2;
+                pointLight.Cookie = assignedTexture;
+
+                int changes = PointLightVolumeEditorUtility.Sync(pointLight, false, false);
+
+                Assert.That(changes & PointLightVolumeEditorUtility.CustomTexturesChanged, Is.Not.Zero);
+                AssertAndroidHdrOverridePreservesDefaultSrgb(assignedPath, TextureImporterFormat.RGBAHalf);
+                AssertMisconfiguredExrImport(unrelatedPath);
+
+                Texture existingHdrTexture = AssetDatabase.LoadAssetAtPath<Texture>(existingHdrPath);
+                Assert.That(existingHdrTexture, Is.Not.Null);
+                pointLight.Cookie = existingHdrTexture;
+                PointLightVolumeEditorUtility.Sync(pointLight, false, false);
+                AssertAndroidHdrOverridePreservesDefaultSrgb(existingHdrPath, TextureImporterFormat.RGBAFloat);
+                Assert.That(PointLightVolumeEditorUtility.EnsureProjectionTextureImportSettings(pointLight), Is.False,
+                    "A correctly configured projection must not be reimported again.");
+
+                Texture ldrTexture = AssetDatabase.LoadAssetAtPath<Texture>(ldrPath);
+                Assert.That(ldrTexture, Is.Not.Null);
+                pointLight.Cookie = ldrTexture;
+                PointLightVolumeEditorUtility.Sync(pointLight, false, false);
+                AssertStandardLdrImport(ldrPath);
+            } finally {
+                AssetDatabase.DeleteAsset(assignedPath);
+                AssetDatabase.DeleteAsset(unrelatedPath);
+                AssetDatabase.DeleteAsset(existingHdrPath);
+                AssetDatabase.DeleteAsset(ldrPath);
+            }
+        }
+
+        // UdonSharp validates every program asset even when a conditional asmdef is disabled. Keep the integration assembly active, but keep AudioLink optional at compile time in both Unity and Udon.
+        [Test]
+        public void AudioLinkIntegrationUsesOptionalRuntimeBridge() {
+            const string audioLinkGuid = "58281da7f948e9644aceb5d0178bf06b";
+            const string bakeryRuntimeGuid = "a1653399f63795746b1857281d1e400d";
+            const string bakeryEditorGuid = "290dd5870d0ead646bcb6ea5c6a60af5";
+            string[] coreAsmdefs = {
+                "Packages/red.sim.lightvolumes/UScripts/red.sim.LightVolumesUdon.asmdef",
+                "Packages/red.sim.lightvolumes/Scripts/red.sim.LightVolumes.asmdef",
+                "Packages/red.sim.lightvolumes/Scripts/Editor/red.sim.LightVolumesEditor.asmdef"
+            };
+            for (int i = 0; i < coreAsmdefs.Length; i++) {
+                AssemblyDefinition asmdef = JsonUtility.FromJson<AssemblyDefinition>(File.ReadAllText(coreAsmdefs[i]));
+                Assert.That(asmdef.references, Does.Not.Contain("GUID:" + audioLinkGuid), coreAsmdefs[i]);
+                Assert.That(asmdef.references, Does.Not.Contain("GUID:" + bakeryRuntimeGuid), coreAsmdefs[i]);
+                Assert.That(asmdef.references, Does.Not.Contain("GUID:" + bakeryEditorGuid), coreAsmdefs[i]);
+            }
+
+            const string audioLinkProgramAssetPath = "Packages/red.sim.lightvolumes/Extra/Audio Link/LightVolumeAudioLink.asset";
+            const string optionalAsmdefPath = "Packages/red.sim.lightvolumes/Extra/Audio Link/red.sim.LightVolumes.AudioLinkUdon.asmdef";
+            const string optionalAssemblyAssetPath = "Packages/red.sim.lightvolumes/Extra/Audio Link/red.sim.LightVolumes.AudioLinkUdon.asset";
+            AssemblyDefinition audioLinkAsmdef = JsonUtility.FromJson<AssemblyDefinition>(File.ReadAllText(optionalAsmdefPath));
+            Assert.That(audioLinkAsmdef.references, Does.Not.Contain("GUID:" + audioLinkGuid));
+            Assert.That(audioLinkAsmdef.defineConstraints, Is.Empty, "A conditional asmdef leaves its UdonSharp program asset outside every active U# assembly.");
+            Assert.That(File.Exists(optionalAssemblyAssetPath), Is.True);
+            Assert.That(File.ReadAllText(optionalAssemblyAssetPath), Does.Contain(AssetDatabase.AssetPathToGUID(optionalAsmdefPath)));
+            string audioLinkProgramAsset = File.ReadAllText(audioLinkProgramAssetPath);
+            Assert.That(audioLinkProgramAsset, Does.Not.Contain("AudioLink.AudioLink, AudioLink"));
+            Assert.That(audioLinkProgramAsset, Does.Contain("UdonSharp.UdonSharpBehaviour, UdonSharp.Runtime"));
+
+            string packageManifest = File.ReadAllText("Packages/red.sim.lightvolumes/package.json");
+            Assert.That(packageManifest, Does.Not.Contain("com.llealloo.audiolink"));
+        }
+
+        // A unique co-located Udon component is authoritative even when an obsolete serialized link points elsewhere.
+        [Test]
+        public void MigrationResolverUsesUniqueCoLocatedDestination() {
+            _legacyObject = new GameObject("Legacy Pair Source");
+            _unifiedObject = new GameObject("Foreign Unified Destination");
+            LightVolume legacy = _legacyObject.AddComponent<LightVolume>();
+            LightVolumeInstance attached = _legacyObject.AddComponent<LightVolumeInstance>();
+            LightVolumeInstance foreign = _unifiedObject.AddComponent<LightVolumeInstance>();
+            MethodInfo resolve = typeof(LightVolumeMigration).GetMethod(
+                "ResolveLightVolumeInstance",
+                BindingFlags.Static | BindingFlags.NonPublic);
+
+            Assert.That(resolve, Is.Not.Null);
+
+            legacy.LightVolumeInstance = foreign;
+            Assert.That(resolve.Invoke(null, new object[] { legacy }), Is.SameAs(attached));
+
+            legacy.LightVolumeInstance = attached;
+            Assert.That(resolve.Invoke(null, new object[] { legacy }), Is.SameAs(attached));
+        }
+
+        // Resolving an incomplete old payload is read-only and must never create a replacement Udon component.
+        [Test]
+        public void MigrationResolverDoesNotCreateMissingDestination() {
+            _legacyObject = new GameObject("Incomplete Migration Source");
+            LightVolume legacy = _legacyObject.AddComponent<LightVolume>();
+            MethodInfo resolve = typeof(LightVolumeMigration).GetMethod(
+                "ResolveLightVolumeInstance",
+                BindingFlags.Static | BindingFlags.NonPublic);
+
+            Assert.That(resolve, Is.Not.Null);
+            Assert.That(resolve.Invoke(null, new object[] { legacy }), Is.Null);
+            Assert.That(_legacyObject.GetComponents<LightVolumeInstance>(), Is.Empty);
+        }
+
+        // Applying the same compatibility payload twice must produce the same unified serialized state.
+        [Test]
+        public void MigrationPointLightPayloadCopyIsIdempotent() {
+            _legacyObject = new GameObject("Point Light Migration Source");
+            _unifiedObject = new GameObject("Point Light Migration Destination");
+            PointLightVolume source = _legacyObject.AddComponent<PointLightVolume>();
+            PointLightVolumeInstance destination = _unifiedObject.AddComponent<PointLightVolumeInstance>();
+            Texture2D cookie = new Texture2D(2, 2, TextureFormat.RGBA32, false);
+            source.Dynamic = true;
+            source.Type = PointLightVolume.LightType.SpotLight;
+            source.Projection = PointLightVolume.LightProjection.Custom;
+            source.Cookie = cookie;
+            source.Range = 17f;
+            source.Intensity = 3.5f;
+            source.Angle = 42f;
+            source.Falloff = 0.6f;
+            source.Shadows = true;
+            source.BakeInGame = true;
+            MethodInfo copy = typeof(LightVolumeMigration).GetMethod(
+                "CopyLegacyPointLight",
+                BindingFlags.Static | BindingFlags.NonPublic);
+
+            Assert.That(copy, Is.Not.Null);
+            copy.Invoke(null, new object[] { source, destination });
+            destination.EditorApplyAuthoringData(true, true, false);
+            string firstState = JsonUtility.ToJson(destination);
+            copy.Invoke(null, new object[] { source, destination });
+            destination.EditorApplyAuthoringData(true, true, false);
+
+            Assert.That(JsonUtility.ToJson(destination), Is.EqualTo(firstState));
+            Assert.That(destination.LightType, Is.EqualTo(1));
+            Assert.That(destination.Projection, Is.EqualTo(2));
+            Assert.That(destination.ProjectionMode, Is.EqualTo(2));
+            Assert.That(destination.Cookie, Is.SameAs(cookie));
+            Assert.That(destination.CustomTexture, Is.SameAs(cookie));
+            Assert.That(destination.Intensity, Is.EqualTo(3.5f).Within(Epsilon));
+            UnityEngine.Object.DestroyImmediate(cookie);
+        }
+
+        // The affected upgrade retained a matching effective runtime source while losing the duplicate cookie field.
+        [Test]
+        public void MigrationRecoversMissingSpotCookieFromMatchingLegacyRuntimeState() {
+            _legacyObject = new GameObject("Partially Deserialized Point Light Source");
+            _unifiedObject = new GameObject("Working Legacy Runtime Destination");
+            PointLightVolume source = _legacyObject.AddComponent<PointLightVolume>();
+            PointLightVolumeInstance destination = _unifiedObject.AddComponent<PointLightVolumeInstance>();
+            Texture2D cookie = new Texture2D(2, 2, TextureFormat.RGBA32, false);
+            source.Type = PointLightVolume.LightType.SpotLight;
+            source.Projection = PointLightVolume.LightProjection.Custom;
+            destination.LightType = 1;
+            destination.ProjectionMode = 2;
+            destination.CustomTexture = cookie;
+            MethodInfo copy = typeof(LightVolumeMigration).GetMethod(
+                "CopyLegacyPointLight",
+                BindingFlags.Static | BindingFlags.NonPublic);
+
+            Assert.That(copy, Is.Not.Null);
+            copy.Invoke(null, new object[] { source, destination });
+            destination.EditorApplyAuthoringData(true, true, false);
+
+            Assert.That(destination.LightType, Is.EqualTo(1));
+            Assert.That(destination.Projection, Is.EqualTo(2));
+            Assert.That(destination.ProjectionMode, Is.EqualTo(2));
+            Assert.That(destination.Cookie, Is.SameAs(cookie));
+            Assert.That(destination.CustomTexture, Is.SameAs(cookie));
+            UnityEngine.Object.DestroyImmediate(cookie);
+        }
+
+        // Runtime fields are derived cache and must not override a different legacy authoring type or mode.
+        [Test]
+        public void MigrationDoesNotImportMismatchedLegacyRuntimeProjectionState() {
+            _legacyObject = new GameObject("Authoritative Parametric Point Source");
+            _unifiedObject = new GameObject("Stale Spot Cookie Runtime Destination");
+            PointLightVolume source = _legacyObject.AddComponent<PointLightVolume>();
+            PointLightVolumeInstance destination = _unifiedObject.AddComponent<PointLightVolumeInstance>();
+            Texture2D staleCookie = new Texture2D(2, 2, TextureFormat.RGBA32, false);
+            destination.LightType = 1;
+            destination.ProjectionMode = 2;
+            destination.CustomTexture = staleCookie;
+            MethodInfo copy = typeof(LightVolumeMigration).GetMethod(
+                "CopyLegacyPointLight",
+                BindingFlags.Static | BindingFlags.NonPublic);
+
+            Assert.That(copy, Is.Not.Null);
+            copy.Invoke(null, new object[] { source, destination });
+            destination.EditorApplyAuthoringData(true, true, false);
+
+            Assert.That(destination.LightType, Is.Zero);
+            Assert.That(destination.Projection, Is.Zero);
+            Assert.That(destination.ProjectionMode, Is.Zero);
+            Assert.That(destination.GetProjectionSource(), Is.Null);
+            Assert.That(destination.CustomTexture, Is.Null);
+            UnityEngine.Object.DestroyImmediate(staleCookie);
+        }
+
+        [Test]
+        public void MigrationPreservesProjectionSourcesForEveryLightTypeAndMode() {
+            MethodInfo copy = typeof(LightVolumeMigration).GetMethod(
+                "CopyLegacyPointLight",
+                BindingFlags.Static | BindingFlags.NonPublic);
+            Texture2D lut = new Texture2D(2, 2, TextureFormat.RGBA32, false);
+            Texture2D cookie = new Texture2D(2, 2, TextureFormat.RGBA32, false);
+            Cubemap cubemap = new Cubemap(2, TextureFormat.RGBA32, false);
+            Assert.That(copy, Is.Not.Null);
+
+            AssertProjectionCopy(copy, PointLightVolume.LightType.PointLight, PointLightVolume.LightProjection.Parametric, null, 0);
+            AssertProjectionCopy(copy, PointLightVolume.LightType.PointLight, PointLightVolume.LightProjection.LUT, lut, 1);
+            AssertProjectionCopy(copy, PointLightVolume.LightType.PointLight, PointLightVolume.LightProjection.Custom, cubemap, 2);
+            AssertProjectionCopy(copy, PointLightVolume.LightType.SpotLight, PointLightVolume.LightProjection.Parametric, null, 0);
+            AssertProjectionCopy(copy, PointLightVolume.LightType.SpotLight, PointLightVolume.LightProjection.LUT, lut, 1);
+            AssertProjectionCopy(copy, PointLightVolume.LightType.SpotLight, PointLightVolume.LightProjection.Custom, cookie, 2);
+            AssertProjectionCopy(copy, PointLightVolume.LightType.AreaLight, PointLightVolume.LightProjection.Parametric, null, 0);
+            AssertProjectionCopy(copy, PointLightVolume.LightType.AreaLight, PointLightVolume.LightProjection.Parametric, cookie, 2);
+
+            UnityEngine.Object.DestroyImmediate(lut);
+            UnityEngine.Object.DestroyImmediate(cookie);
+            UnityEngine.Object.DestroyImmediate(cubemap);
+        }
+
+        [Test]
+        public void MigrationPreservesShadowMapForEveryLightTypeAndWhenShadowsAreDisabled() {
+            MethodInfo copy = typeof(LightVolumeMigration).GetMethod(
+                "CopyLegacyPointLight",
+                BindingFlags.Static | BindingFlags.NonPublic);
+            Texture2D shadowMap = new Texture2D(2, 2, TextureFormat.RGBA32, false);
+            Assert.That(copy, Is.Not.Null);
+
+            AssertShadowCopy(copy, PointLightVolume.LightType.PointLight, shadowMap, true, true);
+            AssertShadowCopy(copy, PointLightVolume.LightType.SpotLight, shadowMap, true, false);
+            AssertShadowCopy(copy, PointLightVolume.LightType.AreaLight, shadowMap, true, true);
+            AssertShadowCopy(copy, PointLightVolume.LightType.SpotLight, shadowMap, false, false);
+
+            UnityEngine.Object.DestroyImmediate(shadowMap);
+        }
+
+        // Resolution validation belongs to unified authoring and rejects invalid or overflowing grids.
+        [Test]
+        public void UnifiedVoxelCountRejectsInvalidAndOverflowingResolution() {
+            Assert.That(LightVolumeTools.GetVoxelCount(new Vector3Int(2, 3, 4)), Is.EqualTo(24));
+            Assert.That(LightVolumeTools.GetVoxelCount(new Vector3Int(0, 3, 4)), Is.EqualTo(-1));
+            Assert.That(LightVolumeTools.GetVoxelCount(new Vector3Int(int.MaxValue, 2, 2)), Is.EqualTo(-1));
+        }
+
+        // Destroyed Unity texture wrappers still satisfy C# type patterns and must be rejected with
+        // Unity's overloaded null comparison before their native properties are read.
+        [Test]
+        public void ManagerStatsIgnoreDestroyedShadowTextures() {
+            MethodInfo getTextureTexels = typeof(LightVolumeManagerEditor).GetMethod(
+                "GetTextureTexels",
+                BindingFlags.Static | BindingFlags.NonPublic);
+            Cubemap destroyedCubemap = new Cubemap(4, TextureFormat.RGBAHalf, false);
+            Assert.That(getTextureTexels, Is.Not.Null);
+            UnityEngine.Object.DestroyImmediate(destroyedCubemap);
+
+            Assert.That((ulong)getTextureTexels.Invoke(null, new object[] { destroyedCubemap }), Is.Zero);
+        }
+
+        // The Manager estimate follows the actual texture format and exact mip dimensions instead of applying one RGBAHalf bytes-per-texel assumption to every source.
+        [Test]
+        public void ManagerStatsUseExactArrayMipStorage() {
+            MethodInfo getTextureGpuBytes = typeof(LightVolumeManagerEditor).GetMethod(
+                "GetTextureGpuBytes",
+                BindingFlags.Static | BindingFlags.NonPublic);
+            Texture2DArray texture = new Texture2DArray(4, 4, 2, TextureFormat.RGBAHalf, true, true);
+            try {
+                Assert.That(getTextureGpuBytes, Is.Not.Null);
+                // (4x4 + 2x2 + 1x1) * two array slices * eight bytes per RGBAHalf texel.
+                Assert.That((ulong)getTextureGpuBytes.Invoke(null, new object[] { texture }), Is.EqualTo(336UL));
+            } finally {
+                UnityEngine.Object.DestroyImmediate(texture);
+            }
+        }
+
+        // Block-compressed imports already represent their GPU-ready payload and must not receive the empirical bundle ratio a second time.
+        [Test]
+        public void ManagerStatsDoNotDoubleCompressBlockTextureEstimate() {
+            MethodInfo getTextureGpuBytes = typeof(LightVolumeManagerEditor).GetMethod(
+                "GetTextureGpuBytes",
+                BindingFlags.Static | BindingFlags.NonPublic);
+            MethodInfo estimateBundleBytes = typeof(LightVolumeManagerEditor).GetMethod(
+                "EstimateCompressedBundleBytes",
+                BindingFlags.Static | BindingFlags.NonPublic);
+            Texture2D texture = new Texture2D(4, 4, TextureFormat.DXT1, false, true);
+            try {
+                Assert.That(getTextureGpuBytes, Is.Not.Null);
+                Assert.That(estimateBundleBytes, Is.Not.Null);
+                ulong gpuBytes = (ulong)getTextureGpuBytes.Invoke(null, new object[] { texture });
+                Assert.That(gpuBytes, Is.EqualTo(8UL));
+                Assert.That((ulong)estimateBundleBytes.Invoke(null, new object[] { texture }), Is.EqualTo(gpuBytes));
+            } finally {
+                UnityEngine.Object.DestroyImmediate(texture);
+            }
+        }
+
+        // Two same-name lights receive separate shadow assets, while a rebake keeps the path already
+        // owned by that light.
+        [Test]
+        public void ShadowBakePathsDoNotCollideForSameNameLights() {
+            MethodInfo resolvePath = typeof(PointLightShadowBaker).GetMethod(
+                "ResolveShadowAssetPath",
+                BindingFlags.Static | BindingFlags.NonPublic);
+            string firstPath = AssetDatabase.GenerateUniqueAssetPath("Assets/VRCLightVolumesShadowPathTest.asset");
+            GameObject firstObject = new GameObject("Point Light");
+            GameObject secondObject = new GameObject("Point Light");
+            Texture2D firstShadow = new Texture2D(2, 2, TextureFormat.RGBAHalf, false);
+
+            try {
+                Assert.That(resolvePath, Is.Not.Null);
+                AssetDatabase.CreateAsset(firstShadow, firstPath);
+                PointLightVolumeInstance first = firstObject.AddComponent<PointLightVolumeInstance>();
+                PointLightVolumeInstance second = secondObject.AddComponent<PointLightVolumeInstance>();
+                first.ShadowMap = firstShadow;
+
+                string rebakePath = (string)resolvePath.Invoke(null, new object[] { first, firstPath });
+                string secondPath = (string)resolvePath.Invoke(null, new object[] { second, firstPath });
+
+                Assert.That(rebakePath, Is.EqualTo(firstPath));
+                Assert.That(secondPath, Is.Not.EqualTo(firstPath));
+            } finally {
+                UnityEngine.Object.DestroyImmediate(firstObject);
+                UnityEngine.Object.DestroyImmediate(secondObject);
+                AssetDatabase.DeleteAsset(firstPath);
+            }
+        }
+
+        // Rebuilding shared shadow dependencies must release only the temporary materials created
+        // by the editor baker and preserve externally-owned non-persistent materials.
+        [Test]
+        public void ShadowDependencyReplacementReleasesOnlyOwnedRuntimeMaterials() {
+            MethodInfo ensureDependencies = typeof(PointLightShadowBaker).GetMethod(
+                "EnsureRuntimeShadowBakeDependencies",
+                BindingFlags.Static | BindingFlags.NonPublic);
+            GameObject managerObject = new GameObject("Shadow Dependency Replacement Manager");
+            GameObject pointObject = new GameObject("Shadow Dependency Replacement Point");
+            Material ownedDepth = null;
+            Material externalBlur = null;
+            try {
+                Assert.That(ensureDependencies, Is.Not.Null);
+                Shader wrongShader = Shader.Find("Hidden/InternalErrorShader");
+                Assert.That(wrongShader, Is.Not.Null);
+                ownedDepth = new Material(wrongShader) { hideFlags = HideFlags.HideAndDontSave };
+                externalBlur = new Material(wrongShader);
+                LightVolumeManager manager = managerObject.AddComponent<LightVolumeManager>();
+                PointLightVolumeInstance point = pointObject.AddComponent<PointLightVolumeInstance>();
+                point.LightVolumeManager = manager;
+                point.Blur = 1f;
+                manager.RuntimeShadowDepthEncodeMaterial = ownedDepth;
+                manager.RuntimeShadowBlurMaterial = externalBlur;
+
+                bool ready = (bool)ensureDependencies.Invoke(null, new object[] { manager, point });
+
+                Assert.That(ready, Is.True);
+                Assert.That(ownedDepth == null, Is.True, "The replaced editor-owned material must be destroyed.");
+                Assert.That(externalBlur == null, Is.False, "An external material must not be destroyed when the Manager stops referencing it.");
+                Assert.That(manager.RuntimeShadowDepthEncodeMaterial.shader.name, Is.EqualTo("Hidden/VRCLV/PointLightShadowDepthEncode"));
+                Assert.That(manager.RuntimeShadowBlurMaterial.shader.name, Is.EqualTo("Hidden/VRCLV/PointLightShadowRuntimeBlur"));
+            } finally {
+                UnityEngine.Object.DestroyImmediate(pointObject);
+                UnityEngine.Object.DestroyImmediate(managerObject);
+                if (ownedDepth != null) UnityEngine.Object.DestroyImmediate(ownedDepth);
+                if (externalBlur != null) UnityEngine.Object.DestroyImmediate(externalBlur);
+            }
+        }
+
+        // Re-baking copies the new pixels into the already assigned native asset so its complete
+        // Unity identity and references held by other lights remain valid.
+        [TestCase(false)]
+        [TestCase(true)]
+        public void ShadowRebakePreservesAssetIdentityAndSharedReferences(bool cubemap) {
+            MethodInfo saveAtPath = typeof(PointLightShadowBaker).GetMethod(
+                "SaveShadowAssetAtPath",
+                BindingFlags.Static | BindingFlags.NonPublic);
+            string assetKind = cubemap ? "Cubemap" : "Texture";
+            string path = AssetDatabase.GenerateUniqueAssetPath($"Assets/VRCLightVolumesShadow{assetKind}IdentityTest.asset");
+            GameObject ownerObject = new GameObject("Shadow Owner");
+            GameObject observerObject = new GameObject("Shadow Observer");
+            Texture existingShadow = cubemap
+                ? (Texture)new Cubemap(2, TextureFormat.RGBAHalf, false)
+                : new Texture2D(2, 2, TextureFormat.RGBAHalf, false, true);
+            existingShadow.name = "Stable Shadow";
+            existingShadow.filterMode = FilterMode.Bilinear;
+            Texture replacementShadow = null;
+
+            try {
+                Assert.That(saveAtPath, Is.Not.Null);
+                SetShadowPixels(existingShadow, Color.black);
+                AssetDatabase.CreateAsset(existingShadow, path);
+                string assetNameBefore = existingShadow.name;
+
+                PointLightVolumeInstance owner = ownerObject.AddComponent<PointLightVolumeInstance>();
+                PointLightVolumeInstance observer = observerObject.AddComponent<PointLightVolumeInstance>();
+                owner.ShadowMap = existingShadow;
+                observer.ShadowMap = existingShadow;
+
+                Assert.That(AssetDatabase.TryGetGUIDAndLocalFileIdentifier(existingShadow, out string guidBefore, out long localIdBefore), Is.True);
+
+                replacementShadow = cubemap
+                    ? (Texture)new Cubemap(4, TextureFormat.RGBAHalf, false)
+                    : new Texture2D(4, 4, TextureFormat.RGBAHalf, false, true);
+                replacementShadow.name = "Temporary Replacement";
+                replacementShadow.filterMode = FilterMode.Point;
+                SetShadowPixels(replacementShadow, Color.white);
+
+                UnityEngine.Object savedShadow = saveAtPath.Invoke(null, new object[] { replacementShadow, path }) as UnityEngine.Object;
+                owner.ShadowMap = savedShadow;
+
+                AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceUpdate);
+                Texture reloadedShadow = AssetDatabase.LoadAssetAtPath<Texture>(path);
+                Assert.That(reloadedShadow, Is.Not.Null);
+                Assert.That(reloadedShadow.GetType(), Is.EqualTo(existingShadow.GetType()));
+                Assert.That(AssetDatabase.TryGetGUIDAndLocalFileIdentifier(reloadedShadow, out string guidAfter, out long localIdAfter), Is.True);
+                Assert.That(guidAfter, Is.EqualTo(guidBefore));
+                Assert.That(localIdAfter, Is.EqualTo(localIdBefore));
+                Assert.That(owner.ShadowMap, Is.EqualTo(reloadedShadow));
+                Assert.That(observer.ShadowMap, Is.EqualTo(reloadedShadow));
+                Assert.That(reloadedShadow.name, Is.EqualTo(assetNameBefore));
+                Assert.That(reloadedShadow.width, Is.EqualTo(4));
+                Assert.That(reloadedShadow.height, Is.EqualTo(4));
+                Assert.That(reloadedShadow.filterMode, Is.EqualTo(FilterMode.Point));
+                Color firstPixel = reloadedShadow is Cubemap reloadedCubemap
+                    ? reloadedCubemap.GetPixel(CubemapFace.PositiveX, 0, 0)
+                    : ((Texture2D)reloadedShadow).GetPixel(0, 0);
+                Assert.That(firstPixel.r, Is.EqualTo(1f).Within(1f / 255f));
+            } finally {
+                UnityEngine.Object.DestroyImmediate(ownerObject);
+                UnityEngine.Object.DestroyImmediate(observerObject);
+                if (replacementShadow != null) UnityEngine.Object.DestroyImmediate(replacementShadow);
+                AssetDatabase.DeleteAsset(path);
+            }
+        }
+
+        [System.Serializable]
+        private sealed class AssemblyDefinition {
+            public string[] references = new string[0];
+            public string[] defineConstraints = new string[0];
+            public VersionDefine[] versionDefines = new VersionDefine[0];
+        }
+
+        [System.Serializable]
+        private sealed class VersionDefine {
+            public string name = "";
+            public string expression = "";
+            public string define = "";
+        }
+
+        private static void SetShadowPixels(Texture texture, Color color) {
+            Color[] pixels = new Color[texture.width * texture.height];
+            for (int i = 0; i < pixels.Length; i++) pixels[i] = color;
+
+            if (texture is Cubemap cubemap) {
+                for (int i = 0; i < 6; i++) cubemap.SetPixels(pixels, (CubemapFace)i);
+                cubemap.Apply(false);
+                return;
+            }
+
+            Texture2D texture2D = (Texture2D)texture;
+            texture2D.SetPixels(pixels);
+            texture2D.Apply(false);
+        }
+
+        private static void CreateExrImport(string path) {
+            Texture2D source = new Texture2D(2, 2, TextureFormat.RGBAFloat, false, true);
+            try {
+                source.SetPixels(new[] { new Color(4f, 0f, 0f, 1f), Color.green, Color.blue, Color.white });
+                source.Apply(false);
+                File.WriteAllBytes(path, source.EncodeToEXR(Texture2D.EXRFlags.OutputAsFloat));
+            } finally {
+                UnityEngine.Object.DestroyImmediate(source);
+            }
+
+            ConfigureMisconfiguredHdrImport(path);
+        }
+
+        private static void CreateRadianceHdrImport(string path) {
+            byte[] header = System.Text.Encoding.ASCII.GetBytes("#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n-Y 2 +X 2\n");
+            byte[] pixels = {
+                128, 0, 0, 131,
+                0, 128, 0, 129,
+                0, 0, 128, 129,
+                128, 128, 128, 129
+            };
+            byte[] data = new byte[header.Length + pixels.Length];
+            System.Buffer.BlockCopy(header, 0, data, 0, header.Length);
+            System.Buffer.BlockCopy(pixels, 0, data, header.Length, pixels.Length);
+            File.WriteAllBytes(path, data);
+
+            ConfigureMisconfiguredHdrImport(path);
+        }
+
+        private static void CreatePngImport(string path) {
+            Texture2D source = new Texture2D(2, 2, TextureFormat.RGBA32, false);
+            try {
+                source.SetPixels(new[] { Color.red, Color.green, Color.blue, Color.white });
+                source.Apply(false);
+                File.WriteAllBytes(path, source.EncodeToPNG());
+            } finally {
+                UnityEngine.Object.DestroyImmediate(source);
+            }
+
+            AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
+            TextureImporter importer = AssetImporter.GetAtPath(path) as TextureImporter;
+            Assert.That(importer, Is.Not.Null);
+            importer.sRGBTexture = true;
+            importer.textureCompression = TextureImporterCompression.Compressed;
+            importer.ClearPlatformTextureSettings("Android");
+            importer.SaveAndReimport();
+        }
+
+        private static void ConfigureMisconfiguredHdrImport(string path) {
+            AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
+            TextureImporter importer = AssetImporter.GetAtPath(path) as TextureImporter;
+            Assert.That(importer, Is.Not.Null);
+            importer.sRGBTexture = true;
+            importer.textureCompression = TextureImporterCompression.Compressed;
+            importer.ClearPlatformTextureSettings("Android");
+            importer.SaveAndReimport();
+            Assert.That(importer.sRGBTexture, Is.True);
+            Assert.That(importer.GetPlatformTextureSettings("Android").overridden, Is.False);
+        }
+
+        private static void AssertStandardLdrImport(string path) {
+            TextureImporter importer = AssetImporter.GetAtPath(path) as TextureImporter;
+            Assert.That(importer, Is.Not.Null);
+            Assert.That(importer.sRGBTexture, Is.True);
+            Assert.That(importer.GetPlatformTextureSettings("Android").overridden, Is.False,
+                "An LDR projection must retain its normal Android import settings.");
+        }
+
+        private static void SetAndroidHdrOverride(string path, TextureImporterFormat format) {
+            TextureImporter importer = AssetImporter.GetAtPath(path) as TextureImporter;
+            Assert.That(importer, Is.Not.Null);
+            TextureImporterPlatformSettings androidSettings = importer.GetPlatformTextureSettings("Android");
+            androidSettings.overridden = true;
+            androidSettings.format = format;
+            androidSettings.textureCompression = TextureImporterCompression.Uncompressed;
+            importer.SetPlatformTextureSettings(androidSettings);
+            importer.SaveAndReimport();
+        }
+
+        private static void AssertAndroidHdrOverridePreservesDefaultSrgb(string path, TextureImporterFormat format) {
+            TextureImporter importer = AssetImporter.GetAtPath(path) as TextureImporter;
+            Assert.That(importer, Is.Not.Null);
+            Assert.That(importer.sRGBTexture, Is.True, "The default import used by non-Android platforms must remain unchanged.");
+            TextureImporterPlatformSettings androidSettings = importer.GetPlatformTextureSettings("Android");
+            Assert.That(androidSettings.overridden, Is.True);
+            Assert.That(androidSettings.format, Is.EqualTo(format));
+            Assert.That(androidSettings.textureCompression, Is.EqualTo(TextureImporterCompression.Uncompressed));
+        }
+
+        private static void AssertMisconfiguredExrImport(string path) {
+            TextureImporter importer = AssetImporter.GetAtPath(path) as TextureImporter;
+            Assert.That(importer, Is.Not.Null);
+            Assert.That(importer.sRGBTexture, Is.True);
+            Assert.That(importer.GetPlatformTextureSettings("Android").overridden, Is.False);
+        }
+
+        private static void AssertProjectionCopy(MethodInfo copy, PointLightVolume.LightType lightType, PointLightVolume.LightProjection projection, UnityEngine.Object sourceObject, int expectedMode) {
+            GameObject legacyObject = new GameObject($"Legacy {lightType} {projection}");
+            GameObject unifiedObject = new GameObject($"Unified {lightType} {projection}");
+            try {
+                PointLightVolume source = legacyObject.AddComponent<PointLightVolume>();
+                PointLightVolumeInstance destination = unifiedObject.AddComponent<PointLightVolumeInstance>();
+                source.Type = lightType;
+                source.Projection = projection;
+                if (lightType == PointLightVolume.LightType.AreaLight) source.Cookie = sourceObject;
+                else if (projection == PointLightVolume.LightProjection.LUT) source.FalloffLUT = sourceObject;
+                else if (lightType == PointLightVolume.LightType.PointLight) source.Cubemap = sourceObject;
+                else source.Cookie = sourceObject;
+
+                copy.Invoke(null, new object[] { source, destination });
+                destination.EditorApplyAuthoringData(true, true, false);
+
+                Assert.That(destination.LightType, Is.EqualTo((int)lightType), $"{lightType} {projection} type");
+                Assert.That(destination.ProjectionMode, Is.EqualTo(expectedMode), $"{lightType} {projection} mode");
+                Assert.That(destination.GetProjectionSource(), Is.SameAs(sourceObject), $"{lightType} {projection} source");
+                Assert.That(destination.CustomTexture, Is.SameAs(sourceObject as Texture), $"{lightType} {projection} runtime texture");
+            } finally {
+                UnityEngine.Object.DestroyImmediate(legacyObject);
+                UnityEngine.Object.DestroyImmediate(unifiedObject);
+            }
+        }
+
+        private static void AssertShadowCopy(MethodInfo copy, PointLightVolume.LightType lightType, UnityEngine.Object shadowMap, bool shadows, bool expectedCubemap) {
+            GameObject legacyObject = new GameObject($"Legacy {lightType} Shadows {shadows}");
+            GameObject unifiedObject = new GameObject($"Unified {lightType} Shadows {shadows}");
+            try {
+                PointLightVolume source = legacyObject.AddComponent<PointLightVolume>();
+                PointLightVolumeInstance destination = unifiedObject.AddComponent<PointLightVolumeInstance>();
+                source.Type = lightType;
+                source.Shadows = shadows;
+                source.ShadowMap = shadowMap;
+
+                copy.Invoke(null, new object[] { source, destination });
+                destination.EditorApplyAuthoringData(true, true, false);
+
+                Assert.That(destination.LightType, Is.EqualTo((int)lightType));
+                Assert.That(destination.Shadows, Is.EqualTo(shadows));
+                Assert.That(destination.ShadowMap, Is.SameAs(shadowMap), $"{lightType} authoring shadow source");
+                Assert.That(destination.ShadowMapTexture, shadows ? Is.SameAs(shadowMap) : Is.Null, $"{lightType} runtime shadow source");
+                Assert.That(destination.ShadowMapID, shadows ? Is.Zero : Is.EqualTo(-1f));
+                Assert.That(destination.ShadowMapUsesCubemap, Is.EqualTo(shadows && expectedCubemap));
+            } finally {
+                UnityEngine.Object.DestroyImmediate(legacyObject);
+                UnityEngine.Object.DestroyImmediate(unifiedObject);
+            }
+        }
+    }
+}

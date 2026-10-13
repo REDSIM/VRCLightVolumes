@@ -98,8 +98,8 @@ Install VRC Light Volumes in the avatar project, then choose the prefab matching
 
 | Avatar tool | Prefab, relative to `Packages/red.sim.lightvolumes/` |
 | --- | --- |
-| [VRCFury](https://vrcfury.com/download/) | `Extra/Light Volume Debugger/VRCFury/Light Volume Debugger VRCFury.prefab` |
-| [Modular Avatar](https://modular-avatar.nadena.dev/docs/intro) | `Extra/Light Volume Debugger/ModularAvatar/Light Volume Debugger MA.prefab` |
+| [VRCFury](https://vrcfury.com/download/) | `Extra/Light Volume Debugger/Light Volume Debugger VRCFury.prefab` |
+| [Modular Avatar](https://modular-avatar.nadena.dev/docs/intro) | `Extra/Light Volume Debugger/Light Volume Debugger MA.prefab` |
 
 Install the tool for your chosen prefab. The Modular Avatar version requires **1.18.0** or newer.
 

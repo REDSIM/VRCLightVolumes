@@ -16,7 +16,7 @@ Shader "Light Volume Samples/Light Volume Debugger Clustering" {
             #pragma multi_compile_instancing
             #include "UnityCG.cginc"
             #define VRCLV_PREVIEW_FINE_CLUSTERING
-            #include "../../Shaders/Editor/LV_UnityPreviewClusteringCommon.cginc"
+            #include "../../../Shaders/Editor/LV_UnityPreviewClusteringCommon.cginc"
 
             UNITY_DECLARE_DEPTH_TEXTURE(_CameraDepthTexture);
             float _UdonLightVolumeEnabled;
@@ -38,22 +38,20 @@ Shader "Light Volume Samples/Light Volume Debugger Clustering" {
                 UNITY_INITIALIZE_OUTPUT(v2f, o);
                 UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(o);
 
-                float3 center = unity_ObjectToWorld._m03_m13_m23;
-                float3 cameraPosition = _WorldSpaceCameraPos;
-                #if defined(USING_STEREO_MATRICES)
-                cameraPosition = (unity_StereoWorldSpaceCameraPos[0] + unity_StereoWorldSpaceCameraPos[1]) * 0.5;
-                #endif
-                float3 delta = cameraPosition - center;
                 // Collapse the cube before rasterization when this camera cannot use the overlay.
-                bool visible = dot(delta, delta) <= 9.0 && _UdonLightVolumeEnabled > 0.0
+                bool visible = _UdonLightVolumeEnabled > 0.0
                     && _UdonLightVolumeVersion >= 3.0 && _UdonClusteringEnabled >= 0.5;
                 if (!visible) {
                     o.position = float4(0.0, 0.0, 0.0, 1.0);
                     return o;
                 }
 
-                // Keep the 3 m camera radius independent of avatar rotation and scale.
-                o.position = UnityWorldToClipPos(center + v.vertex.xyz);
+                // Center the cube on the camera, independent of avatar position, rotation and scale.
+                float3 cameraPosition = _WorldSpaceCameraPos;
+                #if defined(USING_STEREO_MATRICES)
+                cameraPosition = (unity_StereoWorldSpaceCameraPos[0] + unity_StereoWorldSpaceCameraPos[1]) * 0.5;
+                #endif
+                o.position = UnityWorldToClipPos(cameraPosition + v.vertex.xyz);
                 o.screen = ComputeNonStereoScreenPos(o.position);
                 // Only the cube's screen coverage matters, including at the camera's clipping planes.
                 o.position.z = o.position.w * 0.5;

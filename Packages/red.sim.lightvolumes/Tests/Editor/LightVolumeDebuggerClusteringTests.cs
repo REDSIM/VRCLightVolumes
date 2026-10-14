@@ -12,7 +12,7 @@ using UnityEngine.SceneManagement;
 namespace VRCLightVolumes.Tests {
     [Category("Editor")]
     public class LightVolumeDebuggerClusteringTests {
-        private const string AssetRoot = "Packages/red.sim.lightvolumes/Extra/Light Volume Debugger/";
+        private const string AssetRoot = "Packages/red.sim.lightvolumes/Extra/Light Volume Debugger/Debugger/";
         private const string ShaderName = "Light Volume Samples/Light Volume Debugger Clustering";
         private const int ImageSize = 64;
         private const int GridSize = 8;
@@ -48,7 +48,7 @@ namespace VRCLightVolumes.Tests {
 
         [Test]
         public void ClusteringUsesOneCubeAndOneMaterialPass() {
-            Mesh mesh = LoadAsset<Mesh>("LightVolumeDebuggerClustering.asset");
+            Mesh mesh = LoadAsset<Mesh>("Light Volume Debugger Clustering Mesh.asset");
             Assert.That(mesh.vertexCount, Is.EqualTo(8));
             Assert.That(mesh.subMeshCount, Is.EqualTo(1));
             Assert.That(mesh.GetIndexCount(0), Is.EqualTo(36));
@@ -111,16 +111,19 @@ namespace VRCLightVolumes.Tests {
             }
         }
 
-        [Test]
-        public void CameraOutsideThreeMetersDoesNotReceiveTheOverlay() {
+        [TestCase(3.1f)]
+        [TestCase(25f)]
+        [TestCase(250f)]
+        public void AvatarDistanceDoesNotLimitTheOverlay(float distance) {
             using (RenderFixture fixture = new RenderFixture()) {
-                fixture.Camera.transform.position = new Vector3(3.1f, 0, 0);
-                fixture.AssertUnchangedFromNormalView();
+                fixture.Overlay.transform.position = new Vector3(distance, distance, -distance);
+                fixture.Render();
+                fixture.AssertSurfaceColors();
             }
         }
 
         [Test]
-        public void SmallRotatedAvatarStillCoversACameraInsideTheWorldRadius() {
+        public void SmallRotatedAvatarStillCoversTheCamera() {
             using (RenderFixture fixture = new RenderFixture()) {
                 fixture.Overlay.transform.localScale = Vector3.one * 0.1f;
                 fixture.Overlay.transform.rotation = Quaternion.Euler(30, 60, 20);
@@ -266,7 +269,7 @@ Shader ""Hidden/VRCLVClusteringTestMask"" {
                     Wall.AddComponent<MeshRenderer>().sharedMaterial = wallMaterial;
 
                     GameObject overlayObject = CreateObject("Clustering overlay");
-                    overlayObject.AddComponent<MeshFilter>().sharedMesh = LoadAsset<Mesh>("LightVolumeDebuggerClustering.asset");
+                    overlayObject.AddComponent<MeshFilter>().sharedMesh = LoadAsset<Mesh>("Light Volume Debugger Clustering Mesh.asset");
                     Overlay = overlayObject.AddComponent<MeshRenderer>();
                     Overlay.sharedMaterial = LoadAsset<Material>("Light Volume Debugger Clustering.mat");
                     Overlay.shadowCastingMode = ShadowCastingMode.Off;

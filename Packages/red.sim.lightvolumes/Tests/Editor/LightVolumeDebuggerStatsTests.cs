@@ -26,7 +26,7 @@ namespace VRCLightVolumes.Tests {
         [TestCase(ShaderCompilerPlatform.Vulkan, BuildTarget.Android, "")]
         [TestCase(ShaderCompilerPlatform.Metal, BuildTarget.StandaloneOSX, "")]
         public void StatsShaderCompilesForAvatarPlatforms(ShaderCompilerPlatform platform, BuildTarget target, string keyword) {
-            Shader shader = LoadAsset<Shader>("Light Volume Debugger Stats.shader");
+            Shader shader = LoadAsset<Shader>("Debugger/Light Volume Debugger Stats.shader");
             Assert.That(shader.name, Is.EqualTo(ShaderName));
             string[] keywords = keyword.Length == 0 ? Array.Empty<string>() : new[] { keyword };
             var pass = ShaderUtil.GetShaderData(shader).GetSubshader(0).GetPass(0);
@@ -45,18 +45,18 @@ namespace VRCLightVolumes.Tests {
 
         [Test]
         public void StatsAssetsUseOneQuadOnePassAndOneAtlas() {
-            Mesh mesh = LoadAsset<Mesh>("LightVolumeDebuggerStats.asset");
+            Mesh mesh = LoadAsset<Mesh>("Debugger/Light Volume Debugger Stats Mesh.asset");
             Assert.That(mesh.vertexCount, Is.EqualTo(4));
             Assert.That(mesh.subMeshCount, Is.EqualTo(1));
             Assert.That(mesh.GetIndexCount(0), Is.EqualTo(6));
             Assert.That(mesh.GetTopology(0), Is.EqualTo(MeshTopology.Triangles));
 
-            Material material = LoadAsset<Material>("Light Volume Debugger Stats.mat");
+            Material material = LoadAsset<Material>("Debugger/Light Volume Debugger Stats.mat");
             Assert.That(material.shader.name, Is.EqualTo(ShaderName));
             Assert.That(material.passCount, Is.EqualTo(1));
             Assert.That(material.GetTexturePropertyNames().Length, Is.EqualTo(1));
             Texture atlas = material.GetTexture(material.GetTexturePropertyNames()[0]);
-            Assert.That(atlas, Is.EqualTo(LoadAsset<Texture2D>("LightVolumeDebuggerStats.png")));
+            Assert.That(atlas, Is.EqualTo(LoadAsset<Texture2D>("Debugger/Light Volume Debugger Texture.png")));
             Assert.That(atlas.width, Is.EqualTo(1024));
             Assert.That(atlas.height, Is.EqualTo(512));
 
@@ -67,8 +67,8 @@ namespace VRCLightVolumes.Tests {
             }) Assert.That(material.HasProperty(global), Is.False, global + " must remain a shader global.");
         }
 
-        [TestCase("ModularAvatar/Light Volume Debugger MA.prefab")]
-        [TestCase("VRCFury/Light Volume Debugger VRCFury.prefab")]
+        [TestCase("Light Volume Debugger MA.prefab")]
+        [TestCase("Light Volume Debugger VRCFury.prefab")]
         public void DebuggerPrefabsKeepOneRendererAndOneMaterialSlot(string path) {
             GameObject prefab = LoadAsset<GameObject>(path);
             Renderer[] renderers = prefab.GetComponentsInChildren<Renderer>(true);
@@ -78,41 +78,35 @@ namespace VRCLightVolumes.Tests {
             Assert.That(renderers[0].GetComponent<MeshFilter>(), Is.Not.Null);
         }
 
-        [TestCase("ModularAvatar/Controller/Animation/LVDebugger Statistics ON.anim",
-            "ModularAvatar/Controller/Animation/LVDebugger Toggle ON.anim",
-            "ModularAvatar/Controller/Animation/LVDebugger Clustering ON.anim", "Debugger")]
-        [TestCase("VRCFury/LVDebuggerStatistics.anim", "VRCFury/LVDebuggerActive.anim", "VRCFury/LVDebuggerClustering.anim", "")]
-        public void DisplayAnimationsSwapTheExistingSlotAndDisableUnusedDepthLight(string statsPath, string cardsPath, string clusterPath, string childPath) {
+        [Test]
+        public void DisplayAnimationsSwapTheExistingSlotAndDisableUnusedDepthLight() {
             Scene scene = EditorSceneManager.NewPreviewScene();
             try {
                 GameObject root = new GameObject("Stats animation test");
                 SceneManager.MoveGameObjectToScene(root, scene);
                 root.AddComponent<Animator>();
-                GameObject debugger = root;
-                if (childPath.Length != 0) {
-                    debugger = new GameObject(childPath);
-                    debugger.transform.SetParent(root.transform, false);
-                }
+                GameObject debugger = new GameObject("Light Volume Debugger");
+                debugger.transform.SetParent(root.transform, false);
                 MeshFilter filter = debugger.AddComponent<MeshFilter>();
                 MeshRenderer renderer = debugger.AddComponent<MeshRenderer>();
                 GameObject depthLight = new GameObject("Depth Light");
                 depthLight.transform.SetParent(debugger.transform, false);
-                Material cardsMaterial = LoadAsset<Material>("Light Volume Debugger.mat");
-                Mesh cardsMesh = LoadAsset<Mesh>("LightVolumeDebuggerCards.asset");
+                Material cardsMaterial = LoadAsset<Material>("Debugger/Light Volume Debugger Cards.mat");
+                Mesh cardsMesh = LoadAsset<Mesh>("Debugger/Light Volume Debugger Cards Mesh.asset");
                 renderer.sharedMaterial = cardsMaterial;
-                AnimationClip cards = LoadAsset<AnimationClip>(cardsPath);
-                AnimationClip stats = LoadAsset<AnimationClip>(statsPath);
+                AnimationClip cards = LoadAsset<AnimationClip>("VRC/Animation/LVDebugger DebugType 0~2 Volumes.anim");
+                AnimationClip stats = LoadAsset<AnimationClip>("VRC/Animation/LVDebugger DebugType 3 Statistics.anim");
                 cards.SampleAnimation(root, 0.01f);
                 Assert.That(filter.sharedMesh, Is.EqualTo(cardsMesh));
                 stats.SampleAnimation(root, 0.01f);
                 Assert.That(depthLight.activeSelf, Is.False);
-                Assert.That(filter.sharedMesh, Is.EqualTo(LoadAsset<Mesh>("LightVolumeDebuggerStats.asset")));
-                Assert.That(renderer.sharedMaterial, Is.EqualTo(LoadAsset<Material>("Light Volume Debugger Stats.mat")));
+                Assert.That(filter.sharedMesh, Is.EqualTo(LoadAsset<Mesh>("Debugger/Light Volume Debugger Stats Mesh.asset")));
+                Assert.That(renderer.sharedMaterial, Is.EqualTo(LoadAsset<Material>("Debugger/Light Volume Debugger Stats.mat")));
                 Assert.That(renderer.sharedMaterials.Length, Is.EqualTo(1));
-                AnimationClip clustering = LoadAsset<AnimationClip>(clusterPath);
+                AnimationClip clustering = LoadAsset<AnimationClip>("VRC/Animation/LVDebugger DebugType 4 Clustering.anim");
                 clustering.SampleAnimation(root, 0.01f);
-                Assert.That(filter.sharedMesh, Is.EqualTo(LoadAsset<Mesh>("LightVolumeDebuggerClustering.asset")));
-                Assert.That(renderer.sharedMaterial, Is.EqualTo(LoadAsset<Material>("Light Volume Debugger Clustering.mat")));
+                Assert.That(filter.sharedMesh, Is.EqualTo(LoadAsset<Mesh>("Debugger/Light Volume Debugger Clustering Mesh.asset")));
+                Assert.That(renderer.sharedMaterial, Is.EqualTo(LoadAsset<Material>("Debugger/Light Volume Debugger Clustering.mat")));
                 Assert.That(renderer.sharedMaterials.Length, Is.EqualTo(1));
                 Assert.That(depthLight.activeSelf, Is.True);
                 stats.SampleAnimation(root, 0.01f);
@@ -123,34 +117,32 @@ namespace VRCLightVolumes.Tests {
                 Assert.That(filter.sharedMesh, Is.EqualTo(cardsMesh));
                 Assert.That(renderer.sharedMaterial, Is.EqualTo(cardsMaterial));
                 Assert.That(renderer.sharedMaterials.Length, Is.EqualTo(1));
-                if (childPath.Length != 0) {
-                    clustering.SampleAnimation(root, 0.01f);
-                    LoadAsset<AnimationClip>("ModularAvatar/Controller/Animation/LVDebugger Toggle OFF.anim").SampleAnimation(root, 0.01f);
-                    Assert.That(debugger.activeSelf, Is.False);
-                    Assert.That(filter.sharedMesh, Is.Null);
-                    Assert.That(renderer.sharedMaterial, Is.EqualTo(cardsMaterial));
-                    Assert.That(depthLight.activeSelf, Is.False);
-                }
+                clustering.SampleAnimation(root, 0.01f);
+                LoadAsset<AnimationClip>("VRC/Animation/LVDebugger Toggle OFF.anim").SampleAnimation(root, 0.01f);
+                Assert.That(debugger.activeSelf, Is.False);
+                Assert.That(filter.sharedMesh, Is.Null);
+                Assert.That(renderer.sharedMaterial, Is.EqualTo(cardsMaterial));
+                Assert.That(depthLight.activeSelf, Is.False);
             } finally {
                 EditorSceneManager.ClosePreviewScene(scene);
             }
         }
 
         [Test]
-        public void ModularAvatarControllerSwitchesDisplaysAndPreservesVisibility() {
-            AnimatorController controller = LoadAsset<AnimatorController>("ModularAvatar/Controller/LightVolumeDebugger Controller.controller");
-            Mesh cards = LoadAsset<Mesh>("LightVolumeDebuggerCards.asset");
-            Mesh quad = LoadAsset<Mesh>("LightVolumeDebuggerStats.asset");
-            Mesh cube = LoadAsset<Mesh>("LightVolumeDebuggerClustering.asset");
-            Material cardsMaterial = LoadAsset<Material>("Light Volume Debugger.mat");
-            Material statsMaterial = LoadAsset<Material>("Light Volume Debugger Stats.mat");
-            Material clusteringMaterial = LoadAsset<Material>("Light Volume Debugger Clustering.mat");
+        public void SharedControllerSwitchesDisplaysAndPreservesVisibility() {
+            AnimatorController controller = LoadAsset<AnimatorController>("VRC/Controller/LightVolumeDebugger Controller.controller");
+            Mesh cards = LoadAsset<Mesh>("Debugger/Light Volume Debugger Cards Mesh.asset");
+            Mesh quad = LoadAsset<Mesh>("Debugger/Light Volume Debugger Stats Mesh.asset");
+            Mesh cube = LoadAsset<Mesh>("Debugger/Light Volume Debugger Clustering Mesh.asset");
+            Material cardsMaterial = LoadAsset<Material>("Debugger/Light Volume Debugger Cards.mat");
+            Material statsMaterial = LoadAsset<Material>("Debugger/Light Volume Debugger Stats.mat");
+            Material clusteringMaterial = LoadAsset<Material>("Debugger/Light Volume Debugger Clustering.mat");
             Scene scene = EditorSceneManager.NewPreviewScene();
             PlayableGraph graph = PlayableGraph.Create("Stats controller test");
             try {
                 GameObject root = new GameObject("Stats controller test");
                 SceneManager.MoveGameObjectToScene(root, scene);
-                GameObject debugger = new GameObject("Debugger");
+                GameObject debugger = new GameObject("Light Volume Debugger");
                 debugger.transform.SetParent(root.transform, false);
                 GameObject depthLight = new GameObject("Depth Light");
                 depthLight.transform.SetParent(debugger.transform, false);
@@ -168,10 +160,10 @@ namespace VRCLightVolumes.Tests {
                 graph.Play();
                 graph.Evaluate(1f / 60f);
 
-                Action<string, float, float, float, float, int> check = (label, toggle, stats, localOnly, local, mode) => {
+                Action<string, float, float, float, float, int> check = (label, toggle, debugType, localOnly, local, mode) => {
                     playable.SetFloat("LVDebugger/Internal/DirectTree1", 1);
                     playable.SetFloat("LVDebugger/Toggle", toggle);
-                    playable.SetFloat("LVDebugger/Statistics", stats);
+                    playable.SetFloat("LVDebugger/DebugType", debugType);
                     playable.SetFloat("LVDebugger/LocalOnly", localOnly);
                     playable.SetFloat("IsLocal", local);
                     graph.Evaluate(1f / 60f);
@@ -184,23 +176,25 @@ namespace VRCLightVolumes.Tests {
                 };
                 check("Initially off", 0, 0, 1, 1, 0);
                 check("Cards locally", 1, 0, 1, 1, 1);
-                check("Statistics locally", 1, 1, 1, 1, 2);
-                check("Clustering locally", 1, 2, 1, 1, 3);
-                check("Statistics after clustering", 1, 1, 1, 1, 2);
-                check("Clustering before cards", 1, 2, 1, 1, 3);
+                check("Bounds locally", 1, 1, 1, 1, 1);
+                check("Lights locally", 1, 2, 1, 1, 1);
+                check("Statistics locally", 1, 3, 1, 1, 2);
+                check("Clustering locally", 1, 4, 1, 1, 3);
+                check("Statistics after clustering", 1, 3, 1, 1, 2);
+                check("Clustering before cards", 1, 4, 1, 1, 3);
                 check("Cards restored", 1, 0, 1, 1, 1);
-                check("Statistics with master off", 0, 1, 1, 1, 0);
-                check("Statistics restored", 1, 1, 1, 1, 2);
-                check("Statistics hidden remotely", 1, 1, 1, 0, 0);
-                check("Statistics visible remotely", 1, 1, 0, 0, 2);
-                check("Statistics visible locally", 1, 1, 0, 1, 2);
+                check("Statistics with master off", 0, 3, 1, 1, 0);
+                check("Statistics restored", 1, 3, 1, 1, 2);
+                check("Statistics hidden remotely", 1, 3, 1, 0, 0);
+                check("Statistics visible remotely", 1, 3, 0, 0, 2);
+                check("Statistics visible locally", 1, 3, 0, 1, 2);
                 check("Cards visible remotely", 1, 0, 0, 0, 1);
                 check("Cards hidden remotely", 1, 0, 1, 0, 0);
-                check("Master off after statistics", 0, 1, 0, 0, 0);
-                check("Clustering visible remotely", 1, 2, 0, 0, 3);
-                check("Clustering hidden remotely", 1, 2, 1, 0, 0);
-                check("Clustering restored locally", 1, 2, 1, 1, 3);
-                check("Master off after clustering", 0, 2, 1, 1, 0);
+                check("Master off after statistics", 0, 3, 0, 0, 0);
+                check("Clustering visible remotely", 1, 4, 0, 0, 3);
+                check("Clustering hidden remotely", 1, 4, 1, 0, 0);
+                check("Clustering restored locally", 1, 4, 1, 1, 3);
+                check("Master off after clustering", 0, 4, 1, 1, 0);
             } finally {
                 if (graph.IsValid()) graph.Destroy();
                 EditorSceneManager.ClosePreviewScene(scene);
@@ -307,7 +301,7 @@ namespace VRCLightVolumes.Tests {
             using (PanelRenderFixture fixture = new PanelRenderFixture(640, 448)) {
                 fixture.Camera.orthographic = false;
                 fixture.Camera.fieldOfView = 60;
-                fixture.Material.SetTexture("_MainTex", LoadAsset<Texture2D>("LightVolumeDebuggerStats.png"));
+                fixture.Material.SetTexture("_MainTex", LoadAsset<Texture2D>("Debugger/Light Volume Debugger Texture.png"));
                 fixture.Values[5] = 0;
                 Quaternion rotation = Quaternion.Euler(0, angle, 0);
                 float largestBleed = 0;
@@ -415,12 +409,12 @@ namespace VRCLightVolumes.Tests {
                     Assert.That(_target.Create(), Is.True);
                     Camera.targetTexture = _target;
                     Readback = Own(new Texture2D(width, height, TextureFormat.RGBA32, false, true));
-                    Material = Own(new Material(LoadAsset<Material>("Light Volume Debugger Stats.mat")));
+                    Material = Own(new Material(LoadAsset<Material>("Debugger/Light Volume Debugger Stats.mat")));
                     Material.SetTexture("_MainTex", Own(CreateColorAtlas()));
                     Head = CreateObject("Head");
                     Panel = CreateObject("Stats panel");
                     Panel.transform.SetParent(Head.transform, false);
-                    Panel.AddComponent<MeshFilter>().sharedMesh = LoadAsset<Mesh>("LightVolumeDebuggerStats.asset");
+                    Panel.AddComponent<MeshFilter>().sharedMesh = LoadAsset<Mesh>("Debugger/Light Volume Debugger Stats Mesh.asset");
                     MeshRenderer renderer = Panel.AddComponent<MeshRenderer>();
                     renderer.sharedMaterial = Material;
                     renderer.shadowCastingMode = ShadowCastingMode.Off;

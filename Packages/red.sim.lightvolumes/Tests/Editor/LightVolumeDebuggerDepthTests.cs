@@ -11,8 +11,8 @@ namespace VRCLightVolumes.Tests {
     public class LightVolumeDebuggerDepthTests {
         private const string AssetRoot = "Packages/red.sim.lightvolumes/Extra/Light Volume Debugger/";
 
-        [TestCase("ModularAvatar/Light Volume Debugger MA.prefab")]
-        [TestCase("VRCFury/Light Volume Debugger VRCFury.prefab")]
+        [TestCase("Light Volume Debugger MA.prefab")]
+        [TestCase("Light Volume Debugger VRCFury.prefab")]
         public void PrefabDepthLightProvidesCameraDepthWithoutChangingSceneColor(string prefabPath) {
             if (SystemInfo.graphicsDeviceType == GraphicsDeviceType.Null
                     || GraphicsSettings.currentRenderPipeline != null

@@ -33,6 +33,7 @@ namespace VRCLightVolumes {
             if (!Application.isPlaying) CaptureEditorCustomSourceState();
 #endif
             BuildCustomTextureSourceCache();
+            if (_customCubemapMaterialCount == 0 && _customSingleMaterialCount == 0) ReleaseCustomMaterialBlitTexture();
             if (_customTextureArrayDepth <= 0) {
                 if (CustomTextures != null) {
                     ReleaseRuntimeRenderTexture(CustomTextures);
@@ -1092,6 +1093,8 @@ namespace VRCLightVolumes {
         // Writes a six-face cubemap material source into consecutive destination array slices
         private void BlitCubemapMaterial(Material sourceMaterial, int firstSlice, RenderTexture destination) {
             if (sourceMaterial == null || destination == null) return;
+            RenderTexture renderTarget = destination == CustomTextures ? GetCustomMaterialBlitTexture(destination) : destination;
+            if (renderTarget == null) return;
 #if UDONSHARP
             Texture blitSource = sourceMaterial.HasTexture(_cubemapMainTexID) ? sourceMaterial.GetTexture(_cubemapMainTexID) : null;
 #else
@@ -1101,24 +1104,29 @@ namespace VRCLightVolumes {
             float height = destination.height;
             for (int face = 0; face < 6; face++) {
                 sourceMaterial.SetVector("_CustomRenderTextureInfo", new Vector4(width, height, 1f, face));
-                BlitMaterialToSlice(blitSource, sourceMaterial, destination, firstSlice + face, 0);
+                BlitMaterialToSlice(blitSource, sourceMaterial, destination, firstSlice + face, 0, renderTarget);
             }
         }
 
         // Renders a single-slice material source into one texture-array slice
         private void BlitSingleMaterial(Material sourceMaterial, int targetSlice, RenderTexture destination) {
             if (sourceMaterial == null || destination == null) return;
+            RenderTexture renderTarget = destination == CustomTextures ? GetCustomMaterialBlitTexture(destination) : destination;
+            if (renderTarget == null) return;
             sourceMaterial.SetVector("_CustomRenderTextureInfo", new Vector4(destination.width, destination.height, destination.volumeDepth, targetSlice));
 #if UDONSHARP
             Texture blitSource = sourceMaterial.HasTexture(_cubemapMainTexID) ? sourceMaterial.GetTexture(_cubemapMainTexID) : null;
 #else
             Texture blitSource = null;
 #endif
-            BlitMaterialToSlice(blitSource, sourceMaterial, destination, targetSlice, 0);
+            BlitMaterialToSlice(blitSource, sourceMaterial, destination, targetSlice, 0, renderTarget);
         }
 
         // Renders one material pass into a destination texture-array slice using the active runtime API
-        private void BlitMaterialToSlice(Texture sourceTexture, Material material, RenderTexture destination, int targetSlice, int materialPass) {
+        private void BlitMaterialToSlice(Texture sourceTexture, Material material, RenderTexture destination, int targetSlice, int materialPass, RenderTexture materialRenderTarget = null) {
+            // A lighting-aware cookie shader can read the global atlas, including slices shared by other lights. Keep that atlas out of its render attachments.
+            RenderTexture renderTarget = materialRenderTarget != null ? materialRenderTarget : destination;
+            int renderSlice = renderTarget == destination ? targetSlice : 0;
 #if UDONSHARP
 #if !COMPILER_UDONSHARP
             RenderTexture previousRenderTexture = RenderTexture.active;
@@ -1132,18 +1140,50 @@ namespace VRCLightVolumes {
                 }
                 _dummyRT = dummyTexture;
             }
-            VRCGraphics.Blit(_dummyRT, destination, 0, targetSlice);
-            VRCGraphics.Blit(sourceTexture, material, materialPass, targetSlice);
+            VRCGraphics.Blit(_dummyRT, renderTarget, 0, renderSlice);
+            VRCGraphics.Blit(sourceTexture, material, materialPass, renderSlice);
+            if (renderTarget != destination) VRCGraphics.Blit(renderTarget, destination, 0, targetSlice);
 #if !COMPILER_UDONSHARP
             RenderTexture.active = previousRenderTexture == destination ? null : previousRenderTexture;
 #endif
 #else
             // Unity Graphics can bind the target slice directly, so the material pass can render in one blit
             RenderTexture previousRenderTexture = RenderTexture.active;
-            VRCGraphics.SetRenderTarget(destination, 0, CubemapFace.Unknown, targetSlice);
+            // Native material blits blend over the previous slice. Retain that background in the separate target.
+            if (renderTarget != destination) VRCGraphics.Blit(destination, renderTarget, targetSlice, 0);
+            VRCGraphics.SetRenderTarget(renderTarget, 0, CubemapFace.Unknown, renderSlice);
             VRCGraphics.Blit(sourceTexture, material, materialPass);
+            if (renderTarget != destination) VRCGraphics.Blit(renderTarget, destination, 0, targetSlice);
             RenderTexture.active = previousRenderTexture == destination ? null : previousRenderTexture;
 #endif
+        }
+
+        // Reuses one 2D material target across all cookie faces and sources. Only a resolution or format change replaces it.
+        private RenderTexture GetCustomMaterialBlitTexture(RenderTexture destination) {
+            RenderTexture texture = _customMaterialBlitTexture;
+            if (texture != null && texture.width == destination.width && texture.height == destination.height && texture.format == destination.format && texture.IsCreated()) return texture;
+            ReleaseCustomMaterialBlitTexture();
+            texture = new RenderTexture(destination.width, destination.height, 0, destination.format, RenderTextureReadWrite.Linear);
+            texture.useMipMap = false;
+            texture.autoGenerateMips = false;
+            texture.wrapMode = TextureWrapMode.Clamp;
+            texture.filterMode = FilterMode.Point;
+#if !COMPILER_UDONSHARP
+            texture.hideFlags = HideFlags.HideAndDontSave;
+#endif
+            if (!texture.Create()) {
+                ReleaseRuntimeRenderTexture(texture);
+                return null;
+            }
+            _customMaterialBlitTexture = texture;
+            return texture;
+        }
+
+        // Releases the reusable cookie material target when its atlas is removed or the Manager is destroyed.
+        private void ReleaseCustomMaterialBlitTexture() {
+            if (_customMaterialBlitTexture == null) return;
+            ReleaseRuntimeRenderTexture(_customMaterialBlitTexture);
+            _customMaterialBlitTexture = null;
         }
 
         // Returns the resolved custom projection texture ID for a point light instance

@@ -537,5 +537,7 @@ namespace VRCLightVolumes {
         private int _cubemapArraySourceResolutionID;
 
 #endregion
+
+        private RenderTexture _customMaterialBlitTexture; // Reusable target keeps cookie generators from reading and writing the atlas at the same time.
     }
 }

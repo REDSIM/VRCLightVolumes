@@ -5229,6 +5229,60 @@ namespace VRCLightVolumes.Tests {
             Assert.That(firstPoint.AutoUpdateCustomTexture, Is.False);
         }
 
+        // A source merge reallocates the atlas. Existing users must retain their cookie pixels and published IDs throughout later live updates.
+        [TestCase(false)]
+        [TestCase(true)]
+        public void SharedPointMaterialSwitchPreservesOtherCookiePixelsAndShaderIds(bool autoUpdateTextures) {
+            LightVolumeManager manager = CreateManager("Shared Material Switch Manager", false);
+            manager.AutoUpdateTextures = autoUpdateTextures;
+            manager.CustomTexturesWidth = 4;
+            manager.CustomTexturesHeight = 4;
+            Material firstMaterial = CreateMaterial("Unlit/Color");
+            firstMaterial.SetColor("_Color", Color.red);
+            Material sharedMaterial = CreateMaterial("Unlit/Color");
+            sharedMaterial.SetColor("_Color", Color.green);
+            PointLightVolumeInstance target = CreatePointLight(manager, "Changed Material Point", true);
+            PointLightVolumeInstance other = CreatePointLight(manager, "Existing Shared Material Point", true);
+            PointLightVolumeInstance plain = CreatePointLight(manager, "Plain Point", true);
+            target.SetCustomMaterial(firstMaterial);
+            other.SetCustomMaterial(sharedMaterial);
+            manager.UpdateVolumes();
+            RenderTexture previousAtlas = manager.CustomTextures;
+            Assert.That(previousAtlas.volumeDepth, Is.EqualTo(12));
+            Color[][] previousPixels = ReadRenderTextureArrayPixels(previousAtlas);
+            int previousOtherSlice = manager.GetPointLightCustomID(other) * 6;
+            Vector4[] previousPositions = Shader.GetGlobalVectorArray(_pointLightPositionID);
+            Vector4[] previousColors = Shader.GetGlobalVectorArray(_pointLightColorID);
+
+            target.SetCustomMaterial(sharedMaterial);
+            manager.UpdateVolumes();
+
+            Assert.That(manager.CustomTextures, Is.Not.SameAs(previousAtlas));
+            Assert.That(manager.CustomTextures.volumeDepth, Is.EqualTo(6));
+            Assert.That(Shader.GetGlobalTexture(_pointLightTextureID), Is.SameAs(manager.CustomTextures));
+            Assert.That(Shader.GetGlobalFloat(_pointLightCubeCountID), Is.EqualTo(1));
+            Assert.That(manager.GetPointLightCustomID(target), Is.EqualTo(0));
+            Assert.That(manager.GetPointLightCustomID(other), Is.EqualTo(0));
+            Assert.That(manager.GetPointLightCustomID(plain), Is.EqualTo(-1));
+            AssertPointCustomData(0, target, -1, 0);
+            AssertPointCustomData(1, other, -1, 0);
+            AssertPointCustomData(2, plain, 0, 0);
+            Assert.That(Shader.GetGlobalVectorArray(_pointLightPositionID), Is.EqualTo(previousPositions));
+            Assert.That(Shader.GetGlobalVectorArray(_pointLightColorID), Is.EqualTo(previousColors));
+            for (int update = 0; update < 3; update++) {
+                if (autoUpdateTextures) manager.UpdateAutoCustomTextures();
+                Color[][] pixels = ReadRenderTextureArrayPixels(manager.CustomTextures);
+                for (int face = 0; face < 6; face++) Assert.That(pixels[face], Is.EqualTo(previousPixels[previousOtherSlice + face]), "Shared face " + face + ", update " + update);
+            }
+
+            if (autoUpdateTextures) {
+                sharedMaterial.SetColor("_Color", Color.blue);
+                manager.UpdateAutoCustomTextures();
+                Color[][] pixels = ReadRenderTextureArrayPixels(manager.CustomTextures);
+                for (int face = 0; face < 6; face++) Assert.That(pixels[face][0].b, Is.GreaterThan(0.9f), "Live face " + face);
+            }
+        }
+
         // Verifies runtime cookie size comes from the manager setting, not from the source texture
         [Test]
         public void SpotCookieRuntimeArrayUsesConfiguredSize() {
@@ -6504,6 +6558,90 @@ namespace VRCLightVolumes.Tests {
             Assert.That(material.GetTexture("_MainTex"), Is.SameAs(mainTexture));
             AssertVectorClose(new Vector4(4, 4, 1, 0), material.GetVector(CustomRenderTextureInfoProperty));
             Assert.That(GetManagerField<RenderTexture>(manager, _dummyRTField), Is.Not.Null);
+        }
+
+        // Lighting-aware generators can sample the global cookie atlas. Rendering another slice must preserve that input.
+        [TestCase(false)]
+        [TestCase(true)]
+        public void MaterialSourceBlitCanReadExistingCookieAtlas(bool cubemap) {
+            LightVolumeManager manager = CreateManager("Material Atlas Input Manager", false);
+            manager.UpdateVolumes();
+            manager.CustomTextures = CreateRenderTexture("Material Atlas Input", 4, 4, 12, TextureDimension.Tex2DArray);
+            for (int slice = 0; slice < 12; slice++) FillRenderTextureArraySlice(manager.CustomTextures, slice, Color.green);
+            Shader.SetGlobalTexture(_pointLightTextureID, manager.CustomTextures);
+            Shader shader = ShaderUtil.CreateShaderAsset(@"
+Shader ""Hidden/VRCLV/Tests/MaterialAtlasInput"" {
+    SubShader {
+        Pass {
+            Cull Off ZWrite Off ZTest Always
+            CGPROGRAM
+            #pragma target 4.5
+            #pragma vertex vert_img
+            #pragma fragment frag
+            #include ""UnityCG.cginc""
+            Texture2DArray<float4> _UdonPointLightVolumeTexture;
+            float4 frag(v2f_img input) : SV_Target { return _UdonPointLightVolumeTexture.Load(int4(0, 0, 0, 0)); }
+            ENDCG
+        }
+    }
+}
+", false);
+            _createdObjects.Add(shader);
+            Material material = new Material(shader);
+            _createdObjects.Add(material);
+            MethodInfo method = typeof(LightVolumeManager).GetMethod(cubemap ? "BlitCubemapMaterial" : "BlitSingleMaterial", _lifecycleMethodFlags);
+            RenderTexture control = CreateRenderTexture("Separate Material Atlas Output", 4, 4, 12, TextureDimension.Tex2DArray);
+            method.Invoke(manager, new object[] { material, 6, control });
+            Assert.That(ReadRenderTextureArrayPixels(control)[6][0].g, Is.GreaterThan(0.9f), "The shader must read the original atlas when it renders into a separate target.");
+
+            FieldInfo stagingField = typeof(LightVolumeManager).GetField("_customMaterialBlitTexture", _lifecycleMethodFlags);
+            RenderTexture stagingTexture = null;
+            for (int update = 0; update < 3; update++) {
+                method.Invoke(manager, new object[] { material, 6, manager.CustomTextures });
+                if (update == 0) stagingTexture = (RenderTexture)stagingField.GetValue(manager);
+                else Assert.That(stagingField.GetValue(manager), Is.SameAs(stagingTexture), "Live updates must reuse the material target.");
+                Color[][] pixels = ReadRenderTextureArrayPixels(manager.CustomTextures);
+                for (int slice = 0; slice < 12; slice++) Assert.That(pixels[slice][0].g, Is.GreaterThan(0.9f), "Atlas slice " + slice + ", update " + update);
+            }
+
+            InvokeLifecycleMethod(manager, "OnDestroy");
+            Assert.That(stagingField.GetValue(manager), Is.Null);
+            Assert.That(stagingTexture == null, Is.True, "Manager destruction must release its material target.");
+        }
+
+        // Cookie resolution changes replace the material target, and texture-only cookies release it without removing their atlas.
+        [Test]
+        public void CookieMaterialTargetTracksResolutionAndReleasesWithLastMaterial() {
+            LightVolumeManager manager = CreateManager("Material Target Lifetime Manager", false);
+            manager.CustomTexturesWidth = 4;
+            manager.CustomTexturesHeight = 4;
+            PointLightVolumeInstance point = CreatePointLight(manager, "Material Target Lifetime Point", true);
+            point.SetCustomMaterial(CreateMaterial("Unlit/Color"));
+            manager.UpdateVolumes();
+            FieldInfo stagingField = typeof(LightVolumeManager).GetField("_customMaterialBlitTexture", _lifecycleMethodFlags);
+            RenderTexture original = (RenderTexture)stagingField.GetValue(manager);
+            Assert.That(original.width, Is.EqualTo(4));
+            Assert.That(original.height, Is.EqualTo(4));
+
+            manager.CustomTexturesWidth = 8;
+            manager.ReinitializeCustomTextures();
+
+            RenderTexture resized = (RenderTexture)stagingField.GetValue(manager);
+            Assert.That(original == null, Is.True);
+            Assert.That(resized.width, Is.EqualTo(8));
+            Assert.That(resized.height, Is.EqualTo(4));
+            resized.Release();
+            manager.UpdateAutoCustomTextures();
+            RenderTexture recovered = (RenderTexture)stagingField.GetValue(manager);
+            Assert.That(resized == null, Is.True);
+            Assert.That(recovered.IsCreated(), Is.True);
+
+            point.SetCustomTexture(CreateTexture2D("Material Target Replacement Texture"));
+            manager.UpdateVolumes();
+
+            Assert.That(manager.CustomTextures, Is.Not.Null);
+            Assert.That(stagingField.GetValue(manager), Is.Null);
+            Assert.That(recovered == null, Is.True);
         }
 
         // GrabPass requires a color attachment in native Unity, but shadow encoding must still sample depth.

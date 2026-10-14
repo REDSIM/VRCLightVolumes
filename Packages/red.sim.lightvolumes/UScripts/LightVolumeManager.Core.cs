@@ -750,6 +750,7 @@ namespace VRCLightVolumes {
 #endif
             ReleaseDirectShadowPreservation();
             ReleaseClusteringTextures();
+            ReleaseCustomMaterialBlitTexture();
 #if UDONSHARP
             if (_dummyRT != null) {
                 ReleaseRuntimeRenderTexture(_dummyRT);

@@ -13,47 +13,54 @@ For a quick world test, create a Material and select **Light Volume Samples > Li
 | 2.x | Baked Regular/Additive lighting and the older Point Light Volume path. Textured Area lights use an average-color fallback. |
 | 3.x | Can also use Point Light Volume shadows, textured Area emission and individual specular highlights. The shader author decides which features to expose. |
 
-Shaders with VRC Light Volumes 3.x support use [Froxel Clustering](./HowToUse_FroxelClustering.md) automatically. Older integrations still show the lighting without this optimization.
+Shaders that support [Froxel Clustering](./HowToUse_FroxelClustering.md) use it automatically when enabled in the world.
+
+<a id="shaders-that-use-the-installed-package"></a>
 
 ## Shaders With 3.x Support
 
-**Version** shows when support was added. A dash means the version or date is unknown.
+**Version** links to a compatible release or current source. A dash means the version is unknown.
 
-| Shader | Use | Version |
+| Shader | Description | Version |
 |---|---|---|
-| [Poiyomi Toon](https://github.com/poiyomi/PoiyomiToonShader) | Toon shader for avatars | [10.0.20](https://www.poiyomi.com/changelog/2026/09/14/10-0-20) |
-| [Poiyomi Pro](https://www.poiyomi.com/) | Toon shader with additional features | [10.0.12](https://www.poiyomi.com/changelog/2026/06/28/10-0-12) |
-| [Mochie's Unity Shaders](https://github.com/MochiesCode/Mochies-Unity-Shaders) | PBR, toon, water, particles and other shaders | [1.74](https://github.com/MochiesCode/Mochies-Unity-Shaders/releases/tag/v1.74) |
-| [VixenWear Latex Ultra](https://vixenlicous.gumroad.com/l/latex-ultra) | PBR shader for synthetic materials | — |
+| [Poiyomi Toon](https://github.com/poiyomi/PoiyomiToonShader) | A feature-rich toon shader for VRChat avatars, with multiple shading modes, flexible scene lighting and extensive material effects. Free and open source, with detailed controls for customizing the final look. | [10.0.20](https://www.poiyomi.com/changelog/2026/09/14/10-0-20) |
+| [Poiyomi Pro](https://www.poiyomi.com/) | The expanded edition of Poiyomi's customizable toon shader for VRChat avatars, with additional lighting, material and special-effect features for more elaborate character looks. | [10.0.12](https://www.poiyomi.com/changelog/2026/06/28/10-0-12) |
+| [Mochie's Unity Shaders](https://github.com/MochiesCode/Mochies-Unity-Shaders) | A collection of shaders including a highly customizable toon shader, a Standard shader replacement, particle shaders, water, glass and screen-space effects. | [1.77.1](https://github.com/MochiesCode/Mochies-Unity-Shaders/releases/tag/v1.77.1) |
+| [VixenWear Latex Ultra](https://vixenlicous.gumroad.com/l/latex-ultra) | A PBR surface shader for latex and other glossy synthetic materials, with detailed control over highlights and reflections. Supports Light Volumes, LTCGI and AudioLink effects. | — |
+| [MingToon](https://booth.pm/ja/items/8810209) | An advanced character toon shader with polished anime-style lighting, layered shadows, depth rim lighting and Face SDF. Includes detailed face and hair controls, PBR materials and toon specular highlights. | [0.1.13 Open Beta](https://studioraming.github.io/mingtoon-docs/en/changelog/0.1.13) |
+| [Orels Unity Shaders (Toon and PBR)](https://github.com/orels1/orels-Unity-Shaders/tree/dev) | A collection of practical PBR and toon shaders for Unity worlds, with a shader generator for custom materials. Enable prerelease packages in VCC to install the 7.4 version. | [7.4.0-dev.2 (prerelease)](https://github.com/orels1/orels-Unity-Shaders/releases/tag/v7.4.0-dev.2) |
+| [Graphlit Shaders and Shader Editor by z3y](https://github.com/z3y/Graphlit) | A node-based editor for building Toon and PBR shaders, with ready-made shaders and visual control over custom materials. Supports Built-in RP and URP. Use Built-in RP for Light Volumes. | [2.7.4](https://github.com/z3y/Graphlit/blob/59a4609b3df6668e34458dc59e926b62957d4871/ShaderLibrary/GlobalIllumination/LightProbe.hlsl) |
+| [GeneLit by Momoma](https://github.com/momoma-null/GeneLit) | Physically based rendering (PBR) shaders derived from Google's [Filament](https://github.com/google/filament), offering richer material rendering than Unity's Standard shader. Includes dedicated standard, cloth and subsurface shading models. | [1.0.9](https://github.com/momoma-null/GeneLit/blob/1.0.9/Shaders/Include/GeneLit_LightingIndirect.cginc) |
+| [Cottonfox Fur Shader](https://github.com/jamestruhlar/cottonfoxfur/) | A fur shader with configurable fur length, density, color and highlights. Includes AudioLink effects and receives Light Volumes lighting. | [Current source](https://github.com/jamestruhlar/cottonfoxfur/blob/5ab3ff1580fd8c7c7bd2b0465d12ca7a2d3be66c/CottonFoxFurHelper.cginc) |
+| [Unity Baked Volumetrics - Fork by Ikeiwa](https://github.com/Ikeiwa/Unity-Baked-Volumetrics) | A volumetric fog shader that receives Light Volumes lighting, adding visible light and atmosphere to a scene. A fork of [Unity Baked Volumetrics](https://github.com/frostbone25/Unity-Baked-Volumetrics). | [Current source](https://github.com/Ikeiwa/Unity-Baked-Volumetrics/blob/3d7abbf49133413f9f9253465cdf54103ddb867c/BakedVolumetrics/Assets/BakedVolumetrics/Runtime/Shaders/Scene/SceneVolumetricFog_VRCLV.shader) |
+| [Moriohs Toon Shader](https://gitlab.com/xMorioh/moriohs-toon-shader) | A customizable toon shader that combines stylized NPR shading with PBR material features. Designed to respond to Unity's scene lighting while giving detailed control over the final look. | [Current source](https://gitlab.com/xMorioh/moriohs-toon-shader/-/blob/master/Mori%27s%20Toon%20Shader/CGIncludes/Base.cginc) |
+| [NonToon](https://github.com/lilxyzw/NonToon) | A modular character shader combining PBR lighting with stylized shading. Supports outlines, ramp shadows, MatCaps, hair highlights and fur, with separate modules for extra features. Light Volumes support requires VRCLVModule. | [0.2.0](https://github.com/lilxyzw/NonToon/releases/tag/0.2.0) with [VRCLVModule 1.2.0](https://github.com/lilxyzw/VRCLVModule/releases/tag/1.2.0) |
+| [BigiShader](https://github.com/bigibas123/BigiShader) | A collection of customizable avatar and world shaders with toon-style rendering, specular materials and AudioLink effects. Includes shaders for video screens, particles, billboards and other visual effects. | [4.0.6](https://github.com/bigibas123/BigiShader/releases/tag/4.0.6) |
+| [dhk Shaders](https://github.com/you5248/dhk-shaders) | A Standard-compatible world shader with bicubic lightmaps, MonoSH and packed material maps. Adds detail textures, rim lighting and optional Light Volumes specular, and includes a Quest version. | [1.5.0](https://github.com/you5248/dhk-shaders/releases/tag/v1.5.0) |
 
 Check the specific material's settings: not every shader in a pack uses every lighting feature.
 
-## Other Known Integrations
+<a id="other-known-integrations"></a>
 
-These entries record **2.x support**. Check the author's release notes for newer features and versions.
+## Shaders With 2.x Support
 
-| Shader | Use | Version |
+| Shader | Description | Version |
 |---|---|---|
-| [lilToon Shader](https://github.com/lilxyzw/lilToon) | Toon shader for avatars. | 2.0.0 |
-| [UnlitWF Shaders](https://github.com/whiteflare/Unlit_WF_ShaderSuite) | Toon, fur, water and other avatar/world shaders. | 2.10.0 |
-| [Filamented by Silent](https://gitlab.com/s-ilent/filamented) | PBR shader for world surfaces. | 2025-07-05 |
-| [Silent Cel Shading Shader](https://gitlab.com/s-ilent/SCSS/-/tree/crosstone-testing?ref_type=heads) | Cel shading with Unity lighting support. | 2025-07-21 |
-| [Silent Clear Water](https://gitlab.com/s-ilent/clear-water) | Water shader. | 2025-07-20 |
-| [Silent Crispy Foliage](https://gitlab.com/s-ilent/crispy-foliage) | Foliage shader with thin detail and wind. | 2025-07-20 |
-| [Unity Standard Particles Plus by Silent](https://github.com/s-ilent/unity-standard-particles-plus) | Unity particle shaders with Light Volumes support. | 2025-07-21 |
-| [Graphlit Shaders and Shader Editor by z3y](https://github.com/z3y/Graphlit) | Node shader editor with Toon and PBR shaders. Use its Built-in RP integration. | 2.0.1 |
-| [Unity Baked Volumetrics - Fork by Ikeiwa](https://github.com/Ikeiwa/Unity-Baked-Volumetrics) | Volumetric fog with Light Volumes support. | — |
-| [Unity Shaders Plus](https://github.com/ShingenPizza/UnityShadersPlus/) | Modified versions of Unity built-in shaders. | 3 |
-| [GeneLit by Momoma](https://github.com/momoma-null/GeneLit) | PBR shaders based on Filament. | 1.0.8 |
-| [Cottonfox Fur Shader](https://github.com/jamestruhlar/cottonfoxfur/) | Fur shader. | — |
-| [Orels Unity Shaders (Toon and PBR)](https://github.com/orels1/orels-Unity-Shaders/tree/dev) | Toon and PBR shaders. The recorded version is a prerelease. | 7.0.0 Dev 23 |
-| [Moriohs Toon Shader](https://gitlab.com/xMorioh/moriohs-toon-shader) | Toon shader with PBR options. | 2.1.0 |
-| [RealToon (Pro Anime/Toon Shader)](https://assetstore.unity.com/packages/vfx/shaders/realtoon-pro-anime-toon-shader-65518?aid=1100lwff7) | Anime and toon shader. | 5.0.13 |
-| [Quantum Shader](https://github.com/SaphiBlue/quantumshader) | PBR shader pack made with Amplify Shader Editor. | 2025-07-24 |
-| [Warren's Fast Fur Shader](https://warrenwolfy.gumroad.com/l/atntv) | Fur shader with per-pixel and per-vertex Light Volumes options. | 5.1.0 |
-| [ACLS Shader](https://aciil.booth.pm/items/1779615) | Toon and realistic shading for avatars. | 2.31 |
-| [The Gaze Shader](https://github.com/lunabxgg/The-Gaze-Shader) | Animated image and gaze-tracking shader. | 1.0 |
-| [Xiexe's Unity Shaders](https://github.com/Xiexe/Xiexes-Unity-Shaders) | Toon and PBR shaders. | 3.7.0 |
+| [lilToon Shader](https://github.com/lilxyzw/lilToon) | A Japanese toon shader for VRChat avatars, with anime-style shading and detailed controls for shadows, outlines, rim lighting and material appearance. | 2.0.0 |
+| [UnlitWF Shaders](https://github.com/whiteflare/Unlit_WF_ShaderSuite) | A general-purpose shader pack for VRChat avatars and worlds, including toon, fur, water and other shader variants. | 2.10.0 |
+| [Filamented by Silent](https://gitlab.com/s-ilent/filamented) | A PBR replacement for Unity's Standard shader, with Mono SH, Specular AA and Specular Occlusion. A good choice for detailed, realistic world materials. | 2025-07-05 |
+| [Silent Cel Shading Shader](https://gitlab.com/s-ilent/SCSS/-/tree/crosstone-testing?ref_type=heads) | A feature-rich cel-shading shader designed to work with Unity's scene lighting while keeping an anime-style appearance. Includes outlines and detailed controls over shadows and materials. | 2025-07-21 |
+| [Silent Clear Water](https://gitlab.com/s-ilent/clear-water) | A water shader for Unity and VRChat that uses reflections, refraction and animated waves to create clean-looking water surfaces. | 2025-07-20 |
+| [Silent Crispy Foliage](https://gitlab.com/s-ilent/crispy-foliage) | A shader for semitransparent plants and foliage, including thin leaves and other fine details. Supports wind animation to bring vegetation to life. | 2025-07-20 |
+| [Unity Standard Particles Plus by Silent](https://github.com/s-ilent/unity-standard-particles-plus) | Unity's Standard Particle shaders, extended with Light Volumes support. | 2025-07-21 |
+| [Unity Shaders Plus](https://github.com/ShingenPizza/UnityShadersPlus/) | Modified versions of Unity's built-in Standard, particle and unlit shaders, with extra features while retaining compatibility with existing materials. Includes visibility controls for VRChat cameras and mirrors. | 3 |
+| [RealToon (Pro Anime/Toon Shader)](https://assetstore.unity.com/packages/vfx/shaders/realtoon-pro-anime-toon-shader-65518?aid=1100lwff7) | An advanced anime and toon shader for characters and objects, with controls for a range of cartoon and stylized looks. Suitable for games, animation, film and illustrations. | 5.0.13 |
+| [Quantum Shader](https://github.com/SaphiBlue/quantumshader) | A shader pack made with Amplify Shader Editor (ASE), combining Unity-style PBR materials with custom AudioLink effects. Includes Light Volumes support across the pack. | 2025-07-24 |
+| [Warren's Fast Fur Shader](https://warrenwolfy.gumroad.com/l/atntv) | A fur shader optimized for speed, with per-pixel and per-vertex Light Volumes options and anisotropic hair highlights. | 5.1.0 |
+| [ACLS Shader](https://aciil.booth.pm/items/1779615) | A highly configurable avatar shader for toon (NPR) and realistic (PBR) styles, designed to adapt to the varied lighting of VRChat worlds. Gives detailed control over how materials respond to the scene. | 2.31 |
+| [The Gaze Shader](https://github.com/lunabxgg/The-Gaze-Shader) | A 2D animation and gaze-tracking shader for Unity and VRChat. Plays GIFs or sprite sheets in 3D scenes and follows the viewer's perspective, creating an interactive feeling of being watched. | 1.0 |
+| [Xiexe's Unity Shaders](https://github.com/Xiexe/Xiexes-Unity-Shaders) | A shader collection that balances stylized character looks with the surrounding scene lighting. Supports both NPR and PBR workflows, with extensive controls for tuning each material. | 3.7.0 |
+| [Clearwater VRC](https://github.com/bmbb93/clearwater-vrc) | A water and beach shader package with waves, foam, underwater rendering and a time-of-day sky. Includes tools for building shorelines and matching the water, beach and sky lighting. | [1.2.0](https://github.com/bmbb93/clearwater-vrc/releases/tag/v1.2.0) |
 
 ## PC And Android
 

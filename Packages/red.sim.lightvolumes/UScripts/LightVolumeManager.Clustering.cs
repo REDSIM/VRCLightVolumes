@@ -150,7 +150,6 @@ namespace VRCLightVolumes {
 #if UNITY_EDITOR
             // Shader globals outlive managed proxy state across play-mode transitions. Reset them even when the restored edit-mode manager reports a stale _clusteringActive == false.
             VRCShader.SetGlobalFloat(_clusteringEnabledID, 0f);
-            VRCShader.SetGlobalTexture(_clusterMaskID, null);
             VRCShader.SetGlobalTexture(_coarseClusterMaskID, null);
 #endif
             _clusteringUnsupported = false;
@@ -854,6 +853,8 @@ namespace VRCLightVolumes {
             _clusterMaskValid = false;
             _froxelCameraAnchorValid = false;
             _shadowCullPyramidDirty = true;
+            // The released Fine mask may still be the bound global.
+            if (_clusterMaskFallback != null) VRCShader.SetGlobalTexture(_clusterMaskID, _clusterMaskFallback);
         }
 
         // Creates the build material outside Udon; runtime Udon receives the same dependency from the build preprocessor.

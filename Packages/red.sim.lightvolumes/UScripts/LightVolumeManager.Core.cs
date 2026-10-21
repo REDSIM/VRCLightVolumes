@@ -638,6 +638,9 @@ namespace VRCLightVolumes {
             VRCShader.SetGlobalVector(_pointLightShadowReceiverParamsID, GetPointLightShadowReceiverParams());
             _clusteringLightsDirty = true;
             VRCShader.SetGlobalFloat(_clusteringEnabledID, 0f);
+            // A null global leaves an 8-bit default on the Texture2D<int4> mask declaration, which Metal API Validation reports on every draw.
+            _clusterMaskFallback = EnsureClusterMaskTexture(_clusterMaskFallback, 1, 1, false);
+            VRCShader.SetGlobalTexture(_clusterMaskID, _clusterMaskFallback);
             _isInitialized = true;
         }
 
@@ -749,6 +752,8 @@ namespace VRCLightVolumes {
             }
 #endif
             ReleaseDirectShadowPreservation();
+            ReleaseRuntimeRenderTexture(_clusterMaskFallback);
+            _clusterMaskFallback = null;
             ReleaseClusteringTextures();
             ReleaseCustomMaterialBlitTexture();
 #if UDONSHARP

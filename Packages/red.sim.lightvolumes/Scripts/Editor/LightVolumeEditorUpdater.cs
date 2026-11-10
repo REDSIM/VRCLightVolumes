@@ -19,6 +19,8 @@ namespace VRCLightVolumes {
         private static bool _managerUpdateQueued;
         private static bool _flushQueued;
         private static bool _isFlushing;
+        private const double AnimatedCookieUpdateInterval = 1.0 / 30.0;
+        private static double _nextAnimatedCookieUpdateTime;
 
         // Installs editor change hooks and initializes the primary Manager cache.
         static LightVolumeEditorUpdater() {
@@ -105,8 +107,22 @@ namespace VRCLightVolumes {
             if (EditorApplication.isPlayingOrWillChangePlaymode || EditorApplication.isCompiling || EditorApplication.isUpdating || Undo.isProcessing) return;
             LightVolumeManager manager = _primaryManager;
             if (manager == null || !manager.isActiveAndEnabled || !manager.AutoUpdateTextures || !manager.HasAutoCustomTextureUpdates) return;
+            // A repaint requested on every editor tick keeps the editor from idling, so the Scene and Game views render as fast as the GPU allows.
+            double time = EditorApplication.timeSinceStartup;
+            if (time < _nextAnimatedCookieUpdateTime) return;
+            _nextAnimatedCookieUpdateTime = time + AnimatedCookieUpdateInterval;
+            if (!IsAnySceneViewAlwaysRefreshing()) return;
             manager.UpdateAutoCustomTextures();
             SceneView.RepaintAll();
+        }
+
+        // Animated cookies follow the Scene View Always Refresh toggle, like Unity's animated materials.
+        private static bool IsAnySceneViewAlwaysRefreshing() {
+            for (int i = 0; i < SceneView.sceneViews.Count; i++) {
+                SceneView sceneView = SceneView.sceneViews[i] as SceneView;
+                if (sceneView != null && sceneView.sceneViewState.alwaysRefreshEnabled) return true;
+            }
+            return false;
         }
 
         // Persists a changed atlas post-processor chain and queues the runtime mirror refresh.

@@ -1184,6 +1184,8 @@ namespace VRCLightVolumes.Tests {
             Assert.That(clusteringShader, Is.Not.Null);
             Assert.That(clusteringShader.isSupported, Is.True);
 
+            int fineMaskID = Shader.PropertyToID("_UdonClusterMask");
+            Shader.SetGlobalTexture(fineMaskID, null);
             LightVolumeManager manager = CreateManager("Released Froxel Texture Manager", false);
             manager.Clustering = true;
             manager.ClusteringMinLights = 1;
@@ -1193,6 +1195,8 @@ namespace VRCLightVolumes.Tests {
             PointLightVolumeInstance point = CreatePointLight(manager, "Released Froxel Texture Light", true);
             manager.PointLightVolumeInstances = new[] { point };
             manager.UpdateVolumes();
+            RenderTexture initialMask = Shader.GetGlobalTexture(fineMaskID) as RenderTexture;
+            Assert.That(initialMask != null && initialMask.format == RenderTextureFormat.ARGBInt, Is.True, "Initialization must bind an integer mask before clustering builds one.");
 
             GameObject cameraObject = CreateGameObject("Released Froxel Texture Camera", false);
             Camera camera = cameraObject.AddComponent<Camera>();
@@ -1238,12 +1242,11 @@ namespace VRCLightVolumes.Tests {
                 Is.GreaterThan(1f), "A replacement material must receive the cached depth ratios before its first Fine draw.");
 
             int clusteringEnabledID = Shader.PropertyToID("_UdonClusteringEnabled");
-            int fineMaskID = Shader.PropertyToID("_UdonClusterMask");
             int coarseMaskID = Shader.PropertyToID("_UdonCoarseClusterMask");
             Shader.SetGlobalFloat(clusteringEnabledID, 1f);
             manager.ReleaseClusteringPreview();
             Assert.That(Shader.GetGlobalFloat(clusteringEnabledID), Is.Zero);
-            Assert.That(Shader.GetGlobalTexture(fineMaskID), Is.Null);
+            Assert.That(Shader.GetGlobalTexture(fineMaskID), Is.SameAs(initialMask), "The integer mask declaration needs an integer texture bound while clustering is off.");
             Assert.That(Shader.GetGlobalTexture(coarseMaskID), Is.Null);
         }
 
@@ -5426,6 +5429,7 @@ namespace VRCLightVolumes.Tests {
             RenderTexture shadowCullHierarchy = CreateRenderTexture("Runtime Shadow Cull Hierarchy", 8, 8, 1, TextureDimension.Tex2D, RenderTextureFormat.RFloat);
             RenderTexture shadowCullBuildLevel = CreateRenderTexture("Runtime Shadow Cull Build Level", 4, 4, 1, TextureDimension.Tex2D, RenderTextureFormat.RFloat);
             RenderTexture dummyBlitSource = CreateRenderTexture("Runtime Dummy Blit Source", 1, 1, 1, TextureDimension.Tex2D);
+            RenderTexture clusterMaskFallback = CreateRenderTexture("Runtime Cluster Mask Fallback", 1, 1, 1, TextureDimension.Tex2D);
             customTextures.hideFlags = HideFlags.HideAndDontSave;
             shadowTextures.hideFlags = HideFlags.HideAndDontSave;
             manager.CustomTextures = customTextures;
@@ -5437,12 +5441,14 @@ namespace VRCLightVolumes.Tests {
             FieldInfo shadowCullPyramidField = typeof(LightVolumeManager).GetField("_shadowCullPyramid", _lifecycleMethodFlags);
             FieldInfo shadowCullBuildLevelsField = typeof(LightVolumeManager).GetField("_shadowCullBuildLevels", _lifecycleMethodFlags);
             FieldInfo directShadowPreservationField = typeof(LightVolumeManager).GetField("_directShadowPreservationTexture", _lifecycleMethodFlags);
+            FieldInfo clusterMaskFallbackField = typeof(LightVolumeManager).GetField("_clusterMaskFallback", _lifecycleMethodFlags);
             Assert.That(fineClusterMaskField, Is.Not.Null);
             Assert.That(coarseClusterMaskField, Is.Not.Null);
             Assert.That(clusteringSourceField, Is.Not.Null);
             Assert.That(shadowCullPyramidField, Is.Not.Null);
             Assert.That(shadowCullBuildLevelsField, Is.Not.Null);
             Assert.That(directShadowPreservationField, Is.Not.Null);
+            Assert.That(clusterMaskFallbackField, Is.Not.Null);
             fineClusterMaskField.SetValue(manager, fineClusterMask);
             coarseClusterMaskField.SetValue(manager, coarseClusterMask);
             clusteringSourceField.SetValue(manager, clusteringSource);
@@ -5452,6 +5458,7 @@ namespace VRCLightVolumes.Tests {
             shadowCullBuildLevelsField.SetValue(manager, shadowCullBuildLevels);
             directShadowPreservationField.SetValue(manager, directShadowPreservation);
             _dummyRTField.SetValue(manager, dummyBlitSource);
+            clusterMaskFallbackField.SetValue(manager, clusterMaskFallback);
 
             InvokeLifecycleMethod(manager, "OnDestroy");
 
@@ -5473,6 +5480,7 @@ namespace VRCLightVolumes.Tests {
             Assert.That(shadowCullBuildLevel == null, Is.True);
             Assert.That(directShadowPreservation == null, Is.True);
             Assert.That(dummyBlitSource == null, Is.True);
+            Assert.That(clusterMaskFallback == null, Is.True);
         }
 
         // Verifies each Point Light-owned runtime shadow target is destroyed with the light.

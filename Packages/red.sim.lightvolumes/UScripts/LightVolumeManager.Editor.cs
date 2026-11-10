@@ -483,6 +483,8 @@ namespace VRCLightVolumes {
         // Prevents the generated HideAndDontSave material from becoming unreachable with the editor-state table during an assembly reload.
         internal void ReleaseClusteringPreviewForAssemblyReload() {
             ReleaseClusteringPreview();
+            ReleaseRuntimeRenderTexture(_clusterMaskFallback);
+            _clusterMaskFallback = null;
             InvalidateTextureCaches(false, true);
             DestroyClusteringMaterial();
         }

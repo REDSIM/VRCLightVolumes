@@ -539,5 +539,6 @@ namespace VRCLightVolumes {
 #endregion
 
         private RenderTexture _customMaterialBlitTexture; // Reusable target keeps cookie generators from reading and writing the atlas at the same time.
+        private RenderTexture _clusterMaskFallback; // 1x1 integer mask bound to _UdonClusterMask while no Fine mask exists.
     }
 }

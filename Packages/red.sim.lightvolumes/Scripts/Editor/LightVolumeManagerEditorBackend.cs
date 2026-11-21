@@ -431,7 +431,15 @@ namespace VRCLightVolumes {
 
         // Wraps the generator so success, validation failure, exceptions and explicit cancellation all clear the static coroutine handle and dispose its iterator-owned resources.
         private static IEnumerator RunAtlasGeneration(LightVolumeManager manager, LightVolumeInstance[] volumes, TexturePackingStrategy strategy, int generationVersion) {
-            IEnumerator generator = Texture3DAtlasGenerator.CreateAtlas(volumes, atlas => CompleteAtlas(manager, volumes, atlas), manager.DownscaleVolumes, strategy);
+            AtlasPackingSettings packingSettings = new AtlasPackingSettings {
+                Search = (AtlasPackingSearch)manager.AtlasPackingSearch,
+                StopEarly = manager.AtlasPackingStopEarly,
+                MaxSeconds = manager.AtlasPackingMaxTime,
+                UseCpu = manager.AtlasPackingUseCpu,
+                // A running Bakery bake keeps the GPU busy; the reason is shown in the packing log line.
+                SkipGpuReason = BakeryEditorBridge.IsBaking ? "Bakery is baking" : null
+            };
+            IEnumerator generator = Texture3DAtlasGenerator.CreateAtlas(volumes, atlas => CompleteAtlas(manager, volumes, atlas), manager.DownscaleVolumes, strategy, packingSettings);
             try {
                 while (generator.MoveNext()) yield return generator.Current;
             } finally {

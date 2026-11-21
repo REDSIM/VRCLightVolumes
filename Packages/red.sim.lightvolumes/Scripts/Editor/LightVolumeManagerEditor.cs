@@ -10,6 +10,7 @@ namespace VRCLightVolumes {
     public sealed class LightVolumeManagerEditor : UnityEditor.Editor {
         private const string DebugFoldoutSessionKey = "VRCLightVolumes.LightVolumeManagerEditor.DebugFoldout";
         private const string ShaderFeaturesFoldoutSessionKey = "VRCLightVolumes.LightVolumeManagerEditor.ShaderFeaturesFoldout";
+        private const string PackingFoldoutSessionKey = "VRCLightVolumes.LightVolumeManagerEditor.PackingFoldout";
         private const string SortLightVolumesMenu = "CONTEXT/LightVolumeManager/Sort Light Volumes";
         private const int VisibleRegistryRows = 12;
         private const float RegistryHeaderHeight = 20f;
@@ -38,6 +39,8 @@ namespace VRCLightVolumes {
         private static readonly string[] BakingLabels = { "Progressive", "Bakery", "Custom Lightmapper" };
         private static readonly int[] DownscaleValues = { 0, 1, 2, 3 };
         private static readonly string[] DownscaleLabels = { "None", "2x", "4x", "8x" };
+        private static readonly int[] PackingSearchValues = { 0, 1, 2 };
+        private static readonly string[] PackingSearchLabels = { "Fast", "Default", "Thorough" };
         private static readonly string[] BakeryMaskLabels = { "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "29", "30" };
         private static readonly LightVolumeShaderFeatures[] ShaderFeatureFlags = {
             LightVolumeShaderFeatures.RegularVolumes,
@@ -118,6 +121,7 @@ namespace VRCLightVolumes {
         private LightVolumeManager _primaryManager;
         private bool _debugExpanded;
         private bool _shaderFeaturesExpanded;
+        private bool _packingExpanded;
         private readonly List<UnityEngine.Object> _textureDependencyRoots = new List<UnityEngine.Object>();
         private readonly HashSet<UnityEngine.Object> _textureDependencyRootSet = new HashSet<UnityEngine.Object>();
         private readonly HashSet<Texture> _directTextureRoots = new HashSet<Texture>();
@@ -150,6 +154,7 @@ namespace VRCLightVolumes {
             _manager = (LightVolumeManager)target;
             _debugExpanded = SessionState.GetBool(DebugFoldoutSessionKey, false);
             _shaderFeaturesExpanded = SessionState.GetBool(ShaderFeaturesFoldoutSessionKey, false);
+            _packingExpanded = SessionState.GetBool(PackingFoldoutSessionKey, false);
             RefreshManagerCount();
             // UdonSharp creates a custom editor before its first Play Mode Udon-to-proxy copy.
             // Merely selecting the Manager late must therefore never repair and serialize the
@@ -572,7 +577,35 @@ namespace VRCLightVolumes {
                 }
             }
             DrawIntPopup("Downscale Volumes", "DownscaleVolumes", DownscaleLabels, DownscaleValues);
+            DrawPackingSettings();
             DrawProperty("LightVolumeAtlas", "Light Volume Atlas");
+        }
+
+        // Draws the atlas packing settings in a foldout that starts collapsed. While the crash guard keeps the GPU off, a warning with a
+        // Try GPU again button stays visible below it.
+        private void DrawPackingSettings() {
+            bool expanded = EditorGUILayout.Foldout(_packingExpanded, new GUIContent("Packing Settings", "How packing searches for a smaller atlas and whether it may use the GPU."), true);
+            if (expanded != _packingExpanded) {
+                _packingExpanded = expanded;
+                SessionState.SetBool(PackingFoldoutSessionKey, expanded);
+            }
+            if (_packingExpanded) {
+                EditorGUI.indentLevel++;
+                DrawIntPopup("Search", "AtlasPackingSearch", PackingSearchLabels, PackingSearchValues);
+                DrawProperty("AtlasPackingStopEarly", "Stop Early");
+                SerializedProperty maxTime = serializedObject.FindProperty("AtlasPackingMaxTime");
+                EditorGUILayout.PropertyField(maxTime, new GUIContent("Max Packing Time (s)", maxTime.tooltip));
+                if (maxTime.floatValue < 0f) maxTime.floatValue = 0f;
+                DrawProperty("AtlasPackingUseCpu", "Use CPU");
+                EditorGUI.indentLevel--;
+            }
+
+            if (!serializedObject.FindProperty("AtlasPackingUseCpu").boolValue && Texture3DAtlasGenerator.GpuPackingDisabledAfterCrash) {
+                EditorGUILayout.HelpBox("GPU packing is off: Unity closed while it was packing on the GPU. Atlases are packed on the CPU and are still correct.", MessageType.Warning);
+                if (GUILayout.Button(new GUIContent("Try GPU again", "Packs on the GPU again from the next pack. If Unity closes during packing again, turn on Use CPU."))) {
+                    Texture3DAtlasGenerator.EnableGpuPackingAgain();
+                }
+            }
         }
 
         // Draws runtime update, blending and overdraw settings relevant to current registries.
@@ -1332,12 +1365,16 @@ namespace VRCLightVolumes {
             EditorGUILayout.Slider(property, min, max, new GUIContent(label, property.tooltip));
         }
 
-        // Draws an integer-backed popup while preserving serialized property help.
+        // Draws an integer-backed popup while preserving serialized property help. The popup starts at the field column like the other
+        // fields: PrefixLabel already indents the label, so the popup itself is drawn without indent.
         private void DrawIntPopup(string label, string propertyName, string[] labels, int[] values) {
             SerializedProperty property = serializedObject.FindProperty(propertyName);
             Rect rect = EditorGUILayout.GetControlRect();
             Rect popupRect = EditorGUI.PrefixLabel(rect, new GUIContent(label, property.tooltip));
+            int indent = EditorGUI.indentLevel;
+            EditorGUI.indentLevel = 0;
             property.intValue = EditorGUI.IntPopup(popupRect, property.intValue, labels, values);
+            EditorGUI.indentLevel = indent;
         }
 
         // Draws a Bakery bitmask with named bit positions and field-level help.

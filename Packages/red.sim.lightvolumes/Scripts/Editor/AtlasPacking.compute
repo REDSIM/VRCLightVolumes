@@ -1,0 +1,275 @@
+#pragma kernel PackAtlasCandidates
+// Desktop editor graphics APIs only (d3d11 also covers Direct3D 12). Elsewhere the kernel is missing and the CPU packs.
+#pragma only_renderers d3d11 vulkan metal glcore
+
+// Packs one atlas candidate (free axis, caps and block order) per thread group with the CPU packer's rules
+// (Texture3DAtlasGenerator.EmptySpacePacker): every block goes into the empty maximal space (Lai & Chan 1997) that keeps the
+// atlas smallest, ties broken by the lowest z, y and x. The group keeps the candidate's spaces in groupshared memory and shares
+// the scoring, the splitting and the containment test between its threads. Thousands of candidates run per dispatch.
+// If a candidate runs out of space slots, spaces are dropped: its packing stays valid but may differ from the CPU packer's.
+// Portability: about 26 KB of groupshared memory (32 KB is the Direct3D 11, Metal and OpenGL minimum), integer math only, and
+// the threads of a group share work only through groupshared memory, 32-bit atomics and group barriers. Nothing depends on
+// the wave size, and every buffer index is clamped to the buffer.
+
+#define GROUP_SIZE 64
+#define MAX_SPACES 640
+#define MAX_CREATED 384
+#define MAX_BLOCKS 256 // more than the block count
+#define MAX_ATLAS_SIZE 2048u
+#define NONE 0xffffffffu
+
+StructuredBuffer<uint> _BlockSizes;  // padded block sizes, three atlas axes per block
+StructuredBuffer<uint4> _Candidates; // free axis (0..2, 3 = smallest volume), cap x, cap y, bound (NONE = no bound)
+StructuredBuffer<uint> _Orders;      // _BlockCount block indices per candidate
+RWStructuredBuffer<uint4> _Results;  // status (0 packed, 1 did not fit, 2 stopped by the bound), volume or lower bound, atlas width | height << 16, atlas depth
+uint _BlockCount;     // 1 to MAX_BLOCKS - 1
+uint _PaddedVolume;
+uint _CandidateOffset;
+uint _CandidateCount; // candidates in the buffers; groups past the end compute a clamped copy and write nothing
+
+groupshared uint gs_spaces[6 * MAX_SPACES]; // two halves, three values per space: min | max << 16 on each frame axis
+groupshared uint gs_created[3 * MAX_CREATED];
+groupshared uint gs_dead[MAX_SPACES];
+groupshared uint gs_keep[MAX_CREATED];
+groupshared uint gs_minXY[MAX_BLOCKS]; // smallest remaining block width | height << 16 from each order index on
+groupshared uint gs_minZ[MAX_BLOCKS];
+groupshared uint gs_spaceCount;
+groupshared uint gs_half;
+groupshared uint gs_status;
+groupshared uint gs_fitness;
+groupshared uint3 gs_extent;
+groupshared uint3 gs_placed;
+groupshared uint gs_bestScore;
+groupshared uint gs_bestZ;
+groupshared uint gs_bestYX;
+groupshared uint gs_createdCount;
+groupshared uint gs_nextCount;
+
+uint Low(uint v) { return v & 0xffffu; }
+uint High(uint v) { return v >> 16; }
+
+// a * b * c saturated below NONE.
+uint MulSat(uint a, uint b, uint c) {
+    uint ab = a * b;
+    return c != 0 && ab > (NONE - 1) / c ? NONE - 1 : ab * c;
+}
+
+bool Contains(uint a0, uint a1, uint a2, uint b0, uint b1, uint b2) {
+    return Low(a0) <= Low(b0) && High(a0) >= High(b0) && Low(a1) <= Low(b1) && High(a1) >= High(b1) && Low(a2) <= Low(b2) && High(a2) >= High(b2);
+}
+
+// Adds a remainder space unless it is too small for every remaining block.
+void AddCreated(uint x1, uint x2, uint y1, uint y2, uint z1, uint z2, uint minWidth, uint minHeight, uint minDepth) {
+    if (x2 - x1 < minWidth || y2 - y1 < minHeight || z2 - z1 < minDepth) return;
+    uint k;
+    InterlockedAdd(gs_createdCount, 1, k);
+    if (k >= MAX_CREATED) return;
+    gs_created[3 * k] = x1 | (x2 << 16);
+    gs_created[3 * k + 1] = y1 | (y2 << 16);
+    gs_created[3 * k + 2] = z1 | (z2 << 16);
+}
+
+// Maps a frame axis value triple back to the atlas axes.
+uint AtlasAxis(uint3 frame, uint axisX, uint axisY, uint atlasAxis) {
+    return axisX == atlasAxis ? frame.x : axisY == atlasAxis ? frame.y : frame.z;
+}
+
+[numthreads(GROUP_SIZE, 1, 1)]
+void PackAtlasCandidates(uint3 groupId : SV_GroupID, uint t : SV_GroupIndex) {
+    bool inRange = _CandidateOffset + groupId.x < _CandidateCount;
+    uint p = min(_CandidateOffset + groupId.x, _CandidateCount - 1);
+    uint n = clamp(_BlockCount, 1u, (uint)MAX_BLOCKS - 1);
+    uint4 candidate = _Candidates[p];
+    uint axisX = 0, axisY = 1, axisZ = 2;
+    if (candidate.x == 0) { axisX = 2; axisY = 1; axisZ = 0; }
+    else if (candidate.x == 1) { axisX = 0; axisY = 2; axisZ = 1; }
+    bool minimumVolume = candidate.x == 3;
+    uint capX = min(candidate.y, MAX_ATLAS_SIZE);
+    uint capY = min(candidate.z, MAX_ATLAS_SIZE);
+    uint bound = candidate.w;
+    uint orderBase = p * n;
+
+    if (t == 0) {
+        uint minX = 0xffffu, minY = 0xffffu, minZ = 0xffffu;
+        gs_minXY[n] = minX | (minY << 16);
+        gs_minZ[n] = minZ;
+        for (uint i = n; i > 0; i--) {
+            uint b = min(_Orders[orderBase + i - 1], n - 1);
+            minX = min(minX, _BlockSizes[3 * b + axisX]);
+            minY = min(minY, _BlockSizes[3 * b + axisY]);
+            minZ = min(minZ, _BlockSizes[3 * b + axisZ]);
+            gs_minXY[i - 1] = minX | (minY << 16);
+            gs_minZ[i - 1] = minZ;
+        }
+        gs_spaces[0] = capX << 16;
+        gs_spaces[1] = capY << 16;
+        gs_spaces[2] = MAX_ATLAS_SIZE << 16;
+        gs_spaceCount = 1;
+        gs_half = 0;
+        gs_status = 0;
+        gs_fitness = 0;
+        gs_extent = uint3(0, 0, 0);
+        gs_placed = uint3(0, 0, 0);
+        gs_bestScore = NONE;
+        gs_bestZ = NONE;
+        gs_bestYX = NONE;
+        gs_createdCount = 0;
+        gs_nextCount = 0;
+    }
+    GroupMemoryBarrierWithGroupSync();
+
+    // Barriers stay outside the branches: a finished candidate only skips the work of the remaining blocks.
+    [loop] for (uint i = 0; i < n; i++) {
+        bool active = gs_status == 0;
+        uint b = min(_Orders[orderBase + i], n - 1);
+        uint w = _BlockSizes[3 * b + axisX];
+        uint h = _BlockSizes[3 * b + axisY];
+        uint d = _BlockSizes[3 * b + axisZ];
+        uint spaceCount = gs_spaceCount;
+        uint offset = gs_half * 3 * MAX_SPACES;
+        uint3 extent = gs_extent;
+
+        // 1. Every thread scores its share of the spaces; three atomic stages pick the lowest (score, z, y, x).
+        uint myScore = NONE, myZ = NONE, myYX = NONE;
+        if (active) {
+            for (uint s = t; s < spaceCount; s += GROUP_SIZE) {
+                uint a0 = gs_spaces[offset + 3 * s], a1 = gs_spaces[offset + 3 * s + 1], a2 = gs_spaces[offset + 3 * s + 2];
+                uint x = Low(a0), y = Low(a1), z = Low(a2);
+                if (High(a0) - x < w || High(a1) - y < h || High(a2) - z < d) continue;
+                uint newZ = max(extent.z, z + d);
+                uint score = minimumVolume ? MulSat(max(extent.x, x + w), max(extent.y, y + h), newZ) : newZ;
+                uint yx = (y << 12) | x;
+                if (score < myScore || (score == myScore && (z < myZ || (z == myZ && yx < myYX)))) {
+                    myScore = score;
+                    myZ = z;
+                    myYX = yx;
+                }
+            }
+            InterlockedMin(gs_bestScore, myScore);
+        }
+        GroupMemoryBarrierWithGroupSync();
+        uint bestScore = gs_bestScore;
+        bool eligible = active && myScore != NONE && myScore == bestScore;
+        if (eligible) InterlockedMin(gs_bestZ, myZ);
+        GroupMemoryBarrierWithGroupSync();
+        uint bestZ = gs_bestZ;
+        if (eligible && myZ == bestZ) InterlockedMin(gs_bestYX, myYX);
+        GroupMemoryBarrierWithGroupSync();
+
+        if (active && t == 0) {
+            if (bestScore == NONE) {
+                gs_status = 1;
+                gs_fitness = NONE;
+            } else {
+                uint bestYX = gs_bestYX;
+                uint x = bestYX & 0xfffu, y = bestYX >> 12, z = bestZ;
+                uint3 newExtent = uint3(max(extent.x, x + w), max(extent.y, y + h), max(extent.z, z + d));
+                gs_placed = uint3(x, y, z);
+                gs_extent = newExtent;
+                if (bound != NONE) {
+                    // Same lower bound as the CPU packer: the free axis must still hold every block at the capped cross-section.
+                    uint lowerZ = newExtent.z;
+                    if (!minimumVolume) {
+                        uint crossSection = capX * capY;
+                        lowerZ = max(lowerZ, (_PaddedVolume + crossSection - 1) / crossSection);
+                    }
+                    uint lowerBound = max(MulSat(newExtent.x, newExtent.y, lowerZ), _PaddedVolume);
+                    if (lowerBound > bound) {
+                        gs_status = 2;
+                        gs_fitness = lowerBound;
+                    }
+                }
+            }
+            gs_bestScore = NONE;
+            gs_bestZ = NONE;
+            gs_bestYX = NONE;
+        }
+        GroupMemoryBarrierWithGroupSync();
+        active = gs_status == 0;
+
+        // 2. Split every space the block intersects into its maximal remainders that can still hold a remaining block.
+        uint3 placed = gs_placed;
+        uint x1 = placed.x, y1 = placed.y, z1 = placed.z;
+        uint x2 = x1 + w, y2 = y1 + h, z2 = z1 + d;
+        uint minXY = gs_minXY[i + 1];
+        uint minWidth = Low(minXY), minHeight = High(minXY), minDepth = gs_minZ[i + 1];
+        if (active) {
+            for (uint s = t; s < spaceCount; s += GROUP_SIZE) {
+                uint a0 = gs_spaces[offset + 3 * s], a1 = gs_spaces[offset + 3 * s + 1], a2 = gs_spaces[offset + 3 * s + 2];
+                uint sx1 = Low(a0), sx2 = High(a0), sy1 = Low(a1), sy2 = High(a1), sz1 = Low(a2), sz2 = High(a2);
+                if (x1 >= sx2 || x2 <= sx1 || y1 >= sy2 || y2 <= sy1 || z1 >= sz2 || z2 <= sz1) {
+                    gs_dead[s] = 0;
+                    continue;
+                }
+                gs_dead[s] = 1;
+                if (x1 > sx1) AddCreated(sx1, x1, sy1, sy2, sz1, sz2, minWidth, minHeight, minDepth);
+                if (x2 < sx2) AddCreated(x2, sx2, sy1, sy2, sz1, sz2, minWidth, minHeight, minDepth);
+                if (y1 > sy1) AddCreated(sx1, sx2, sy1, y1, sz1, sz2, minWidth, minHeight, minDepth);
+                if (y2 < sy2) AddCreated(sx1, sx2, y2, sy2, sz1, sz2, minWidth, minHeight, minDepth);
+                if (z1 > sz1) AddCreated(sx1, sx2, sy1, sy2, sz1, z1, minWidth, minHeight, minDepth);
+                if (z2 < sz2) AddCreated(sx1, sx2, sy1, sy2, z2, sz2, minWidth, minHeight, minDepth);
+            }
+        }
+        GroupMemoryBarrierWithGroupSync();
+
+        // 3. Drop created spaces that another space contains (of equal ones the lowest index stays), then compact the
+        //    surviving spaces into the other half.
+        uint createdCount = min(gs_createdCount, (uint)MAX_CREATED);
+        uint nextOffset = 3 * MAX_SPACES - offset;
+        if (active) {
+            for (uint k = t; k < createdCount; k += GROUP_SIZE) {
+                uint c0 = gs_created[3 * k], c1 = gs_created[3 * k + 1], c2 = gs_created[3 * k + 2];
+                uint keep = 1;
+                for (uint j = 0; j < spaceCount && keep != 0; j++) {
+                    if (gs_dead[j] == 0 && Contains(gs_spaces[offset + 3 * j], gs_spaces[offset + 3 * j + 1], gs_spaces[offset + 3 * j + 2], c0, c1, c2)) keep = 0;
+                }
+                for (uint m = 0; m < createdCount && keep != 0; m++) {
+                    if (m == k) continue;
+                    uint e0 = gs_created[3 * m], e1 = gs_created[3 * m + 1], e2 = gs_created[3 * m + 2];
+                    if (Contains(e0, e1, e2, c0, c1, c2) && (m < k || !Contains(c0, c1, c2, e0, e1, e2))) keep = 0;
+                }
+                gs_keep[k] = keep;
+            }
+            for (uint s = t; s < spaceCount; s += GROUP_SIZE) {
+                if (gs_dead[s] != 0) continue;
+                uint q;
+                InterlockedAdd(gs_nextCount, 1, q);
+                gs_spaces[nextOffset + 3 * q] = gs_spaces[offset + 3 * s];
+                gs_spaces[nextOffset + 3 * q + 1] = gs_spaces[offset + 3 * s + 1];
+                gs_spaces[nextOffset + 3 * q + 2] = gs_spaces[offset + 3 * s + 2];
+            }
+        }
+        GroupMemoryBarrierWithGroupSync();
+        if (active) {
+            for (uint k = t; k < createdCount; k += GROUP_SIZE) {
+                if (gs_keep[k] == 0) continue;
+                uint q;
+                InterlockedAdd(gs_nextCount, 1, q);
+                if (q >= MAX_SPACES) continue;
+                gs_spaces[nextOffset + 3 * q] = gs_created[3 * k];
+                gs_spaces[nextOffset + 3 * q + 1] = gs_created[3 * k + 1];
+                gs_spaces[nextOffset + 3 * q + 2] = gs_created[3 * k + 2];
+            }
+        }
+        GroupMemoryBarrierWithGroupSync();
+        if (active && t == 0) {
+            gs_spaceCount = min(gs_nextCount, (uint)MAX_SPACES);
+            gs_half = 1 - gs_half;
+            gs_nextCount = 0;
+            gs_createdCount = 0;
+        }
+        GroupMemoryBarrierWithGroupSync();
+    }
+
+    if (t == 0 && inRange) {
+        uint3 extent = gs_extent;
+        if (gs_status == 0) {
+            uint width = AtlasAxis(extent, axisX, axisY, 0);
+            uint height = AtlasAxis(extent, axisX, axisY, 1);
+            uint depth = AtlasAxis(extent, axisX, axisY, 2);
+            _Results[p] = uint4(0, MulSat(extent.x, extent.y, extent.z), width | (height << 16), depth);
+        } else {
+            _Results[p] = uint4(gs_status, gs_fitness, 0, 0);
+        }
+    }
+}

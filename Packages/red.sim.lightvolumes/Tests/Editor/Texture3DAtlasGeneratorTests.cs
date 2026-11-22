@@ -2,8 +2,10 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Reflection;
+using System.Text.RegularExpressions;
 using System.Threading;
 using NUnit.Framework;
+using UnityEditor;
 using UnityEngine;
 using UnityEngine.TestTools;
 
@@ -23,14 +25,39 @@ namespace VRCLightVolumes.Tests {
         private static readonly BindingFlags _nestedPrivateFlags = BindingFlags.NonPublic;
 
         private readonly List<UnityEngine.Object> _createdObjects = new List<UnityEngine.Object>();
+        private bool _hadGpuRunning;
+        private int _savedGpuRunning;
+        private bool _hadGpuDisabled;
+        private bool _savedGpuDisabled;
 
-        // Destroys all temporary scene and texture objects created by a test case.
+        // Destroys all temporary scene and texture objects created by a test case and restores the GPU crash guard's EditorPrefs.
         [TearDown]
         public void TearDown() {
             for (int i = _createdObjects.Count - 1; i >= 0; i--) {
                 if (_createdObjects[i] != null) UnityEngine.Object.DestroyImmediate(_createdObjects[i]);
             }
             _createdObjects.Clear();
+            RestoreCrashGuardPrefs();
+        }
+
+        // Clears the GPU crash guard's EditorPrefs for this project, so a real crash on this computer cannot change the results.
+        [SetUp]
+        public void SetUp() {
+            _hadGpuRunning = EditorPrefs.HasKey(GpuRunningKey);
+            _savedGpuRunning = EditorPrefs.GetInt(GpuRunningKey, 0);
+            _hadGpuDisabled = EditorPrefs.HasKey(GpuDisabledKey);
+            _savedGpuDisabled = EditorPrefs.GetBool(GpuDisabledKey, false);
+            EditorPrefs.DeleteKey(GpuRunningKey);
+            EditorPrefs.DeleteKey(GpuDisabledKey);
+            // Each test sees the once-per-session logs.
+            ((HashSet<string>)typeof(Texture3DAtlasGenerator).GetField("gpuPackingLoggedReasons", _staticPrivateFlags).GetValue(null)).Clear();
+        }
+
+        private void RestoreCrashGuardPrefs() {
+            EditorPrefs.DeleteKey(GpuRunningKey);
+            EditorPrefs.DeleteKey(GpuDisabledKey);
+            if (_hadGpuRunning) EditorPrefs.SetInt(GpuRunningKey, _savedGpuRunning);
+            if (_hadGpuDisabled) EditorPrefs.SetBool(GpuDisabledKey, _savedGpuDisabled);
         }
 
         // Verifies a single valid baked volume produces an atlas and readable bounds for all three texture slots.
@@ -260,7 +287,8 @@ namespace VRCLightVolumes.Tests {
         [Test]
         public void CreateAtlasRejectsTooLargeBakedTextureDimensions() {
             LightVolumeInstance volume = CreateBakedLightVolume("Too Large Baked Texture", CreateSolidTexture3D("Too Large Tex0", MaxAtlasSize - 1, 1, 1, TextureFormat.RGBAHalf, Color.clear), CreateSolidTexture3D("Too Large Tex1", MaxAtlasSize - 1, 1, 1, TextureFormat.RGBAHalf, Color.clear), CreateSolidTexture3D("Too Large Tex2", MaxAtlasSize - 1, 1, 1, TextureFormat.RGBAHalf, Color.clear));
-            LogAssert.Expect(LogType.Error, $"[LightVolumes] Light volume \"{volume.gameObject.name}\" texture dimensions are too large for the atlas.");
+            LogAssert.Expect(LogType.Error, $"[LightVolumes] Light volume \"{volume.gameObject.name}\" texture is too large for the atlas: {MaxAtlasSize - 1} x 1 x 1 plus 1 voxel padding per side " +
+                $"exceeds the atlas limit of {MaxAtlasSize} on an axis. No new atlas was made; the previous atlas is kept. Lower this volume's resolution or increase Downscale Volumes on the Light Volume Manager.");
 
             Assert.That(RunAtlasExpectingNoResult(new[] { volume }), Is.False);
         }
@@ -269,7 +297,8 @@ namespace VRCLightVolumes.Tests {
         [Test]
         public void CreateAtlasRejectsTooLargeReservedVolumeDimensions() {
             LightVolumeInstance volume = CreateReservedLightVolume("Too Large Reserved Volume", new Vector3Int(MaxAtlasSize - 1, 1, 1));
-            LogAssert.Expect(LogType.Error, $"[LightVolumes] Reserved UV space for light volume \"{volume.gameObject.name}\" is too large!");
+            LogAssert.Expect(LogType.Error, $"[LightVolumes] Reserved UV space for light volume \"{volume.gameObject.name}\" is too large: {MaxAtlasSize - 1} x 1 x 1 plus 1 voxel padding per side " +
+                $"exceeds the atlas limit of {MaxAtlasSize} on an axis. No new atlas was made; the previous atlas is kept. Lower the volume's reserved resolution.");
 
             Assert.That(RunAtlasExpectingNoResult(new[] { volume }), Is.False);
         }
@@ -277,7 +306,7 @@ namespace VRCLightVolumes.Tests {
         // Verifies the private packer rejects blocks whose padded size exceeds the atlas maximum without allocating texture data.
         [Test]
         public void PackTextureBlocksRejectsTooLargePaddedBlock() {
-            object result = InvokePackTextureBlocks(MaxAtlasSize - 1, 1, 1, TexturePackingStrategy.MinimumVRAM);
+            object result = InvokePackTextureBlocks(new[] { new[] { MaxAtlasSize - 1, 1, 1 } }, TexturePackingStrategy.MinimumVRAM, AtlasPackingSettings.Default);
 
             Assert.That(GetField<bool>(result, "Success"), Is.False);
         }
@@ -285,10 +314,310 @@ namespace VRCLightVolumes.Tests {
         // Verifies the private packer accepts a block that exactly reaches the atlas maximum after padding.
         [Test]
         public void PackTextureBlocksAcceptsExactMaximumPaddedBlock() {
-            object result = InvokePackTextureBlocks(MaxAtlasSize - 2, 1, 1, TexturePackingStrategy.MinimumVRAM);
+            object result = InvokePackTextureBlocks(new[] { new[] { MaxAtlasSize - 2, 1, 1 } }, TexturePackingStrategy.MinimumVRAM, AtlasPackingSettings.Default);
 
             Assert.That(GetField<bool>(result, "Success"), Is.True);
             Assert.That(GetField<int>(result, "AtlasWidth"), Is.EqualTo(MaxAtlasSize));
+        }
+
+        // Verifies a real 150-island scene packs every island exactly once, padded, inside the atlas and without overlaps.
+        [TestCase(TexturePackingStrategy.MinimumVRAM)]
+        [TestCase(TexturePackingStrategy.MinimumDepth)]
+        public void PackTextureBlocksPlacesEveryBlockOnceWithoutOverlap(TexturePackingStrategy strategy) {
+            int[][] sizes = CreateRealSceneBlockSizes();
+            object result = InvokePackTextureBlocks(sizes, strategy, FastSettings(true));
+
+            AssertValidLayout(result, sizes);
+        }
+
+        // Verifies the default settings search at the Default level, stop early and have no time limit, on the struct and on a new Manager.
+        [Test]
+        public void PackingSettingsDefaultToDefaultSearchWithStopEarlyAndNoTimeLimit() {
+            AtlasPackingSettings settings = AtlasPackingSettings.Default;
+            Assert.That(settings.Search, Is.EqualTo(AtlasPackingSearch.Default));
+            Assert.That(settings.StopEarly, Is.True);
+            Assert.That(settings.MaxSeconds, Is.EqualTo(0f));
+            Assert.That(settings.UseCpu, Is.False);
+            Assert.That(settings.SkipGpuReason, Is.Null);
+
+            GameObject managerObject = new GameObject("Packing Settings Manager");
+            _createdObjects.Add(managerObject);
+            LightVolumeManager manager = managerObject.AddComponent<LightVolumeManager>();
+            Assert.That((AtlasPackingSearch)manager.AtlasPackingSearch, Is.EqualTo(AtlasPackingSearch.Default));
+            Assert.That(manager.AtlasPackingStopEarly, Is.True);
+            Assert.That(manager.AtlasPackingMaxTime, Is.EqualTo(0f));
+            Assert.That(manager.AtlasPackingUseCpu, Is.False);
+        }
+
+        // Verifies Stop Early ends the search after fewer packings than the full budget and still returns a valid layout.
+        [Test]
+        public void PackTextureBlocksStopEarlyTriesFewerPackings() {
+            int[][] sizes = CreateRealSceneBlockSizes();
+            object full = InvokePackTextureBlocks(sizes, TexturePackingStrategy.MinimumVRAM, FastSettings(false));
+            object stopped = InvokePackTextureBlocks(sizes, TexturePackingStrategy.MinimumVRAM, FastSettings(true));
+
+            AssertValidLayout(full, sizes);
+            AssertValidLayout(stopped, sizes);
+            Assert.That(GetField<int>(stopped, "Packings"), Is.LessThan(GetField<int>(full, "Packings")));
+        }
+
+        // Verifies a time limit ends the search early with a valid layout.
+        [Test]
+        public void PackTextureBlocksTimeLimitEndsSearchEarly() {
+            int[][] sizes = CreateRealSceneBlockSizes();
+            AtlasPackingSettings limited = FastSettings(false);
+            limited.MaxSeconds = 0.05f;
+            object full = InvokePackTextureBlocks(sizes, TexturePackingStrategy.MinimumVRAM, FastSettings(false));
+            object stopped = InvokePackTextureBlocks(sizes, TexturePackingStrategy.MinimumVRAM, limited);
+
+            AssertValidLayout(stopped, sizes);
+            Assert.That(GetField<int>(stopped, "Packings"), Is.LessThan(GetField<int>(full, "Packings")));
+        }
+
+        // Verifies Use CPU never touches the GPU, packs a valid atlas and logs one line that says why.
+        [Test]
+        public void PackTextureBlocksAsyncUseCpuNeverUsesGpu() {
+            int[][] sizes = CreateRealSceneBlockSizes();
+            AtlasPackingSettings settings = AtlasPackingSettings.Default;
+            settings.UseCpu = true;
+            LogAssert.Expect(LogType.Log, new Regex(PackedOnCpuPattern + @" \(Use CPU is on\)\.$"));
+
+            object output = RunPackTextureBlocksAsync(sizes, settings, out bool sawGpuRunning);
+
+            Assert.That(sawGpuRunning, Is.False);
+            Assert.That(GetField<bool>(output, "UsedGpu"), Is.False);
+            Assert.That(GetField<string>(output, "CpuReason"), Is.EqualTo("Use CPU is on."));
+            AssertValidLayout(GetField<object>(output, "Result"), sizes);
+        }
+
+        // Verifies a skip reason from the caller (a running Bakery bake) keeps packing on the CPU and appears in the log line.
+        [Test]
+        public void PackTextureBlocksAsyncSkipGpuReasonPacksOnCpu() {
+            int[][] sizes = CreateRealSceneBlockSizes();
+            AtlasPackingSettings settings = FastSettings(true);
+            settings.SkipGpuReason = "Bakery is baking";
+            LogAssert.Expect(LogType.Log, new Regex(PackedOnCpuPattern + @" \(Bakery is baking\)\.$"));
+
+            object output = RunPackTextureBlocksAsync(sizes, settings, out bool sawGpuRunning);
+
+            Assert.That(sawGpuRunning, Is.False);
+            Assert.That(GetField<bool>(output, "UsedGpu"), Is.False);
+            AssertValidLayout(GetField<object>(output, "Result"), sizes);
+        }
+
+        // Verifies a GPU pack marks the GPU as running while it searches, clears the mark when it ends and logs the GPU, its graphics API,
+        // the time and the atlas size; without a usable GPU the CPU packs and the line says why.
+        [Test]
+        public void PackTextureBlocksAsyncClearsCrashGuardAndLogsPack() {
+            int[][] sizes = CreateRealSceneBlockSizes();
+            bool gpu = GpuPackingAvailable();
+            string device = gpu ? $@"GPU \({Regex.Escape(SystemInfo.graphicsDeviceName)}, {SystemInfo.graphicsDeviceType}\)" : "CPU";
+            LogAssert.Expect(LogType.Log, new Regex($@"^\[LightVolumes\] Atlas packed on the {device} in \d+\.\d s: \d+ x \d+ x \d+, \d+\.\d\d MB" + (gpu ? @"\.$" : @" \(.+\)\.$")));
+
+            object output = RunPackTextureBlocksAsync(sizes, AtlasPackingSettings.Default, out bool sawGpuRunning);
+
+            Assert.That(sawGpuRunning, Is.EqualTo(gpu));
+            Assert.That(EditorPrefs.HasKey(GpuRunningKey), Is.False);
+            Assert.That(Texture3DAtlasGenerator.GpuPackingDisabledAfterCrash, Is.False);
+            Assert.That(GetField<bool>(output, "UsedGpu"), Is.EqualTo(gpu));
+        }
+
+        // Verifies that a GPU mark left by another editor process (a crash or driver reset during GPU packing) turns the GPU off with one
+        // warning, packs on the CPU with the reason in the log line, and that EnableGpuPackingAgain turns it back on.
+        [Test]
+        public void PackTextureBlocksAsyncSkipsGpuAfterCrashUntilEnabledAgain() {
+            int[][] sizes = CreateRealSceneBlockSizes();
+            int processId = (int)typeof(Texture3DAtlasGenerator).GetField("editorProcessId", _staticPrivateFlags).GetValue(null);
+            int otherProcess = processId == int.MaxValue ? 1 : processId + 1;
+            EditorPrefs.SetInt(GpuRunningKey, otherProcess);
+            // LogAssert rebuilds the Regex from its pattern and drops RegexOptions, so multi-line patterns use the inline (?s).
+            LogAssert.Expect(LogType.Warning, new Regex(@"(?s)^\[LightVolumes\] Atlas packing: Unity closed while the atlas was being packed on the GPU, so GPU packing is turned off\.\n" +
+                $@"Reason: The previous Unity session \(process {otherProcess}\) ended during GPU packing.*What to do: To use the GPU again, click Try GPU again.*turn on Packing Settings > Use CPU"));
+            LogAssert.Expect(LogType.Log, new Regex(PackedOnCpuPattern + @" \(GPU packing is off after a crash; click Try GPU again on the Light Volume Manager to turn it back on\)\.$"));
+
+            object output = RunPackTextureBlocksAsync(sizes, FastSettings(true), out bool sawGpuRunning);
+            object second = RunPackTextureBlocksAsync(sizes, FastSettings(true), out _);
+
+            Assert.That(sawGpuRunning, Is.False);
+            Assert.That(GetField<bool>(output, "UsedGpu"), Is.False);
+            Assert.That(GetField<bool>(second, "UsedGpu"), Is.False);
+            Assert.That(GetField<string>(output, "CpuReason"), Does.Contain("Try GPU again"));
+            AssertValidLayout(GetField<object>(output, "Result"), sizes);
+            Assert.That(Texture3DAtlasGenerator.GpuPackingDisabledAfterCrash, Is.True);
+
+            Texture3DAtlasGenerator.EnableGpuPackingAgain();
+            Assert.That(Texture3DAtlasGenerator.GpuPackingDisabledAfterCrash, Is.False);
+            object third = RunPackTextureBlocksAsync(sizes, FastSettings(true), out _);
+            Assert.That(GetField<bool>(third, "UsedGpu"), Is.EqualTo(GpuPackingAvailable()));
+        }
+
+        // Verifies the GPU search packs the real scene, with a layout that passes the check and beats the previous greedy atlas. Without
+        // compute shader support (for example with -nographics) the packer must fall back to the CPU instead.
+        [Test]
+        public void PackTextureBlocksAsyncPacksOnGpuWhenSupported() {
+            int[][] sizes = CreateRealSceneBlockSizes();
+            object output = RunPackTextureBlocksAsync(sizes, AtlasPackingSettings.Default);
+            object result = GetField<object>(output, "Result");
+
+            AssertValidLayout(result, sizes);
+            Assert.That(GetField<bool>(output, "UsedGpu"), Is.EqualTo(GpuPackingAvailable()));
+            long voxels = (long)GetField<int>(result, "AtlasWidth") * GetField<int>(result, "AtlasHeight") * GetField<int>(result, "AtlasDepth");
+            Assert.That(voxels, Is.LessThan(2663424L));
+        }
+
+        // Verifies every GPU fault ends in a valid CPU atlas with a log that names the fault, the stage, the blocks and the GPU: missing
+        // compute support (an info log) and a missing kernel (a warning, the package is broken) are found before any dispatch; a failed
+        // readback and results no packing can produce are found while the GPU search runs.
+        [TestCase("NoComputeSupport", LogType.Log, false, @"the GPU cannot run the packer \(no compute shaders\), so the atlas is packed on the CPU\..*does not support compute shaders\..*What to do: Nothing is needed\..*stage: checking the GPU before packing; 150 unique volume textures")]
+        [TestCase("MissingKernel", LogType.Warning, false, @"the GPU cannot run the packer \(packing shader did not compile\), so the atlas is packed on the CPU\..*has no PackAtlasCandidates kernel.*Unity reports.*reinstall or update the Light Volumes package.*stage: checking the GPU before packing")]
+        [TestCase("ReadbackError", LogType.Warning, true, @"packing on the GPU failed \(readback error\), so the atlas is packed on the CPU instead\..*AsyncGPUReadback reported an error.*Result: The atlas is packed on the CPU instead\. It will be correct.*turn on Light Volume Manager > Packing Settings > Use CPU.*stage: cap grid; 150 unique volume textures")]
+        [TestCase("InvalidResults", LogType.Warning, true, @"packing on the GPU failed \(invalid results\), so the atlas is packed on the CPU instead\..*impossible result for candidate 0 of \d+: status 7.*turn on Light Volume Manager > Packing Settings > Use CPU.*stage: cap grid; 150 unique volume textures")]
+        public void PackTextureBlocksAsyncFallsBackToCpuOnGpuFault(string fault, LogType logType, bool duringSearch, string message) {
+            int[][] sizes = CreateRealSceneBlockSizes();
+            AtlasPackingSettings settings = FastSettings(true);
+            FieldInfo faultField = typeof(Texture3DAtlasGenerator).GetField("gpuPackingSimulatedFault", _staticPrivateFlags);
+            Assert.That(faultField, Is.Not.Null);
+            // Faults are simulated on a device that runs the kernel; without one the packer never reaches them.
+            bool simulated = GpuPackingAvailable();
+            bool gpuFailed = simulated && duringSearch;
+            if (simulated) {
+                LogAssert.Expect(logType, new Regex($@"(?s)^\[LightVolumes\] Atlas packing: {message}.*Graphics: {Regex.Escape(SystemInfo.graphicsDeviceName)}.*Unity "));
+            }
+            // The atlas line after a GPU failure points back to the warning.
+            if (gpuFailed) LogAssert.Expect(LogType.Log, new Regex(PackedOnCpuPattern + @" \(the GPU failed: (readback error|invalid results); see the warning above\)\.$"));
+            faultField.SetValue(null, Enum.Parse(faultField.FieldType, fault));
+            object output;
+            try {
+                output = RunPackTextureBlocksAsync(sizes, settings, out _);
+            } finally {
+                faultField.SetValue(null, Enum.ToObject(faultField.FieldType, 0));
+            }
+
+            Assert.That(GetField<bool>(output, "UsedGpu"), Is.False);
+            Assert.That(GetField<bool>(output, "GpuFailed"), Is.EqualTo(gpuFailed));
+            Assert.That(EditorPrefs.HasKey(GpuRunningKey), Is.False);
+            AssertValidLayout(GetField<object>(output, "Result"), sizes);
+            if (gpuFailed) {
+                Assert.That(GetField<string>(output, "CpuReasonShort"), Is.EqualTo(fault == "ReadbackError" ? "readback error" : "invalid results"));
+            }
+        }
+
+        // Verifies volume textures that cannot fit in one atlas end without an atlas and with an error that says why and what to do: no
+        // layout fits within the size limit (nine 1000-voxel cubes), or the best atlas has more voxels than one texture holds (eight).
+        [TestCase(9, "No layout of the 9 unique volume textures fits within 2048 voxels per axis\\. Even a perfect packing needs")]
+        [TestCase(8, @"The best atlas found is \d+ x \d+ x \d+ = .* voxels, more than one atlas texture can hold")]
+        public void PackTextureBlocksAsyncReportsAtlasThatDoesNotFit(int count, string reason) {
+            int[][] sizes = new int[count][];
+            for (int i = 0; i < count; i++) sizes[i] = new[] { 1000, 1000, 1000 };
+            LogAssert.Expect(LogType.Error, new Regex($@"(?s)^\[LightVolumes\] Atlas packing: no atlas could be made: the volume textures do not fit in one atlas\.\nReason: {reason}.*" +
+                @"Result: No new atlas was made\. The previous atlas is kept\.\nWhat to do: Increase Downscale Volumes.*stage: CPU search; " + count + " unique volume textures"));
+
+            object output = RunPackTextureBlocksAsync(sizes, FastSettings(true), out _);
+
+            Assert.That(GetField<bool>(GetField<object>(output, "Result"), "Success"), Is.False);
+        }
+
+        // Start of the one-line log of an atlas packed on the CPU.
+        private const string PackedOnCpuPattern = @"^\[LightVolumes\] Atlas packed on the CPU in \d+\.\d s: \d+ x \d+ x \d+, \d+\.\d\d MB";
+
+        // Verifies more blocks than the kernel holds pack on the CPU.
+        [Test]
+        public void PackTextureBlocksAsyncPacksTooManyBlocksOnCpu() {
+            int[][] sizes = new int[300][];
+            for (int i = 0; i < sizes.Length; i++) sizes[i] = new[] { 4 + i % 7, 4 + i * 3 % 5, 4 + i * 5 % 9 };
+
+            object output = RunPackTextureBlocksAsync(sizes, FastSettings(true));
+
+            Assert.That(GetField<bool>(output, "UsedGpu"), Is.False);
+            AssertValidLayout(GetField<object>(output, "Result"), sizes);
+        }
+
+        // Verifies no blocks and a single block pack on the CPU.
+        [TestCase(0)]
+        [TestCase(1)]
+        public void PackTextureBlocksAsyncPacksTinyInputsOnCpu(int count) {
+            int[][] sizes = new int[count][];
+            for (int i = 0; i < count; i++) sizes[i] = new[] { 30, 20, 10 };
+
+            object output = RunPackTextureBlocksAsync(sizes, AtlasPackingSettings.Default);
+            object result = GetField<object>(output, "Result");
+
+            Assert.That(GetField<bool>(output, "UsedGpu"), Is.False);
+            Assert.That(GetField<string>(output, "CpuReason"), Does.Contain($"The scene has {count} unique volume textures. Below 64"));
+            Assert.That(GetField<string>(output, "CpuReasonShort"), Is.EqualTo($"{count} {(count == 1 ? "texture" : "textures")}; the GPU is used from 64"));
+            Assert.That(GetField<bool>(result, "Success"), Is.True);
+            if (count > 0) AssertValidLayout(result, sizes);
+        }
+
+        // Verifies a block that fills the maximum atlas size on one axis packs validly next to many small ones, on the GPU when
+        // supported.
+        [Test]
+        public void PackTextureBlocksAsyncPacksBlockAtMaximumSize() {
+            int[][] sizes = new int[64][];
+            sizes[0] = new[] { MaxAtlasSize - 2, 6, 6 };
+            for (int i = 1; i < sizes.Length; i++) sizes[i] = new[] { 6 + i % 3, 6, 6 + i % 5 };
+
+            object output = RunPackTextureBlocksAsync(sizes, FastSettings(true));
+
+            Assert.That(GetField<bool>(output, "UsedGpu"), Is.EqualTo(GpuPackingAvailable()));
+            AssertValidLayout(GetField<object>(output, "Result"), sizes);
+        }
+
+        // Whether this editor's graphics device runs the packing kernel, decided the same way as the packer.
+        private static bool GpuPackingAvailable() {
+            MethodInfo method = typeof(Texture3DAtlasGenerator).GetMethod("GetGpuPackingUnsupportedReason", _staticPrivateFlags);
+            Assert.That(method, Is.Not.Null);
+            return method.Invoke(null, new object[] { null, -1, null, false }) == null;
+        }
+
+        // EditorPrefs keys of the GPU crash guard for this project.
+        private static string GpuRunningKey => GetCrashGuardKey("gpuPackingRunningKey");
+        private static string GpuDisabledKey => GetCrashGuardKey("gpuPackingDisabledKey");
+
+        private static string GetCrashGuardKey(string fieldName) {
+            typeof(Texture3DAtlasGenerator).GetMethod("InitGpuPackingKeys", _staticPrivateFlags).Invoke(null, null);
+            return (string)typeof(Texture3DAtlasGenerator).GetField(fieldName, _staticPrivateFlags).GetValue(null);
+        }
+
+        // Verifies the layout check used before any packing is accepted rejects overlaps, blocks outside the atlas and wrong sizes.
+        [Test]
+        public void IsValidPackingRejectsBrokenLayouts() {
+            Type generatorType = typeof(Texture3DAtlasGenerator);
+            object problem = CreatePackingProblem(new[] { new[] { 2, 2, 2 }, new[] { 2, 2, 2 } });
+            MethodInfo isValid = generatorType.GetMethod("IsValidPacking", _staticPrivateFlags);
+            Assert.That(isValid, Is.Not.Null);
+
+            Assert.That((bool)isValid.Invoke(null, new[] { CreatePackingResult(8, 4, 4, new[] { 0, 0, 0, 4, 4, 4, 0 }, new[] { 4, 0, 0, 4, 4, 4, 1 }), problem }), Is.True);
+            Assert.That((bool)isValid.Invoke(null, new[] { CreatePackingResult(8, 4, 4, new[] { 0, 0, 0, 4, 4, 4, 0 }, new[] { 3, 0, 0, 4, 4, 4, 1 }), problem }), Is.False, "overlap");
+            Assert.That((bool)isValid.Invoke(null, new[] { CreatePackingResult(7, 4, 4, new[] { 0, 0, 0, 4, 4, 4, 0 }, new[] { 4, 0, 0, 4, 4, 4, 1 }), problem }), Is.False, "outside the atlas");
+            Assert.That((bool)isValid.Invoke(null, new[] { CreatePackingResult(8, 4, 4, new[] { 0, 0, 0, 4, 4, 4, 0 }, new[] { 4, 0, 0, 3, 4, 4, 1 }), problem }), Is.False, "wrong size");
+            Assert.That((bool)isValid.Invoke(null, new[] { CreatePackingResult(8, 4, 4, new[] { 0, 0, 0, 4, 4, 4, 0 }, new[] { 4, 0, 0, 4, 4, 4, 0 }), problem }), Is.False, "block placed twice");
+        }
+
+        // Verifies packing gives the same layout on every run, so the same settings give the same atlas on every machine.
+        [Test]
+        public void PackTextureBlocksIsDeterministic() {
+            int[][] sizes = CreateRealSceneBlockSizes();
+            object first = InvokePackTextureBlocks(sizes, TexturePackingStrategy.MinimumVRAM, FastSettings(true));
+            object second = InvokePackTextureBlocks(sizes, TexturePackingStrategy.MinimumVRAM, FastSettings(true));
+
+            Assert.That(GetField<int>(second, "AtlasWidth"), Is.EqualTo(GetField<int>(first, "AtlasWidth")));
+            Assert.That(GetField<int>(second, "AtlasHeight"), Is.EqualTo(GetField<int>(first, "AtlasHeight")));
+            Assert.That(GetField<int>(second, "AtlasDepth"), Is.EqualTo(GetField<int>(first, "AtlasDepth")));
+            int[][] firstBoxes = GetPlacedBoxes(first);
+            int[][] secondBoxes = GetPlacedBoxes(second);
+            Assert.That(secondBoxes.Length, Is.EqualTo(firstBoxes.Length));
+            for (int i = 0; i < firstBoxes.Length; i++) Assert.That(secondBoxes[i], Is.EqualTo(firstBoxes[i]));
+        }
+
+        // Verifies the real 150-island scene packs smaller than the previous greedy packer's 102 x 32 x 816 atlas (2,663,424 voxels).
+        [Test]
+        public void PackTextureBlocksBeatsPreviousGreedyAtlasOnRealScene() {
+            object result = InvokePackTextureBlocks(CreateRealSceneBlockSizes(), TexturePackingStrategy.MinimumVRAM, FastSettings(true));
+
+            Assert.That(GetField<bool>(result, "Success"), Is.True);
+            long voxels = (long)GetField<int>(result, "AtlasWidth") * GetField<int>(result, "AtlasHeight") * GetField<int>(result, "AtlasDepth");
+            Assert.That(voxels, Is.LessThan(2663424L));
         }
 
         // Runs atlas generation and returns the generated atlas.
@@ -414,28 +743,166 @@ namespace VRCLightVolumes.Tests {
             return texture;
         }
 
-        // Invokes the private packer with one block.
-        private static object InvokePackTextureBlocks(int width, int height, int depth, TexturePackingStrategy strategy) {
-            Type generatorType = typeof(Texture3DAtlasGenerator);
-            Type blockType = generatorType.GetNestedType("AtlasBlock", _nestedPrivateFlags);
-            Type progressType = generatorType.GetNestedType("ThreadProgress", _nestedPrivateFlags);
+        // Unpadded island sizes of a real 150-volume scene (width, height, depth, count).
+        private static int[][] CreateRealSceneBlockSizes() {
+            int[,] groups = {
+                { 89, 9, 75, 3 }, { 48, 12, 38, 6 }, { 36, 12, 48, 3 }, { 23, 25, 34, 3 }, { 46, 12, 35, 3 }, { 32, 17, 34, 3 }, { 76, 12, 19, 3 }, { 32, 12, 39, 6 },
+                { 32, 12, 35, 3 }, { 38, 12, 29, 3 }, { 36, 10, 36, 3 }, { 46, 6, 46, 3 }, { 28, 28, 16, 3 }, { 27, 25, 18, 3 }, { 27, 20, 22, 3 }, { 32, 12, 28, 3 },
+                { 42, 12, 20, 3 }, { 25, 18, 22, 3 }, { 20, 18, 24, 3 }, { 19, 18, 24, 3 }, { 28, 12, 24, 3 }, { 20, 12, 32, 3 }, { 46, 6, 27, 3 }, { 27, 15, 17, 3 },
+                { 28, 12, 20, 3 }, { 14, 24, 19, 3 }, { 18, 16, 22, 3 }, { 32, 12, 16, 3 }, { 15, 11, 34, 3 }, { 20, 12, 23, 3 }, { 9, 30, 20, 3 }, { 14, 11, 34, 3 },
+                { 14, 12, 23, 3 }, { 18, 12, 16, 3 }, { 7, 24, 20, 3 }, { 14, 12, 20, 3 }, { 15, 14, 15, 3 }, { 31, 7, 14, 3 }, { 14, 14, 15, 3 }, { 18, 25, 6, 3 },
+                { 10, 15, 17, 3 }, { 17, 25, 6, 3 }, { 30, 8, 10, 3 }, { 21, 7, 14, 3 }, { 9, 17, 13, 3 }, { 8, 12, 20, 3 }, { 7, 12, 20, 3 }, { 7, 12, 8, 3 }
+            };
+            List<int[]> sizes = new List<int[]>();
+            for (int g = 0; g < groups.GetLength(0); g++) {
+                for (int n = 0; n < groups[g, 3]; n++) sizes.Add(new[] { groups[g, 0], groups[g, 1], groups[g, 2] });
+            }
+            return sizes.ToArray();
+        }
+
+        // Fast search settings, with or without Stop Early.
+        private static AtlasPackingSettings FastSettings(bool stopEarly) {
+            AtlasPackingSettings settings = AtlasPackingSettings.Default;
+            settings.Search = AtlasPackingSearch.Fast;
+            settings.StopEarly = stopEarly;
+            return settings;
+        }
+
+        // Creates private packer blocks of the given unpadded sizes (width, height, depth).
+        private static Array CreateBlocks(int[][] sizes) {
+            Type blockType = typeof(Texture3DAtlasGenerator).GetNestedType("AtlasBlock", _nestedPrivateFlags);
             Assert.That(blockType, Is.Not.Null);
+            Array blocks = Array.CreateInstance(blockType, sizes.Length);
+            for (int i = 0; i < sizes.Length; i++) {
+                object block = Activator.CreateInstance(blockType);
+                SetField(block, "Index", i);
+                SetField(block, "Width", sizes[i][0]);
+                SetField(block, "Height", sizes[i][1]);
+                SetField(block, "Depth", sizes[i][2]);
+                blocks.SetValue(block, i);
+            }
+            return blocks;
+        }
+
+        // Invokes the private CPU packer with blocks of the given unpadded sizes (width, height, depth) and padding 1.
+        private static object InvokePackTextureBlocks(int[][] sizes, TexturePackingStrategy strategy, AtlasPackingSettings settings) {
+            Type generatorType = typeof(Texture3DAtlasGenerator);
+            Type progressType = generatorType.GetNestedType("ThreadProgress", _nestedPrivateFlags);
             Assert.That(progressType, Is.Not.Null);
-
-            Array blocks = Array.CreateInstance(blockType, 1);
-            object block = Activator.CreateInstance(blockType);
-            SetField(block, "Index", 0);
-            SetField(block, "Width", width);
-            SetField(block, "Height", height);
-            SetField(block, "Depth", depth);
-            blocks.SetValue(block, 0);
-
-            object progress = Activator.CreateInstance(progressType);
-            SetField(progress, "Total", 1);
-
             MethodInfo method = generatorType.GetMethod("PackTextureBlocks", _staticPrivateFlags);
             Assert.That(method, Is.Not.Null);
-            return method.Invoke(null, new object[] { blocks, 1, strategy, progress, CancellationToken.None });
+            return method.Invoke(null, new object[] { CreateBlocks(sizes), 1, strategy, settings, Activator.CreateInstance(progressType), CancellationToken.None });
+        }
+
+        // Runs the private GPU-or-CPU packing coroutine to the end and returns its output (Done, UsedGpu, CpuReason, GpuFailed, Result).
+        private static object RunPackTextureBlocksAsync(int[][] sizes, AtlasPackingSettings settings) {
+            return RunPackTextureBlocksAsync(sizes, settings, out _);
+        }
+
+        // Same, and reports whether the crash guard marked the GPU as running between any two steps.
+        private static object RunPackTextureBlocksAsync(int[][] sizes, AtlasPackingSettings settings, out bool sawGpuRunning) {
+            Type generatorType = typeof(Texture3DAtlasGenerator);
+            Type outputType = generatorType.GetNestedType("PackingOutput", _nestedPrivateFlags);
+            Assert.That(outputType, Is.Not.Null);
+            MethodInfo method = generatorType.GetMethod("PackTextureBlocksAsync", _staticPrivateFlags);
+            Assert.That(method, Is.Not.Null);
+            object output = Activator.CreateInstance(outputType);
+            IEnumerator routine = (IEnumerator)method.Invoke(null, new object[] { CreateBlocks(sizes), 1, TexturePackingStrategy.MinimumVRAM, settings, null, CancellationToken.None, output });
+            string runningKey = GpuRunningKey;
+            sawGpuRunning = false;
+            var timer = System.Diagnostics.Stopwatch.StartNew();
+            try {
+                while (routine.MoveNext()) {
+                    sawGpuRunning |= EditorPrefs.HasKey(runningKey);
+                    if (timer.Elapsed.TotalSeconds > AtlasTimeoutSeconds) Assert.Fail("Packing did not finish within the timeout.");
+                }
+            } finally {
+                (routine as IDisposable)?.Dispose();
+            }
+            Assert.That(GetField<bool>(output, "Done"), Is.True);
+            return output;
+        }
+
+        // Creates the private packing problem for blocks of the given unpadded sizes and padding 1.
+        private static object CreatePackingProblem(int[][] sizes) {
+            MethodInfo method = typeof(Texture3DAtlasGenerator).GetMethod("TryCreatePackingProblem", _staticPrivateFlags);
+            Assert.That(method, Is.Not.Null);
+            object[] arguments = { CreateBlocks(sizes), 1, null };
+            Assert.That((bool)method.Invoke(null, arguments), Is.True);
+            return arguments[2];
+        }
+
+        // Creates a private packing result from boxes { x, y, z, width, height, depth, index }.
+        private static object CreatePackingResult(int width, int height, int depth, params int[][] boxes) {
+            Type generatorType = typeof(Texture3DAtlasGenerator);
+            Type resultType = generatorType.GetNestedType("PackingResult", _nestedPrivateFlags);
+            Type placedType = generatorType.GetNestedType("AtlasPlacedBlock", _nestedPrivateFlags);
+            Assert.That(resultType, Is.Not.Null);
+            Assert.That(placedType, Is.Not.Null);
+            Array placed = Array.CreateInstance(placedType, boxes.Length);
+            for (int i = 0; i < boxes.Length; i++) {
+                object box = Activator.CreateInstance(placedType);
+                SetField(box, "X", boxes[i][0]);
+                SetField(box, "Y", boxes[i][1]);
+                SetField(box, "Z", boxes[i][2]);
+                SetField(box, "Width", boxes[i][3]);
+                SetField(box, "Height", boxes[i][4]);
+                SetField(box, "Depth", boxes[i][5]);
+                SetField(box, "Index", boxes[i][6]);
+                placed.SetValue(box, i);
+            }
+            object result = Activator.CreateInstance(resultType);
+            SetField(result, "Success", true);
+            SetField(result, "AtlasWidth", width);
+            SetField(result, "AtlasHeight", height);
+            SetField(result, "AtlasDepth", depth);
+            SetField(result, "Placed", placed);
+            return result;
+        }
+
+        // Asserts a packing result places every block exactly once, padded, inside an atlas within the size limit and without overlaps.
+        private static void AssertValidLayout(object result, int[][] sizes) {
+            Assert.That(GetField<bool>(result, "Success"), Is.True);
+            int atlasWidth = GetField<int>(result, "AtlasWidth");
+            int atlasHeight = GetField<int>(result, "AtlasHeight");
+            int atlasDepth = GetField<int>(result, "AtlasDepth");
+            Assert.That(Math.Max(atlasWidth, Math.Max(atlasHeight, atlasDepth)), Is.LessThanOrEqualTo(MaxAtlasSize));
+            int[][] boxes = GetPlacedBoxes(result);
+            Assert.That(boxes.Length, Is.EqualTo(sizes.Length));
+
+            bool[] seen = new bool[sizes.Length];
+            for (int i = 0; i < boxes.Length; i++) {
+                int[] box = boxes[i];
+                int index = box[6];
+                Assert.That(seen[index], Is.False, "Block placed twice: " + index);
+                seen[index] = true;
+                Assert.That(box[3], Is.EqualTo(sizes[index][0] + 2));
+                Assert.That(box[4], Is.EqualTo(sizes[index][1] + 2));
+                Assert.That(box[5], Is.EqualTo(sizes[index][2] + 2));
+                Assert.That(box[0] >= 0 && box[1] >= 0 && box[2] >= 0, Is.True);
+                Assert.That(box[0] + box[3] <= atlasWidth && box[1] + box[4] <= atlasHeight && box[2] + box[5] <= atlasDepth, Is.True, "Block outside the atlas: " + index);
+                for (int j = 0; j < i; j++) {
+                    int[] other = boxes[j];
+                    bool overlaps = box[0] < other[0] + other[3] && other[0] < box[0] + box[3]
+                        && box[1] < other[1] + other[4] && other[1] < box[1] + box[4]
+                        && box[2] < other[2] + other[5] && other[2] < box[2] + box[5];
+                    Assert.That(overlaps, Is.False, "Blocks overlap: " + index + " and " + other[6]);
+                }
+            }
+        }
+
+        // Reads placed blocks as { x, y, z, width, height, depth, index }, in result order.
+        private static int[][] GetPlacedBoxes(object result) {
+            Array placed = GetField<Array>(result, "Placed");
+            int[][] boxes = new int[placed.Length][];
+            for (int i = 0; i < placed.Length; i++) {
+                object box = placed.GetValue(i);
+                boxes[i] = new[] {
+                    GetField<int>(box, "X"), GetField<int>(box, "Y"), GetField<int>(box, "Z"),
+                    GetField<int>(box, "Width"), GetField<int>(box, "Height"), GetField<int>(box, "Depth"), GetField<int>(box, "Index")
+                };
+            }
+            return boxes;
         }
 
         // Sets a public field on a private nested test target.

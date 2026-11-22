@@ -170,6 +170,14 @@ namespace VRCLightVolumes {
         [HideInInspector] public bool FixLightProbesL1 = true;
         [Tooltip("Uses a smaller baked grid in the atlas. Useful for a lower-detail mobile version.")]
         [HideInInspector] public int DownscaleVolumes = 0; // 0 = None, 1 = x2, 2 = x4, 3 = x8
+        [Tooltip("How long atlas packing searches for a smaller atlas. Fast suits quick iteration; Thorough searches longer, usually for an atlas that is only slightly smaller.")]
+        [HideInInspector] public int AtlasPackingSearch = 1; // 0 = Fast, 1 = Default, 2 = Thorough
+        [Tooltip("Stops packing once the search stops finding a smaller atlas.")]
+        [HideInInspector] public bool AtlasPackingStopEarly = true;
+        [Tooltip("Stops packing after this many seconds and keeps the smallest atlas found so far. The first search step always finishes. 0 = no limit. With a limit, the atlas can depend on the speed of the computer.")]
+        [HideInInspector] public float AtlasPackingMaxTime = 0f;
+        [Tooltip("Packs the atlas on the CPU only. Off: the GPU is used when the graphics card supports it and the scene has 64-255 volume textures; otherwise the CPU packs. Turn on if GPU packing causes problems on your computer.")]
+        [HideInInspector] public bool AtlasPackingUseCpu = false;
         // The mobile slider is authoring-only. ShadowMinVariance remains the resolved raw runtime value.
         [Tooltip("Reduces shadow noise on PC. Higher values can make shadows look less attached to objects.")]
         [HideInInspector] public float ShadowMinVarianceDesktop = 0f;

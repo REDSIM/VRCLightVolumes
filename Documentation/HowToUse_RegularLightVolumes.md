@@ -71,6 +71,25 @@ Each bake saves a volume's lighting in three source 3D textures: **Texture 0**, 
 
 **Pack Light Volumes** combines the source textures from all volumes into one shared 3D texture, called an atlas. This is the final texture used by the world. Packing runs automatically after a successful bake. It reuses the existing baked data. It does not calculate new lighting.
 
+**Packing Settings** on the **Light Volume Manager** control how long packing searches for a smaller atlas and where it runs. The defaults work without any setup:
+
+- **Search** sets the search budget: `Fast`, `Default` or `Thorough`. For 150 to 250 volumes, `Default` takes 1-3 s on the GPU and 5-25 s on the CPU; `Thorough` up to 10 s on the GPU and about a minute on the CPU, usually for an atlas that is only slightly smaller.
+- **Stop Early** ends the search once it stops finding a smaller atlas. Turn it off to always use the whole budget.
+- **Max Packing Time** ends the search after that many seconds and keeps the best atlas found so far. The first search step always finishes. `0` means no limit.
+- **Use CPU** packs the atlas on the CPU only. When it is off (the default), the GPU packs when the graphics card supports compute shaders and the scene has 64 to 255 unique volume textures and no atlas post-processors, and Bakery is not baking; otherwise the CPU packs.
+
+Each pack logs one line in the Console with the device, the time and the atlas size, and why the GPU was not used, for example `[LightVolumes] Atlas packed on the GPU (NVIDIA GeForce RTX 3090 Ti, Direct3D11) in 1.2 s: 102 x 281 x 77, 17.66 MB.` or `[LightVolumes] Atlas packed on the CPU in 0.1 s: 334 x 38 x 74, 7.51 MB (21 textures; the GPU is used from 64).`
+
+On the CPU, the same volumes and settings always give the same atlas; the GPU path does not guarantee this. Every atlas is checked block by block before it is used, whichever device packed it. You can cancel packing from Unity's progress bar; the previous atlas is kept.
+
+If packing misbehaves:
+
+- **The GPU fails.** If the GPU returns an error, times out or gives a result that does not pass the check, the CPU packs the atlas instead. The atlas is still correct. The Console shows a warning that starts with `[LightVolumes] Atlas packing:` and lists the reason, the stage, the GPU and what to do, and the pack's line ends with `(the GPU failed: ...; see the warning above)`. Nothing else is needed.
+- **Unity closes during GPU packing** (a crash or a graphics driver reset). The next time Unity starts, Light Volumes turns GPU packing off for this project on this computer and logs a warning. A warning box with a **Try GPU again** button appears under **Packing Settings**; atlases are packed on the CPU until you click it.
+- **The GPU causes problems on your computer**, such as freezes or driver resets while packing: turn on **Use CPU**.
+- **The atlas does not fit.** If the volume textures do not fit in one 2048 x 2048 x 2048 atlas, the Console shows an error with the space they need, and the previous atlas is kept. Increase **Downscale Volumes**, lower the resolution of the largest volumes or use fewer volumes.
+- **Reporting a problem:** copy the whole `[LightVolumes] Atlas packing:` message from the Console. Its `Details` line has the GPU, graphics API and version, and the Unity version.
+
 Light Volumes includes the packed atlas in the VRChat build and removes its references to the source textures. Keep those source assets in your Unity project: they are needed whenever you pack the volumes again.
 
 You can save a baked volume as a prefab and reuse it in another scene:

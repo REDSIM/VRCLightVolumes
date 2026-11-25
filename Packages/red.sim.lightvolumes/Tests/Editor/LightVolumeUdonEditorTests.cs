@@ -7368,45 +7368,17 @@ Shader ""Hidden/VRCLV/Tests/ShadowGrabPass"" {
             Assert.That(point.ShadowMapTextureHasDepthSlices, Is.True);
         }
 
-        // A delayed Udon event cannot be cancelled by clearing a local flag. Keep ownership with
-        // the already queued callback so a quick disable-enable cannot create a second realtime loop.
+        // Both the initial callback and the per-frame bake must stop before they change the bake state.
         [Test]
-        public void ExternalRuntimeShadowBakerKeepsPendingLoopOwnershipAcrossDisableEnable() {
-            GameObject gameObject = CreateGameObject("External Runtime Shadow Loop Baker", false);
-            PointLightShadowRuntimeBaker baker = gameObject.AddComponent<PointLightShadowRuntimeBaker>();
-            baker.Realtime = false;
-            gameObject.SetActive(true);
-
-            FieldInfo scheduledField = typeof(PointLightShadowRuntimeBaker).GetField("_realtimeLoopScheduled", _lifecycleMethodFlags);
-            Assert.That(scheduledField, Is.Not.Null);
-            scheduledField.SetValue(baker, true);
-
-            gameObject.SetActive(false);
-            Assert.That((bool)scheduledField.GetValue(baker), Is.True);
-            gameObject.SetActive(true);
-            Assert.That((bool)scheduledField.GetValue(baker), Is.True);
-
-            gameObject.SetActive(false);
-            baker._RealtimeBakeLoop();
-            Assert.That((bool)scheduledField.GetValue(baker), Is.False,
-                "The queued callback, not OnDisable/OnEnable, must release loop ownership.");
-        }
-
-        // Both the initial callback and a queued loop must stop before they change the bake state.
-        [Test]
-        public void CompiledUdonExternalBakerStopsDelayedWorkWithoutLocalPlayer() {
+        public void CompiledUdonExternalBakerStopsRealtimeWorkWithoutLocalPlayer() {
             RunCompiledUdonWithoutLocalPlayer<PointLightShadowRuntimeBaker>(backing => {
                 backing.SetProgramVariable("Realtime", true);
-                backing.SetProgramVariable("_realtimeLoopScheduled", false);
                 backing.SetProgramVariable("_configuredDirectOutput", true);
                 backing.SendCustomEvent("_onEnable");
-                Assert.That(backing.GetProgramVariable("_realtimeLoopScheduled"), Is.EqualTo(false));
                 Assert.That(backing.GetProgramVariable("_configuredTargetPointLightVolume"), Is.Null);
                 Assert.That(backing.GetProgramVariable("_configuredDirectOutput"), Is.EqualTo(true));
 
-                backing.SetProgramVariable("_realtimeLoopScheduled", true);
-                backing.SendCustomEvent(nameof(PointLightShadowRuntimeBaker._RealtimeBakeLoop));
-                Assert.That(backing.GetProgramVariable("_realtimeLoopScheduled"), Is.EqualTo(false));
+                backing.SendCustomEvent("_postLateUpdate");
                 Assert.That(backing.GetProgramVariable("_configuredTargetPointLightVolume"), Is.Null);
                 Assert.That(backing.GetProgramVariable("_configuredDirectOutput"), Is.EqualTo(true));
                 LogAssert.NoUnexpectedReceived();

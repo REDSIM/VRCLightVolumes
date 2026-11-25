@@ -539,7 +539,7 @@ A normal runtime bake keeps a complete source texture on the light. With an unch
 
 The realtime baker can write directly into the atlas when its active target's resolution matches the Manager. The Manager preserves matching direct outputs during atlas rebuilds. Let the baker manage `RuntimeShadowDirectOutput`. Use a one-shot bake when you need a retained source after realtime stops. See [shadow output details](./TechnicalDetails.md#realtime-shadow-output).
 
-Leave registration callbacks, `_onVarChange_*`, `_RealtimeBakeLoop`, GPU callbacks and cleanup helpers to the components. They are public for Udon events and component communication. Enabling and disabling a component already adds and removes it from the Manager.
+Leave registration callbacks, `_onVarChange_*`, GPU callbacks and cleanup helpers to the components. They are public for Udon events and component communication. Enabling and disabling a component already adds and removes it from the Manager.
 
 ## Optional integrations
 

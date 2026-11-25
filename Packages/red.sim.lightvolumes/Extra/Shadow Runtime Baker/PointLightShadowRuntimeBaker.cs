@@ -26,9 +26,7 @@ namespace VRCLightVolumes {
 
         private PointLightVolumeInstance _configuredTargetPointLightVolume;
         private bool _configuredDirectOutput = false;
-#if UDONSHARP
-        private bool _realtimeLoopScheduled = false;
-#else
+#if !UDONSHARP
         private bool _hasStarted = false;
 #endif
 
@@ -36,7 +34,7 @@ namespace VRCLightVolumes {
         // Starts runtime baking once regular MonoBehaviour startup order is stable.
         private void Start() {
             _hasStarted = true;
-            if (Realtime) StartTargetRealtimeBakeLoop();
+            if (Realtime) StartTargetRealtimeBake();
             else if (BakeOnEnable) BakeShadows();
         }
 #endif
@@ -44,30 +42,30 @@ namespace VRCLightVolumes {
         // Starts one-shot or realtime target baking when this external baker becomes active.
         private void OnEnable() {
 #if UDONSHARP
-            if (Realtime) StartTargetRealtimeBakeLoop();
+            if (Realtime) StartTargetRealtimeBake();
             else if (BakeOnEnable) BakeShadows();
 #else
             if (!_hasStarted) return;
-            if (Realtime) StartTargetRealtimeBakeLoop();
+            if (Realtime) StartTargetRealtimeBake();
             else if (BakeOnEnable) BakeShadows();
 #endif
         }
 
-        // Releases retained scratch resources. A queued Udon event owns the scheduled flag until it runs; keeping the flag prevents a quick disable-enable cycle from creating a second loop.
+        // Releases retained scratch resources.
         private void OnDisable() {
             ReleaseConfiguredTarget();
         }
 
-#if !UDONSHARP
-        // Drives the target point light once per frame in regular Unity runtime.
-        private void Update() {
-            if (!Realtime || TargetPointLightVolume == null) {
-                ReleaseConfiguredTarget();
-                return;
-            }
-            PointLightVolumeInstance target = TargetPointLightVolume;
-            ConfigureTargetBake(target, true);
-            if (target.IsActive) target.BakeShadows();
+#if UDONSHARP
+        // Bakes after VRChat applies avatar IK. Baking from Update captured avatars one pose behind.
+        public override void PostLateUpdate() {
+            if (!IsUdonRuntimeAvailable()) return;
+            BakeRealtimeShadows();
+        }
+#else
+        // Bakes after animation and Update motion so shadow casters match the rendered frame.
+        private void LateUpdate() {
+            BakeRealtimeShadows();
         }
 #endif
 
@@ -82,30 +80,19 @@ namespace VRCLightVolumes {
             target.BakeShadows();
         }
 
-        // Delayed Udon realtime loop that only triggers the target point light.
-        public void _RealtimeBakeLoop() {
-#if UDONSHARP
-            _realtimeLoopScheduled = false;
-            if (!IsUdonRuntimeAvailable()) return;
-#endif
-            if (!enabled || !gameObject.activeInHierarchy || !Realtime) {
-                ReleaseConfiguredTarget();
+        // Per-frame realtime bake that only triggers the target point light.
+        private void BakeRealtimeShadows() {
+            if (!Realtime || TargetPointLightVolume == null) {
+                if (_configuredDirectOutput) ReleaseConfiguredTarget();
                 return;
             }
-            if (TargetPointLightVolume != null) {
-                PointLightVolumeInstance target = TargetPointLightVolume;
-                ConfigureTargetBake(target, true);
-                if (target.IsActive) target.BakeShadows();
-            } else ReleaseConfiguredTarget();
-#if UDONSHARP
-            if (!IsUdonRuntimeAvailable()) return;
-            _realtimeLoopScheduled = true;
-            SendCustomEventDelayedFrames(nameof(_RealtimeBakeLoop), 1);
-#endif
+            PointLightVolumeInstance target = TargetPointLightVolume;
+            ConfigureTargetBake(target, true);
+            if (target.IsActive) target.BakeShadows();
         }
 
-        // Writes realtime bake fields to the target and starts the external trigger loop.
-        private void StartTargetRealtimeBakeLoop() {
+        // Writes realtime bake fields to the target before the first per-frame bake.
+        private void StartTargetRealtimeBake() {
 #if UDONSHARP
             if (!IsUdonRuntimeAvailable()) return;
 #endif
@@ -114,11 +101,6 @@ namespace VRCLightVolumes {
                 return;
             }
             ConfigureTargetBake(TargetPointLightVolume, true);
-#if UDONSHARP
-            if (_realtimeLoopScheduled) return;
-            _realtimeLoopScheduled = true;
-            SendCustomEventDelayedFrames(nameof(_RealtimeBakeLoop), 1);
-#endif
         }
 
 #if UDONSHARP
